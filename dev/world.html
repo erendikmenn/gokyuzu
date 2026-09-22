@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Dünya önizleme</title>
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #0b1622; }
+    canvas { display: block; }
+    #info { position: fixed; left: 10px; top: 8px; color: #fff; font: 12px/1.45 -apple-system, Menlo, monospace;
+      background: rgba(0,0,0,.45); padding: 6px 9px; border-radius: 6px; pointer-events: none; white-space: pre; }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "../node_modules/three/build/three.module.js",
+        "three/addons/": "../node_modules/three/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+<div id="info">yükleniyor…</div>
+<script type="module">
+// Standalone world preview with a free camera.
+//   ?cam=x,y,z&look=x,y,z      camera position / look-at target (y in cam may be "g+3" = 3 m above ground)
+//   ?view=spawn|approach|mountains|town|lake|overview|valley|runway   presets
+//   ?t=seconds                 advance simulated time (clouds / water)
+//   ?hide=a,b                  hide scene objects by name (sky, terrain, water, runway, trees, town, clouds, ...)
+// Keys: WASD move, Q/E down/up, arrows look, Shift = fast. Drag to look.
+import * as THREE from 'three';
+import { createWorld } from '../src/world/world.js';
+import { SPAWN, RUNWAY } from '../src/config.js';
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFShadowMap;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.3, 30000);
+const world = createWorld(scene, renderer);
+
+const q = new URLSearchParams(location.search);
+const L = world.layout;
+const presets = {
+  spawn: () => [[SPAWN.x, 'g+3', SPAWN.z], [SPAWN.x, RUNWAY.elevation + 3, SPAWN.z - 1000]],
+  chase: () => [[SPAWN.x, 'g+5', SPAWN.z + 14], [SPAWN.x, RUNWAY.elevation + 2, SPAWN.z - 30]],
+  approach: () => [[0, 140, 2500], [0, 20, 300]],
+  glide: () => [[0, 100, 2200], [0, 20, 600]],
+  runway: () => [[120, 60, 900], [0, 20, 200]],
+  mountains: () => [[-300, 420, -1500], [0, 400, -4500]],
+  valley: () => [[-300, 180, -2300], [200, 150, -3500]],
+  town: () => [[L.town.x - 700, 260, L.town.z - 700], [L.town.x, 10, L.town.z]],
+  townlow: () => [[L.town.x - 180, 40, L.town.z - 260], [L.town.x + 100, 15, L.town.z + 100]],
+  harbor: () => [[L.harbor.x + 250, 60, L.harbor.z - 250], [L.harbor.x - 60, 0, L.harbor.z]],
+  lighthouse: () => [[L.lighthouse.x - 150, 45, L.lighthouse.z + 120], [L.lighthouse.x, 20, L.lighthouse.z]],
+  forest: () => [[-2600, 'g+25', 600], [-3200, 60, 200]],
+  lake: () => [[L.lake.x - 900, 200, L.lake.z + 1200], [L.lake.x, L.lakeLevel || 20, L.lake.z]],
+  overview: () => [[0, 3000, 6500], [0, 0, -500]],
+  top: () => [[0, 11000, 1], [0, 0, 0]],
+  west: () => [[-1500, 250, 1500], [-3500, 150, 0]],
+  coast: () => [[3000, 120, 4200], [4200, 0, 2600]],
+};
+let camP, lookP;
+if (q.get('view') && presets[q.get('view')]) [camP, lookP] = presets[q.get('view')]();
+else { camP = (q.get('cam') || '0,g+3,640').split(','); lookP = (q.get('look') || '0,23,-400').split(',').map(Number); }
+const cx = Number(camP[0]), cz = Number(camP[2]);
+let cy = String(camP[1]).startsWith('g+') ? world.getGroundHeight(cx, cz) + Number(String(camP[1]).slice(2)) : Number(camP[1]);
+camera.position.set(cx, cy, cz);
+camera.lookAt(lookP[0], lookP[1], lookP[2]);
+if (q.get('fov')) { camera.fov = Number(q.get('fov')); camera.updateProjectionMatrix(); }
+
+// ?hide=name1,name2 hides named scene objects (debugging)
+for (const n of (q.get('hide') || '').split(',').filter(Boolean)) { const o = scene.getObjectByName(n); if (o) o.visible = false; }
+
+// warm-up: simulate time for clouds / water
+const t = Number(q.get('t') || 0);
+for (let i = 0; i < t * 10; i++) world.update(0.1, camera);
+
+const keys = new Set();
+addEventListener('keydown', (e) => keys.add(e.code));
+addEventListener('keyup', (e) => keys.delete(e.code));
+let yaw = 0, pitch = 0;
+{ const e = new THREE.Euler().setFromQuaternion(camera.quaternion, 'YXZ'); yaw = e.y; pitch = e.x; }
+let drag = null;
+renderer.domElement.addEventListener('pointerdown', (e) => { drag = [e.clientX, e.clientY]; });
+addEventListener('pointerup', () => { drag = null; });
+addEventListener('pointermove', (e) => {
+  if (!drag) return;
+  yaw -= (e.clientX - drag[0]) * 0.004; pitch -= (e.clientY - drag[1]) * 0.004;
+  pitch = Math.max(-1.5, Math.min(1.5, pitch)); drag = [e.clientX, e.clientY];
+});
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight);
+});
+
+const info = document.getElementById('info');
+const clock = new THREE.Timer();
+clock.connect(document);
+let acc = 0, frames = 0, fps = 0;
+const v = new THREE.Vector3();
+function frame(ts) {
+  clock.update(ts);
+  const dt = Math.min(clock.getDelta(), 0.1);
+  const sp = (keys.has('ShiftLeft') ? 600 : 80) * dt;
+  if (keys.has('ArrowLeft')) yaw += dt; if (keys.has('ArrowRight')) yaw -= dt;
+  if (keys.has('ArrowUp')) pitch += dt; if (keys.has('ArrowDown')) pitch -= dt;
+  camera.quaternion.setFromEuler(new THREE.Euler(pitch, yaw, 0, 'YXZ'));
+  v.set((keys.has('KeyD') ? 1 : 0) - (keys.has('KeyA') ? 1 : 0), (keys.has('KeyE') ? 1 : 0) - (keys.has('KeyQ') ? 1 : 0), (keys.has('KeyS') ? 1 : 0) - (keys.has('KeyW') ? 1 : 0));
+  camera.position.addScaledVector(v.applyQuaternion(camera.quaternion), sp);
+  const g = world.getGroundHeight(camera.position.x, camera.position.z);
+  if (camera.position.y < g + 1) camera.position.y = g + 1;
+  world.update(dt, camera);
+  renderer.render(scene, camera);
+  acc += dt; frames++;
+  if (acc > 0.5) { fps = frames / acc; acc = 0; frames = 0; }
+  const p = camera.position;
+  info.textContent = `fps ${fps.toFixed(0)}  calls ${renderer.info.render.calls}  tris ${(renderer.info.render.triangles / 1e6).toFixed(2)}M\n` +
+    `cam ${p.x.toFixed(0)}, ${p.y.toFixed(0)}, ${p.z.toFixed(0)}  ground ${g.toFixed(1)}  water ${world.isWater(p.x, p.z)}`;
+  requestAnimationFrame(frame);
+}
+window.THREE = THREE; window.__world = world; window.__renderer = renderer; window.__camera = camera; window.__scene = scene;
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
