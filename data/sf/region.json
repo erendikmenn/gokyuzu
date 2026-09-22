@@ -1,0 +1,26 @@
+{
+  "name": "San Francisco Bay",
+  "crs": "EPSG:32610",
+  "origin": {
+    "lon": -122.374889,
+    "lat": 37.618972,
+    "note": "SFO airport reference point"
+  },
+  "originUTM": [
+    555166.105,
+    4163724.242
+  ],
+  "bboxLonLat": [
+    -122.56,
+    37.55,
+    -122.14,
+    37.87
+  ],
+  "local": {
+    "minX": -16467,
+    "maxX": 20799,
+    "minZ": -28016,
+    "maxZ": 7745
+  },
+  "axes": "x = UTM easting - E0 (east +X); z = -(UTM northing - N0) (north -Z); y = meters above MSL"
+}

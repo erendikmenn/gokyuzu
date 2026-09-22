@@ -2,3 +2,12 @@ node_modules/
 .DS_Store
 *.png
 !docs/*.png
+.venv/
+__pycache__/
+*.pyc
+# generated / downloaded (reproducible from tools/ and blender/ scripts)
+assets/
+renders/
+data/sf/raw/
+data/sf/cache/
+*.blend1

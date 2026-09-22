@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Headless screenshot + console check.
-// Usage: node tools/shot.mjs <url-path> <out.png> [--wait ms] [--hold KeyW:2000,ShiftLeft:1500] [--eval "js expr"] [--click]
+// Usage: node tools/shot.mjs <url-path> <out.png> [--wait ms] [--hold KeyW:2000,ShiftLeft:1500] [--eval "js expr"] [--click] [--size 1920x1080] [--swiftshader]
+//   Renders on the real Apple GPU (ANGLE/Metal) by default, so fps readings are meaningful. --swiftshader forces software GL.
 //   url-path is relative to http://localhost:5173/ (e.g. "index.html" or "dev/models.html").
 //   --click   clicks the page center first (dismisses the start overlay in index.html).
 //   --hold    presses keys in sequence, each held for the given ms (KeyboardEvent.code names).
@@ -19,10 +20,12 @@ const hold = opt('--hold');
 const evalExpr = opt('--eval');
 const click = args.includes('--click');
 
-const browser = await chromium.launch({
-  args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'],
-});
-const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+const [vw, vh] = (opt('--size') || '1440x900').split('x').map(Number);
+const gpuArgs = args.includes('--swiftshader')
+  ? ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist']
+  : ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist'];
+const browser = await chromium.launch({ args: gpuArgs });
+const page = await browser.newPage({ viewport: { width: vw, height: vh } });
 const problems = [];
 page.on('console', (m) => { if ((m.type() === 'error' || m.type() === 'warning') && !/GL Driver Message|GPU stall/.test(m.text())) problems.push(`[console.${m.type()}] ${m.text()}`); });
 page.on('pageerror', (e) => problems.push(`[pageerror] ${e.message}\n${e.stack ?? ''}`));
@@ -46,6 +49,8 @@ if (evalExpr) {
   catch (e) { console.log('eval error:', e.message); }
 }
 await page.screenshot({ path: out });
+const fps = await page.evaluate(() => window.__fps).catch(() => undefined);
+if (fps) console.log('fps:', fps.toFixed(1));
 await browser.close();
 console.log(problems.length ? problems.join('\n') : 'no console errors');
 console.log('saved', out);

@@ -29,8 +29,8 @@
 //   ?hide=a,b                  hide scene objects by name (sky, terrain, water, runway, trees, town, clouds, ...)
 // Keys: WASD move, Q/E down/up, arrows look, Shift = fast. Drag to look.
 import * as THREE from 'three';
-import { createWorld } from '../src/world/world.js';
-import { SPAWN, RUNWAY } from '../src/config.js';
+import { createWorld } from '../src/ada/world/world.js';
+import { SPAWN, RUNWAY } from '../src/ada/config.js';
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));

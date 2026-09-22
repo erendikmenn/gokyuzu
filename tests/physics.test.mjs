@@ -1,6 +1,6 @@
 // Flight model tests. Run: node tests/physics.test.mjs
 // No framework: scripted pilots drive an InputState against fake worlds; prints a PASS/FAIL table.
-import { FlightModel } from '../src/flight/physics.js';
+import { FlightModel } from '../src/ada/flight/physics.js';
 
 const GEAR = 1.2;
 const DEG = 180 / Math.PI;

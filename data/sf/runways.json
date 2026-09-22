@@ -1,0 +1,267 @@
+{
+ "note": "Authoritative runway data (lead-owned). Local coords per data/sf/region.json. ends[i] = runway threshold; headingTrue = direction of flight when departing from that end. Terrain must be flattened to `elevation` over each runway rectangle (+ shoulders).",
+ "magneticDeclination": 12.9,
+ "airports": [
+  {
+   "icao": "KSFO",
+   "name": "San Francisco International",
+   "elevation": 4.0,
+   "military": false,
+   "runways": [
+    {
+     "id": "01L/19R",
+     "width": 61.0,
+     "length": 2342.8,
+     "surface": "asphalt",
+     "elevation": 4.0,
+     "center": {
+      "x": -167.99,
+      "z": 201.99
+     },
+     "ends": [
+      {
+       "ident": "19R",
+       "x": 371.51,
+       "z": -837.8,
+       "headingTrue": 207.42
+      },
+      {
+       "ident": "01L",
+       "x": -707.49,
+       "z": 1241.77,
+       "headingTrue": 27.42
+      }
+     ]
+    },
+    {
+     "id": "01R/19L",
+     "width": 61.0,
+     "length": 2632.5,
+     "surface": "asphalt",
+     "elevation": 4.0,
+     "center": {
+      "x": 71.6,
+      "z": 237.23
+     },
+     "ends": [
+      {
+       "ident": "01R",
+       "x": -534.41,
+       "z": 1405.7,
+       "headingTrue": 27.41
+      },
+      {
+       "ident": "19L",
+       "x": 677.6,
+       "z": -931.23,
+       "headingTrue": 207.41
+      }
+     ]
+    },
+    {
+     "id": "10L/28R",
+     "width": 61.0,
+     "length": 3618.7,
+     "surface": "asphalt",
+     "elevation": 4.0,
+     "center": {
+      "x": -34.32,
+      "z": -239.31
+     },
+     "ends": [
+      {
+       "ident": "28R",
+       "x": 1571.64,
+       "z": 594.12,
+       "headingTrue": 297.43
+      },
+      {
+       "ident": "10L",
+       "x": -1640.28,
+       "z": -1072.74,
+       "headingTrue": 117.43
+      }
+     ]
+    },
+    {
+     "id": "10R/28L",
+     "width": 61.0,
+     "length": 3465.2,
+     "surface": "asphalt",
+     "elevation": 4.0,
+     "center": {
+      "x": -73.95,
+      "z": -2.25
+     },
+     "ends": [
+      {
+       "ident": "28L",
+       "x": 1463.97,
+       "z": 795.72,
+       "headingTrue": 297.42
+      },
+      {
+       "ident": "10R",
+       "x": -1611.87,
+       "z": -800.23,
+       "headingTrue": 117.42
+      }
+     ]
+    }
+   ],
+   "center": {
+    "x": -51.2,
+    "z": 49.4
+   }
+  },
+  {
+   "icao": "KOAK",
+   "name": "Oakland International",
+   "elevation": 3.0,
+   "military": false,
+   "runways": [
+    {
+     "id": "10L/28R",
+     "width": 46.0,
+     "length": 1649.5,
+     "surface": "asphalt",
+     "elevation": 3.0,
+     "center": {
+      "x": 14140.9,
+      "z": -12165.52
+     },
+     "ends": [
+      {
+       "ident": "10L",
+       "x": 13374.42,
+       "z": -12470.05,
+       "headingTrue": 111.67
+      },
+      {
+       "ident": "28R",
+       "x": 14907.39,
+       "z": -11860.99,
+       "headingTrue": 291.67
+      }
+     ]
+    },
+    {
+     "id": "10R/28L",
+     "width": 46.0,
+     "length": 1892.7,
+     "surface": "asphalt",
+     "elevation": 3.0,
+     "center": {
+      "x": 13925.18,
+      "z": -11924.0
+     },
+     "ends": [
+      {
+       "ident": "10R",
+       "x": 13045.87,
+       "z": -12273.92,
+       "headingTrue": 111.7
+      },
+      {
+       "ident": "28L",
+       "x": 14804.48,
+       "z": -11574.09,
+       "headingTrue": 291.7
+      }
+     ]
+    },
+    {
+     "id": "12/30",
+     "width": 46.0,
+     "length": 3203.8,
+     "surface": "asphalt",
+     "elevation": 3.0,
+     "center": {
+      "x": 12861.82,
+      "z": -10282.33
+     },
+     "ends": [
+      {
+       "ident": "30",
+       "x": 14097.41,
+       "z": -9262.82,
+       "headingTrue": 309.53
+      },
+      {
+       "ident": "12",
+       "x": 11626.24,
+       "z": -11301.84,
+       "headingTrue": 129.53
+      }
+     ]
+    },
+    {
+     "id": "15/33",
+     "width": 23.0,
+     "length": 1029.4,
+     "surface": "asphalt",
+     "elevation": 3.0,
+     "center": {
+      "x": 13450.51,
+      "z": -13067.02
+     },
+     "ends": [
+      {
+       "ident": "15",
+       "x": 13308.03,
+       "z": -13561.61,
+       "headingTrue": 163.93
+      },
+      {
+       "ident": "33",
+       "x": 13593.0,
+       "z": -12572.44,
+       "headingTrue": 343.93
+      }
+     ]
+    }
+   ],
+   "center": {
+    "x": 13594.6,
+    "z": -11859.7
+   }
+  },
+  {
+   "icao": "KNGZ",
+   "name": "Alameda Hava Üssü",
+   "elevation": 3.0,
+   "military": true,
+   "runways": [
+    {
+     "id": "06/24",
+     "width": 45.0,
+     "length": 2700.0,
+     "surface": "concrete",
+     "elevation": 3.0,
+     "center": {
+      "x": 5072.39,
+      "z": -18606.13
+     },
+     "ends": [
+      {
+       "ident": "06",
+       "x": 3768.39,
+       "z": -18256.72,
+       "headingTrue": 75.0
+      },
+      {
+       "ident": "24",
+       "x": 6376.39,
+       "z": -18955.54,
+       "headingTrue": 255.0
+      }
+     ]
+    }
+   ],
+   "center": {
+    "x": 5072.4,
+    "z": -18606.1
+   }
+  }
+ ]
+}

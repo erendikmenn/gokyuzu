@@ -28,9 +28,9 @@
   <script type="module">
     import * as THREE from 'three';
     import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-    import { createAircraft, createAircraftMesh } from '../src/models/aircraft.js';
-    import { createAirport } from '../src/models/airport.js';
-    import { RUNWAY } from '../src/config.js';
+    import { createAircraft, createAircraftMesh } from '../src/ada/models/aircraft.js';
+    import { createAirport } from '../src/ada/models/airport.js';
+    import { RUNWAY } from '../src/ada/config.js';
 
     const q = new URLSearchParams(location.search);
     const num = (k, d) => (q.has(k) && q.get(k) !== '' ? Number(q.get(k)) : d);

@@ -1,0 +1,195 @@
+{
+ "note": "Lead-owned. Approximate positions; landmarks agent refines. Buildings pipeline removes generic footprints within excludeRadius.",
+ "landmarks": [
+  {
+   "id": "golden_gate_bridge",
+   "name": "Golden Gate Bridge",
+   "lon": -122.47829,
+   "lat": 37.81989,
+   "x": -9249.4,
+   "z": -22235.7,
+   "excludeRadius": 0,
+   "kind": "bridge"
+  },
+  {
+   "id": "bay_bridge_west",
+   "name": "Bay Bridge (west span, SF to Yerba Buena)",
+   "lon": -122.37745,
+   "lat": 37.79855,
+   "x": -358.4,
+   "z": -19922.4,
+   "excludeRadius": 0,
+   "kind": "bridge"
+  },
+  {
+   "id": "bay_bridge_east",
+   "name": "Bay Bridge (east span, Yerba Buena to Oakland)",
+   "lon": -122.34095,
+   "lat": 37.8158,
+   "x": 2841.5,
+   "z": -21858.3,
+   "excludeRadius": 0,
+   "kind": "bridge"
+  },
+  {
+   "id": "transamerica_pyramid",
+   "name": "Transamerica Pyramid",
+   "lon": -122.40279,
+   "lat": 37.79518,
+   "x": -2586.9,
+   "z": -19533.9,
+   "excludeRadius": 45,
+   "kind": "tower"
+  },
+  {
+   "id": "salesforce_tower",
+   "name": "Salesforce Tower",
+   "lon": -122.39683,
+   "lat": 37.78977,
+   "x": -2058.3,
+   "z": -18937.0,
+   "excludeRadius": 45,
+   "kind": "tower"
+  },
+  {
+   "id": "coit_tower",
+   "name": "Coit Tower",
+   "lon": -122.40582,
+   "lat": 37.80239,
+   "x": -2858.8,
+   "z": -20332.2,
+   "excludeRadius": 30,
+   "kind": "tower"
+  },
+  {
+   "id": "ferry_building",
+   "name": "Ferry Building",
+   "lon": -122.39343,
+   "lat": 37.79554,
+   "x": -1763.1,
+   "z": -19579.2,
+   "excludeRadius": 110,
+   "kind": "building"
+  },
+  {
+   "id": "alcatraz",
+   "name": "Alcatraz Island",
+   "lon": -122.42306,
+   "lat": 37.82667,
+   "x": -4393.1,
+   "z": -23016.5,
+   "excludeRadius": 350,
+   "kind": "island"
+  },
+  {
+   "id": "sutro_tower",
+   "name": "Sutro Tower",
+   "lon": -122.4528,
+   "lat": 37.75523,
+   "x": -6964.0,
+   "z": -15074.5,
+   "excludeRadius": 40,
+   "kind": "tower"
+  },
+  {
+   "id": "palace_of_fine_arts",
+   "name": "Palace of Fine Arts",
+   "lon": -122.44842,
+   "lat": 37.80286,
+   "x": -6609.3,
+   "z": -20361.3,
+   "excludeRadius": 120,
+   "kind": "building"
+  },
+  {
+   "id": "city_hall",
+   "name": "San Francisco City Hall",
+   "lon": -122.41924,
+   "lat": 37.77927,
+   "x": -4024.3,
+   "z": -17759.6,
+   "excludeRadius": 80,
+   "kind": "building"
+  },
+  {
+   "id": "oracle_park",
+   "name": "Oracle Park",
+   "lon": -122.38907,
+   "lat": 37.77857,
+   "x": -1366.9,
+   "z": -17698.8,
+   "excludeRadius": 150,
+   "kind": "stadium"
+  },
+  {
+   "id": "chase_center",
+   "name": "Chase Center",
+   "lon": -122.3877,
+   "lat": 37.76803,
+   "x": -1238.6,
+   "z": -16530.2,
+   "excludeRadius": 90,
+   "kind": "stadium"
+  },
+  {
+   "id": "painted_ladies",
+   "name": "Painted Ladies (Alamo Square)",
+   "lon": -122.43275,
+   "lat": 37.77617,
+   "x": -5211.9,
+   "z": -17408.3,
+   "excludeRadius": 0,
+   "kind": "houses"
+  },
+  {
+   "id": "fort_point",
+   "name": "Fort Point",
+   "lon": -122.47707,
+   "lat": 37.8106,
+   "x": -9136.3,
+   "z": -21205.6,
+   "excludeRadius": 60,
+   "kind": "building"
+  },
+  {
+   "id": "pier_39",
+   "name": "Pier 39",
+   "lon": -122.4098,
+   "lat": 37.8087,
+   "x": -3213.6,
+   "z": -21030.0,
+   "excludeRadius": 0,
+   "kind": "pier"
+  },
+  {
+   "id": "lombard_street",
+   "name": "Lombard Street (crooked section)",
+   "lon": -122.41874,
+   "lat": 37.8021,
+   "x": -3996.0,
+   "z": -20292.8,
+   "excludeRadius": 0,
+   "kind": "street"
+  },
+  {
+   "id": "port_of_oakland_cranes",
+   "name": "Port of Oakland container cranes",
+   "lon": -122.318,
+   "lat": 37.803,
+   "x": 4871.9,
+   "z": -20452.6,
+   "excludeRadius": 0,
+   "kind": "industrial"
+  },
+  {
+   "id": "sfo_tower",
+   "name": "SFO Air Traffic Control Tower",
+   "lon": -122.3834,
+   "lat": 37.6163,
+   "x": -749.2,
+   "z": 301.4,
+   "excludeRadius": 60,
+   "kind": "airport"
+  }
+ ]
+}
