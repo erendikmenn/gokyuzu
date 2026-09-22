@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Gökyüzü: Uçuş Simülatörü</title>
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #0b1622; }
+    #app { position: fixed; inset: 0; }
+    #app canvas { display: block; width: 100%; height: 100%; }
+    #hud { position: fixed; inset: 0; pointer-events: none; }
+    #overlay {
+      position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+      background: radial-gradient(ellipse at center, rgba(8,20,35,.55), rgba(4,10,18,.85));
+      color: #eaf2ff; font: 16px/1.5 -apple-system, "Helvetica Neue", Arial, sans-serif; cursor: pointer; z-index: 10;
+    }
+    #overlay.hidden { display: none; }
+    #overlay .card { text-align: center; max-width: 560px; padding: 40px 48px; }
+    #overlay h1 { font-size: 56px; letter-spacing: -.02em; margin: 0 0 6px; }
+    #overlay p { margin: 6px 0; opacity: .85; }
+    #overlay .go { margin-top: 28px; display: inline-block; padding: 14px 34px; border-radius: 999px;
+      background: #f2801a; color: #111; font-weight: 700; font-size: 18px; }
+    #overlay .keys { margin-top: 26px; font-size: 14px; opacity: .75; }
+    #loading { position: fixed; left: 16px; bottom: 12px; color: #9fb3c8; font: 12px -apple-system, sans-serif; z-index: 11; }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "./node_modules/three/build/three.module.js",
+        "three/addons/": "./node_modules/three/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="app"></div>
+  <div id="hud"></div>
+  <div id="overlay">
+    <div class="card">
+      <h1>Gökyüzü</h1>
+      <p>Küçük bir pervaneli uçakla kalk, halkalardan geç, piste geri in.</p>
+      <div class="go">Uçmak için tıkla</div>
+      <div class="keys">W/S burun · A/D yatış · Q/E dümen · Shift/Ctrl gaz · F flap · B fren · C kamera · R yeniden başla · ? yardım</div>
+    </div>
+  </div>
+  <div id="loading">Yükleniyor…</div>
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>
