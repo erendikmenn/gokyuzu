@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <title>Uçak önizleme</title>
+  <style>html,body{margin:0;height:100%;overflow:hidden;background:#1b2530;color:#dde;font:13px -apple-system,sans-serif} #info{position:fixed;left:10px;top:8px;z-index:2;white-space:pre}</style>
+  <script type="importmap">{ "imports": { "three": "../node_modules/three/build/three.module.js", "three/addons/": "../node_modules/three/examples/jsm/" } }</script>
+</head>
+<body>
+<div id="info"></div>
+<script type="module">
+// Lead-owned generic aircraft viewer. Query params:
+//   id=<aircraft id>  view=exterior|cockpit  cam=x,y,z (meters, relative to the aircraft)  anim=1 (cycle controls/gear)
+//   gear=0..1 flaps=0..1 ab=0..1 throttle=0..1 aileron elevator rudder speedbrake canopy (fixed poses)  turntable=1  env=studio|sky
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { createAssetLoader } from '../src/core/assets.js';
+import { loadAircraftDefinition } from '../src/aircraft/registry.js';
+import { createDisplay } from '../src/avionics/index.js';
+
+const q = new URLSearchParams(location.search);
+const num = (k, d) => (q.has(k) ? Number(q.get(k)) : d);
+const renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.shadowMap.enabled = true;
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x8fb4d8);
+scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
+const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.05, 5000);
+scene.add(new THREE.HemisphereLight(0xdfefff, 0x445544, 1.0));
+const sun = new THREE.DirectionalLight(0xffffff, 2.5);
+sun.position.set(-30, 50, 25); sun.castShadow = true; sun.shadow.mapSize.set(4096, 4096);
+Object.assign(sun.shadow.camera, { left: -40, right: 40, top: 40, bottom: -40, near: 1, far: 200 });
+scene.add(sun);
+const ground = new THREE.Mesh(new THREE.CircleGeometry(200, 64).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x55585c, roughness: 0.95 }));
+ground.receiveShadow = true;
+scene.add(ground);
+
+const loader = createAssetLoader(renderer);
+const def = await loadAircraftDefinition(q.get('id') || 'f16');
+const gltf = def.model.url ? await loader.loadGLTF(def.model.url) : null;
+const rig = def.createRig(gltf ? gltf.scene : null);
+rig.object.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+const gearDownY = -Math.min(...rig.contacts.map((c) => c.position.y));
+rig.object.position.y = gearDownY;
+scene.add(rig.object);
+const fakeFlight = { ias: 70, airspeed: 70, altitude: 1200, verticalSpeed: 2, heading: 297, pitch: 3, roll: 8, aoa: 4, mach: 0.2, gForce: 1, throttle: 0.6, gear: 1, flaps: 0.5, flapsLabel: '1', engines: [{ n1: 0.6, thrust: 0, afterburner: 0, fuelFlow: 0 }, { n1: 0.6, thrust: 0, afterburner: 0, fuelFlow: 0 }], position: new THREE.Vector3(), quaternion: new THREE.Quaternion(), velocity: new THREE.Vector3(0, 0, -70), onGround: false, warnings: {}, autopilot: { on: false }, fuel: 5000 };
+const displays = Object.entries(def.model.displays || {}).flatMap(([name, type]) => {
+  const mesh = rig.screens[name];
+  if (!mesh) return [];
+  const d = createDisplay(type);
+  mesh.material = mesh.material.clone();
+  Object.assign(mesh.material, { map: d.texture, emissiveMap: d.texture, emissive: new THREE.Color(0xffffff) });
+  if (type.endsWith('.hud')) Object.assign(mesh.material, { transparent: true, blending: THREE.AdditiveBlending, depthWrite: false });
+  return [d];
+});
+
+const view = q.get('view') || 'exterior';
+rig.setView(view);
+const controls = new OrbitControls(camera, renderer.domElement);
+if (view === 'cockpit') {
+  const eye = rig.eye.pilot.clone().add(rig.object.position);
+  camera.position.copy(eye);
+  controls.target.copy(eye).add(new THREE.Vector3(0, -0.05, -1));
+  camera.near = 0.02;
+} else {
+  const R = rig.bounds.radius || 10;
+  const c = (q.get('cam') || `${R * 1.3},${R * 0.55},${-R * 1.1}`).split(',').map(Number);
+  camera.position.set(c[0], c[1] + gearDownY, c[2]);
+  controls.target.set(0, gearDownY * 0.8, 0);
+}
+controls.update();
+
+const pose = { gear: num('gear', 1), flaps: num('flaps', 0), ab: num('ab', 0), throttle: num('throttle', 0.3), aileron: num('aileron', 0), elevator: num('elevator', 0), rudder: num('rudder', 0), speedbrake: num('speedbrake', 0), canopy: num('canopy', 0), spoilers: num('spoilers', 0) };
+const t0 = performance.now();
+function visual(t) {
+  const a = q.get('anim') === '1';
+  const s = (f) => Math.sin(t * f);
+  return {
+    time: t, airspeed: 60, mach: 0.18, onGround: true, aoa: 3,
+    aileron: a ? s(1.1) : pose.aileron, elevator: a ? s(0.8) : pose.elevator, rudder: a ? s(0.6) : pose.rudder,
+    flaps: a ? (s(0.3) + 1) / 2 : pose.flaps, slats: a ? (s(0.3) + 1) / 2 : pose.flaps, spoilers: a ? Math.max(0, s(0.5)) : pose.spoilers,
+    speedbrake: a ? Math.max(0, s(0.4)) : pose.speedbrake, gear: a ? (s(0.25) + 1) / 2 : pose.gear, gearCompression: [0.3, 0.3, 0.3], wheelSpeed: a ? 5 : 0,
+    engines: [0, 1].map(() => ({ n1: a ? 0.5 + 0.5 * s(0.2) : pose.throttle, throttle: a ? 0.5 + 0.5 * s(0.2) : pose.throttle, afterburner: a ? Math.max(0, s(0.2)) : pose.ab, nozzle: pose.ab, reverser: 0 })),
+    tvc: { pitch: a ? s(0.7) : 0, yaw: 0 },
+    rotor: def.spec.category === 'helicopter' ? { rpm: a ? 1 : pose.throttle, collective: 0.5, cyclicX: a ? s(0.9) * 0.5 : 0, cyclicY: 0, pedal: 0 } : null,
+    canopy: a ? (s(0.2) + 1) / 2 : pose.canopy,
+    lights: { nav: true, strobe: true, beacon: true, landing: true, taxi: true },
+  };
+}
+const info = document.getElementById('info');
+info.textContent = `${def.name}  ·  ${def.model.url || 'STUB placeholder'}\nscreens: ${Object.keys(rig.screens).join(', ') || '-'}\ncontacts: ${rig.contacts.map((c) => c.name).join(', ')}`;
+let fpsAcc = 0, frames = 0, last = performance.now();
+renderer.setAnimationLoop(() => {
+  const now = performance.now(), dt = Math.min((now - last) / 1000, 0.1); last = now;
+  const t = (now - t0) / 1000;
+  if (q.get('turntable') === '1') rig.object.rotation.y = t * 0.3;
+  rig.update(dt, visual(t));
+  for (const d of displays) d.update(dt, fakeFlight, null);
+  controls.update();
+  renderer.render(scene, camera);
+  fpsAcc += dt; frames++; if (fpsAcc > 1) { window.__fps = frames / fpsAcc; fpsAcc = 0; frames = 0; }
+});
+window.__rig = rig;
+addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
+</script>
+</body>
+</html>
