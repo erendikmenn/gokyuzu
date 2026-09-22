@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Modeller: uçak ve havalimanı</title>
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #9cc3e6; font: 13px -apple-system, "Helvetica Neue", Arial, sans-serif; }
+    canvas { display: block; }
+    #info { position: fixed; left: 10px; top: 8px; color: #10202e; background: rgba(255,255,255,.72); padding: 6px 10px; border-radius: 6px; line-height: 1.45; }
+    #info a { color: #1f3f8f; margin-right: 8px; }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "../node_modules/three/build/three.module.js",
+        "three/addons/": "../node_modules/three/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="info">
+    <b>Model önizleme</b> ·
+    <a href="?">uçak</a><a href="?cockpit">kokpit</a><a href="?airport">havalimanı</a><a href="?parked">park halindeki uçaklar</a>
+    <div id="stats"></div>
+  </div>
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { createAircraft, createAircraftMesh } from '../src/models/aircraft.js';
+    import { createAirport } from '../src/models/airport.js';
+    import { RUNWAY } from '../src/config.js';
+
+    const q = new URLSearchParams(location.search);
+    const num = (k, d) => (q.has(k) && q.get(k) !== '' ? Number(q.get(k)) : d);
+    const mode = q.has('airport') ? 'airport' : q.has('cockpit') ? 'cockpit' : q.has('parked') ? 'parked' : 'aircraft';
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFShadowMap;
+    document.body.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x9cc3e6);
+    scene.fog = new THREE.Fog(0x9cc3e6, 600, 4000);
+    const camera = new THREE.PerspectiveCamera(num('fov', mode === 'cockpit' ? 70 : 40), innerWidth / innerHeight, 0.05, 20000);
+
+    const hemi = new THREE.HemisphereLight(0xcfe4ff, 0x6b5a45, 1.15);
+    scene.add(hemi);
+    const sun = new THREE.DirectionalLight(0xfff2de, 2.6);
+    const sunDir = new THREE.Vector3(num('sx', -0.45), num('sy', 0.8), num('sz', 0.35)).normalize();
+    sun.castShadow = true;
+    sun.shadow.bias = -0.0004;
+    sun.shadow.normalBias = 0.03;
+    scene.add(sun, sun.target);
+
+    const GROUND_Y = mode === 'airport' ? 20 : 0;
+    const ground = new THREE.Mesh(
+      new THREE.PlaneGeometry(6000, 6000).rotateX(-Math.PI / 2),
+      new THREE.MeshStandardMaterial({ color: mode === 'airport' ? 0x6f8f4e : 0x8a8f86, roughness: 1 }),
+    );
+    ground.position.y = GROUND_Y;
+    ground.receiveShadow = true;
+    scene.add(ground);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+
+    let aircraft = null, airport = null;
+    const statsEl = document.getElementById('stats');
+
+    if (mode === 'airport') {
+      const fakeWorld = { getGroundHeight: () => 20, isWater: () => false, isOnRunway: () => false };
+      const strip = new THREE.Mesh(new THREE.PlaneGeometry(RUNWAY.width, RUNWAY.length).rotateX(-Math.PI / 2),
+        new THREE.MeshStandardMaterial({ color: 0x3d3f42, roughness: 0.95 }));
+      strip.position.set(RUNWAY.x, 20.02, RUNWAY.z);
+      strip.receiveShadow = true;
+      scene.add(strip);
+      airport = createAirport(fakeWorld);
+      scene.add(airport);
+      sun.shadow.mapSize.set(4096, 4096);
+      const sc = sun.shadow.camera;
+      sc.left = -260; sc.right = 260; sc.top = 260; sc.bottom = -260; sc.near = 1; sc.far = 1400;
+      const tgt = new THREE.Vector3(num('tx', 140), num('ty', 22), num('tz', 300));
+      sun.target.position.copy(tgt);
+      sun.position.copy(tgt).addScaledVector(sunDir, 600);
+      controls.target.copy(tgt);
+      const az = num('angle', 235) * Math.PI / 180, el = num('elev', 22) * Math.PI / 180, d = num('dist', 360);
+      camera.position.set(tgt.x + Math.sin(az) * Math.cos(el) * d, tgt.y + Math.sin(el) * d, tgt.z + Math.cos(az) * Math.cos(el) * d);
+    } else if (mode === 'parked') {
+      const liveries = [
+        {},
+        { base: '#f3f1ea', stripe1: '#b3122e', stripe2: '#2b2b2b', registration: 'TC-KRM', regColor: '#5a0a16', spinner: '#b3122e', wingtip: '#b3122e', name: '' },
+        { base: '#eef2f5', stripe1: '#0f6e4f', stripe2: '#e9c341', registration: 'TC-YSL', regColor: '#0b3b2c', spinner: '#e9c341', wingtip: '#0f6e4f', name: '' },
+      ];
+      liveries.forEach((l, i) => {
+        const m = createAircraftMesh(l);
+        m.position.set((i - 1) * 13, m.userData.gearHeight, 0);
+        m.rotation.y = 0.5;
+        scene.add(m);
+      });
+      sun.shadow.mapSize.set(2048, 2048);
+      const sc = sun.shadow.camera; sc.left = -30; sc.right = 30; sc.top = 30; sc.bottom = -30; sc.near = 1; sc.far = 200;
+      sun.position.copy(sunDir).multiplyScalar(60);
+      controls.target.set(0, 1, 0);
+      camera.position.set(num('cx', 10), num('cy', 9), num('cz', 30));
+    } else {
+      aircraft = createAircraft();
+      aircraft.object.position.y = aircraft.gearHeight;
+      scene.add(aircraft.object);
+      sun.shadow.mapSize.set(2048, 2048);
+      const sc = sun.shadow.camera; sc.left = -9; sc.right = 9; sc.top = 9; sc.bottom = -9; sc.near = 1; sc.far = 60;
+      sun.position.copy(sunDir).multiplyScalar(25);
+      // wheel-contact check markers
+      const marker = new THREE.Mesh(new THREE.RingGeometry(0.3, 0.34, 32).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xff00ff }));
+      marker.position.y = 0.002;
+      if (q.has('markers')) scene.add(marker);
+      const tgt = new THREE.Vector3(num('tx', 0), num('ty', 1.1), num('tz', 0.3));
+      controls.target.copy(tgt);
+      const d = num('dist', 13);
+      const el = num('elev', 14) * Math.PI / 180;
+      const setAngle = (deg) => {
+        const az = deg * Math.PI / 180;
+        camera.position.set(tgt.x + Math.sin(az) * Math.cos(el) * d, tgt.y + Math.sin(el) * d, tgt.z + Math.cos(az) * Math.cos(el) * d);
+      };
+      setAngle(num('angle', 215));
+      window.__setAngle = setAngle;
+    }
+
+    const turntable = mode === 'aircraft' && !q.has('angle') && !q.has('still');
+    const t0 = num('t', 0);
+    const timer = new THREE.Timer();
+    timer.connect(document);
+    let time = t0;
+
+    function controlState(t) {
+      const cyc = (p, s) => Math.sin(t * s + p);
+      return {
+        throttle: q.has('thr') ? num('thr', 0) : 0.5 + 0.5 * Math.sin(t * 0.35),
+        aileron: q.has('ail') ? num('ail', 0) : cyc(0, 0.9),
+        elevator: q.has('ele') ? num('ele', 0) : cyc(1.3, 0.7),
+        rudder: q.has('rud') ? num('rud', 0) : cyc(2.1, 0.8),
+        flaps: q.has('flap') ? num('flap', 0) : 0.5 + 0.5 * Math.sin(t * 0.4),
+        airspeed: 30,
+      };
+    }
+
+    function frame(ts) {
+      timer.update(ts);
+      const dt = Math.min(timer.getDelta(), 0.1);
+      time += dt;
+      if (aircraft) {
+        if (turntable) aircraft.object.rotation.y = time * 0.25;
+        aircraft.update(dt, controlState(time));
+        if (mode === 'cockpit') {
+          aircraft.object.updateMatrixWorld();
+          const eye = aircraft.cockpitOffset.clone().applyMatrix4(aircraft.object.matrixWorld);
+          camera.position.copy(eye);
+          const look = new THREE.Vector3(num('lx', 0), num('ly', -0.08), num('lz', -1)).normalize().applyQuaternion(aircraft.object.quaternion);
+          camera.lookAt(eye.clone().add(look));
+        }
+      }
+      if (airport && airport.userData.update) airport.userData.update(dt);
+      if (mode !== 'cockpit') controls.update();
+      renderer.render(scene, camera);
+      statsEl.textContent = `draw calls: ${renderer.info.render.calls} · üçgen: ${renderer.info.render.triangles}` + (aircraft ? ` · gearHeight: ${aircraft.gearHeight.toFixed(4)} m` : '');
+      requestAnimationFrame(frame);
+    }
+    // settle the prop spin for screenshots with a fixed throttle
+    if (aircraft && q.has('thr')) for (let i = 0; i < 120; i++) aircraft.update(1 / 30, controlState(t0));
+    frame();
+
+    addEventListener('resize', () => {
+      camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+    });
+    window.__dev = { scene, camera, renderer, aircraft, airport, controls, THREE };
+  </script>
+</body>
+</html>
