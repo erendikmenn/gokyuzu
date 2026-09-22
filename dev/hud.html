@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>HUD önizleme</title>
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #0b1622; }
+    #bg { position: fixed; inset: 0; display: block; width: 100%; height: 100%; }
+    #hud { position: fixed; inset: 0; pointer-events: none; }
+    #note { position: fixed; right: 12px; top: 10px; color: rgba(255,255,255,.55); font: 12px -apple-system, sans-serif; }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "../node_modules/three/build/three.module.js",
+        "three/addons/": "../node_modules/three/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <!-- Query params: ?toast ?help ?paused ?stall ?pull ?low ?hidden ?freeze=<seconds> ?bright ?landing ?free ?fps -->
+  <canvas id="bg"></canvas>
+  <div id="hud"></div>
+  <div id="note">dev/hud.html</div>
+  <script type="module">
+    import * as THREE from 'three';
+    import { createHUD } from '../src/game/hud.js';
+
+    const q = new URLSearchParams(location.search);
+    const DEG = Math.PI / 180;
+
+    // Fake island: hills to the north, sea around.
+    const world = {
+      getGroundHeight(x, z) {
+        const r = Math.hypot(x * 0.9, z) / 4600;
+        let h = 260 * (1 - r * r) + 90 * Math.sin(x / 640) * Math.cos(z / 820) + 60 * Math.sin((x + z) / 330);
+        h += Math.max(0, -z - 1500) * 0.22 * (1 - r);
+        if (Math.abs(x) < 400 && Math.abs(z) < 1100) h = 20;
+        return Math.max(0, h);
+      },
+      isWater(x, z) { return this.getGroundHeight(x, z) <= 0; },
+      isOnRunway(x, z) { return Math.abs(x) < 22.5 && Math.abs(z) < 700; },
+    };
+
+    const hud = createHUD(document.getElementById('hud'), world);
+
+    const flight = {
+      position: new THREE.Vector3(-900, 420, -1400), quaternion: new THREE.Quaternion(), velocity: new THREE.Vector3(),
+      airspeed: 52, altitude: 420, agl: 300, heading: 0, pitch: 0, roll: 0, verticalSpeed: 0, gForce: 1,
+      throttle: 0.78, flaps: 0, onGround: false, stalled: false, crashed: false,
+    };
+    const rings = [[0, -2100], [-1200, -3300], [400, -4000], [2200, -3100], [3400, -1500], [3600, 600], [2800, 2400], [1500, 3600], [300, 4300], [0, 2600]]
+      .map(([x, z], i) => ({ position: new THREE.Vector3(x, 300 + 40 * i, z), passed: i < 3 }));
+    const landing = q.has('landing');
+    const free = q.has('free');
+    if (landing) rings.forEach((r) => (r.passed = true));
+    const mission = {
+      title: free ? 'Serbest uçuş' : 'Halka Parkuru',
+      objective: landing ? 'Piste in ve dur' : free ? 'Adayı keşfet' : 'Halkalardan sırayla geç',
+      score: landing ? 1000 : 300, ringsDone: landing ? 10 : 3, ringsTotal: free ? 0 : 10, time: 83.4, bestTime: 151.4,
+      nextTarget: free ? null : landing ? new THREE.Vector3(0, 20, 700) : rings[3].position.clone(),
+      rings: free ? [] : rings, landing,
+    };
+
+    // Background: a simple sky/ground horizon that matches the fake attitude.
+    const bg = document.getElementById('bg');
+    const g = bg.getContext('2d');
+    function drawBg(pitch, roll) {
+      const w = bg.width = innerWidth, h = bg.height = innerHeight;
+      g.save();
+      g.translate(w / 2, h / 2);
+      g.rotate(-roll * DEG);
+      g.translate(0, pitch * 12 * Math.max(0.6, Math.min(h / 900, w / 1180)));
+      const bright = q.has('bright');
+      let gr = g.createLinearGradient(0, -h * 1.5, 0, 0);
+      gr.addColorStop(0, bright ? '#6fa8dc' : '#2a4a6e'); gr.addColorStop(1, bright ? '#dfeefa' : '#8fb4d4');
+      g.fillStyle = gr; g.fillRect(-w * 2, -h * 3, w * 4, h * 3);
+      gr = g.createLinearGradient(0, 0, 0, h * 1.5);
+      gr.addColorStop(0, '#7d8f62'); gr.addColorStop(1, '#2d3b22');
+      g.fillStyle = gr; g.fillRect(-w * 2, 0, w * 4, h * 3);
+      g.restore();
+    }
+
+    const freeze = q.has('freeze') ? Number(q.get('freeze') || 3) : null;
+    const t0 = performance.now();
+    const e = new THREE.Euler();
+    let lastAs = flight.airspeed;
+    function frame() {
+      const t = freeze ?? (performance.now() - t0) / 1000;
+      flight.pitch = 7 * Math.sin(t * 0.5);
+      flight.roll = 24 * Math.sin(t * 0.33);
+      flight.heading = (((t * 9) % 360) + 360) % 360;
+      flight.airspeed = 50 + 8 * Math.sin(t * 0.4);
+      flight.altitude = 420 + 60 * Math.sin(t * 0.21);
+      flight.verticalSpeed = 60 * 0.21 * Math.cos(t * 0.21);
+      flight.position.set(-900 + t * 20, flight.altitude, -1400 - t * 40);
+      flight.agl = flight.altitude - world.getGroundHeight(flight.position.x, flight.position.z);
+      flight.gForce = 1 / Math.cos(flight.roll * DEG);
+      e.set(flight.pitch * DEG, -flight.heading * DEG, -flight.roll * DEG, 'YXZ');
+      flight.quaternion.setFromEuler(e);
+      // velocity slightly below the nose (angle of attack ~4°)
+      flight.velocity.set(0.015, -0.07, -1).normalize().multiplyScalar(flight.airspeed).applyQuaternion(flight.quaternion);
+      if (q.has('stall')) { flight.stalled = true; flight.airspeed = 21; }
+      if (q.has('pull')) { flight.verticalSpeed = -18; flight.agl = 90; }
+      if (q.has('low')) { flight.verticalSpeed = -5; flight.agl = 30; }
+      if (!freeze) mission.time += 1 / 60;
+      drawBg(flight.pitch, flight.roll);
+      hud.update(flight, mission);
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+
+    if (q.has('toast')) hud.showMessage(q.get('toast') || 'Halka 3/10', 600000);
+    if (q.has('help')) hud.showHelp([
+      { keys: 'W / S  ·  ↑ / ↓', label: 'Burnu indir / kaldır' },
+      { keys: 'A / D  ·  ← / →', label: 'Sola / sağa yatış' },
+      { keys: 'Q / E', label: 'Dümen sola / sağa (yerde burun tekeri)' },
+      { keys: 'Shift / Ctrl', label: 'Gaz artır / azalt' },
+      { keys: 'X / Z  ·  + / −', label: 'Gaz artır / azalt (Mac için)' },
+      { keys: '1 … 9  ·  0', label: 'Gaz %10 … %90  ·  %100' },
+      { keys: 'F / V', label: 'Flap indir / topla' },
+      { keys: 'B / Boşluk', label: 'Fren' },
+      { keys: 'C', label: 'Kamera değiştir' },
+      { keys: 'R', label: 'Yeniden başla' },
+      { keys: 'P / Esc', label: 'Duraklat' },
+      { keys: 'H', label: 'Göstergeleri gizle / göster' },
+      { keys: 'M', label: 'Sesi kapat / aç' },
+      { keys: 'F1 / ?', label: 'Yardım' },
+      { keys: 'Oyun kolu', label: 'Sol çubuk: burun / yatış · Sağ çubuk: dümen / gaz · RT / LT: gaz · LB / RB: dümen' },
+      { keys: 'Oyun kolu', label: 'A: fren · B / X: flap indir / topla · Y: kamera · Start: duraklat · Back: yeniden başla' },
+    ], true);
+    if (q.has('paused')) hud.setPaused(true);
+    if (q.has('hidden')) hud.setVisible(false);
+    window.__hud = { hud, flight, mission };
+  </script>
+</body>
+</html>

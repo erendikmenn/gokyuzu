@@ -55,6 +55,8 @@ let paused = false;
 let hudVisible = true;
 let helpVisible = false;
 let crashTimer = 0;       // seconds until auto-reset after a crash
+let userMuted = false;     // player's own mute choice; pausing also silences audio
+const applyMute = () => audio.setMuted(userMuted || paused);
 let missionState = missions.update(0, flight);
 
 function resetFlight() {
@@ -82,13 +84,16 @@ flight.on('touchdown', (info) => {
   if (!flight.crashed) hud.showMessage(info.onRunway ? grade : `${grade} (pist dışı)`, 2200);
 });
 flight.on('takeoff', () => hud.showMessage('Kalkış!', 1500));
-missions.onEvent((e) => hud.showMessage(e.text, e.type === 'complete' ? 4000 : 1600));
+missions.onEvent((e) => {
+  hud.showMessage(e.text, e.type === 'complete' ? 4000 : 1600);
+  if (e.type === 'ring' || e.type === 'complete') audio.chime(e.type);
+});
 
 input.on('camera', () => hud.showMessage(`Kamera: ${cameraRig.next()}`, 1000));
 input.on('reset', () => { resetFlight(); hud.showMessage('Yeniden başlatıldı', 1000); });
-input.on('pause', () => { if (started) { paused = !paused; hud.setPaused(paused); } });
+input.on('pause', () => { if (started) { paused = !paused; hud.setPaused(paused); applyMute(); } });
 input.on('hud', () => { hudVisible = !hudVisible; hud.setVisible(hudVisible); });
-input.on('mute', () => { audio.setMuted(!audio.muted); hud.showMessage(audio.muted ? 'Ses kapalı' : 'Ses açık', 900); });
+input.on('mute', () => { userMuted = !userMuted; applyMute(); hud.showMessage(userMuted ? 'Ses kapalı' : 'Ses açık', 900); });
 input.on('help', () => { helpVisible = !helpVisible; hud.showHelp(input.bindings, helpVisible); });
 
 overlay.addEventListener('click', () => {
