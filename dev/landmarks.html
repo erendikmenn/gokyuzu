@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <title>Simge yapılar önizleme</title>
+  <style>html,body{margin:0;height:100%;overflow:hidden;background:#0b1622;color:#dde;font:13px -apple-system,sans-serif}
+  #info{position:fixed;left:10px;top:8px;z-index:2;white-space:pre;text-shadow:0 1px 2px #000;pointer-events:none}
+  #views{position:fixed;right:10px;top:8px;z-index:2;display:flex;flex-wrap:wrap;gap:4px;max-width:60vw;justify-content:flex-end}
+  #views a{color:#fff;background:#0008;padding:3px 7px;border-radius:4px;text-decoration:none}</style>
+  <base href="/" />
+  <script type="importmap">{ "imports": { "three": "/node_modules/three/build/three.module.js", "three/addons/": "/node_modules/three/examples/jsm/" } }</script>
+</head>
+<body>
+<div id="info"></div>
+<div id="views"></div>
+<script type="module">
+// W3 landmark preview. Query params:
+//   view=ggb|ggb-deck|ggb-under|ggb-tower|ggb-far|baybridge|bb-east|downtown|alcatraz|sutro|cranes|coit|ferry|cityhall|palace|oracle|painted|fortpoint|pier39
+//   cam=x,y,z & target=x,y,z (world meters)   fov=deg   env=world (use W1 environment+terrain) | simple (default)
+//   night=1   hitmarkers=1 (draw collision primitives)
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { createAssetLoader } from '/src/core/assets.js';
+import { createLandmarks } from '/src/world-sf/landmarks.js';
+
+const q = new URLSearchParams(location.search);
+const renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFShadowMap;
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(Number(q.get('fov') || 55), innerWidth / innerHeight, 0.3, 80000);
+scene.add(camera);
+addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
+const loader = createAssetLoader(renderer);
+const [region, landmarksRef, runways] = await Promise.all([loader.loadJSON('data/sf/region.json'), loader.loadJSON('data/sf/landmarks.json'), loader.loadJSON('data/sf/runways.json')]);
+
+// named views: [camera, target] in world meters
+const VIEWS = {
+  ggb: [[-9900, 260, -24150], [-9270, 110, -22000]],            // Marin headlands (Battery Spencer side) looking SE
+  'ggb-far': [[-13500, 420, -23300], [-9270, 90, -22220]],
+  'ggb-deck': [[-9243, 80, -22060], [-9300, 120, -22600]],
+  'ggb-under': [[-9150, 18, -22250], [-9330, 70, -22190]],
+  'ggb-tower': [[-9110, 190, -21480], [-9212, 170, -21584]],
+  'ggb-south': [[-8960, 120, -20750], [-9250, 90, -21900]],
+  baybridge: [[-2300, 260, -19000], [300, 80, -20300]],
+  'bb-east': [[4200, 240, -20400], [2500, 90, -21300]],
+  downtown: [[1200, 380, -21200], [-2300, 140, -19200]],
+  alcatraz: [[-3600, 180, -23800], [-4400, 30, -23000]],
+  sutro: [[-6300, 420, -15800], [-6964, 380, -15074]],
+  cranes: [[3300, 180, -19500], [5000, 30, -20500]],
+  coit: [[-2500, 200, -20700], [-2859, 140, -20332]],
+  ferry: [[-1450, 90, -19950], [-1763, 30, -19579]],
+  cityhall: [[-3700, 160, -18150], [-4024, 60, -17760]],
+  palace: [[-6300, 120, -20750], [-6609, 30, -20361]],
+  oracle: [[-1000, 200, -18100], [-1367, 20, -17699]],
+  painted: [[-5130, 60, -17330], [-5212, 30, -17408]],
+  fortpoint: [[-8950, 60, -21400], [-9136, 25, -21206]],
+  pier39: [[-3000, 120, -21400], [-3214, 10, -21030]],
+};
+const vname = q.get('view') || 'ggb';
+let [cam, tgt] = VIEWS[vname] || VIEWS.ggb;
+if (q.get('cam')) cam = q.get('cam').split(',').map(Number);
+if (q.get('target')) tgt = q.get('target').split(',').map(Number);
+camera.position.set(...cam);
+const views = document.getElementById('views');
+for (const k of Object.keys(VIEWS)) { const a = document.createElement('a'); a.href = `dev/landmarks.html?view=${k}${q.get('env') ? '&env=' + q.get('env') : ''}`; a.textContent = k; views.appendChild(a); }
+
+// ---- environment: W1's (if requested and working) or a simple sky + sea
+let environment = null, terrain = null;
+const night = q.get('night') === '1';
+async function simpleEnv() {
+  const { Sky } = await import('three/addons/objects/Sky.js');
+  const sky = new Sky(); sky.scale.setScalar(70000); scene.add(sky);
+  const sunDir = new THREE.Vector3().setFromSphericalCoords(1, THREE.MathUtils.degToRad(night ? 96 : 62), THREE.MathUtils.degToRad(215));
+  Object.assign(sky.material.uniforms, {});
+  sky.material.uniforms.sunPosition.value.copy(sunDir);
+  sky.material.uniforms.turbidity.value = 4; sky.material.uniforms.rayleigh.value = 1.6;
+  const pm = new THREE.PMREMGenerator(renderer);
+  const envScene = new THREE.Scene(); const sky2 = sky.clone(); envScene.add(sky2);
+  scene.environment = pm.fromScene(envScene, 0, 1, 100000).texture;
+  scene.environmentIntensity = night ? 0.03 : Number(q.get("envi") || 0.25);
+  scene.fog = new THREE.FogExp2(night ? 0x0a0f18 : 0xb9c9d8, 0.000045);
+  const sun = new THREE.DirectionalLight(0xfff1dd, night ? 0.0 : Number(q.get("sun") || 2.6));
+  sun.position.copy(sunDir).multiplyScalar(4000).add(new THREE.Vector3(...tgt));
+  sun.target.position.set(...tgt); scene.add(sun, sun.target);
+  sun.castShadow = true; sun.shadow.mapSize.set(4096, 4096);
+  Object.assign(sun.shadow.camera, { left: -1500, right: 1500, top: 1500, bottom: -1500, near: 10, far: 9000 });
+  sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.6;
+  scene.add(new THREE.HemisphereLight(night ? 0x223044 : 0xcfe3ff, 0x4a4a40, night ? 0.08 : 0.6));
+  const water = new THREE.Mesh(new THREE.PlaneGeometry(80000, 80000).rotateX(-Math.PI / 2),
+    new THREE.MeshStandardMaterial({ color: night ? 0x050a10 : 0x1f3f55, roughness: 0.18, metalness: 0.0 }));
+  water.position.set(2000, 0, -10000); water.receiveShadow = true; scene.add(water);
+  terrain = { getHeight: () => 0, isWater: () => true };
+  // dev-only context terrain (3DEP heights + NAIP aerial, built by tools/geo/landmarks_context.py devctx)
+  try {
+    const C = await loader.loadJSON('assets/sf/landmarks/dev/context.json');
+    const buf = await loader.loadBinary('assets/sf/landmarks/dev/height_u16.bin');
+    const H = new Uint16Array(buf);
+    const hAt = (i, j) => H[Math.min(C.h - 1, Math.max(0, j)) * C.w + Math.min(C.w - 1, Math.max(0, i))] / 10 - 100;
+    const getHeight = (x, z) => {
+      const fx = (x - C.x0) / C.res, fz = (z - C.z0) / C.res;
+      if (fx < 0 || fz < 0 || fx > C.w - 1 || fz > C.h - 1) return 0;
+      const i = Math.floor(fx), j = Math.floor(fz), tx = fx - i, tz = fz - j;
+      const v = hAt(i, j) * (1 - tx) * (1 - tz) + hAt(i + 1, j) * tx * (1 - tz) + hAt(i, j + 1) * (1 - tx) * tz + hAt(i + 1, j + 1) * tx * tz;
+      return Math.max(v, 0);
+    };
+    const step = 2, nx = Math.floor((C.w - 1) / step), nz = Math.floor((C.h - 1) / step);
+    const g = new THREE.PlaneGeometry((C.w - 1) * C.res, (C.h - 1) * C.res, nx, nz).rotateX(-Math.PI / 2);
+    const pos = g.attributes.position;
+    for (let k = 0; k < pos.count; k++) {
+      const x = pos.getX(k) + (C.x0 + C.x1) / 2, z = pos.getZ(k) + (C.z0 + C.z1) / 2;
+      const i = Math.round((x - C.x0) / C.res), j = Math.round((z - C.z0) / C.res);
+      pos.setY(k, hAt(i, j) < 0.3 ? hAt(i, j) - 3 : hAt(i, j));
+    }
+    g.computeVertexNormals();
+    const tex = await loader.loadTexture('assets/sf/landmarks/dev/aerial.jpg');
+    tex.anisotropy = 8;
+    const ground = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ map: tex, roughness: 0.95 }));
+    ground.position.set((C.x0 + C.x1) / 2, 0, (C.z0 + C.z1) / 2);
+    ground.receiveShadow = true;
+    scene.add(ground);
+    terrain = { getHeight, isWater: (x, z) => getHeight(x, z) <= 0.3 };
+  } catch (e) { console.warn('no dev context terrain', e); }
+}
+if (q.get('env') === 'world') {
+  try {
+    const { createEnvironment } = await import('/src/world-sf/environment.js');
+    const { createTerrain } = await import('/src/world-sf/terrain.js');
+    const ctx0 = { scene, renderer, camera, loader, runways, landmarks: landmarksRef, region, focus: { x: tgt[0], z: tgt[2] } };
+    environment = await createEnvironment(ctx0);
+    ctx0.terrain = terrain = await createTerrain(ctx0);
+    scene.add(terrain.object);
+    await terrain.ready;
+  } catch (e) { console.warn('world env failed, using simple', e); await simpleEnv(); }
+} else await simpleEnv();
+
+const ctx = { scene, renderer, camera, loader, runways, landmarks: landmarksRef, region, focus: { x: tgt[0], z: tgt[2] }, terrain };
+// optional W2 city layer (to check overlaps with the landmarks): ?city=1
+let cityLayer = null;
+if (q.get('city') === '1') {
+  try { const { createCity } = await import('/src/world-sf/city.js'); cityLayer = await createCity(ctx); scene.add(cityLayer.object); }
+  catch (e) { console.warn('city failed', e); }
+}
+const t0 = performance.now();
+const layer = await createLandmarks(ctx);
+scene.add(layer.object);
+await layer.ready;
+const loadMs = performance.now() - t0;
+
+if (q.get('hitmarkers') === '1') {
+  const g = new THREE.Group(); scene.add(g);
+  const mat = new THREE.MeshBasicMaterial({ color: 0x00ff88, wireframe: true });
+  for (const p of layer.collision.prims) {
+    if (p.t === 0) { const m = new THREE.Mesh(new THREE.BoxGeometry(p.hx * 2, p.hy * 2, p.hz * 2), mat); m.position.set(p.cx, p.cy, p.cz); m.rotation.y = Math.atan2(p.s, p.c); g.add(m); }
+    else { const a = new THREE.Vector3(p.ax, p.ay, p.az), b = new THREE.Vector3(p.bx, p.by, p.bz); const L = a.distanceTo(b); const m = new THREE.Mesh(new THREE.CylinderGeometry(p.r, p.r, L, 6), mat); m.position.copy(a).add(b).multiplyScalar(0.5); m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), b.clone().sub(a).normalize()); g.add(m); }
+  }
+}
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(...tgt);
+controls.update();
+const info = document.getElementById('info');
+let frames = 0, acc = 0, last = performance.now();
+window.__fps = 0;
+window.__layer = layer;
+const clock = new THREE.Timer(); clock.connect(document);
+function frame(ts) {
+  requestAnimationFrame(frame);
+  clock.update(ts);
+  const dt = Math.min(clock.getDelta(), 0.1);
+  controls.update();
+  if (environment) environment.update(dt, camera);
+  if (terrain && terrain.update) terrain.update(dt, camera);
+  layer.update(dt, camera);
+  if (cityLayer) cityLayer.update(dt, camera);
+  renderer.render(scene, camera);
+  frames++; const now = performance.now(); acc += now - last; last = now;
+  if (acc > 1000) {
+    window.__fps = frames * 1000 / acc; frames = 0; acc = 0;
+    const p = camera.position;
+    const shown = layer.items.map((it) => `${it.def.id}:L${it.shown}`).join(' ');
+    info.textContent = `${vname}  fps ${window.__fps.toFixed(0)}  calls ${renderer.info.render.calls}  tris ${(renderer.info.render.triangles / 1e3).toFixed(0)}k  load ${(loadMs / 1000).toFixed(1)} s\n` +
+      `cam ${p.x.toFixed(0)}, ${p.y.toFixed(0)}, ${p.z.toFixed(0)}   obstacle ${layer.heightAt(p.x, p.z).toFixed(1)}  hit ${layer.hitTest(p.x, p.y, p.z, 5)}\n${shown}`;
+  }
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

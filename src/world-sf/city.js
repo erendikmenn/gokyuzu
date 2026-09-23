@@ -1,5 +1,285 @@
-// STUB (replaced by its owner agent): empty layer.
+// W2 city layer: San Francisco + Bay Area buildings (DataSF LiDAR footprints + OSM, meshes built in Blender) and trees.
+// Streams three LOD levels (L0 500 m tiles with full detail, L1 1 km simplified, L2 2 km merged blocks) chosen per
+// 2 km cell by camera distance, swaps a cell's level only once every tile of the new level is loaded (no holes), drops
+// every building onto the live terrain (ctx.terrain.getHeight) and answers heightAt / hitTest from 4 m obstacle rasters.
 import * as THREE from 'three';
-export async function createCity(ctx) {
-  return { object: new THREE.Group(), update() {}, heightAt: () => -Infinity, hitTest: () => null, ready: Promise.resolve() };
+import { createCityMaterial, prepareCityGeometry } from './city_material.js';
+import { createCityObstacles } from './city_obstacles.js';
+import { createCityTrees } from './city_trees.js';
+
+const BASE = 'assets/sf/city/';
+const DEFAULTS = { r0: 1300, r1: 3600, r2: 8000, rMax: 26000, maxLoads: 5, unloadAfter: 20 };
+
+export async function createCity(ctx, options = {}) {
+  const opt = { ...DEFAULTS, ...options };
+  const base = options.base || BASE;
+  const { terrain, focus = { x: 0, z: 0 } } = ctx;
+  const getH = (x, z) => (terrain ? terrain.getHeight(x, z) : 0);
+  const index = await (await fetch(base + 'index.json')).json();
+  const { material, uniforms } = await createCityMaterial(ctx.renderer, base + 'atlas/');
+  const gltf = ctx.loader?.gltf || (await import('../core/assets.js')).createAssetLoader(ctx.renderer).gltf;
+
+  const group = new THREE.Group();
+  group.name = 'city';
+  const buildings = new THREE.Group();
+  buildings.name = 'city_buildings';
+  group.add(buildings);
+
+  // ---- tile registry ------------------------------------------------------------------------------------------
+  const levels = index.levels.map((l) => ({ ...l, map: new Map() }));
+  const cells = new Map();   // L2 cell key -> { i, j, bounds, l2, kids: [{ key, l1, l0: [...] }], display, want }
+  const tkey = (i, j) => i + '_' + j;
+  const cellOf = (i, j, lvl) => { const f = lvl === 0 ? 4 : lvl === 1 ? 2 : 1; return [Math.floor(i / f), Math.floor(j / f)]; };
+  for (const L of levels) {
+    for (const t of L.tiles) {
+      const rec = { ...t, level: L.level, dir: L.dir, placement: L.placement, state: 'none', mesh: null, lastUsed: 0 };
+      L.map.set(tkey(t.i, t.j), rec);
+      const [ci, cj] = cellOf(t.i, t.j, L.level);
+      const ck = tkey(ci, cj);
+      let c = cells.get(ck);
+      if (!c) {
+        c = { i: ci, j: cj, minX: Infinity, maxX: -Infinity, minZ: Infinity, maxZ: -Infinity, maxY: 0, display: null, displayKey: '' };
+        cells.set(ck, c);
+      }
+      c.minX = Math.min(c.minX, t.minX); c.maxX = Math.max(c.maxX, t.maxX);
+      c.minZ = Math.min(c.minZ, t.minZ); c.maxZ = Math.max(c.maxZ, t.maxZ); c.maxY = Math.max(c.maxY, t.maxY);
+    }
+  }
+  const lvlMap = (n) => (levels.find((l) => l.level === n) || { map: new Map() }).map;
+  const L0 = lvlMap(0), L1 = lvlMap(1), L2 = lvlMap(2), L3 = lvlMap(3);
+
+  function dist(cam, b) {
+    const dx = Math.max(b.minX - cam.x, 0, cam.x - b.maxX);
+    const dz = Math.max(b.minZ - cam.z, 0, cam.z - b.maxZ);
+    const dy = Math.max(0, cam.y - (b.maxY + 150));
+    return Math.hypot(dx, dz, dy);
+  }
+
+  // ---- loading ----------------------------------------------------------------------------------------------------
+  const queue = [];
+  let active = 0;
+  const loadedTiles = new Set();
+
+  function request(rec, prio) {
+    if (rec.state !== 'none') return;
+    rec.state = 'queued';
+    rec.prio = prio;
+    queue.push(rec);
+  }
+
+  function pump() {
+    if (!queue.length || active >= opt.maxLoads) return;
+    queue.sort((a, b) => a.prio - b.prio);
+    while (queue.length && active < opt.maxLoads) {
+      const rec = queue.shift();
+      active++;
+      gltf.loadAsync(`${base}${rec.dir}/${rec.i}_${rec.j}.glb`).then((g) => {
+        let mesh = null;
+        g.scene.traverse((o) => { if (o.isMesh && !mesh) mesh = o; });
+        if (!mesh) throw new Error('no mesh');
+        mesh.updateWorldMatrix(true, false);
+        const cx = mesh.position.x, cz = mesh.position.z;
+        place(mesh.geometry, cx, cz, rec.placement);
+        mesh.removeFromParent();
+        mesh.material = material;
+        mesh.castShadow = rec.level <= 1;
+        mesh.receiveShadow = true;
+        mesh.visible = false;
+        mesh.matrixAutoUpdate = false;
+        mesh.updateMatrix();
+        mesh.name = `city_L${rec.level}_${rec.i}_${rec.j}`;
+        buildings.add(mesh);
+        rec.mesh = mesh;
+        rec.state = 'ready';
+        loadedTiles.add(rec);
+      }).catch((e) => {
+        console.warn('[city] tile failed', rec.dir, rec.i, rec.j, e.message);
+        rec.state = 'failed';
+      }).finally(() => { active--; });
+    }
+  }
+
+  function place(geo, cx, cz, placement) {
+    prepareCityGeometry(geo);
+    const pos = geo.getAttribute('position');
+    const P = pos.array, n = pos.count;
+    const anc = geo.getAttribute('uv1');
+    const cache = new Map();
+    if (placement === 'anchor' && anc) {
+      const A = anc.array;
+      for (let v = 0; v < n; v++) {
+        const ax = A[v * 2] + cx, az = A[v * 2 + 1] + cz;
+        const k = Math.round(ax * 4) * 1e6 + Math.round(az * 4);
+        let g = cache.get(k);
+        if (g === undefined) { g = getH(ax, az); cache.set(k, g); }
+        const y = P[v * 3 + 1];
+        if (y < 0.05) {
+          const gv = getH(P[v * 3] + cx, P[v * 3 + 2] + cz);
+          P[v * 3 + 1] = Math.min(g, gv) - 1.5;
+        } else {
+          P[v * 3 + 1] = y + g;
+        }
+      }
+      geo.deleteAttribute('uv1');
+    } else {
+      for (let v = 0; v < n; v++) {
+        const g = getH(P[v * 3] + cx, P[v * 3 + 2] + cz);
+        const y = P[v * 3 + 1];
+        P[v * 3 + 1] = y < 0.05 ? g - 2.0 : y + g;
+      }
+      if (anc) geo.deleteAttribute('uv1');
+    }
+    pos.needsUpdate = true;
+    geo.computeBoundingBox();
+    geo.computeBoundingSphere();
+  }
+
+  function unload(rec) {
+    if (rec.mesh) {
+      rec.mesh.removeFromParent();
+      rec.mesh.geometry.dispose();
+      rec.mesh = null;
+    }
+    rec.state = 'none';
+    loadedTiles.delete(rec);
+  }
+
+  // ---- LOD selection per 2 km cell ------------------------------------------------------------------------------
+  const camPos = new THREE.Vector3();
+  let clock = 0, lastSelect = -1;
+  const lastCam = new THREE.Vector3(1e9, 0, 0);
+
+  function wanted(c, cam) {
+    const d = dist(cam, c);
+    if (d > opt.rMax) return { key: 'none', tiles: [] };
+    if (d > opt.r2 && L3.size) {
+      const t = L3.get(tkey(c.i, c.j));
+      return { key: 'L3', tiles: t ? [t] : [] };
+    }
+    if (d > opt.r1) {
+      const t = L2.get(tkey(c.i, c.j));
+      return { key: 'L2', tiles: t ? [t] : [] };
+    }
+    const tiles = [];
+    let key = 'S';
+    for (let a = 0; a < 2; a++) for (let b = 0; b < 2; b++) {
+      const i1 = c.i * 2 + a, j1 = c.j * 2 + b;
+      const t1 = L1.get(tkey(i1, j1));
+      const bb = t1 || { minX: i1 * 1000, maxX: i1 * 1000 + 1000, minZ: j1 * 1000, maxZ: j1 * 1000 + 1000, maxY: 50 };
+      if (dist(cam, bb) > opt.r0) {
+        key += '1';
+        if (t1) tiles.push(t1);
+      } else {
+        key += '0';
+        for (let s = 0; s < 4; s++) {
+          const t0 = L0.get(tkey(i1 * 2 + (s & 1), j1 * 2 + (s >> 1)));
+          if (t0) tiles.push(t0);
+        }
+      }
+    }
+    return { key, tiles };
+  }
+
+  function select(cam) {
+    const now = clock;
+    for (const c of cells.values()) {
+      const w = wanted(c, cam);
+      const d = dist(cam, c);
+      let allReady = true;
+      for (const t of w.tiles) {
+        t.lastUsed = now;
+        if (t.state !== 'ready' && t.state !== 'failed') {
+          allReady = false;
+          request(t, dist(cam, t) + (t.level >= 2 ? 2000 : 0));
+        }
+      }
+      if (allReady && w.key !== c.displayKey) {
+        if (c.display) for (const t of c.display) if (t.mesh) t.mesh.visible = false;
+        c.display = w.tiles;
+        c.displayKey = w.key;
+        for (const t of c.display) if (t.mesh) t.mesh.visible = true;
+      }
+      if (c.display) for (const t of c.display) t.lastUsed = now;
+      c.dist = d;
+    }
+    // evict tiles unused for a while (L2 tiles are small: keep them)
+    for (const rec of [...loadedTiles]) {
+      if (rec.level < 2 && now - rec.lastUsed > opt.unloadAfter) unload(rec);
+    }
+    // drop queued requests that are no longer wanted
+    for (let k = queue.length - 1; k >= 0; k--) {
+      if (now - queue[k].lastUsed > 2) { queue[k].state = 'none'; queue.splice(k, 1); }
+    }
+  }
+
+  // ---- obstacles, trees -----------------------------------------------------------------------------------------
+  const obstacles = createCityObstacles({ base, index: index.obstacles, terrain });
+  let trees = null;
+  if (index.trees) {
+    try {
+      trees = await createCityTrees({ ...ctx, base, getH, indexUrl: base + index.trees });
+      group.add(trees.object);
+    } catch (e) {
+      console.warn('[city] trees unavailable:', e.message);
+    }
+  }
+
+  // ---- initial load around the focus --------------------------------------------------------------------------------
+  const focusCam = new THREE.Vector3(focus.x, getH(focus.x, focus.z) + 300, focus.z);
+  select(focusCam);
+  const ready = (async () => {
+    const need = () => {
+      let pendingCount = 0;
+      for (const c of cells.values()) {
+        if (dist(focusCam, c) > opt.r1 * 1.2) continue;
+        const w = wanted(c, focusCam);
+        for (const t of w.tiles) if (t.state !== 'ready' && t.state !== 'failed') pendingCount++;
+      }
+      return pendingCount;
+    };
+    const t0 = performance.now();
+    while (need() > 0 && performance.now() - t0 < 45000) {
+      pump();
+      await new Promise((r) => setTimeout(r, 30));
+      clock += 0.03;
+      select(focusCam);
+    }
+    await obstacles.preload(focus.x, focus.z, 2500);
+    if (trees) await trees.ready;
+  })();
+
+  return {
+    object: group,
+    ready,
+    material,
+    uniforms,
+    get stats() {
+      let tris = 0, visible = 0;
+      for (const r of loadedTiles) if (r.mesh && r.mesh.visible) { visible++; tris += r.tris; }
+      return { loaded: loadedTiles.size, visible, tris, queued: queue.length, active, trees: trees ? trees.stats : null };
+    },
+    setNight(v) { uniforms.uCityNight.value = v; },
+    update(dt, camera) {
+      clock += dt;
+      camera.getWorldPosition(camPos);
+      const moved = camPos.distanceToSquared(lastCam) > 15 * 15;
+      if (moved || clock - lastSelect > 0.5) {
+        select(camPos);
+        lastSelect = clock;
+        lastCam.copy(camPos);
+      }
+      pump();
+      if (trees) trees.update(dt, camera);
+    },
+    heightAt(x, z) {
+      const hb = obstacles.heightAt(x, z);
+      const ht = trees ? trees.heightAt(x, z) : -Infinity;
+      return hb > ht ? hb : ht;
+    },
+    hitTest(x, y, z, r) {
+      const hit = obstacles.hitTest(x, y, z, r);
+      if (hit) return hit;
+      return trees ? trees.hitTest(x, y, z, r) : null;
+    },
+  };
 }

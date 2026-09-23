@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <title>Havalimanları önizleme</title>
+  <style>html,body{margin:0;height:100%;overflow:hidden;background:#1b2530;color:#dde;font:13px -apple-system,sans-serif}
+  #info{position:fixed;left:10px;top:8px;z-index:2;white-space:pre;text-shadow:0 1px 2px #000;pointer-events:none}</style>
+  <script type="importmap">{ "imports": { "three": "../node_modules/three/build/three.module.js", "three/addons/": "../node_modules/three/examples/jsm/" } }</script>
+</head>
+<body>
+<div id="info"></div>
+<script type="module">
+// W4 airport preview. Query params:
+//   view=sfo|sfo-28r|sfo-tower|sfo-gates|alameda|alameda-has|alameda-24|oak   night=1 (or day=0..1)   cam=x,y,z&look=x,y,z
+//   city=1 (also load city + landmarks layers)   fov=deg
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { createAssetLoader } from '../src/core/assets.js';
+import { createEnvironment } from '../src/world-sf/environment.js';
+import { createTerrain } from '../src/world-sf/terrain.js';
+import { createAirports } from '../src/world-sf/airports.js';
+
+const q = new URLSearchParams(location.search);
+const info = document.getElementById('info');
+const renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFShadowMap;
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(Number(q.get('fov') || 55), innerWidth / innerHeight, 0.3, 80000);
+scene.add(camera);
+addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
+
+const loader = createAssetLoader(renderer);
+const [runways, landmarks, region] = await Promise.all(['runways', 'landmarks', 'region'].map((n) => loader.loadJSON(`../data/sf/${n}.json`)));
+// the asset loader resolves relative to the page: serve the repo root paths by rebasing fetches
+const rebase = (u) => (/^(https?:|blob:|data:|\/|\.\.\/)/.test(u) ? u : '../' + u);
+const L = {
+  ...loader,
+  loadJSON: (u) => loader.loadJSON(rebase(u)), loadBinary: (u) => loader.loadBinary(rebase(u)),
+  loadGLTF: (u) => loader.loadGLTF(rebase(u)), loadTexture: (u, o) => loader.loadTexture(rebase(u), o),
+};
+THREE.DefaultLoadingManager.setURLModifier(rebase);
+
+const RW = (icao, ident) => {
+  const apt = runways.airports.find((a) => a.icao === icao);
+  for (const r of apt.runways) for (const e of r.ends) if (e.ident === ident) return e;
+};
+const along = (e, d, side = 0) => {
+  const h = e.headingTrue * Math.PI / 180;
+  return [e.x + Math.sin(h) * d + Math.cos(h) * side, e.z - Math.cos(h) * d + Math.sin(h) * side];
+};
+const views = {
+  'sfo': () => ({ cam: [2300, 700, 2300], look: [-300, 0, 0] }),
+  'sfo-28r': () => { const e = RW('KSFO', '28R'); const [x, z] = along(e, 45); const [lx, lz] = along(e, 1500); return { cam: [x, 4.2, z], look: [lx, 2, lz], fov: 60 }; },
+  'sfo-28r-final': () => { const e = RW('KSFO', '28R'); const [x, z] = along(e, -2400); const [lx, lz] = along(e, 400); return { cam: [x, 130, z], look: [lx, 4, lz], fov: 50 }; },
+  'sfo-tower': () => ({ cam: [-420, 45, 760], look: [-900, 40, 250], fov: 50 }),
+  'sfo-gates': () => ({ cam: [-560, 25, 820], look: [-980, 5, 520], fov: 55 }),
+  'alameda': () => ({ cam: [5900, 700, -17300], look: [5000, 0, -18700] }),
+  'alameda-has': () => ({ cam: [4480, 24, -18700], look: [4120, 4, -18800], fov: 50 }),
+  'alameda-line': () => ({ cam: [4950, 30, -18130], look: [5250, 3, -18330], fov: 50 }),
+  'alameda-24': () => { const e = RW('KNGZ', '24'); const [x, z] = along(e, 45); const [lx, lz] = along(e, 1500); return { cam: [x, 3.2, z], look: [lx, 2, lz], fov: 60 }; },
+  'oak': () => ({ cam: [15400, 900, -8200], look: [13200, 0, -11200] }),
+};
+const vname = q.get('view') || 'sfo';
+const v = (views[vname] || views.sfo)();
+if (q.get('cam')) v.cam = q.get('cam').split(',').map(Number);
+if (q.get('look')) v.look = q.get('look').split(',').map(Number);
+if (v.fov && !q.get('fov')) { camera.fov = v.fov; camera.updateProjectionMatrix(); }
+const focus = { x: v.look[0], z: v.look[2] };
+const ctx = { scene, renderer, camera, loader: L, runways, landmarks, region, focus };
+function flatTerrain() {
+  const b = region.local, w = b.maxX - b.minX, d = b.maxZ - b.minZ;
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, d, 64, 64).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ color: 0x6d8a5a }));
+  mesh.position.set((b.minX + b.maxX) / 2, 3.0, (b.minZ + b.maxZ) / 2);
+  mesh.receiveShadow = true;
+  return { object: mesh, getHeight: () => 3.0, isWater: () => false, update() {}, ready: Promise.resolve() };
+}
+function flatEnvironment() {
+  const night = q.get('env') === 'night';
+  scene.background = new THREE.Color(night ? 0x0a1220 : 0x9cc6ec);
+  scene.fog = new THREE.Fog(night ? 0x0a1220 : 0x9cc6ec, 3000, 45000);
+  scene.add(new THREE.HemisphereLight(night ? 0x2a3550 : 0xdfefff, night ? 0x0a0c10 : 0x55604a, night ? 0.25 : 1.3));
+  const sun = new THREE.DirectionalLight(night ? 0x9fb4d8 : 0xffffff, night ? 0.12 : 2.4);
+  sun.position.set(-2000, night ? -600 : 3500, 2500);
+  scene.add(sun);
+  return { sunDirection: sun.position.clone().normalize(), update() {} };
+}
+const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms))]);
+let environment, terrain;
+if (q.get('terrain') === 'flat' || q.get('env') === 'night') { environment = flatEnvironment(); terrain = flatTerrain(); }
+else {
+  try { environment = await withTimeout(createEnvironment(ctx), 20000); } catch (e) { console.warn('[dev] environment fallback', e.message); environment = flatEnvironment(); }
+  try { terrain = await withTimeout(createTerrain(ctx), 20000); await withTimeout(Promise.resolve(terrain.ready), 30000); }
+  catch (e) { console.warn('[dev] terrain fallback', e.message); terrain = flatTerrain(); }
+}
+scene.add(terrain.object);
+ctx.terrain = terrain;
+// view heights are relative to the ground
+await Promise.race([terrain.ready, new Promise((r) => setTimeout(r, 15000))]);
+v.cam[1] += Math.max(0, terrain.getHeight(v.cam[0], v.cam[2]));
+v.look[1] += Math.max(0, terrain.getHeight(v.look[0], v.look[2]));
+camera.position.set(...v.cam);
+camera.lookAt(...v.look);
+const t0 = performance.now();
+const airports = await createAirports(ctx);
+scene.add(airports.object);
+const layers = [airports];
+if (q.get('city') === '1') {
+  for (const [mod, fn] of [['../src/world-sf/city.js', 'createCity'], ['../src/world-sf/landmarks.js', 'createLandmarks']]) {
+    try { const m = await import(mod); const l = await m[fn](ctx); scene.add(l.object); layers.push(l); } catch (e) { console.warn(e); }
+  }
+}
+await Promise.all([terrain.ready, ...layers.map((l) => l.ready), airports.allReady]);
+const loadS = ((performance.now() - t0) / 1000).toFixed(1);
+if (q.has('night')) airports.setDaylight(q.get('night') === '1' ? 0 : 1);
+if (q.has('day')) airports.setDaylight(Number(q.get('day')));
+window.__apt = airports;
+window.__camera = camera;
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(...v.look);
+controls.update();
+window.__controls = controls;
+const timer = new THREE.Timer();
+let acc = 0, frames = 0;
+function frame(ts) {
+  requestAnimationFrame(frame);
+  timer.update(ts);
+  const dt = Math.min(timer.getDelta(), 0.1);
+  environment.update(dt, camera);
+  terrain.update(dt, camera);
+  for (const l of layers) l.update(dt, camera);
+  renderer.render(scene, camera);
+  acc += dt; frames++;
+  if (acc > 1) {
+    window.__fps = frames / acc; acc = 0; frames = 0;
+    window.__drawCalls = renderer.info.render.calls;
+    window.__tris = renderer.info.render.triangles;
+    info.textContent = `${vname}  fps ${window.__fps.toFixed(0)}  calls ${renderer.info.render.calls}  tris ${(renderer.info.render.triangles / 1e6).toFixed(2)}M  load ${loadS}s`;
+  }
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <title>F-16 kokpit kontrol</title>
+  <style>html,body{margin:0;height:100%;overflow:hidden;background:#000}</style>
+  <script type="importmap">{ "imports": { "three": "../../../node_modules/three/build/three.module.js", "three/addons/": "../../../node_modules/three/examples/jsm/" } }</script>
+</head>
+<body>
+<script type="module">
+// F-16 agent test page: camera at a rig eye point (or any point) with yaw/pitch/fov params and a sky environment.
+//   ?yaw=0&pitch=-20&fov=70&eye=1   or  ?cam=x,y,z&target=x,y,z   (aircraft frame, meters)
+//   gear, flaps, ab, throttle, canopy, speedbrake, aileron, elevator, rudder, lights=1, time=day|dusk
+import * as THREE from 'three';
+import { createAssetLoader } from '../../core/assets.js';
+import { model, createRig } from './model.js';
+import { createDisplay } from '../../avionics/index.js';
+
+const q = new URLSearchParams(location.search);
+const num = (k, d) => (q.has(k) ? Number(q.get(k)) : d);
+const renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = num('exposure', 1.0);
+renderer.shadowMap.enabled = true;
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+// gradient sky dome used for background and environment (sky-like, moderate intensity)
+function gradientDome(top, horizon, bottom, k = 1) {
+  const g = new THREE.SphereGeometry(5000, 48, 24);
+  const col = [];
+  const p = g.attributes.position;
+  const c0 = new THREE.Color(top), c1 = new THREE.Color(horizon), c2 = new THREE.Color(bottom), tmp = new THREE.Color();
+  for (let i = 0; i < p.count; i++) {
+    const y = p.getY(i) / 5000;
+    if (y >= 0) tmp.copy(c1).lerp(c0, Math.pow(y, 0.6)); else tmp.copy(c1).lerp(c2, Math.min(1, -y * 4));
+    tmp.multiplyScalar(k);
+    col.push(tmp.r, tmp.g, tmp.b);
+  }
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  return new THREE.Mesh(g, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, depthWrite: false }));
+}
+const dusk = q.get('time') === 'dusk';
+const dome = dusk ? gradientDome(0x1d2a44, 0xd98a4a, 0x2a2622) : gradientDome(0x3f74c0, 0xc9d8e6, 0x6b665e);
+scene.add(dome);
+const envScene = new THREE.Scene();
+envScene.add(dusk ? gradientDome(0x1d2a44, 0xd98a4a, 0x2a2622, 0.8) : gradientDome(0x3f74c0, 0xc9d8e6, 0x6b665e, 1.0));
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(envScene, 0, 1, 20000).texture;
+const elev = dusk ? 4 : num('sunelev', 35), az = num('sunaz', 200);
+const sunDir = new THREE.Vector3().setFromSphericalCoords(1, THREE.MathUtils.degToRad(90 - elev), THREE.MathUtils.degToRad(az));
+const sun = new THREE.DirectionalLight(0xfff4e8, dusk ? 0.6 : 3.0);
+sun.position.copy(sunDir).multiplyScalar(50);
+sun.castShadow = true; sun.shadow.mapSize.set(4096, 4096); sun.shadow.bias = -0.0002; sun.shadow.normalBias = 0.02;
+Object.assign(sun.shadow.camera, { left: -12, right: 12, top: 12, bottom: -12, near: 1, far: 120 });
+scene.add(sun);
+
+const ground = new THREE.Mesh(new THREE.CircleGeometry(400, 64).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x6b6a66, roughness: 0.95 }));
+ground.receiveShadow = true; scene.add(ground);
+
+const loader = createAssetLoader(renderer);
+if (q.get('lod') === '1') {
+  const lg = await loader.loadGLTF(model.lodUrl);
+  lg.scene.position.set(num('lodx', 0), 1.9, num('lodz', 0));
+  lg.scene.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  scene.add(lg.scene);
+  let tris = 0; lg.scene.traverse((o) => { if (o.isMesh) tris += o.geometry.index ? o.geometry.index.count / 3 : o.geometry.attributes.position.count / 3; });
+  window.__lodTris = tris;
+}
+const gltf = await loader.loadGLTF(model.url);
+const rig = createRig(gltf.scene);
+rig.object.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+const gearY = -Math.min(...rig.contacts.map((c) => c.position.y));
+rig.object.position.y = gearY;
+scene.add(rig.object);
+const fake = { ias: 250, airspeed: 130, altitude: 1500, verticalSpeed: 0, heading: 297, pitch: 2, roll: 0, aoa: 3, mach: 0.4, gForce: 1, throttle: 0.8, gear: 1, flaps: 0, flapsLabel: 'UP', engines: [{ n1: 0.8, thrust: 0, afterburner: 0, fuelFlow: 0 }], position: new THREE.Vector3(), quaternion: new THREE.Quaternion(), velocity: new THREE.Vector3(0, 0, -130), onGround: false, warnings: {}, autopilot: { on: false }, fuel: 3000 };
+const displays = Object.entries(model.displays).flatMap(([name, type]) => {
+  const mesh = rig.screens[name];
+  if (!mesh) return [];
+  const d = createDisplay(type);
+  mesh.material = mesh.material.clone();
+  Object.assign(mesh.material, { map: d.texture, emissiveMap: d.texture, emissive: new THREE.Color(0xffffff) });
+  if (type.endsWith('.hud')) Object.assign(mesh.material, { transparent: true, blending: THREE.AdditiveBlending, depthWrite: false });
+  mesh.material.needsUpdate = true;
+  return [d];
+});
+const view = q.get('view') || (q.has('cam') ? 'exterior' : 'cockpit');
+rig.setView(view);
+const camera = new THREE.PerspectiveCamera(num('fov', 70), innerWidth / innerHeight, 0.02, 20000);
+rig.object.updateMatrixWorld(true);
+if (q.has('cam')) {
+  const c = q.get('cam').split(',').map(Number);
+  camera.position.set(c[0], c[1] + gearY, c[2]);
+  const t = (q.get('target') || '0,0,0').split(',').map(Number);
+  camera.lookAt(t[0], t[1] + gearY, t[2]);
+} else {
+  camera.position.copy(rig.eye.pilot).add(rig.object.position);
+  camera.rotation.order = 'YXZ';
+  camera.rotation.y = THREE.MathUtils.degToRad(-num('yaw', 0));
+  camera.rotation.x = THREE.MathUtils.degToRad(num('pitch', -12));
+}
+const pose = { gear: num('gear', 1), flaps: num('flaps', 0), ab: num('ab', 0), throttle: num('throttle', 0.3), canopy: num('canopy', 0), speedbrake: num('speedbrake', 0) };
+const t0 = performance.now();
+let last = t0, acc = 0, frames = 0;
+renderer.setAnimationLoop(() => {
+  const now = performance.now(), dt = Math.min((now - last) / 1000, 0.1); last = now;
+  const t = (now - t0) / 1000;
+  rig.update(dt, {
+    time: t, airspeed: 60, onGround: true, aoa: 0.05, aileron: num('aileron', 0), elevator: num('elevator', 0), rudder: num('rudder', 0),
+    flaps: pose.flaps, slats: 0, spoilers: 0, speedbrake: pose.speedbrake, gear: pose.gear, gearCompression: [0.35, 0.35, 0.35], wheelSpeed: 0,
+    engines: [{ n1: pose.throttle, throttle: pose.throttle, afterburner: pose.ab, reverser: 0 }], tvc: { pitch: 0, yaw: 0 }, rotor: null,
+    canopy: pose.canopy, lights: { nav: q.get('lights') === '1', strobe: q.get('lights') === '1', beacon: false, landing: q.get('lights') === '1', taxi: false },
+  });
+  for (const d of displays) d.update(dt, fake, null);
+  renderer.render(scene, camera);
+  acc += dt; frames++; if (acc > 1) { window.__fps = frames / acc; acc = 0; frames = 0; }
+});
+window.__rig = rig;
+</script>
+</body>
+</html>

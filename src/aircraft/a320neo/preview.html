@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <title>A320neo önizleme (dev)</title>
+  <style>html,body{margin:0;height:100%;overflow:hidden;background:#9fbfdc}</style>
+  <script type="importmap">{ "imports": { "three": "../../../node_modules/three/build/three.module.js", "three/addons/": "../../../node_modules/three/examples/jsm/" } }</script>
+</head>
+<body>
+<script type="module">
+// Dev-only viewer for the A320neo rig (aircraft agent). Params:
+//   view=cockpit|exterior  eye=capt|fo  yaw,pitch (deg, head look)  fov  cam=x,y,z target=x,y,z (exterior)
+//   gear flaps slats spoilers speedbrake aileron elevator rudder n1 rev lights=0|1  sun=elevation,azimuth  t=time
+import * as THREE from 'three';
+import { createAssetLoader } from '../../core/assets.js';
+import { model, createRig } from './model.js';
+import { createDisplay } from '../../avionics/index.js';
+
+const q = new URLSearchParams(location.search);
+const num = (k, d) => (q.has(k) ? Number(q.get(k)) : d);
+const renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.shadowMap.enabled = true;
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+// simple sky gradient environment (closer to the game than a white studio room)
+const pm = new THREE.PMREMGenerator(renderer);
+const skyScene = new THREE.Scene();
+const skyGeo = new THREE.SphereGeometry(100, 32, 16);
+const skyMat = new THREE.ShaderMaterial({ side: THREE.BackSide, uniforms: {},
+  vertexShader: 'varying vec3 vp; void main(){ vp = position; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0);}',
+  fragmentShader: 'varying vec3 vp; void main(){ float h = normalize(vp).y; vec3 top=vec3(0.25,0.45,0.85); vec3 hor=vec3(0.75,0.82,0.9); vec3 gnd=vec3(0.28,0.27,0.25); vec3 c = h>0.0? mix(hor, top, pow(h,0.6)) : mix(hor, gnd, pow(-h,0.4)); gl_FragColor=vec4(c*1.2,1.0);}' });
+skyScene.add(new THREE.Mesh(skyGeo, skyMat));
+scene.environment = pm.fromScene(skyScene, 0.02).texture;
+scene.background = new THREE.Color(0x9fbfdc);
+const [sEl, sAz] = (q.get('sun') || '35,140').split(',').map(Number);
+const sun = new THREE.DirectionalLight(0xfff4e6, 3.0);
+const se = sEl * Math.PI / 180, sa = sAz * Math.PI / 180;
+sun.position.set(Math.sin(sa) * Math.cos(se) * 60, Math.sin(se) * 60, -Math.cos(sa) * Math.cos(se) * 60);
+sun.castShadow = true; sun.shadow.mapSize.set(4096, 4096);
+Object.assign(sun.shadow.camera, { left: -30, right: 30, top: 30, bottom: -30, near: 1, far: 200 });
+sun.shadow.bias = -0.0003; sun.shadow.normalBias = 0.02;
+scene.add(sun, sun.target);
+scene.add(new THREE.HemisphereLight(0xcfe3ff, 0x4a4a44, 0.35));
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(600, 600).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x6a6c6e, roughness: 0.95 }));
+ground.receiveShadow = true; scene.add(ground);
+
+const loader = createAssetLoader(renderer);
+const gltf = await loader.loadGLTF(q.get('lod') === '1' ? model.lodUrl : model.url);
+let rig;
+if (q.get('lod') === '1') {
+  const o = new THREE.Group(); o.add(gltf.scene);
+  rig = { object: o, contacts: [{ position: new THREE.Vector3(0, -3.9, 0) }], screens: {}, eye: { pilot: new THREE.Vector3() }, update() {}, setView() {} };
+} else rig = createRig(gltf.scene);
+rig.object.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+const gy = -Math.min(...rig.contacts.map((c) => c.position.y));
+rig.object.position.y = gy;
+scene.add(rig.object);
+const displays = Object.entries(model.displays).flatMap(([name, type]) => {
+  const mesh = rig.screens[name]; if (!mesh) return [];
+  const d = createDisplay(type, { mesh, eye: rig.eye.pilot, root: rig.object });
+  mesh.material = new THREE.MeshBasicMaterial({ map: d.texture, toneMapped: false, polygonOffset: true, polygonOffsetFactor: -1 });
+  d.name = name;
+  return [d];
+});
+window.__displays = displays;
+const fake = { ias: 142, airspeed: 142, altitude: 1500, verticalSpeed: -3.5, heading: 280, pitch: 2.5, roll: 0, aoa: 4, mach: 0.22, gForce: 1, throttle: 0.45, gear: 1, flaps: 1, flapsLabel: 'FULL', engines: [{ n1: 0.55 }, { n1: 0.55 }], position: new THREE.Vector3(), quaternion: new THREE.Quaternion(), velocity: new THREE.Vector3(0, -3, -70), onGround: false, warnings: {}, autopilot: { on: true }, fuel: 5000 };
+
+if (q.get('state') === 'ground') Object.assign(fake, { ias: 0, airspeed: 0, altitude: 4, verticalSpeed: 0, pitch: 0, roll: 0, aoa: 0, mach: 0, throttle: 0, flaps: 0.29, flapsLabel: '1+F', engines: [{ n1: 0.21 }, { n1: 0.21 }], velocity: new THREE.Vector3(), onGround: true, autopilot: { on: false }, heading: 297 });
+const view = q.get('view') || 'exterior';
+rig.setView(view);
+const camera = new THREE.PerspectiveCamera(num('fov', view === 'cockpit' ? 70 : 40), innerWidth / innerHeight, view === 'cockpit' ? 0.02 : 0.1, 5000);
+if (view === 'cockpit') {
+  const eye = (q.get('eye') === 'fo' ? rig.eye.copilot : rig.eye.pilot).clone();
+  camera.position.copy(eye).add(rig.object.position);
+  camera.rotation.order = 'YXZ';
+  camera.rotation.set(num('pitch', 0) * Math.PI / 180, -num('yaw', 0) * Math.PI / 180, 0);
+} else {
+  const c = (q.get('cam') || '30,8,-30').split(',').map(Number);
+  const t = (q.get('target') || '0,2,0').split(',').map(Number);
+  camera.position.set(c[0], c[1] + gy, c[2]);
+  camera.lookAt(t[0], t[1] + gy, t[2]);
+}
+const L = q.get('lights') === '0' ? { nav: false, strobe: false, beacon: false, landing: false, taxi: false } : { nav: true, strobe: true, beacon: true, landing: q.get('land') === '1', taxi: false };
+const vs = {
+  time: 0, airspeed: 70, mach: 0.2, onGround: true, aoa: 3,
+  aileron: num('aileron', 0), elevator: num('elevator', 0), rudder: num('rudder', 0),
+  flaps: num('flaps', 0), slats: num('slats', num('flaps', 0)), spoilers: num('spoilers', 0), speedbrake: num('speedbrake', 0),
+  gear: num('gear', 1), gearCompression: [0.35, 0.35, 0.35], wheelSpeed: 0,
+  engines: [0, 1].map(() => ({ n1: num('n1', 0.2), throttle: num('n1', 0.2), afterburner: 0, nozzle: 0, reverser: num('rev', 0) })),
+  tvc: { pitch: 0, yaw: 0 }, rotor: null, canopy: 0, lights: L,
+};
+let last = performance.now(), acc = 0, frames = 0;
+renderer.setAnimationLoop(() => {
+  const now = performance.now(), dt = Math.min((now - last) / 1000, 0.1); last = now;
+  vs.time += dt;
+  rig.update(dt, vs);
+  for (const d of displays) d.update(dt, fake, null);
+  renderer.render(scene, camera);
+  acc += dt; frames++; if (acc > 1) { window.__fps = frames / acc; acc = 0; frames = 0; }
+});
+window.__rig = rig; window.__camera = camera; window.__renderer = renderer;
+</script>
+</body>
+</html>

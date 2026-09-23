@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <base href="/" />
+  <title>Arazi önizleme</title>
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #0b1622; color: #dde; font: 12px -apple-system, sans-serif; }
+    #info { position: fixed; left: 10px; top: 8px; z-index: 2; white-space: pre; text-shadow: 0 1px 2px #000; pointer-events: none; }
+    #views { position: fixed; right: 10px; top: 8px; z-index: 2; }
+    #views a { color: #cde; margin-left: 8px; text-decoration: none; }
+  </style>
+  <script type="importmap">{ "imports": { "three": "../node_modules/three/build/three.module.js", "three/addons/": "../node_modules/three/examples/jsm/" } }</script>
+</head>
+<body>
+<div id="info">yükleniyor…</div>
+<div id="views"></div>
+<script type="module">
+// W1 terrain / environment preview. Query params:
+//   view=sfo|downtown|goldengate|alameda|oakland|overview|marin|ocean|runway   or   cam=x,y,z&look=x,y,z
+//   fov=60  orbit=1 (mouse orbit)  fly=1 (slow forward flight to test streaming)  + environment params (sunEl, sunAz, haze, exposure, shadows=0, clouds=0, fogbank=0)
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { createAssetLoader } from '../src/core/assets.js';
+import { createEnvironment } from '../src/world-sf/environment.js';
+import { createTerrain } from '../src/world-sf/terrain.js';
+
+const VIEWS = {
+  sfo:        { cam: [3600, 260, 2300], look: [-300, 0, -200] },
+  runway:     { cam: [1540, 6, 620], look: [-1600, 8, -1050] },
+  downtown:   { cam: [2200, 420, -16200], look: [-2400, 60, -19400] },
+  goldengate: { cam: [-5600, 260, -20600], look: [-9250, 60, -22240] },
+  alameda:    { cam: [8200, 320, -15800], look: [5070, 0, -18610] },
+  oakland:    { cam: [17200, 380, -8400], look: [13600, 0, -11860] },
+  overview:   { cam: [9000, 9000, 16000], look: [-2000, 0, -14000] },
+  marin:      { cam: [-9000, 700, -18000], look: [-11000, 200, -27000] },
+  ocean:      { cam: [-16000, 350, -20500], look: [-9250, 50, -22240] },
+};
+const q = new URLSearchParams(location.search);
+const vec = (s) => s.split(',').map(Number);
+const v = VIEWS[q.get('view') || 'sfo'] || VIEWS.sfo;
+const camP = q.get('cam') ? vec(q.get('cam')) : v.cam;
+const lookP = q.get('look') ? vec(q.get('look')) : v.look;
+document.getElementById('views').innerHTML = Object.keys(VIEWS).map((k) => `<a href="/dev/terrain.html?view=${k}">${k}</a>`).join('');
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFShadowMap;
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(+(q.get('fov') || 60), innerWidth / innerHeight, 0.3, 80000);
+camera.position.set(...camP);
+camera.lookAt(...lookP);
+scene.add(camera);
+addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
+
+const loader = createAssetLoader(renderer);
+const [runways, landmarks, region] = await Promise.all(['runways', 'landmarks', 'region'].map((n) => loader.loadJSON(`../data/sf/${n}.json`)));
+const ctx = { scene, renderer, camera, loader, runways, landmarks, region, focus: { x: lookP[0], z: lookP[2] } };
+const t0 = performance.now();
+let env, terrain, world = null;
+if (q.get('layers') === '1') {
+  // full world (lead's composition: environment + terrain + airports + city + landmarks)
+  const { createSFWorld } = await import('../src/world-sf/index.js');   // dynamic: other layers can't break the plain preview
+  world = await createSFWorld({ scene, renderer, camera, loader, focus: ctx.focus });
+  env = world.environment; terrain = world.terrain;
+} else {
+  env = await createEnvironment(ctx);
+  terrain = await createTerrain(ctx);
+  scene.add(terrain.object);
+  await terrain.ready;
+}
+const tReady = (performance.now() - t0) / 1000;
+if (q.has('agl') && !q.has('fly')) {   // place the camera at a height above the ground, look at the look point's ground + 1.5 m
+  camera.position.y = terrain.getHeight(camera.position.x, camera.position.z) + +q.get('agl');
+  camera.lookAt(lookP[0], q.has('lookAgl') ? terrain.getHeight(lookP[0], lookP[2]) + +q.get('lookAgl') : lookP[1], lookP[2]);
+}
+console.log(`[terrain] ready in ${tReady.toFixed(1)} s`);
+
+// test objects: a shadow caster on the ground at the look point
+if (q.get('probe') === '1') {
+  const g = terrain.getHeight(lookP[0], lookP[2]);
+  const m = new THREE.Mesh(new THREE.BoxGeometry(30, 40, 30), new THREE.MeshStandardMaterial({ color: 0xdddddd, roughness: 0.6 }));
+  m.position.set(lookP[0], g + 20, lookP[2]); m.castShadow = m.receiveShadow = true; scene.add(m);
+  const s = new THREE.Mesh(new THREE.SphereGeometry(8, 32, 16), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.05, metalness: 1 }));
+  s.position.set(lookP[0] + 40, g + 8, lookP[2]); s.castShadow = true; scene.add(s);
+}
+
+let controls = null;
+if (q.get('orbit') === '1') { controls = new OrbitControls(camera, renderer.domElement); controls.target.set(...lookP); controls.update(); }
+const fly = q.has('fly') ? (+q.get('fly') > 1 ? +q.get('fly') : 120) : 0;   // m/s
+const flyDir = new THREE.Vector3(lookP[0] - camP[0], 0, lookP[2] - camP[2]).normalize();
+
+const info = document.getElementById('info');
+// GPU time of renderer.render (ms), via EXT_disjoint_timer_query_webgl2 when available
+const gl = renderer.getContext();
+const tq = gl.getExtension('EXT_disjoint_timer_query_webgl2');
+const queries = [];
+let gpuMs = 0, gpuSamples = [];
+function gpuBegin() { if (!tq) return null; const qq = gl.createQuery(); gl.beginQuery(tq.TIME_ELAPSED_EXT, qq); return qq; }
+function gpuEnd(qq) { if (!qq) return; gl.endQuery(tq.TIME_ELAPSED_EXT); queries.push(qq); }
+function gpuPoll() {
+  while (queries.length && gl.getQueryParameter(queries[0], gl.QUERY_RESULT_AVAILABLE)) {
+    const qq = queries.shift();
+    if (!gl.getParameter(tq.GPU_DISJOINT_EXT)) gpuSamples.push(gl.getQueryParameter(qq, gl.QUERY_RESULT) / 1e6);
+    gl.deleteQuery(qq);
+  }
+  if (gpuSamples.length > 90) gpuSamples = gpuSamples.slice(-90);
+  if (gpuSamples.length) gpuMs = Math.min(...gpuSamples);   // min: robust to GPU time-slicing by other processes
+}
+const timer = new THREE.Timer();
+timer.connect(document);
+let acc = 0, frames = 0;
+const runStats = { maxUpdate: 0, sumUpdate: 0, frames: 0, maxDt: 0 };
+window.__run = runStats;
+window.__terrain = terrain;
+window.THREE = THREE;
+window.__env = env;
+window.__renderer = renderer;
+window.__camera = camera;
+function frame(ts) {
+  requestAnimationFrame(frame);
+  timer.update(ts);
+  const dt = Math.min(timer.getDelta(), 0.1);
+  if (fly) { camera.position.addScaledVector(flyDir, fly * dt); if (q.has('agl')) camera.position.y = terrain.getHeight(camera.position.x, camera.position.z) + +q.get('agl'); }
+  if (controls) controls.update();
+  const tu0 = performance.now();
+  if (world) world.update(dt, camera); else { env.update(dt, camera); terrain.update(dt, camera); }
+  const tu = performance.now() - tu0;
+  runStats.maxUpdate = Math.max(runStats.maxUpdate, tu); runStats.sumUpdate += tu; runStats.frames++;
+  if (runStats.frames > 30) runStats.maxDt = Math.max(runStats.maxDt, dt);
+  const qq = gpuBegin();
+  renderer.render(scene, camera);
+  gpuEnd(qq);
+  gpuPoll();
+  acc += dt; frames++;
+  if (acc > 1) {
+    window.__fps = frames / acc; acc = 0; frames = 0;
+    const s = terrain.stats, r = renderer.info.render, m = renderer.info.memory;
+    const p = camera.position;
+    info.textContent = `fps ${window.__fps.toFixed(0)}  gpu ${gpuMs.toFixed(2)} ms  calls ${r.calls}  tris ${(r.triangles / 1e6).toFixed(2)}M  tex ${m.textures} geo ${m.geometries}\n` +
+      `tiles sel ${s.selected} loaded ${s.loaded} imgs ${s.textures} inflight ${s.inflight} queued ${s.pending}  ready ${tReady.toFixed(1)} s\n` +
+      `cam ${p.x.toFixed(0)}, ${p.y.toFixed(0)}, ${p.z.toFixed(0)}  ground ${terrain.getHeight(p.x, p.z).toFixed(2)}  water ${terrain.isWater(p.x, p.z)}`;
+    window.__stats = { fps: window.__fps, gpuMs, calls: r.calls, tris: r.triangles, ...s, ready: tReady };
+  }
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

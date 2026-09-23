@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <title>Şehir önizleme · Gökyüzü SF</title>
+  <style>html,body{margin:0;height:100%;overflow:hidden;background:#9cc6ec;color:#fff;font:12px -apple-system,sans-serif} #info{position:fixed;left:10px;top:8px;z-index:2;white-space:pre;text-shadow:0 1px 2px #000}</style>
+  <script type="importmap">{ "imports": { "three": "../node_modules/three/build/three.module.js", "three/addons/": "../node_modules/three/examples/jsm/" } }</script>
+</head>
+<body>
+<div id="info">yükleniyor…</div>
+<script type="module">
+// W2 city preview. Query params:
+//   view=downtown|mission|sunset|oakland|presidio|haight|soma|alameda|daly   (named camera views)
+//   cam=x,y,z&look=x,y,z   (local meters; y is above terrain when agl=1)   fly=1 (slow orbit)   night=0..1
+//   terrain=stub  (skip the real terrain)   env=0 (skip the environment module)   size via tools/shot.mjs --size
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { createAssetLoader } from '../src/core/assets.js';
+import { lonLatToLocal } from '../src/geo.js';
+import { createCity } from '../src/world-sf/city.js';
+
+const q = new URLSearchParams(location.search);
+const info = document.getElementById('info');
+const renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFShadowMap;
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.5, 80000);
+scene.add(camera);
+addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
+const loader = createAssetLoader(renderer);
+const [runways, landmarks, region] = await Promise.all(['runways', 'landmarks', 'region'].map((n) => loader.loadJSON(`../data/sf/${n}.json`)));
+
+const VIEWS = {
+  //            camera lon, lat, agl        look lon, lat, agl
+  downtown: [[-122.3905, 37.7825, 420], [-122.4010, 37.7925, 60]],
+  mission: [[-122.4215, 37.7575, 45], [-122.4195, 37.7625, 10]],
+  sunset: [[-122.4905, 37.7505, 70], [-122.4960, 37.7580, 5]],
+  oakland: [[-122.2580, 37.7950, 380], [-122.2720, 37.8040, 40]],
+  presidio: [[-122.4530, 37.7930, 260], [-122.4650, 37.7990, 30]],
+  haight: [[-122.4470, 37.7672, 40], [-122.4420, 37.7705, 12]],
+  soma: [[-122.3950, 37.7700, 160], [-122.4050, 37.7780, 20]],
+  alameda: [[-122.2600, 37.7580, 250], [-122.2450, 37.7660, 10]],
+  daly: [[-122.4600, 37.6950, 200], [-122.4700, 37.7050, 10]],
+};
+let cam = new THREE.Vector3(), look = new THREE.Vector3();
+const view = VIEWS[q.get('view') || 'downtown'];
+let focus;
+if (q.get('cam')) {
+  const c = q.get('cam').split(',').map(Number), l = (q.get('look') || q.get('cam')).split(',').map(Number);
+  cam.set(c[0], c[1], c[2]); look.set(l[0], l[1], l[2]);
+  focus = { x: c[0], z: c[2] };
+} else {
+  const a = lonLatToLocal(view[0][0], view[0][1]), b = lonLatToLocal(view[1][0], view[1][1]);
+  cam.set(a.x, view[0][2], a.z); look.set(b.x, view[1][2], b.z);
+  focus = { x: (a.x + b.x) / 2, z: (a.z + b.z) / 2 };
+}
+const ctx = { scene, renderer, camera, loader, runways, landmarks, region, focus };
+
+// terrain (real if W1 delivered it, stub otherwise) + environment
+let terrain = null;
+if (q.get('terrain') !== 'stub') {
+  try {
+    const { createTerrain } = await import('../src/world-sf/terrain.js');
+    terrain = await createTerrain(ctx);
+    scene.add(terrain.object);
+    await Promise.race([terrain.ready, new Promise((r) => setTimeout(r, 20000))]);
+  } catch (e) { console.warn('terrain unavailable', e); terrain = null; }
+}
+if (!terrain) {
+  const g = new THREE.Mesh(new THREE.PlaneGeometry(80000, 80000).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x6f7a66, roughness: 1 }));
+  g.receiveShadow = true;
+  scene.add(g);
+  terrain = { object: g, getHeight: () => 0, isWater: () => false, update() {}, ready: Promise.resolve() };
+}
+ctx.terrain = terrain;
+let env = null;
+if (q.get('env') !== '0') {
+  try { const { createEnvironment } = await import('../src/world-sf/environment.js'); env = await createEnvironment(ctx); } catch (e) { console.warn('environment unavailable', e); }
+}
+if (!env) {
+  scene.background = new THREE.Color(0x9cc6ec);
+  scene.fog = new THREE.Fog(0x9cc6ec, 3000, 40000);
+  scene.add(new THREE.HemisphereLight(0xdfefff, 0x55604a, 1.2));
+  const sun = new THREE.DirectionalLight(0xffffff, 2.4);
+  sun.position.set(-3000, 4000, 2500);
+  scene.add(sun);
+}
+if (q.get('agl') !== '0') {
+  cam.y += terrain.getHeight(cam.x, cam.z);
+  look.y += terrain.getHeight(look.x, look.z);
+}
+camera.position.copy(cam);
+camera.lookAt(look);
+
+const t0 = performance.now();
+const city = await createCity(ctx, { base: '../assets/sf/city/' });
+scene.add(city.object);
+await city.ready;
+const loadS = ((performance.now() - t0) / 1000).toFixed(1);
+if (q.get('night')) city.setNight(Number(q.get('night')));
+window.__city = city;
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.copy(look);
+controls.update();
+const fly = q.get('fly') === '1';
+const clock = new THREE.Timer();
+let acc = 0, frames = 0;
+renderer.info.autoReset = false;
+function frame(ts) {
+  requestAnimationFrame(frame);
+  clock.update(ts);
+  const dt = Math.min(clock.getDelta(), 0.1);
+  if (fly) { const r = camera.position.clone().sub(controls.target); r.applyAxisAngle(new THREE.Vector3(0, 1, 0), dt * 0.05); camera.position.copy(controls.target).add(r); camera.lookAt(controls.target); }
+  controls.update();
+  env?.update?.(dt, camera);
+  terrain.update(dt, camera);
+  city.update(dt, camera);
+  renderer.info.reset();
+  renderer.render(scene, camera);
+  acc += dt; frames++;
+  if (acc >= 1) {
+    window.__fps = frames / acc; acc = 0; frames = 0;
+    const s = city.stats, r = renderer.info.render;
+    window.__stats = { ...s, calls: r.calls, triangles: r.triangles, loadS };
+    info.textContent = `Şehir · yükleme ${loadS} s · ${window.__fps.toFixed(0)} fps · draw calls ${r.calls} · üçgen ${(r.triangles / 1e6).toFixed(2)} M\n` +
+      `karolar: ${s.visible} görünür / ${s.loaded} yüklü · kuyruk ${s.queued}` + (s.trees ? ` · ağaç ${s.trees.instances ?? ''}` : '') +
+      `\nkamera ${camera.position.x.toFixed(0)}, ${camera.position.y.toFixed(0)}, ${camera.position.z.toFixed(0)}`;
+  }
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

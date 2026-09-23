@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <title>737-800 viewer</title>
+  <style>html,body{margin:0;height:100%;overflow:hidden;background:#1b2530;color:#dde;font:13px -apple-system,sans-serif}</style>
+  <script type="importmap">{ "imports": { "three": "../../../node_modules/three/build/three.module.js", "three/addons/": "../../../node_modules/three/examples/jsm/" } }</script>
+</head>
+<body>
+<script type="module">
+// b737 agent's own test viewer (not part of the game). Params:
+//   view=cockpit|exterior  yaw,pitch (deg, cockpit look)  cam=x,y,z tgt=x,y,z (exterior, metres, aircraft frame)
+//   fov  sun=elevDeg  night=1  gear flaps spoilers speedbrake aileron elevator rudder n1 rev lights=1 lod=1
+import * as THREE from 'three';
+import { Sky } from 'three/addons/objects/Sky.js';
+import { createAssetLoader } from '../../core/assets.js';
+import { model, createRig } from './model.js';
+import { createDisplay } from '../../avionics/index.js';
+
+const q = new URLSearchParams(location.search);
+const num = (k, d) => (q.has(k) ? Number(q.get(k)) : d);
+const renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = num('exposure', 0.5);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFShadowMap;
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+const night = q.get('night') === '1';
+const sunEl = num('sun', night ? -8 : 35) * Math.PI / 180, sunAz = num('az', 200) * Math.PI / 180;
+const sunDir = new THREE.Vector3(Math.cos(sunEl) * Math.sin(sunAz), Math.sin(sunEl), -Math.cos(sunEl) * Math.cos(sunAz));
+const sky = new Sky();
+sky.scale.setScalar(10000);
+Object.assign(sky.material.uniforms.turbidity, { value: 4 });
+sky.material.uniforms.rayleigh.value = 1.2;
+sky.material.uniforms.sunPosition.value.copy(sunDir);
+scene.add(sky);
+const pmrem = new THREE.PMREMGenerator(renderer);
+const envScene = new THREE.Scene(); const sky2 = sky.clone(); envScene.add(sky2);
+scene.environment = pmrem.fromScene(envScene, 0, 0.1, 20000).texture;
+scene.environmentIntensity = night ? 0.03 : num('env', 0.5);
+const sun = new THREE.DirectionalLight(0xfff4e6, night ? 0 : 3.2);
+sun.position.copy(sunDir).multiplyScalar(80);
+sun.castShadow = true; sun.shadow.mapSize.set(4096, 4096); sun.shadow.bias = -0.0003; sun.shadow.normalBias = 0.02;
+Object.assign(sun.shadow.camera, { left: -30, right: 30, top: 30, bottom: -30, near: 1, far: 200 });
+scene.add(sun, sun.target);
+scene.add(new THREE.HemisphereLight(0xcfe3ff, 0x4a4a44, night ? 0.02 : 0.35));
+const ground = new THREE.Mesh(new THREE.CircleGeometry(3000, 64).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x3d4043, roughness: 0.92 }));
+ground.receiveShadow = true;
+scene.add(ground);
+// runway strip for context
+const rw = new THREE.Mesh(new THREE.PlaneGeometry(45, 3000).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x2a2c2e, roughness: 0.85 }));
+rw.position.set(0, 0.01, -1000); rw.receiveShadow = true; scene.add(rw);
+for (let i = 0; i < 60; i++) { const m = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 30).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xdddddd })); m.position.set(0, 0.02, -60 - i * 50); scene.add(m); }
+
+const loader = createAssetLoader(renderer);
+const useLod = q.get('lod') === '1';
+const gltf = await loader.loadGLTF(useLod ? model.lodUrl : model.url);
+let rig;
+if (useLod) {
+  rig = { object: gltf.scene, eye: { pilot: new THREE.Vector3() }, contacts: [{ position: new THREE.Vector3(0, -2.9, 0) }], screens: {}, update() {}, setView() {} };
+} else rig = createRig(gltf.scene);
+rig.object.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+const gy = -Math.min(...rig.contacts.map((c) => c.position.y));
+rig.object.position.y = gy;
+scene.add(rig.object);
+const view = q.get('view') || 'exterior';
+const fake = { ias: 142, airspeed: 142, altitude: 1500, verticalSpeed: 3, heading: 284, pitch: 4, roll: 0, aoa: 4, mach: 0.22, gForce: 1, throttle: 0.7, gear: 1, flaps: 0.375, flapsLabel: '15', flapsIndex: 5, engines: [{ n1: 0.85, thrust: 0, afterburner: 0, fuelFlow: 0.4 }, { n1: 0.85, thrust: 0, afterburner: 0, fuelFlow: 0.4 }], position: new THREE.Vector3(), quaternion: new THREE.Quaternion(), velocity: new THREE.Vector3(0, 0, -142), onGround: false, warnings: {}, autopilot: { on: true, altitude: 3000, heading: 284, speed: 160 }, fuel: 16000, spec: { id: 'b737' } };
+const displays = Object.entries(model.displays).flatMap(([name, type]) => {
+  const mesh = rig.screens[name];
+  if (!mesh) return [];
+  const d = createDisplay(type, { mesh, eye: rig.eye.pilot, root: rig.object });
+  mesh.material = new THREE.MeshBasicMaterial({ map: d.texture, toneMapped: false, polygonOffset: true, polygonOffsetFactor: -1 });
+  return [d];
+});
+rig.setView(view);
+const camera = new THREE.PerspectiveCamera(num('fov', view === 'cockpit' ? 62 : 40), innerWidth / innerHeight, 0.02, 20000);
+if (view === 'cockpit') {
+  const eye = (q.get('seat') === 'fo' ? rig.eye.copilot : rig.eye.pilot).clone().add(rig.object.position);
+  if (q.has('eyeoff')) { const o = q.get('eyeoff').split(',').map(Number); eye.add(new THREE.Vector3(o[0], o[1], o[2])); }
+  camera.position.copy(eye);
+  camera.rotation.order = 'YXZ';
+  camera.rotation.y = -num('yaw', 0) * Math.PI / 180;
+  camera.rotation.x = num('pitch', -14) * Math.PI / 180;
+} else {
+  const c = (q.get('cam') || '-26,5,-24').split(',').map(Number);
+  const t = (q.get('tgt') || '0,0,0').split(',').map(Number);
+  camera.position.set(c[0], c[1] + gy, c[2]);
+  camera.lookAt(t[0], t[1] + gy, t[2]);
+}
+const L = q.get('lights') === '1' || night;
+const vs = {
+  time: 0, airspeed: 60, mach: 0.18, onGround: true, aoa: 3,
+  aileron: num('aileron', 0), elevator: num('elevator', 0), rudder: num('rudder', 0),
+  flaps: num('flaps', 0), slats: num('slats', num('flaps', 0)), spoilers: num('spoilers', 0), speedbrake: num('speedbrake', 0),
+  gear: num('gear', 1), gearCompression: [0.35, 0.35, 0.35], wheelSpeed: 0,
+  engines: [0, 1].map(() => ({ n1: num('n1', 0.0), throttle: num('n1', 0.0), afterburner: 0, nozzle: 0, reverser: num('rev', 0) })),
+  tvc: { pitch: 0, yaw: 0 }, rotor: null, canopy: 0,
+  lights: { nav: L, strobe: L, beacon: L, landing: L && q.get('landing') !== '0', taxi: L },
+};
+let last = performance.now(), acc = 0, frames = 0, t0 = performance.now();
+renderer.setAnimationLoop(() => {
+  const now = performance.now(), dt = Math.min((now - last) / 1000, 0.1); last = now;
+  vs.time = (now - t0) / 1000 + num('t', 0);
+  rig.update(dt, vs);
+  for (const d of displays) d.update(dt, fake, null);
+  renderer.render(scene, camera);
+  acc += dt; frames++; if (acc > 1) { window.__fps = frames / acc; acc = 0; frames = 0; }
+});
+window.__rig = rig; window.__camera = camera; window.__scene = scene; window.__renderer = renderer;
+addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
+</script>
+</body>
+</html>
