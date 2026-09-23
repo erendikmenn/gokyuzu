@@ -11,9 +11,11 @@ Two sources: the game's beacons (/_e, exact: flight start, one heartbeat per act
 without beacons (versions before telemetry, blocked requests), sessions rebuilt from asset requests (approximate).
 Nobody is identified: a visitor is a salted hash of IP + browser (salt in ~/.config/gokyuzu/analytics_salt, never
 shared); raw IPs are never printed. Your own IPs (~/.config/gokyuzu/staging_ips) are marked "sen", headless test
-browsers "test".
+browsers "test". Countries come from the free DB-IP Lite database (CC BY 4.0, https://db-ip.com), looked up offline.
 """
 import argparse
+import bisect
+import ipaddress
 import datetime as dt
 import gzip
 import hashlib
@@ -104,6 +106,46 @@ def client(ua):
     return browser, system
 
 
+COUNTRIES = {'TR': 'Türkiye', 'US': 'ABD', 'GB': 'Birleşik Krallık', 'DE': 'Almanya', 'NL': 'Hollanda', 'FR': 'Fransa',
+             'IT': 'İtalya', 'AT': 'Avusturya', 'GR': 'Yunanistan', 'BG': 'Bulgaristan', 'RO': 'Romanya', 'AZ': 'Azerbaycan',
+             'CY': 'Kıbrıs', 'ES': 'İspanya', 'CH': 'İsviçre', 'BE': 'Belçika', 'SE': 'İsveç', 'CA': 'Kanada', 'RU': 'Rusya',
+             'UA': 'Ukrayna', 'PL': 'Polonya', 'IE': 'İrlanda', 'DK': 'Danimarka', 'NO': 'Norveç', 'FI': 'Finlandiya'}
+
+
+class Geo:
+    """IP → country from the free DB-IP Lite database (CC BY 4.0), downloaded once a month into data/analytics/geo/."""
+    def __init__(self):
+        import requests
+        folder = ROOT / 'data' / 'analytics' / 'geo'
+        folder.mkdir(parents=True, exist_ok=True)
+        path = folder / 'dbip-country-lite.csv.gz'
+        if not path.exists() or dt.datetime.now().timestamp() - path.stat().st_mtime > 35 * 86400:
+            for months_back in (0, 1):
+                d = dt.date.today().replace(day=1) - dt.timedelta(days=28 * months_back)
+                r = requests.get(f'https://download.db-ip.com/free/dbip-country-lite-{d:%Y-%m}.csv.gz', timeout=60)
+                if r.ok:
+                    path.write_bytes(r.content)
+                    break
+        self.v4, self.v6 = ([], []), ([], [])
+        with gzip.open(path, 'rt') as f:
+            for line in f:
+                a, b, cc = line.strip().split(',')
+                t = self.v6 if ':' in a else self.v4
+                t[0].append(int(ipaddress.ip_address(a)))
+                t[1].append((int(ipaddress.ip_address(b)), cc))
+
+    def country(self, ip):
+        try:
+            addr = ipaddress.ip_address(ip)
+        except ValueError:
+            return '?'
+        starts, ends = self.v6 if addr.version == 6 else self.v4
+        i = bisect.bisect_right(starts, int(addr)) - 1
+        if i >= 0 and int(addr) <= ends[i][0]:
+            return COUNTRIES.get(ends[i][1], ends[i][1])
+        return '?'
+
+
 def edge_city(code):
     return EDGES.get(code[:3], code[:3] or '?')
 
@@ -136,6 +178,7 @@ def main():
         print(f'{new} yeni kayıt dosyası indirildi.', file=sys.stderr)
     since = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=a.days)
     key_salt, mine = salt(), own_ips()
+    geo = Geo()
 
     beacons = defaultdict(list)          # sid -> [(at, event dict, visitor)]
     requests = defaultdict(list)         # visitor -> [(at, uri)]
@@ -146,8 +189,8 @@ def main():
         if any(w in ua.lower() for w in BOT_WORDS):
             continue
         status = row.get('sc-status', '0')
-        if status == '403':
-            blocked[edge_city(row.get('x-edge-location', ''))] += 1
+        if status == '403':   # staging: IP lock; production: a missing file (S3 answers 403 for unknown keys)
+            blocked[row.get('cs-uri-stem', '?') if a.target == 'production' else edge_city(row.get('x-edge-location', ''))] += 1
             continue
         if not status.startswith(('2', '3')):
             continue
@@ -157,7 +200,8 @@ def main():
         vid = hashlib.sha256(f'{key_salt}|{ip}|{ua}'.encode()).hexdigest()[:6]
         browser, system = client(ua)
         who = 'sen' if ip in mine else 'test' if browser == 'test' else ''
-        visitors.setdefault(vid, {'browser': browser, 'system': system, 'city': edge_city(row.get('x-edge-location', '')), 'who': who})
+        if vid not in visitors:
+            visitors[vid] = {'browser': browser, 'system': system, 'city': geo.country(ip), 'who': who}
         uri = row.get('cs-uri-stem', '')
         if uri == '/_e':
             q = query(row)
@@ -227,7 +271,7 @@ def main():
     print('\nUçaklar:', top(Counter(AIRCRAFT.get(s['aircraft'], s['aircraft']) for s in flights)))
     print('Kalkış noktaları:', top(Counter(s['spawn'] for s in flights if s['spawn'])))
     print('Günler:', top(Counter(s['start'].astimezone().strftime('%d.%m') for s in real), 14))
-    print('Konum (en yakın CloudFront noktası):', top(Counter(visitors[v]['city'] for v in real_v)))
+    print('Ülke:', top(Counter(visitors[v]['city'] for v in real_v), 12))
     print('Tarayıcı / sistem:', top(Counter(f"{visitors[v]['browser']}/{visitors[v]['system']}" for v in real_v)))
     fps = [s['fps'] for s in real if s['fps']]
     if fps:
@@ -239,16 +283,16 @@ def main():
     if errs:
         print('Hatalar:', top(errs, 5))
     if blocked:
-        print('IP kilidine takılan istek:', top(blocked))
+        print('Eksik dosya (403):' if a.target == 'production' else 'IP kilidine takılan istek:', top(blocked, 5))
 
-    print(f'\nSon {min(a.sessions, len(sessions))} oturum (anonim ziyaretçi kimliği · başlangıç · konum · tarayıcı · uçak · süre):')
+    print(f'\nSon {min(a.sessions, len(sessions))} oturum (anonim ziyaretçi kimliği · başlangıç · ülke · tarayıcı · uçak · süre):')
     for s in sorted(sessions, key=lambda s: s['start'], reverse=True)[:a.sessions]:
         v = visitors[s['vid']]
         ac = AIRCRAFT.get(s['aircraft'], s['aircraft'] or 'menüde kaldı')
         dur = fmt_min(s['minutes']) + (f" (aktif {s['active']} dk)" if s['active'] else '') + ('' if s['exact'] else ' ~')
         extra = ' · '.join(x for x in [f"{s['fps']} fps" if s['fps'] else '', s['spawn'] or '', f"yükleme {s['load']} sn" if s['load'] else ''] if x)
         who = f"  [{v['who']}]" if v['who'] else ''
-        print(f"  #{s['vid']}  {s['start'].astimezone():%d.%m %H:%M}  {v['city']:<12} {v['browser']}/{v['system']:<8} {ac:<12} {dur}"
+        print(f"  #{s['vid']}  {s['start'].astimezone():%d.%m %H:%M}  {v['city']:<16} {v['browser'] + '/' + v['system']:<16} {ac:<12} {dur}"
               + (f'  · {extra}' if extra else '') + who)
 
 
