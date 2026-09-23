@@ -132,7 +132,8 @@ export async function createEnvironment(ctx) {
   sun.castShadow = shadowsOn;
   sun.shadow.mapSize.set(4096, 4096);
   sun.shadow.camera.near = 1;
-  sun.shadow.camera.far = num('shadowDist', 1600);
+  const shadowDist = num('shadowDist', 1600);
+  sun.shadow.camera.far = shadowDist;
   sun.shadow.bias = -0.0003;
   sun.shadow.normalBias = 0.35;
   sun.shadow.radius = 1.5;
@@ -153,13 +154,31 @@ export async function createEnvironment(ctx) {
   bank.mesh.visible = useBank;
   scene.add(bank.mesh);
 
-  let time = 0, lutTimer = 0, lastLutH = 300;
+  let time = 0, lutTimer = 0, lastLutH = 300, quality = null;
   const env = {
     sunDirection,
     sun, hemi, dome, bank, clouds,
     sunColor: sunColor.clone().multiplyScalar(sunIntensity),
     skyUniforms,
     lut,
+    /** Live quality change (CONTRACTS-SF.md §8): shadows, shadowMapSize, shadowCascades, clouds. */
+    setQuality(qq) {
+      if (!qq) return;
+      const on = qq.shadows !== false && shadowsOn;
+      if (sun.castShadow !== on) sun.castShadow = on;   // renderer.shadowMap.enabled is set by main.js
+      const size = qq.shadowMapSize || 4096;
+      if (sun.shadow.mapSize.x !== size) {
+        sun.shadow.mapSize.set(size, size);
+        if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; }   // reallocated on the next shadow pass
+      }
+      // SunLight always renders 2 cascades (fixed in three's shader); "1 cascade" = short shadow range, so the second
+      // cascade covers little and its caster pass is cheap
+      sun.shadow.camera.far = (qq.shadowCascades || 2) >= 2 ? shadowDist : Math.min(shadowDist, 500);
+      clouds.setQuality(qq.clouds || 'high');
+      bank.setQuality(qq.clouds || 'high');
+      quality = qq;
+    },
+    get quality() { return quality; },
     /** Show/hide the Golden Gate fog bank (also removes the in-fog visibility effect). */
     setFogBank(on) { bank.mesh.visible = !!on; },
     get fogBankEnabled() { return bank.mesh.visible; },
@@ -183,5 +202,6 @@ export async function createEnvironment(ctx) {
       }
     },
   };
+  if (ctx.quality) env.setQuality(ctx.quality);   // before the first frame: no 4096² allocation on a low preset
   return env;
 }

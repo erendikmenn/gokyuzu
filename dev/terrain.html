@@ -24,6 +24,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { createAssetLoader } from '../src/core/assets.js';
 import { createEnvironment } from '../src/world-sf/environment.js';
 import { createTerrain } from '../src/world-sf/terrain.js';
+import { QUALITY } from '../src/core/quality.js';
 
 const VIEWS = {
   sfo:        { cam: [3600, 260, 2300], look: [-300, 0, -200] },
@@ -60,13 +61,15 @@ addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; cam
 
 const loader = createAssetLoader(renderer);
 const [runways, landmarks, region] = await Promise.all(['runways', 'landmarks', 'region'].map((n) => loader.loadJSON(`../data/sf/${n}.json`)));
-const ctx = { scene, renderer, camera, loader, runways, landmarks, region, focus: { x: lookP[0], z: lookP[2] } };
+const quality = QUALITY[q.get('quality')] || null;   // ?quality=low|medium|high|ultra (src/core/quality.js)
+if (quality) renderer.shadowMap.enabled = quality.shadows;
+const ctx = { scene, renderer, camera, loader, runways, landmarks, region, focus: { x: lookP[0], z: lookP[2] }, quality };
 const t0 = performance.now();
 let env, terrain, world = null;
 if (q.get('layers') === '1') {
   // full world (lead's composition: environment + terrain + airports + city + landmarks)
   const { createSFWorld } = await import('../src/world-sf/index.js');   // dynamic: other layers can't break the plain preview
-  world = await createSFWorld({ scene, renderer, camera, loader, focus: ctx.focus });
+  world = await createSFWorld({ scene, renderer, camera, loader, focus: ctx.focus, quality });
   env = world.environment; terrain = world.terrain;
 } else if (q.get('bare') === '1') {
   // no W1 environment: stock chunks, no SunLight, no fog (checks the terrain material compiles in other pages)
@@ -76,11 +79,13 @@ if (q.get('layers') === '1') {
   env = { update() {} };
   terrain = await createTerrain(ctx);
   scene.add(terrain.object);
+  if (quality) terrain.setQuality(quality);
   await terrain.ready;
 } else {
   env = await createEnvironment(ctx);
   terrain = await createTerrain(ctx);
   scene.add(terrain.object);
+  if (quality) terrain.setQuality(quality);
   await terrain.ready;
 }
 const tReady = (performance.now() - t0) / 1000;

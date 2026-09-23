@@ -113,15 +113,26 @@ vec3 sfWaterN;
 const mat2 SF_R1 = mat2(0.8776, 0.4794, -0.4794, 0.8776);
 const mat2 SF_R2 = mat2(0.4536, -0.8912, 0.8912, 0.4536);
 const mat2 SF_R3 = mat2(-0.6663, 0.7457, -0.7457, -0.6663);
+#ifndef SF_WATER
+  #define SF_WATER 2
+#endif
 vec2 sfWaveSlope(vec2 p, float dist) {
+  vec2 s = vec2(0.0);
+#if SF_WATER >= 1
   // regional choppiness variation breaks up any visible repetition
   float region = texture2D(uWaveTex, p / 2900.0).b;
   float region2 = texture2D(uWaveTex, SF_R2 * p / 1100.0 + 0.37).b;
-  vec2 s = vec2(0.0);
+#else
+  float region = 0.5, region2 = 0.5;
+#endif
   s += SF_R1 * (texture2D(uWaveTex, SF_R1 * p / 67.0 + uTime * vec2(0.012, 0.007)).xy - 0.5) * (0.6 + 0.8 * region);
   s += SF_R2 * (texture2D(uWaveTex, SF_R2 * p / 23.3 + uTime * vec2(-0.021, 0.029)).xy - 0.5) * (0.4 + 0.6 * region2) * (1.0 - smoothstep(900.0, 3500.0, dist));
+#if SF_WATER >= 1
   s += SF_R3 * (texture2D(uWaveTex, SF_R3 * p / 241.0 + uTime * vec2(0.0041, -0.0019)).xy - 0.5) * 0.7;
+#endif
+#if SF_WATER >= 2
   s += (texture2D(uWaveTex, p / 7.9 + uTime * vec2(0.06, 0.04)).xy - 0.5) * 0.35 * (1.0 - smoothstep(60.0, 350.0, dist));
+#endif
   return s * 0.6 * uWaveScale;
 }
 `;
@@ -147,7 +158,7 @@ const FRAG_MAP = /* glsl */`
   sfDist = length(vSfWorld - cameraPosition);
   // close-range ground detail: fine grain + metre-scale variation break up the magnified 1 m photo
   float dfade = 1.0 - smoothstep(80.0, 600.0, sfDist);
-  if (dfade > 0.0) {
+  if (SF_WATER >= 1 && dfade > 0.0) {
     float g1 = texture2D(uDetailTex, vSfWorld.xz / 23.0).r;
     float g2 = texture2D(uDetailTex, vSfWorld.xz / 97.0 + 0.31).g;
     land *= 1.0 + ((g1 - 0.5) * 0.45 + (g2 - 0.5) * 0.35) * dfade;
@@ -179,9 +190,13 @@ const FRAG_MAP = /* glsl */`
   float foamN = texture2D(uWaveTex, vSfWorld.xz / 31.0 + uTime * vec2(0.013, 0.021)).b;
   float swash = smoothstep(0.45, 0.02, 1.0 - img.a) * (1.0 - a);
   float surfZone = ocean * smoothstep(280.0, 40.0, shoreDist) * smoothstep(11.0, 1.5, depth) * (1.0 - a);
+#if SF_WATER >= 1
   float sets = texture2D(uWaveTex, vSfWorld.xz / 610.0 + vec2(0.37, uTime * 0.0015)).b;   // breaking sections vary along the shore
   float crest = smoothstep(0.74, 0.97, sin(shoreDist * 0.075 + uTime * 0.55 + foamN * 1.6 + sets * 4.0) * 0.5 + 0.5) * smoothstep(0.3, 0.62, sets);
   float surf = surfZone * (crest * 0.85 + 0.5 * smoothstep(100.0, 15.0, shoreDist)) * smoothstep(0.25, 0.7, foamN + 0.15);
+#else
+  float surf = surfZone * 0.35 * smoothstep(100.0, 15.0, shoreDist);
+#endif
   float foam = (swash * 0.6 * smoothstep(0.3, 0.7, foamN) + surf) * seaLvl;
   wcol = mix(wcol, vec3(0.62), clamp(foam, 0.0, 1.0) * 0.85);
   diffuseColor.rgb = mix(wcol, land, sfLandA);
@@ -222,9 +237,24 @@ const LIGHTS_BEGIN_SUNVIS = THREE.ShaderChunk.lights_fragment_begin
 
 let _id = 0;
 /** One material per tile; `tile` = { uImg: {value}, uImgXform: {value: Vector4} }. */
+const WATER_LEVEL = { simple: 0, medium: 1, high: 2 };
+export const terrainMaterialState = { water: 2 };
+/** 'simple' | 'medium' | 'high' → applied to materials created afterwards; returns true if it changed. */
+export function setTerrainWaterQuality(w) {
+  const v = WATER_LEVEL[w] ?? 2;
+  if (v === terrainMaterialState.water) return false;
+  terrainMaterialState.water = v;
+  return true;
+}
+export function applyWaterDefine(m) {
+  m.defines = m.defines || {};
+  if (m.defines.SF_WATER !== terrainMaterialState.water) { m.defines.SF_WATER = terrainMaterialState.water; m.needsUpdate = true; }
+}
+
 export function createTerrainMaterial(shared, tile) {
   const m = new THREE.MeshStandardMaterial({ roughness: 0.93, metalness: 0.0, color: 0xffffff });
   m.name = 'sf-terrain';
+  m.defines = { SF_WATER: terrainMaterialState.water };
   m.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, shared, tile);
     sh.vertexShader = sh.vertexShader
@@ -239,7 +269,7 @@ export function createTerrainMaterial(shared, tile) {
       .replace('#include <lights_physical_fragment>', '#include <lights_physical_fragment>\n' + FRAG_SPEC)
       .replace('#include <lights_fragment_begin>', LIGHTS_BEGIN_SUNVIS);
   };
-  m.customProgramCacheKey = () => 'sf-terrain-3';
+  m.customProgramCacheKey = () => 'sf-terrain-4';   // defines (SF_WATER) are part of three's program key
   m.userData.sfId = _id++;
   return m;
 }

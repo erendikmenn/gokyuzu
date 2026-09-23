@@ -4,7 +4,7 @@
 //  - streaming: height tiles via HTTP range requests into per-level packs, imagery as WebP, a few uploads per frame
 //  - getHeight(x,z) samples exactly the triangles that are rendered near the camera (same data, same diagonal split)
 import * as THREE from 'three';
-import { createTerrainShared, createTerrainMaterial } from './terrain-material.js';
+import { createTerrainShared, createTerrainMaterial, setTerrainWaterQuality, applyWaterDefine } from './terrain-material.js';
 import { createHorizonRing } from './terrain-horizon.js';
 
 const BASE = new URL('../../assets/sf/terrain/', import.meta.url).href;
@@ -85,8 +85,24 @@ export async function createTerrain(ctx) {
       if (n.children.some((c) => !c)) n.children = null;
     }
   }
-  for (const n of nodes.values()) if (n.children) n.childImg = n.children.some((c) => c.img);
   const root = nodes.get(key(0, 0, 0));
+
+  // ---------------- quality (CONTRACTS-SF.md §8) ----------------
+  const IMG_DEEPEST = Math.max(...index.nodes.filter((r) => r[8]).map((r) => r[0]));   // 8 (1 m/px)
+  const qual = { geo: 1, tex: 1, imgCap: IMG_DEEPEST, maxTex: 520, aniso: 8 };
+  const hasImg = (n) => n.img && n.L <= qual.imgCap;
+  function refreshChildImg() { for (const n of nodes.values()) if (n.children) n.childImg = n.children.some(hasImg); }
+  function readQuality(q) {
+    if (!q) return;
+    const te = q.terrainError ?? 1;
+    qual.geo = te; qual.tex = te;
+    qual.imgCap = IMG_DEEPEST + Math.min(0, q.imageryMaxLevel ?? 0);
+    qual.maxTex = q.imageryMaxLevel <= -2 ? 200 : q.imageryMaxLevel === -1 ? 320 : 520;
+    qual.aniso = q.anisotropy ?? 8;
+    setTerrainWaterQuality(q.water || 'high');
+  }
+  readQuality(ctx.quality);
+  refreshChildImg();
 
   // ---------------- shared GPU resources ----------------
   const texLoader = new THREE.TextureLoader();
@@ -143,7 +159,7 @@ export async function createTerrain(ctx) {
     inflight++;
     try {
       const hp = n.heights ? Promise.resolve(null) : fetchHeights(n);
-      const ip = n.img ? fetch(`${BASE}img/${n.L}/${n.i}_${n.j}.webp`).then((r) => {
+      const ip = hasImg(n) ? fetch(`${BASE}img/${n.L}/${n.i}_${n.j}.webp`).then((r) => {
         if (!r.ok) throw new Error(`img ${n.L}/${n.i}/${n.j}: ${r.status}`);
         return r.blob();
       }).then((b) => createImageBitmap(b, { premultiplyAlpha: 'none', colorSpaceConversion: 'none' })) : null;
@@ -181,11 +197,11 @@ export async function createTerrain(ctx) {
 
   /** Height data (no mesh/texture) at full depth over areas other layers sample at build time (airports, landmarks).
    *  Tiles of one level with consecutive ranks are fetched with a single range request. */
-  async function pinHeights(areas) {
+  async function pinHeights(areas, maxLevel = 99) {
     const list = [];
     const hit = (n) => areas.some((a) => n.x0 < a.x1 && n.x0 + n.size > a.x0 && n.z0 < a.z1 && n.z0 + n.size > a.z0);
     const walk = (n) => {
-      if (!hit(n)) return;
+      if (!hit(n) || n.L > maxLevel) return;
       n.pinned = true;
       if (!n.heights) list.push(n);
       if (n.children) for (const c of n.children) walk(c);
@@ -229,11 +245,12 @@ export async function createTerrain(ctx) {
 
   function texSourceOf(n) {
     let s = n;
-    while (s && !s.img) s = s.parent;
+    while (s && !(hasImg(s) && s.tex)) s = s.parent;
     return s;
   }
 
   function buildNode(n) {
+    if (n.bitmap && !hasImg(n)) { if (n.bitmap.close) n.bitmap.close(); n.bitmap = null; }   // level dropped by quality
     // texture
     if (n.bitmap) {
       const t = new THREE.Texture(n.bitmap);
@@ -243,7 +260,7 @@ export async function createTerrain(ctx) {
       t.generateMipmaps = true;
       t.minFilter = THREE.LinearMipmapLinearFilter;
       t.magFilter = THREE.LinearFilter;
-      t.anisotropy = Math.min(8, maxAniso);
+      t.anisotropy = Math.min(qual.aniso, maxAniso);
       t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
       t.needsUpdate = true;
       const tt = performance.now();
@@ -345,7 +362,7 @@ export async function createTerrain(ctx) {
   // ---------------- LOD selection ----------------
   const GEO_PX = +(q.get('geoPx') || 3);           // max geometric error on screen (px, at <= 1200 px viewport height)
   const TEX_PX = +(q.get('texPx') || 1.6);         // max imagery texel size on screen (px)
-  const MAX_TILES = 950, MAX_TEX = 520;   // ~520 x 1.4 MB imagery (with mips) + ~100 MB geometry
+  const MAX_TILES = 950;   // + qual.maxTex resident imagery tiles (520 x 1.4 MB with mips at high)
   let frame = 0;
   const frustum = new THREE.Frustum();
   const projScreen = new THREE.Matrix4();
@@ -376,7 +393,7 @@ export async function createTerrain(ctx) {
       const sseG = n.err * K / d;
       const sseT = n.childImg ? (n.size / 512) * K / d : 0;
       const relax = omni && d > 1200 ? 4 : 1;   // pre-start omni selection: full detail only near the focus
-      refine = sseG > GEO_PX * relax * (n.L >= 9 ? 2 : 1) || sseT > TEX_PX * relax;
+      refine = sseG > GEO_PX * qual.geo * relax * (n.L >= 9 ? 2 : 1) || sseT > TEX_PX * qual.tex * relax;
       if (refine && !omni && d > 1200 && !inFrustum(n)) refine = false;
     }
     if (refine) {
@@ -446,6 +463,7 @@ export async function createTerrain(ctx) {
   }
 
   function evict() {
+    const MAX_TEX = qual.maxTex;
     if (loadedCount <= MAX_TILES && texCount <= MAX_TEX) return;
     const cands = [];
     for (const n of loadedSet) {
@@ -571,7 +589,8 @@ export async function createTerrain(ctx) {
   request(root, 0);
   internalPump();   // start streaming the focus area while the pinned heights load
   const tp = performance.now();
-  const pinned = await pinHeights(pinAreas);
+  // reduced presets pin one level less (4x fewer tiles; L9 is within 1 m of L10, airport pavement is flat at every level)
+  const pinned = await pinHeights(pinAreas, ctx.quality && (ctx.quality.imageryMaxLevel ?? 0) < 0 ? 9 : 99);
   stats.pinned = pinned; stats.pinSeconds = +((performance.now() - tp) / 1000).toFixed(2);
 
   return {
@@ -593,6 +612,22 @@ export async function createTerrain(ctx) {
       lastExternal = performance.now();
       step(camera, false, dt);
     },
+    /** Live quality change (CONTRACTS-SF.md §8): terrainError, imageryMaxLevel, water, anisotropy. */
+    setQuality(q) {
+      const oldCap = qual.imgCap;
+      const waterChanged = setTerrainWaterQuality(q.water || 'high');
+      readQuality(q);
+      if (qual.imgCap !== oldCap) {
+        // tiles finer than the lower cap reference / should reference different imagery: re-stream them
+        refreshChildImg();
+        const cut = Math.min(oldCap, qual.imgCap);
+        for (const n of [...loadedSet]) if (n.L > cut) unloadNode(n);
+        for (const n of built.splice(0)) { if (n.bitmap && n.bitmap.close) n.bitmap.close(); n.bitmap = null; n.state = UNLOADED; }
+      }
+      if (waterChanged) for (const n of loadedSet) if (n.mesh) applyWaterDefine(n.mesh.material);
+      waveTex.anisotropy = detailTex.anisotropy = Math.min(qual.aniso, maxAniso);
+    },
+    get quality() { return { ...qual }; },
     dispose() {
       disposed = true;
       for (const n of nodes.values()) if (n.state === READY) unloadNode(n);

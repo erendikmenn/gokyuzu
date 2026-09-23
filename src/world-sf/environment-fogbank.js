@@ -132,7 +132,7 @@ export function createFogBank({ sunDir, sunE, amb, ground }) {
   }]);
   const mat = new THREE.ShaderMaterial({
     name: 'sf-fogbank',
-    defines: ground ? { SF_GROUND: 1 } : {},
+    defines: ground ? { SF_GROUND: 1, SF_BANK_DETAIL: '1.0' } : { SF_BANK_DETAIL: '1.0' },
     uniforms,
     fog: true,
     transparent: true,
@@ -175,7 +175,7 @@ export function createFogBank({ sunDir, sunE, amb, ground }) {
         if (f < 0.002 || vWorld.y < -1.0) discard;
         float m = sfBankMask(vWorld.xz, f);
         if (m < 0.01) discard;
-        vec3 tg = sfBankTopD(vWorld.xz, f, uTime, 1.0);
+        vec3 tg = sfBankTopD(vWorld.xz, f, uTime, SF_BANK_DETAIL);
         vec3 n = normalize(vec3(-tg.y * 1.7, 1.0, -tg.z * 1.7));
         float sunL = clamp(dot(n, uSunDir) * 0.75 + 0.3, 0.05, 1.0);   // wrapped: light scatters through the fog top
         float trough = clamp((tg.x - 40.0) / 240.0, 0.0, 1.0);
@@ -200,6 +200,11 @@ export function createFogBank({ sunDir, sunE, amb, ground }) {
   return {
     mesh,
     uniforms,
+    /** clouds quality 'low' drops the finest billow octave */
+    setQuality(c) {
+      const v = c === 'low' ? '0.0' : '1.0';
+      if (mat.defines.SF_BANK_DETAIL !== v) { mat.defines.SF_BANK_DETAIL = v; mat.needsUpdate = true; }
+    },
     /** returns { inside (0..1), topAbove (m above the camera) } */
     update(dt, camera) {
       time += dt;

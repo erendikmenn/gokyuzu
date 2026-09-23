@@ -61,6 +61,7 @@ export function createCloudLayer(THREE, { sunDir, sunE, amb }) {
   }]);
   const mat = new THREE.ShaderMaterial({
     name: 'sf-clouds',
+    defines: { SF_CLOUD_Q: 2 },
     uniforms,
     fog: true,
     transparent: true,
@@ -86,12 +87,23 @@ export function createCloudLayer(THREE, { sunDir, sunE, amb }) {
       uniform float uTime; uniform vec3 uSunDir; uniform vec3 uSunE; uniform vec3 uAmb; uniform vec3 uCamPos;
       varying vec3 vWorld;
       ${NOISE_GLSL}
+      #ifndef SF_CLOUD_Q
+        #define SF_CLOUD_Q 2
+      #endif
       float sfCloudDens(vec2 p, float t) {
         vec2 pw = p + vec2(4.0, -1.5) * t;
-        vec2 w = vec2(sfFbm3(pw / 5200.0), sfFbm3(pw / 5200.0 + 7.7)) * 1900.0;
+      #if SF_CLOUD_Q >= 1
+        vec2 w = vec2(sfFbm3(pw / 5200.0), sfFbm3(pw / 5200.0 + 7.7)) * 1900.0;   // domain warp -> cell-like patches
+      #else
+        vec2 w = vec2(sfVNoise(pw / 5200.0), sfVNoise(pw / 5200.0 + 7.7)) * 1900.0;
+      #endif
         vec2 q = pw + w;
         float base = sfFbm3(q / 2500.0);
+      #if SF_CLOUD_Q >= 1
         float det = sfVNoise(q / 540.0) * 0.5 + sfVNoise(q / 190.0) * 0.28 + sfVNoise(q / 72.0) * 0.14;
+      #else
+        float det = sfVNoise(q / 540.0) * 0.6 + 0.18;
+      #endif
         float cov = smoothstep(0.38, 0.62, sfFbm3(p / 21000.0 + 4.0));
         return clamp((base + det * 0.6 - (1.0 - 0.22 * cov)) * 3.2, 0.0, 1.0);
       }
@@ -107,9 +119,13 @@ export function createCloudLayer(THREE, { sunDir, sunE, amb }) {
         float a = clamp(d * 0.95 + ci, 0.0, 1.0);
         a *= smoothstep(76000.0, 40000.0, dist) * smoothstep(0.0, 0.035, abs(dir.y));
         if (a < 0.003) discard;
+      #if SF_CLOUD_Q >= 2
         vec2 sdir = normalize(uSunDir.xz + 1e-5);
         float ds = sfCloudDens(p + sdir * 350.0, uTime);
         float shade = exp(-ds * 1.6);
+      #else
+        float shade = exp(-d * 1.2);
+      #endif
         float mu = dot(dir, uSunDir);
         vec3 lit;
         if (uCamPos.y < vWorld.y) {   // seen from below: dark bases, silver lining toward the sun
@@ -127,8 +143,14 @@ export function createCloudLayer(THREE, { sunDir, sunE, amb }) {
   mesh.name = 'sf-clouds';
   mesh.frustumCulled = false;
   mesh.renderOrder = 20;
+  const LEVEL = { low: 0, medium: 1, high: 2 };
   return {
     mesh,
+    /** 'low' | 'medium' | 'high' (shader variant: domain warp, detail octaves, self-shadowing) */
+    setQuality(c) {
+      const v = LEVEL[c] ?? 2;
+      if (mat.defines.SF_CLOUD_Q !== v) { mat.defines.SF_CLOUD_Q = v; mat.needsUpdate = true; }
+    },
     update(time, camera) {
       uniforms.uTime.value = time;
       uniforms.uCamPos.value.copy(camera.position);
