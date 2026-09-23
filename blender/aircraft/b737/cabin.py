@@ -63,7 +63,7 @@ def build_lining():
 
 def cabin_windows():
     wins = []
-    xs = [x for x in S.window_stations() if not (15.85 < x < 17.8)] + [16.305, 17.305]
+    xs = [x for x in S.window_stations() if not (S.OW_RANGE[0] < x < S.OW_RANGE[1])] + list(S.OW_WINDOWS)
     for side in (1, -1):
         for i, x in enumerate(xs):
             w = EXT.Window(f'cw{side}_{i}', [(x - 0.11, S.WIN_Z - 0.155), (x + 0.11, S.WIN_Z - 0.155),

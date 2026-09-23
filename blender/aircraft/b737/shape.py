@@ -386,7 +386,7 @@ F_RUDDER = (4.95, 12.22)
 def fin_station(Z):
     Z = np.asarray(Z, float)
     xle_main = 31.40 + (Z - 5.0) * math.tan(38.0 * D2R)
-    ext = np.where(Z <= 5.0, 4.6, 4.6 * np.exp(-(np.maximum(Z, 5.0) - 5.0) / 0.40))
+    ext = np.where(Z <= 5.0, 1.75, 1.75 * np.exp(-(np.maximum(Z, 5.0) - 5.0) / 0.34))
     xte = 37.62 + (Z - 5.0) * (39.25 - 37.62) / (HEIGHT - 5.0)
     T = lerp_pts([(4.3, 0.28), (5.0, 0.265), (HEIGHT, 0.105)], Z)   # max half thickness
     # rounded tip cap
@@ -456,17 +456,19 @@ WIN_Z = 3.625        # window centre height
 WIN_WH = (0.245, 0.335)
 DOORS = {           # (X_fwd, X_aft, Z_sill, height, side)  side: -1 left, +1 right
     'L1': (5.18, 6.04, 2.66, 1.83, -1), 'R1': (5.22, 5.98, 2.66, 1.65, 1),
-    'L2': (31.38, 32.22, 2.72, 1.83, -1), 'R2': (31.44, 32.20, 2.72, 1.65, 1),
-    'OW1L': (16.05, 16.56, 3.10, 0.97, -1), 'OW2L': (17.05, 17.56, 3.10, 0.97, -1),
-    'OW1R': (16.05, 16.56, 3.10, 0.97, 1), 'OW2R': (17.05, 17.56, 3.10, 0.97, 1),
+    'L2': (32.98, 33.82, 2.74, 1.80, -1), 'R2': (33.02, 33.78, 2.74, 1.62, 1),
+    'OW1L': (16.75, 17.26, 3.10, 0.97, -1), 'OW2L': (17.75, 18.26, 3.10, 0.97, -1),
+    'OW1R': (16.75, 17.26, 3.10, 0.97, 1), 'OW2R': (17.75, 18.26, 3.10, 0.97, 1),
 }
-CARGO = {'FWD': (8.35, 9.57, 1.52, 1.22, 1), 'AFT': (25.25, 26.47, 1.58, 1.22, 1)}
+CARGO = {'FWD': (8.35, 9.57, 1.52, 1.22, 1), 'AFT': (26.25, 27.47, 1.62, 1.22, 1)}
+OW_WINDOWS = (17.005, 18.005)       # window stations inside the two overwing exit hatches
+OW_RANGE = (16.55, 18.5)            # regular window stations suppressed here
 
 
 def window_stations():
     xs = []
     x = 6.95
-    while x < 30.9:
+    while x < 31.4:
         ok = True
         for k, (a, b, zs, h, side) in DOORS.items():
             if k.startswith('OW'):

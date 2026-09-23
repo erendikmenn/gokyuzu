@@ -87,13 +87,13 @@ def create(textured=True):
     M = {}
     M['fuselage'] = principled('fuselage', (0.9, 0.9, 0.9), 0.32, 0.0,
                                base='fus_base' if T else None, orm='fus_orm' if T else None,
-                               normal='fus_nrm' if T else None, coat=0.25)
+                               normal='fus_nrm' if T else None, coat=0.12)
     M['wing'] = principled('wing', (0.62, 0.64, 0.66), 0.38, 0.15,
                            base='wing_base' if T else None, orm='wing_orm' if T else None,
                            normal='wing_nrm' if T else None)
     M['tail'] = principled('tail', (0.05, 0.12, 0.3), 0.3, 0.0,
                            base='tail_base' if T else None, orm='tail_orm' if T else None,
-                           normal='tail_nrm' if T else None, coat=0.25)
+                           normal='tail_nrm' if T else None, coat=0.12)
     M['stab'] = principled('stab', (0.62, 0.64, 0.66), 0.38, 0.1,
                            base='stab_base' if T else None, orm='stab_orm' if T else None,
                            normal='stab_nrm' if T else None)
@@ -102,7 +102,7 @@ def create(textured=True):
                               normal='nac_nrm' if T else None, coat=0.25)
     M['core'] = principled('core_cowl', (0.50, 0.51, 0.52), 0.42, 0.5)
     M['pylon'] = principled('pylon', (0.80, 0.81, 0.82), 0.38, 0.05, base='pylon_base' if T else None)
-    M['fuselage_plain'] = principled('belly_paint', (0.035, 0.09, 0.22), 0.35, 0.0)
+    M['fuselage_plain'] = principled('belly_paint', (0.62, 0.64, 0.66), 0.35, 0.0)
     M['structure'] = principled('structure', (0.32, 0.34, 0.36), 0.6, 0.3)
     M['metal'] = principled('metal_bare', (0.78, 0.79, 0.8), 0.22, 1.0)
     M['metal_dark'] = principled('metal_dark', (0.18, 0.18, 0.19), 0.45, 0.8, double=True)

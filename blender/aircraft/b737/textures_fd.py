@@ -329,18 +329,18 @@ def paint_cabin_swatches(pa):
     w, h = x1 - x0, y1 - y0
     yy, xx = np.mgrid[0:h, 0:w]
     weave = ((xx // 3 + yy // 3) % 2).astype(np.float32)
-    base = np.array((22, 44, 96), np.float32)
+    base = np.array((40, 44, 58), np.float32)
     col = base[None, None] * (0.9 + 0.08 * weave[..., None] + 0.08 * noise_img(w, h, 16, 1)[..., None])
     stripe = (np.abs(yy - h * 0.7) < 3)
-    col[stripe] = (230, 130, 30)
+    col[stripe] = (200, 16, 46)
     pa.base.paste(Image.fromarray(np.clip(col, 0, 255).astype(np.uint8)), (x0, y0))
     pa.dr.rectangle(SWATCH['cab_fabric'], fill=235)
     # headrest cover: off-white with a small orange sun mark
     x0, y0, x1, y1 = SWATCH['cab_head']
     pa.db.rectangle(SWATCH['cab_head'], fill=(236, 234, 228))
     cx, cy = (x0 + x1) // 2, (y0 + y1) // 2
-    pa.db.ellipse([cx - 40, cy - 40, cx + 40, cy + 40], fill=(243, 132, 28))
-    pa.db.arc([cx - 60, cy - 20, cx + 30, cy + 70], 200, 330, fill=(245, 246, 248), width=10)
+    pa.db.ellipse([cx - 40, cy - 40, cx + 40, cy + 40], fill=(200, 16, 46))
+    pa.db.ellipse([cx - 30, cy - 30, cx + 30, cy + 30], fill=(245, 246, 248))
     pa.dr.rectangle(SWATCH['cab_head'], fill=230)
     # carpet
     x0, y0, x1, y1 = SWATCH['cab_carpet']

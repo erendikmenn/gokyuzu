@@ -351,6 +351,7 @@ def hide_interior(h=True):
 
 def place_aircraft(pitch_deg=0.0, lift=0.0, pivot_y=None):
     """Rotate the whole aircraft (all root objects) about a lateral axis through the main gear contact."""
+    bpy.context.view_layer.update()          # set_pose() changed matrix_basis: refresh world matrices first
     py = S.X_CG - S.MG_X if pivot_y is None else pivot_y
     piv = Vector((0, py, GROUND_Z))
     R = Matrix.Translation(piv + Vector((0, 0, lift))) @ Matrix.Rotation(pitch_deg * D, 4, 'X') @ Matrix.Translation(-piv)
@@ -380,12 +381,19 @@ def finish(name, w, h, samples):
     sc.cycles.adaptive_threshold = 0.02
     sc.cycles.max_bounces = 10
     sc.cycles.transparent_max_bounces = 16
-    sc.view_settings.view_transform = 'AgX'
-    sc.view_settings.look = 'AgX - Medium High Contrast'
+    vt = arg('--view', 'Khronos PBR Neutral')
+    try:
+        sc.view_settings.view_transform = vt
+        sc.view_settings.look = 'None'
+    except TypeError:
+        sc.view_settings.view_transform = 'AgX'
+        sc.view_settings.look = 'AgX - Medium High Contrast'
     try:
         sc.cycles.denoiser = 'OPENIMAGEDENOISE'
     except Exception:
         pass
+    if arg('--exposure') is not None:
+        sc.view_settings.exposure = float(arg('--exposure'))
     if arg('--out') and name != 'custom':
         name = arg('--out')
     path = os.path.join(OUT, f'{name}.png')
@@ -462,6 +470,17 @@ def shot(name, samples):
         cam((0.18, S.X_CG - X, S.FLOOR_Z - S.Z_CG + 1.62), (-0.15, S.X_CG - 22.0, S.FLOOR_Z - S.Z_CG + 0.95), 18)
         bpy.context.scene.view_settings.exposure = float(arg('--exposure', 0.3))
         return finish('cabin', int(1920 * scale), int(1080 * scale), samples)
+    if name == 'jfe':
+        # same viewpoint as the reference photo b738_TC-JFE_MUC.jpg: climbing out, seen from below-right
+        pose(flaps=float(arg('--flaps', 0.0)), gear=0.0)
+        piston_extend(1.0)
+        place_aircraft(pitch_deg=float(arg('--pitch', 13.0)), lift=0.0, pivot_y=0.0)
+        hide_interior(True)
+        glass_for_render(False)
+        world_sky(float(arg('--sunel', 38)), float(arg('--az', 60)), float(arg('--sky', 0.5)))
+        f = lambda k, d: tuple(float(x) for x in arg(k, d).split(','))
+        c = cam(f('--cam', '183,32,-75'), f('--tgt', '0,0.5,0.8'), float(arg('--lens', 150)))
+        return finish(arg('--out', 'cmp_jfe'), int(arg('--w', 1920)), int(arg('--h', 1080)), samples)
     if name == 'custom':
         f = lambda k, d: tuple(float(x) for x in arg(k, d).split(','))
         pose(flaps=float(arg('--flaps', 0)), gear=float(arg('--gear', 1)), spoilers=float(arg('--spoilers', 0)),
