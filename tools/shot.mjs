@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 // Headless screenshot + console check.
-// Usage: node tools/shot.mjs <url-path> <out.png> [--wait ms] [--hold KeyW:2000,ShiftLeft:1500] [--eval "js expr"] [--click] [--size 1920x1080] [--swiftshader]
+// Usage: node tools/shot.mjs <url-path> <out.png> [--wait ms] [--hold KeyW:2000,ShiftLeft:1500] [--eval "js expr"] [--click] [--size 1920x1080] [--swiftshader] [--webkit]
 //   Renders on the real Apple GPU (ANGLE/Metal) by default, so fps readings are meaningful. --swiftshader forces software GL.
 //   url-path is relative to http://localhost:5173/ (e.g. "index.html" or "dev/models.html").
 //   --click   clicks the page center first (dismisses the start overlay in index.html).
 //   --hold    presses keys in sequence, each held for the given ms (KeyboardEvent.code names).
 //   --eval    evaluates an expression in the page at the end and prints the JSON result.
-import { chromium } from 'playwright';
+import { chromium, webkit } from 'playwright';
 
 const args = process.argv.slice(2);
 if (args.length < 2) {
@@ -24,7 +24,8 @@ const [vw, vh] = (opt('--size') || '1440x900').split('x').map(Number);
 const gpuArgs = args.includes('--swiftshader')
   ? ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist']
   : ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist'];
-const browser = await chromium.launch({ args: gpuArgs });
+// --webkit runs Safari's engine (WebKit) instead of Chromium, to check Safari compatibility
+const browser = args.includes('--webkit') ? await webkit.launch() : await chromium.launch({ args: gpuArgs });
 const page = await browser.newPage({ viewport: { width: vw, height: vh } });
 const problems = [];
 page.on('console', (m) => { if ((m.type() === 'error' || m.type() === 'warning') && !/GL Driver Message|GPU stall/.test(m.text())) problems.push(`[console.${m.type()}] ${m.text()}`); });
