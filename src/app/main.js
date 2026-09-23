@@ -275,5 +275,17 @@ function adaptResolution(fps, span) {
   state.pixelRatio = pixelRatio;
 }
 
+// Build stamp (dist/build.json, written by the publish build): a clear ribbon on staging so it is never mistaken for live.
+fetch('build.json', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).then((b) => {
+  if (!b) return;
+  state.build = b;
+  if (b.target === 'staging') {
+    const tag = document.createElement('div');
+    tag.textContent = `STAGING · ${b.version}`;
+    tag.style.cssText = 'position:fixed;right:10px;bottom:10px;z-index:50;padding:4px 10px;border-radius:6px;background:#f2801a;color:#111;font:600 12px -apple-system,sans-serif;pointer-events:none;opacity:.9';
+    document.body.append(tag);
+  }
+}).catch(() => {});
+
 requestAnimationFrame(frame);
 start().catch((e) => { console.error(e); hud.showMessage(`Hata: ${e.message}`, 10000); });

@@ -4,6 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { execSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -80,6 +81,16 @@ if (withGallery) {
     fs.unlinkSync(manPath);
     fs.writeFileSync(manPath, JSON.stringify(man));
   }
+}
+
+// Build stamp: shown in the game (STAGING ribbon on staging) and used for support/rollback.
+{
+  const git = (c) => { try { return execSync(`git ${c}`, { cwd: root }).toString().trim(); } catch { return ''; } };
+  const stamp = {
+    version: git('describe --tags --always --dirty'), commit: git('rev-parse --short HEAD'), branch: git('branch --show-current'),
+    builtAt: new Date().toISOString(), target: process.env.DEPLOY_TARGET || 'local',
+  };
+  fs.writeFileSync(path.join(dist, 'build.json'), JSON.stringify(stamp));
 }
 
 console.log(`dist/: ${files} files, ${(bytes / 1e9).toFixed(2)} GB`);
