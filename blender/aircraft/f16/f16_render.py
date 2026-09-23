@@ -130,31 +130,6 @@ def context_props():
         o.rotation_euler = (math.radians(90), 0, 0)
         o.scale = (1.0, 0.55, 1.0)
         o.data.materials.append(hm)
-    # hills: ring of displaced terrain at 2-3 km, bluish haze colour
-    import numpy as np
-    rng = np.random.default_rng(5)
-    n = 256
-    ang = np.linspace(0, 2 * math.pi, n, endpoint=False)
-    hts = np.zeros(n)
-    for k, a in ((3, 90), (7, 45), (13, 20), (29, 8)):
-        hts += a * np.sin(ang * k + rng.random() * 6.28)
-    hts = np.maximum(hts + 60, 5)
-    verts, faces = [], []
-    for i, a in enumerate(ang):
-        r0, r1 = 2400.0, 3200.0
-        verts.append((r0 * math.cos(a), r0 * math.sin(a), -CG_Z - 1))
-        verts.append((r1 * math.cos(a), r1 * math.sin(a), -CG_Z + hts[i]))
-    for i in range(n):
-        j = (i + 1) % n
-        faces.append((2 * i, 2 * j, 2 * j + 1, 2 * i + 1))
-    me = bpy.data.meshes.new('hills'); me.from_pydata(verts, [], faces)
-    ho = bpy.data.objects.new('hills', me); bpy.context.scene.collection.objects.link(ho)
-    hmm = bpy.data.materials.new('hills')
-    hmm.use_nodes = True
-    b = hmm.node_tree.nodes.get('Principled BSDF')
-    b.inputs['Base Color'].default_value = (0.33, 0.36, 0.40, 1)
-    b.inputs['Roughness'].default_value = 1.0
-    ho.data.materials.append(hmm)
 
 
 def chocks_and_props():
@@ -262,8 +237,8 @@ def ab_flame(strength=1.0, L=4.2, r0=0.46, r1=0.20):
     gm.use_nodes = True
     b = gm.node_tree.nodes.get('Principled BSDF')
     b.inputs['Base Color'].default_value = (0, 0, 0, 1)
-    b.inputs['Emission Color'].default_value = (1.0, 0.45, 0.16, 1)
-    b.inputs['Emission Strength'].default_value = 2.2 * strength
+    b.inputs['Emission Color'].default_value = (1.0, 0.38, 0.10, 1)
+    b.inputs['Emission Strength'].default_value = 0.9 * strength
     g.data.materials.append(gm)
     ld = bpy.data.lights.new('ab_light', 'POINT')
     ld.energy = 400 * strength

@@ -49,7 +49,8 @@ async function start() {
   const runways = await loader.loadJSON('data/sf/runways.json');
   const spawns = buildSpawns(runways);
   let choice;
-  if (params.get('aircraft')) choice = { aircraftId: params.get('aircraft'), spawnId: params.get('spawn') || AIRCRAFT.find((a) => a.id === params.get('aircraft')).defaultSpawn };
+  const direct = AIRCRAFT.find((a) => a.id === params.get('aircraft'));   // ?aircraft=<id>&spawn=<id> skips the menu
+  if (direct) choice = { aircraftId: direct.id, spawnId: spawns.some((s) => s.id === params.get('spawn')) ? params.get('spawn') : direct.defaultSpawn };
   else choice = await createMenu(uiRoot, { aircraft: AIRCRAFT, spawns });
   audio.start();
   const spawn = spawns.find((s) => s.id === choice.spawnId) || spawns[0];
@@ -73,7 +74,13 @@ async function loadAircraft(id) {
   const def = await loadAircraftDefinition(id);
   const gltf = def.model.url ? await loader.loadGLTF(def.model.url) : null;
   const rig = def.createRig(gltf ? gltf.scene : null);
-  rig.object.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  rig.object.traverse((o) => {
+    if (!o.isMesh) return;
+    // glass, plumes and other see-through materials neither cast shadows nor darken the cockpit
+    const seeThrough = [].concat(o.material).some((m) => m && (m.transparent || m.transmission > 0 || m.blending === THREE.AdditiveBlending));
+    o.castShadow = !seeThrough;
+    o.receiveShadow = true;
+  });
   if (state.rig) scene.remove(state.rig.object);
   scene.add(rig.object);
   // dim flight-deck flood light (always present so the light count never changes; only lit in cockpit view)
