@@ -15,7 +15,6 @@ import { openSettings, openCredits, qualityHintSeen, markQualityHintSeen, qualit
 import { explainCrash } from './hints.js';
 import { loadSettings, saveSettings } from '../core/settings.js';
 import { goToMenu } from '../core/leave.js';
-import { mountPauseMusic } from '../music/ui.js';   // music hook (src/music)
 
 const MONO = 'ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace';
 const SANS = '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif';
@@ -322,7 +321,6 @@ export function createHUD(container) {
   const menuBtn = el('button', 'gkh-pbtn', pbtns);
   menuBtn.append('Ana menü');
   const credLink = el('button', 'gkh-plink', pause, 'Künye');
-  mountPauseMusic(pause, credLink);   // music hook: on/off, current track, next (src/music/ui.js)
   const pinfo = el('div', 'gkh-pinfo', pause);
   let pauseCode = 'KeyP', helpCode = 'F1';
   resumeBtn.addEventListener('click', () => pressKey(pauseCode));

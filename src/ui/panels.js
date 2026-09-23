@@ -8,7 +8,6 @@ import { shared } from './shared.js';
 import { loadSettings, saveSettings, DEFAULT_SETTINGS } from '../core/settings.js';
 import { QUALITY, QUALITY_ORDER, detectQuality } from '../core/quality.js';
 import { resetTutorials } from './tutorial.js';
-import { mountNowPlaying, musicPreview } from '../music/ui.js';   // music hook (src/music)
 
 export const CREDITS_LINE = 'Harita verisi © OpenStreetMap katkıcıları (ODbL) · Arazi ve hava fotoğrafları: USGS 3DEP, USDA NAIP · Batimetri: NOAA · Bina verisi: DataSF · Three.js (MIT) · B612 font (OFL)';
 export const DISCLAIMER = 'Bu ücretsiz, ticari olmayan bir hayran projesidir. Turkish Airlines, Airbus, Boeing, Lockheed Martin, General Dynamics ve Sikorsky ile hiçbir bağlantısı yoktur; isimler ve boyalar yalnızca tanımlayıcı amaçla kullanılmıştır.';
@@ -25,7 +24,6 @@ const VOLUMES = [
   ['voice', 'Sesli uyarılar'],
   ['atc', 'Telsiz (ATC)'],
   ['ambient', 'Ortam'],
-  ['music', 'Müzik'],   // soundtrack (src/music)
 ];
 const HUD_MODES = [['full', 'Tam'], ['compact', 'Sade'], ['off', 'Kapalı']];
 
@@ -228,10 +226,6 @@ export function openSettings(container) {
     r.addEventListener('input', () => { s.volumes[key] = Number(r.value) / 100; show(); commit(); });
     sliders[key] = { r, show };
   }
-  // music hook (src/music): soundtrack on/off per context + current track with "next"
-  const musMenu = toggle(a, 'Menüde müzik', 'Ana menüde ve yüklenirken çalar', s.musicMenu !== false, (v) => { s.musicMenu = v; commit(); });
-  const musFlight = toggle(a, 'Uçuşta müzik', 'Uçarken arka planda çalar, uyarılar sırasında kısılır', s.musicFlight === true, (v) => { s.musicFlight = v; if (v) musicPreview(); commit(); });
-  mountNowPlaying(a);
 
   // controls
   const c = el('div', 'gkp-sec', m.card);
@@ -260,12 +254,10 @@ export function openSettings(container) {
   okb.addEventListener('click', m.close);
   reset.addEventListener('click', () => {
     s = { ...s, quality: auto, volumes: { ...DEFAULT_SETTINGS.volumes }, invertPitch: DEFAULT_SETTINGS.invertPitch, atc: DEFAULT_SETTINGS.atc, tutorial: DEFAULT_SETTINGS.tutorial, hudMode: null };
-    s.musicMenu = DEFAULT_SETTINGS.musicMenu !== false; s.musicFlight = DEFAULT_SETTINGS.musicFlight === true;   // music hook
     commit();
     qs.set(s.quality); updateNote();
     for (const [key, { r, show }] of Object.entries(sliders)) { r.value = String(Math.round((s.volumes[key] ?? 1) * 100)); show(); }
     inv.set(s.invertPitch); if (atc) atc.set(s.atc); tut.set(s.tutorial !== false); hud.set('compact');
-    musMenu.set(s.musicMenu); musFlight.set(s.musicFlight);   // music hook
   });
   return m.done;
 }
