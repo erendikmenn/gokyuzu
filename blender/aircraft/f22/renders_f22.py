@@ -320,7 +320,7 @@ def render(ctx, which='all', samples=128):
         sky(18, 35, 0.25, 3.4)
         flight(True)
         import cockpit as CK
-        e = Vector((CK.EYE[0], Y(CK.EYE[1]), CK.EYE[2]))
+        e = Vector((CK.EYE_REAL[0], Y(CK.EYE_REAL[1]), CK.EYE_REAL[2]))
         pl = bpy.data.objects.get('pilot')
         if pl:
             pl.hide_render = True

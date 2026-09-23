@@ -8,8 +8,8 @@ import bmesh
 from mathutils import Vector, Matrix
 
 import geom as G
-from geom import Y
 import cockpit as CK
+from cockpit import Y
 
 
 def ellipsoid(bm, c, r, seg=16, rings=10, rot=None):
@@ -68,13 +68,13 @@ def orient_out(bm):
 
 def build_pilot(uvh, material):
     ex, es, ez = CK.EYE
-    E = Vector((ex, Y(es), ez))
+    E = Vector((ex, Y(es), ez + CK.DZ))
     back = Vector((0, -math.sin(math.radians(15)), math.cos(math.radians(15))))   # up along the seat back
     fwd = Vector((0, 1, 0))
     parts = {}
 
     def P(x, s, z):
-        return Vector((x, Y(s), z))
+        return Vector((x, Y(s), z + CK.DZ))
 
     # --- flight suit (sage): torso, arms, legs
     suit = bmesh.new()

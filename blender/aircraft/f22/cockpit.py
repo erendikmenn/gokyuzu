@@ -12,13 +12,31 @@ import bmesh
 from mathutils import Vector, Matrix
 
 import geom as G
-from geom import Y, lerp
+from geom import lerp
 import shape as S
+
+# The cockpit is authored in its own station frame; it sits DS metres forward of that frame and DZ lower
+# (fitted under the canopy of the USAF 3-view).  Y() maps cockpit stations to world y.
+DS = 0.35
+DZ = -0.10
+
+
+def Y(s):
+    return G.Y(s - DS)
+
+
+def can_x(c):
+    return S.can_x(c - DS)
+
+
+def can_zs(c):
+    return S.can_zs(c - DS)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.abspath(os.path.join(HERE, '..', '..', '..', 'assets', 'aircraft', 'f22', 'src'))
 
-EYE = (0.0, 4.80, 0.90)      # (x, s, z)
+EYE = (0.0, 4.80, 0.90)      # (x, s, z) in cockpit coordinates
+EYE_REAL = (0.0, 4.80 - DS, 0.90 + DZ)   # world station / height
 
 # instrument panel frame
 PAN_O = Vector((0.0, Y(4.18), -0.10))
@@ -123,8 +141,8 @@ def build_cockpit(mats):
         for sign in (1, -1):
             rows = []
             for s in ss:
-                xw = max(0.30, S.can_x(min(max(s, S.S_CAN0 + 0.05), S.S_CAN1 - 0.05)) - 0.012)
-                zt = S.can_zs(s) - 0.005
+                xw = max(0.30, can_x(min(max(s, (S.S_CAN0 + DS) + 0.05), (S.S_CAN1 + DS) - 0.05)) - 0.012)
+                zt = can_zs(s) - 0.005 - DZ
                 rows.append([(sign * min(xw, 0.49), Y(s), -0.33), (sign * min(xw, 0.49), Y(s), zt - 0.12),
                              (sign * (xw + 0.004), Y(s), zt)])
             Gw = np.array(rows)
@@ -145,11 +163,11 @@ def build_cockpit(mats):
     add(bm)
 
     def bulkhead(bm):
-        xh = S.can_x(5.40) - 0.02
+        xh = can_x(5.40) - 0.02
         G.bm_box(bm, (0, Y(5.40), 0.19), (2 * xh, 0.03, 1.05))
         # deck bridging to the turtle deck behind
-        xd = S.can_x(5.52) - 0.02
-        G.bm_box(bm, (0, Y(5.52), 0.705), (2 * xd, 0.26, 0.02))
+        xd = can_x(5.52) - 0.02
+        G.bm_box(bm, (0, Y(5.52), 0.705 - DZ), (2 * xd, 0.26, 0.02))
     add(part(uvh, bulkhead, 'wall'))
 
     # ------------------------------------------------------------------ side consoles
@@ -266,7 +284,7 @@ def build_cockpit(mats):
         rows_t, rows_b = [], []
         for s in ss:
             t = (s - 3.50) / 0.495
-            xh = min(lerp(0.29, 0.43, t ** 0.8), S.can_x(max(s, S.S_CAN0 + 0.08)) - 0.03)
+            xh = min(lerp(0.29, 0.43, t ** 0.8), can_x(max(s, (S.S_CAN0 + DS) + 0.08)) - 0.03)
             z0 = lerp(0.545, 0.525, t)
             crown = 0.035
             rt, rb = [], []
@@ -323,7 +341,7 @@ def build_cockpit(mats):
         for sign in (1, -1):
             pts = []
             for s in np.linspace(3.25, 6.9, 30):
-                pts.append(Vector((sign * (S.can_x(s) - 0.02), Y(s), S.can_zs(s) - 0.015)))
+                pts.append(Vector((sign * (can_x(s) - 0.02), Y(s), can_zs(s) - 0.015 - DZ)))
             for a, b in zip(pts[:-1], pts[1:]):
                 G.bm_cylinder(bm, a, b, 0.018, seg=8, cap0=False, cap1=False)
     add(part(uvh, rails, 'metal'))
@@ -351,15 +369,15 @@ def build_cockpit(mats):
         # back frame, catapult tube, guide rails
         rbox(bm, SB(0.45, -0.07), (0.46, 0.06, 0.95), rot=rotB, bevel=0.015)
         for sx in (-1, 1):
-            rbox(bm, SB(0.58, -0.13, sx * 0.165), (0.045, 0.05, 1.32), rot=rotB, bevel=0.008)
+            rbox(bm, SB(0.55, -0.13, sx * 0.165), (0.045, 0.05, 1.24), rot=rotB, bevel=0.008)
         G.bm_cylinder(bm, SB(-0.1, -0.12), SB(0.95, -0.12), 0.035, seg=12)
         # headbox (parachute container): slightly wider at the top, rounded
         rbox(bm, SB(0.93, -0.05), (0.38, 0.20, 0.16), rot=rotB, bevel=0.03, segs=3)
-        rbox(bm, SB(1.08, -0.06), (0.41, 0.22, 0.16), rot=rotB, bevel=0.04, segs=3)
+        rbox(bm, SB(1.04, -0.06), (0.41, 0.22, 0.13), rot=rotB, bevel=0.035, segs=3)
         # drogue gun + canopy breakers on top
-        G.bm_cylinder(bm, SB(1.13, -0.10, 0.13), SB(1.19, -0.10, 0.13), 0.032, seg=12)
+        G.bm_cylinder(bm, SB(1.08, -0.10, 0.13), SB(1.12, -0.10, 0.13), 0.03, seg=12)
         for sx in (-1, 1):
-            G.bm_cylinder(bm, SB(1.14, 0.02, sx * 0.12), SB(1.2, 0.02, sx * 0.12), 0.012, 0.004, seg=8)
+            G.bm_cylinder(bm, SB(1.09, 0.02, sx * 0.12), SB(1.12, 0.02, sx * 0.12), 0.012, 0.004, seg=8)
         # inertia reel housing / shoulder harness outlet
         rbox(bm, SB(0.84, 0.02), (0.18, 0.05, 0.05), rot=rotB, bevel=0.01, segs=1)
         # emergency oxygen bottle (left side of the seat)
@@ -473,6 +491,8 @@ def build_cockpit(mats):
         G.smooth_sharp(bm, 35)
         bm.to_mesh(ob.data)
         bm.free()
+    for ob in objs.values():
+        ob.location.z += DZ
     interior = G.empty('interior', (0, 0, 0), size=0.5)
     for ob in objs.values():
         G.set_parent(ob, interior)

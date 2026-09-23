@@ -140,7 +140,7 @@ def build_all(bake=False):
     for f in fb.faces:
         f.material_index = 1
     G.join_bm(cb, fb)
-    ctx.canopy = G.pivot_object('canopy', cb, (0, Y(7.52), 0.70), (1, 0, 0), (0, 0, 1),
+    ctx.canopy = G.pivot_object('canopy', cb, (0, Y(S.S_CAN1 + 0.12), S.can_zs(S.S_CAN1) - 0.06), (1, 0, 0), (0, 0, 1),
                                 materials=[m['glass'], skin])
     # ---------------- gear
     gear = D.build_gear([m['gear'], m['tire'], m['hub'], m['skin'], m['chrome'], m['lens']])
@@ -184,12 +184,12 @@ def add_empties(ctx):
     import details as D
     E = {}
     import cockpit as CK
-    E['eye_pilot'] = G.empty('eye_pilot', (CK.EYE[0], Y(CK.EYE[1]), CK.EYE[2]))
+    E['eye_pilot'] = G.empty('eye_pilot', (CK.EYE_REAL[0], Y(CK.EYE_REAL[1]), CK.EYE_REAL[2]))
     E['contact_nose'] = G.empty('contact_nose', (0, Y(D.NOSE_AXLE[1]), S.Z_GROUND))
     E['contact_main_L'] = G.empty('contact_main_L', (-D.MAIN_AXLE[0], Y(D.MAIN_AXLE[1]), S.Z_GROUND))
     E['contact_main_R'] = G.empty('contact_main_R', (D.MAIN_AXLE[0], Y(D.MAIN_AXLE[1]), S.Z_GROUND))
-    E['engine_1'] = G.empty('engine_1', (-D.NOZ_XC, Y(13.2), -0.02))
-    E['engine_2'] = G.empty('engine_2', (D.NOZ_XC, Y(13.2), -0.02))
+    E['engine_1'] = G.empty('engine_1', (-D.NOZ_XC, Y(12.3), -0.05))
+    E['engine_2'] = G.empty('engine_2', (D.NOZ_XC, Y(12.3), -0.05))
     E['nozzle_1'] = G.empty('nozzle_1', (-D.NOZ_XC, Y(D.EXIT_S), -0.01))
     E['nozzle_2'] = G.empty('nozzle_2', (D.NOZ_XC, Y(D.EXIT_S), -0.01))
     for name, (x, s_, z) in D.LIGHTS.items():
@@ -271,9 +271,9 @@ def preview(ctx, out_dir, views=None):
         'gear': ((4.5, 3.0, -1.6), (0, 2.0, -1.2), 'PERSP', 30),
         'ngear': ((-2.0, 7.2, -1.3), (0, 5.1, -1.35), 'PERSP', 32),
         'mgear': ((4.2, 1.8, -1.5), (1.5, -0.9, -1.25), 'PERSP', 32),
-        'cockpit': ((0, 10.1 - 4.80, 0.90), (0, 10.1 - 3.8, 0.55), 'PERSP', 16),
-        'cockpit_l': ((0, 10.1 - 4.80, 0.90), (-0.6, 10.1 - 4.5, 0.2), 'PERSP', 14),
-        'cockpit_ext': ((1.6, 10.1 - 3.2, 2.2), (0, 10.1 - 4.6, 0.3), 'PERSP', 30),
+        'cockpit': ((0, 10.1 - 4.45, 0.80), (0, 10.1 - 3.45, 0.45), 'PERSP', 16),
+        'cockpit_l': ((0, 10.1 - 4.45, 0.80), (-0.6, 10.1 - 4.15, 0.1), 'PERSP', 14),
+        'cockpit_ext': ((1.6, 10.1 - 2.85, 2.1), (0, 10.1 - 4.25, 0.2), 'PERSP', 30),
     }
     V = {k: ALL[k] for k in views} if views else {k: ALL[k] for k in ('side', 'top', 'front', 'rear', 'bottom', 'q_front', 'q_rear', 'q_low', 'nose')}
     for name, (loc, tgt, kind, lens) in V.items():

@@ -16,14 +16,14 @@ import shape as S
 # vertical tails (canted 28 deg outboard) + all-moving... (F-22: fixed fin + large rudder)
 # ==============================================================================================
 FIN_CANT = math.radians(28.0)
-FIN_X0, FIN_Z0 = 1.62, 0.36          # root reference line
-FIN_S_LE0, FIN_S_TE0 = 13.00, 17.00  # root chord at h = 0
-FIN_H = 2.93                         # span along the cant
-FIN_TAN_LE = math.tan(math.radians(26.0))
-FIN_TAN_TE = math.tan(math.radians(17.0))
+FIN_X0, FIN_Z0 = 1.52, 0.20          # root reference line (tail-boom top)
+FIN_S_LE0, FIN_S_TE0 = 13.24, 17.41  # root chord at h = 0 (USAF 3-view)
+FIN_H = 3.10                         # span along the cant (tip 5.09 m above ground)
+FIN_TAN_LE = 0.413                   # 22.4 deg
+FIN_TAN_TE = 0.519                   # 27.4 deg (tip chord 1.28 m)
 FIN_TC = 0.042
 RUD_V = 0.68                         # rudder hinge chord fraction
-RUD_H0, RUD_H1 = 0.10, 1.95
+RUD_H0, RUD_H1 = 0.10, 2.05
 
 
 def fin_frame(sign):
@@ -117,21 +117,23 @@ def build_fin(sign, mats):
 # ==============================================================================================
 # stabilators
 # ==============================================================================================
-STAB_X0, STAB_X1 = 1.98, 4.42
-STAB_XK = 2.80
+STAB_X0, STAB_X1 = 1.98, 4.44
+STAB_XK = 2.87
 STAB_Z = 0.02
 STAB_TC = 0.035
-STAB_PIVOT_S = 16.72
+STAB_PIVOT_S = 16.70
 
 
 def stab_le(x):
-    return 15.26 + S.TAN_LE * (x - 1.75)
+    # 42.9 deg LE through (2.97, 15.79) and (4.44, 17.18); kinked near the root to clear the flaperon TE
+    le = 14.85 + 0.946 * (x - 1.98)
+    return max(le, S.w_te(max(x, S.X_ROOT)) + 0.15)
 
 
 def stab_te(x):
     if x >= STAB_XK:
-        return 18.41 + S.TAN_TE * (4.42 - x)
-    return 18.905 - S.TAN_LE * (STAB_XK - x)
+        return 18.41 + 0.312 * (STAB_X1 - x)
+    return 18.90 - 1.056 * (STAB_XK - x)
 
 
 def stab_pt(x, v, upper):
@@ -144,7 +146,7 @@ def stab_pt(x, v, upper):
 
 def build_stab(sign, mats):
     sfx = 'R' if sign > 0 else 'L'
-    xs = sorted(set([round(v, 5) for v in list(np.linspace(STAB_X0, STAB_XK, 7)) + list(np.linspace(STAB_XK, STAB_X1, 14))]))
+    xs = sorted(set([round(v, 5) for v in list(np.linspace(STAB_X0, STAB_XK, 9)) + list(np.linspace(STAB_XK, STAB_X1, 14))]))
     vs = [0, 0.0015, 0.005, 0.011, 0.02, 0.032, 0.047, 0.065, 0.09, 0.12, 0.16, 0.2, 0.25, 0.3, 0.36, 0.42, 0.48,
           0.54, 0.6, 0.66, 0.72, 0.78, 0.84, 0.89, 0.93, 0.965, 1.0]
     U = np.array([[(sign * p[0], Y(p[1]), p[2]) for p in (stab_pt(x, v, True) for v in vs)] for x in xs])
@@ -179,19 +181,19 @@ def build_stab(sign, mats):
 # ==============================================================================================
 # tail booms
 # ==============================================================================================
-BOOM_S0, BOOM_S1 = 16.55, 18.36
+BOOM_S0, BOOM_S1 = 15.60, 18.05
 
 
 def boom_section(s):
     """Faceted boom section (right side) as list of (x, z): matches the fuselage corner at S_END, then a flat wedge."""
     t = smoothstep(S.S_END, BOOM_S1, s)
-    xo = lerp(1.965, 1.80, t)
+    xo = lerp(2.0, 1.80, t)
     xi = lerp(1.30, 1.50, t)
-    zm = lerp(-0.03, 0.04, t)
-    ht = lerp(0.40, 0.025, t ** 0.85)
-    hb = lerp(0.40, 0.025, t ** 0.7)
+    zm = lerp(-0.10, 0.03, t)
+    ht = lerp(0.30, 0.025, t ** 0.85)
+    hb = lerp(0.34, 0.025, t ** 0.7)
     zt, zb = zm + ht, zm - hb
-    cht, chb = lerp(0.11, 0.012, t), lerp(0.09, 0.012, t)
+    cht, chb = lerp(0.09, 0.012, t), lerp(0.08, 0.012, t)
     return [(xi + 0.03, zt), (xo - cht * 1.5, zt), (xo, zt - cht), (xo, zb + chb),
             (xo - chb * 1.5, zb), (xi + 0.03, zb), (xi, zb + chb), (xi, zt - cht)]
 
@@ -629,14 +631,14 @@ def cut_doors(bm, mats, depth_fn):
             nrm = Vector((-d.y, d.x, 0)).normalized()
             mid = (a + b) / 2
             rad = d.length / 2 + 0.35
-            faces = [f for f in bm.faces if f.normal.z < -0.2 and
+            faces = [f for f in bm.faces if f.normal.z < -0.2 and f.calc_center_median().z < -0.6 and
                      (Vector((f.calc_center_median().x, f.calc_center_median().y, 0)) - mid).length < rad + 0.3]
             if not faces:
                 continue
             geom = list({v for f in faces for v in f.verts}) + list({e for f in faces for e in f.edges}) + faces
             bmesh.ops.bisect_plane(bm, geom=geom, dist=1e-6, plane_co=a, plane_no=nrm)
         bm.faces.ensure_lookup_table()
-        inside = [f for f in bm.faces if f.normal.z < -0.2 and
+        inside = [f for f in bm.faces if f.normal.z < -0.2 and f.calc_center_median().z < -0.6 and
                   _pip((f.calc_center_median().x, f.calc_center_median().y), poly_s)]
         if not inside:
             print('[f22] door cut found no faces for', name)
@@ -755,13 +757,13 @@ def _strip(bm, pts, normal, width, up=None):
 
 LIGHTS = {
     # name: (x, s, z)
-    'light_nav_L': (-(S.X_TIP - 0.05), 12.45, -0.28),
-    'light_nav_R': ((S.X_TIP - 0.05), 12.45, -0.28),
-    'light_strobe_L': (-(S.X_TIP - 0.03), 13.55, -0.27),
-    'light_strobe_R': ((S.X_TIP - 0.03), 13.55, -0.27),
+    'light_nav_L': (-(S.X_TIP - 0.05), 12.66, -0.27),
+    'light_nav_R': ((S.X_TIP - 0.05), 12.66, -0.27),
+    'light_strobe_L': (-(S.X_TIP - 0.03), 13.55, -0.26),
+    'light_strobe_R': ((S.X_TIP - 0.03), 13.55, -0.26),
     'light_tail': (1.66, BOOM_S1 - 0.02, 0.05),
-    'light_beacon_top': (0.0, 9.6, 0.72),
-    'light_beacon_bottom': (0.0, 9.2, -1.12),
+    'light_beacon_top': (0.0, 9.6, 0.585),
+    'light_beacon_bottom': (0.0, 9.2, -1.055),
 }
 
 

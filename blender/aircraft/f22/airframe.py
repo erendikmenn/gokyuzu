@@ -114,7 +114,7 @@ def build_duct(fus, side, mat_index=0):
     n = len(loop)
     ts = G.arc_params(np.vstack([loop, loop[:1]]))[:-1]
     # engine face ring: rounded square centred at (0.66, -0.34) at s = 9.4
-    ef_c = np.array([0.66 * sign, Y(9.4), -0.34])
+    ef_c = np.array([0.62 * sign, Y(10.6), -0.22])
     ring = []
     for t in ts:
         a = 2 * math.pi * t + math.pi * 0.75
@@ -142,6 +142,7 @@ def build_duct(fus, side, mat_index=0):
         t = k / nsteps
         tt = t * t * (3 - 2 * t)
         r = inset + (ring - inset) * tt
+        r = r + np.array([0.16 * sign, 0.0, -0.10]) * math.sin(math.pi * t) ** 1.5
         rows.append(r)
     Gd = np.array(rows)
     bm = bmesh.new()
@@ -151,7 +152,7 @@ def build_duct(fus, side, mat_index=0):
     # orient: duct faces must point inward (towards the duct axis)
     def ref(c):
         s = Y(0) - c.y
-        t = min(1, max(0, (s - 6.0) / 3.4))
+        t = min(1, max(0, (s - 5.3) / 5.3))
         ax = cen + (ef_c - cen) * t
         return Vector((ax[0] - c.x, ax[1] - c.y, ax[2] - c.z))
     G.orient_faces(bm, ref, [f for f in bm.faces if f.material_index == 0])
@@ -214,7 +215,7 @@ def build_canopy_frame():
 
 def build_turtle_deck():
     """Deck under the aft canopy (behind the seat bulkhead)."""
-    ss = np.linspace(5.62, S.S_CAN1 - 0.02, 14)
+    ss = np.linspace(5.27, S.S_CAN1 - 0.02, 14)
     rows = []
     for s in ss:
         xs, zs, zt = S.can_x(s), S.can_zs(s), S.can_zt(s)
@@ -240,9 +241,9 @@ def build_turtle_deck():
 # ==============================================================================================
 # wing
 # ==============================================================================================
-X_FLAP0, X_FLAP1 = 2.08, 4.52
-X_AIL0, X_AIL1 = 4.56, 6.36
-X_LEF0 = 2.07
+X_FLAP0, X_FLAP1 = 2.23, 4.55
+X_AIL0, X_AIL1 = 4.59, 5.85
+X_LEF0 = 2.22
 
 
 def wing_x_stations():
@@ -250,7 +251,7 @@ def wing_x_stations():
     xs += list(np.linspace(X_FLAP0, X_FLAP1, 18)[1:])
     xs += [X_AIL0]
     xs += list(np.linspace(X_AIL0, X_AIL1, 13)[1:])
-    xs += list(np.linspace(X_AIL1, S.X_TIP, 5)[1:])
+    xs += list(np.linspace(X_AIL1, S.X_CLIP, 3)[1:]) + list(np.linspace(S.X_CLIP, S.X_TIP, 4)[1:])
     return np.array(sorted(set(round(v, 6) for v in xs)))
 
 
