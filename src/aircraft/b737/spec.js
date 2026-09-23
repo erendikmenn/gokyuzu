@@ -36,6 +36,7 @@ export default {
     stallRound: 1.8, postStallDrop: 3.0, CLmin: -0.75, CD90: 1.7,
     CD0: 0.019, oswald: 0.82, KMach: { x: [0.6, 0.78, 0.9], y: [1, 1.05, 1.15] }, mdd: 0.80,
     gearCD: 0.02, spoilerCD: 0.10, spoilerCL: 0.9, groundEffectLift: 0.1,
+    speedbrakeCD: 0,              // no separate board: the in-flight speedbrake drag is the flight spoilers' (speedbrakeMax)
     Cm0: 0.05, Cmalpha: -1.2, Cmq: -24, Cmde: 0.5, CmStall: -0.5,
     Clb: -0.12, Clp: -0.45, Clr: 0.12, Clda: 0.07, rollQref: 9000, Cldr: 0.008,
     Cnb: 0.13, Cnr: -0.20, Cnp: -0.04, Cndr: 0.07, Cnda: -0.005,
@@ -56,7 +57,18 @@ export default {
   ],
   takeoffFlapIndex: 3,          // flaps 5
   landingFlapIndex: 7,          // flaps 30
-  speedbrakeMax: 0.35,
+  // In-flight speedbrake (flight spoilers, lever at the FLIGHT detent): drag / lift-loss effect as a fraction of the
+  // full ground-spoiler effect (aero.spoilerCD, spoilerCL), not the drawn deflection (the rig takes the flight spoilers
+  // from VisualState.speedbrake): 0.16 → ΔCD ≈ 0.016.
+  // Real data: Boeing 737 FCTM (FCT 737 (TM) rev. 15, 30 JUN 2016) p. 4.20-4.21, 737-600…-900ER, typical idle descent
+  // below FL200, clean → with speedbrake (with or without load alleviation): M.78/280 kt 2,200 → 3,100 fpm,
+  // 250 kt 1,700 → 2,300 fpm, VREF40+70 kt 1,100 → 1,400 fpm. Level 280 → 250 kt ≈ 25 s / 2 NM clean, "using
+  // speedbrakes ... reduces these times and distances by approximately 50 %". In flight never beyond the FLIGHT
+  // detent; retract them with flaps 15 or greater and before 1,000 ft AGL.
+  // Model, 65 t idle: descent 250 KIAS 1,280 → 1,880 fpm (+600), 280 KIAS 1,650 → 2,515 fpm (+865), 215 KIAS +380;
+  // level 280 KIAS 0.99 → 1.63 kt/s (×1.6). Before: spoilers 0.35 × 0.10 + default speedbrakeCD 0.05 (ΔCD 0.087):
+  // +3,850 fpm at 250 kt, ×4.3 deceleration.
+  speedbrakeMax: 0.16,
 
   // 2 x CFM56-7B26, 117.0 kN (26,300 lbf)
   engine: {

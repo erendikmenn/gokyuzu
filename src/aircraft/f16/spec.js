@@ -24,7 +24,13 @@ export default {
     CD0Mach: { x: [0, 0.6, 0.8, 0.9, 0.95, 1.0, 1.05, 1.1, 1.2, 1.5, 2.0, 2.4], y: [0.0185, 0.0185, 0.019, 0.022, 0.030, 0.043, 0.049, 0.050, 0.049, 0.045, 0.038, 0.037] },
     oswald: 0.75, KMach: { x: [0, 0.8, 1.0, 1.2, 1.5, 2.0], y: [1, 1.05, 1.25, 1.6, 2.1, 2.8] },
     suction: [12, 35],
-    gearCD: 0.03, speedbrakeCD: 0.07, groundEffectLift: 0.08,
+    // speedbrakes: 4 split clamshell petals at the strake ends (0.905 × 0.38 m each, 1.38 m² in all — geometry of
+    // blender/aircraft/f16/f16_parts.py), hinged at the front, opening ±60° (NASA TP-1538 Table I: speed brake 60°;
+    // 43° with the gear handle down, see JSBSim f16.xml after the flight manual — not modelled by fixedwing.js yet).
+    // Inclined plates: CN ≈ 1.15 at 60° (Hoerner, Fluid-Dynamic Drag §13) → drag area ≈ 1.38 × 1.15 × sin 60° ≈ 1.4 m²,
+    // + ~10 % fuselage interference → ΔCD ≈ 0.055 on 27.87 m². Model, 12 t idle, level at 3 km: 250 KIAS 1.7 → 3.8 kt/s,
+    // 350 KIAS 2.3 → 6.6 kt/s, 450 KIAS 3.5 → 10.0 kt/s (was 0.07: 4.4 / 7.7 / 11.3 kt/s).
+    gearCD: 0.03, speedbrakeCD: 0.055, groundEffectLift: 0.08,
     Cm0: 0, CmalphaMach: { x: [0, 0.8, 0.95, 1.1, 1.4, 2.0], y: [-0.08, -0.1, -0.22, -0.55, -0.65, -0.55] }, Cmalpha: -0.08,
     Cmq: -5.5, CmdeMach: { x: [0, 0.9, 1.2, 2.0], y: [0.55, 0.6, 0.45, 0.32] }, Cmde: 0.55,
     CmStall: -0.3, CmHighAlpha: { alpha: 40, k: -0.6 },

@@ -23,7 +23,12 @@ export default {
     CD0Mach: { x: [0, 0.8, 0.9, 1.0, 1.1, 1.2, 1.5, 1.8, 2.2], y: [0.0145, 0.0148, 0.017, 0.030, 0.034, 0.034, 0.032, 0.030, 0.029] },
     oswald: 0.8, KMach: { x: [0, 0.8, 1.0, 1.2, 1.5, 2.0], y: [1, 1.05, 1.2, 1.45, 1.85, 2.4] },
     suction: [14, 40],
-    gearCD: 0.02, speedbrakeCD: 0.05, groundEffectLift: 0.08,
+    // speedbrake: the F-22 has no dedicated airbrake (dropped from the YF-22 design); the FCS deflects the ailerons up,
+    // the flaperons down and toes the rudders out (rig: 30° / 32° / 25°). Drag from the deflected surfaces (plain-flap
+    // profile drag ΔCd ≈ 0.9 (cf/c)^1.38 sin²δ on the flapped areas, DATCOM / Roskam) ≈ 0.022 wing + 0.006 split rudders
+    // → ΔCD ≈ 0.03 on 78 m² (JSBSim f22.xml uses 0.024). Model, 29.3 t idle, level at 3 km: 250 KIAS 1.8 → 3.2 kt/s,
+    // 350 KIAS 2.3 → 5.0 kt/s, 450 KIAS 3.4 → 7.8 kt/s (was 0.05: 4.1 / 6.8 / 10.7 kt/s).
+    gearCD: 0.02, speedbrakeCD: 0.03, groundEffectLift: 0.08,
     Cm0: 0, CmalphaMach: { x: [0, 0.9, 1.1, 1.5, 2.0], y: [-0.05, -0.07, -0.35, -0.45, -0.4] }, Cmalpha: -0.05,
     Cmq: -4.5, CmdeMach: { x: [0, 1.0, 1.3, 2.0], y: [0.38, 0.4, 0.28, 0.22] }, Cmde: 0.38,
     CmStall: -0.15, CmHighAlpha: { alpha: 55, k: -0.8 },

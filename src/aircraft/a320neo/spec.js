@@ -39,6 +39,7 @@ export default {
     stallRound: 2.0, postStallDrop: 2.5, CLmin: -0.75, CD90: 1.7,
     CD0: 0.019, oswald: 0.82, KMach: { x: [0.6, 0.78, 0.9], y: [1, 1.05, 1.15] }, mdd: 0.80,
     gearCD: 0.018, spoilerCD: 0.10, spoilerCL: 0.9, groundEffectLift: 0.1,
+    speedbrakeCD: 0,              // no separate board: the in-flight speedbrake drag is the spoilers' (see speedbrakeMax)
     Cm0: 0.05, Cmalpha: -1.1, Cmq: -22, Cmde: 0.5, CmStall: -0.6,
     Clb: -0.12, Clp: -0.45, Clr: 0.12, Clda: 0.075, rollQref: 9000, Cldr: 0.008,
     Cnb: 0.13, Cnr: -0.20, Cnp: -0.04, Cndr: 0.07, Cnda: -0.005,
@@ -56,7 +57,19 @@ export default {
   ],
   takeoffFlapIndex: 2,          // 1+F
   landingFlapIndex: 5,          // FULL
-  speedbrakeMax: 0.35,          // in-flight spoiler deflection (fraction of ground-spoiler travel)
+  // In-flight speedbrake (spoilers 2-4): drag / lift-loss effect as a fraction of the full ground-spoiler effect
+  // (aero.spoilerCD, spoilerCL), not the drawn deflection (the rig takes spoilers 2-4 from VisualState.speedbrake):
+  // 0.30 → ΔCD ≈ 0.030, ΔCL ≈ -0.08 (VLS rises with the speedbrakes, as on the real aircraft).
+  // Real data: Airbus A318-A321 FCTM (23 NOV 21) PR-NP-SOP-190: level deceleration while configuring ≈ 10 kt/NM, "twice
+  // i.e. 20 kt/NM, with the use of the speedbrakes"; limited effect at low speed; VLS increases with speedbrakes (also
+  // Airbus Safety First #24, Jul 2017); PR-NP-SOP-170: "Speedbrake is very effective in increasing descent rate".
+  // Inhibited / auto-retracted (FCOM DSC-27): CONF FULL (A319/A320), alpha prot, alpha floor, thrust levers above MCT,
+  // SEC 1+3 or an elevator failed (not modelled by fixedwing.js yet).
+  // Model, 65 t idle: level 250 KIAS 0.86 → 1.82 kt/s (×2.1; 210 KIAS ×1.9), idle descent 250 KIAS 1,150 → 2,550 fpm,
+  // 1 g AoA +1°.
+  // Before this calibration the spoilers (0.35 × 0.10) and the default speedbrakeCD 0.05 were added together
+  // (ΔCD 0.087): ×4 deceleration, ×4.7 descent rate.
+  speedbrakeMax: 0.30,
 
   // ---- engines: 2 x CFM LEAP-1A26, 120.6 kN (27,120 lbf) ----
   engine: {

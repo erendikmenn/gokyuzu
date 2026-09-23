@@ -197,6 +197,43 @@ function autoland(id, opts = {}) {
   return res;
 }
 
+/** Clean, idle, level flight (altitude held by a pilot): mean deceleration in kt/s through kts ± 5 KIAS. */
+function levelDecel(id, alt, kts, speedbrake) {
+  const spec = SPECS[id];
+  const world = flatWorld();
+  const f = model(id);
+  f.reset({ x: 0, z: 0, heading: 0, altitude: alt, speed: tasFromCas((kts + 12) * KT, alt) }, world,
+    { throttle: 0, gearDown: false, flapIndex: 0, approach: false, verticalSpeed: 0 });
+  if (speedbrake) f.command('speedbrake');
+  const inp = input({ throttle: 0 });
+  let tA = null, tB = null, thetaBase = f.pitch, dh = 0;
+  fly(f, world, inp, 120, 1 / 60, (t, f, inp) => {
+    const e = clamp((alt - f.altitude) * 0.1, -3, 3) - f.verticalSpeed;
+    thetaBase = clamp(thetaBase + e * 0.3 / 60, -5, 25);
+    inp.pitch = spec.fcs.law === 'airbus' ? clamp(0.1 * e + (thetaBase - f.pitch) * 0.05, -1, 1) : pitchStick(f, thetaBase + clamp(e, -3, 3), 0.12, 0.1);
+    if (tA == null && f.ias <= (kts + 5) * KT) tA = t;
+    if (tA != null) dh = Math.max(dh, Math.abs(f.altitude - alt));
+    if (f.ias <= (kts - 5) * KT) { tB = t; return false; }
+  });
+  return { decel: tA != null && tB != null ? 10 / (tB - tA) : NaN, dh, f };
+}
+
+/** Clean idle descent, IAS held by pitch: mean vertical speed in ft/min (positive down) over 20–50 s. */
+function idleDescent(id, alt, kts, speedbrake) {
+  const world = flatWorld();
+  const f = model(id);
+  f.reset({ x: 0, z: 0, heading: 0, altitude: alt, speed: tasFromCas(kts * KT, alt) }, world,
+    { throttle: 0, gearDown: false, flapIndex: 0, approach: false, verticalSpeed: 0 });
+  if (speedbrake) f.command('speedbrake');
+  const inp = input({ throttle: 0 });
+  let sum = 0, n = 0, err = 0;
+  fly(f, world, inp, 50, 1 / 60, (t, f, inp) => {
+    inp.pitch = clamp(pitchStick(f, clamp(f.pitch + (f.ias - kts * KT) * 0.5, -25, 20), 0.12, 0.2), -1, 1);
+    if (t > 20) { sum += f.verticalSpeed; err = Math.max(err, Math.abs(f.ias / KT - kts)); n++; }
+  });
+  return { fpm: -sum / Math.max(n, 1) / FPM, err, f };
+}
+
 // ======================================================================================================
 // 0. module sanity: atmosphere, airspeed conversion, Turkish text
 {
@@ -835,6 +872,55 @@ for (const id of IDS) {
     const gc = r.getVisualState().gearCompression;
     check(id, 'Rig contacts: aircraft rests on the given wheels, gearCompression ≈ 0.35 at static load', !r.crashed && r.onGround && Math.abs(r.position.y - (ELEV + 2.5)) < 0.05 && gc.every((c) => Math.abs(c - 0.35) < 0.03),
       `y ${r.position.y.toFixed(3)}, compression ${gc.map((c) => c.toFixed(2)).join('/')}`);
+  }
+
+  // ---------------------------------------------------------------------------------------------- 13b speedbrake
+  // in-flight effectiveness against published data (sources in each spec.js next to speedbrakeMax / speedbrakeCD)
+  {
+    const lvl = (alt, kts) => { const a = levelDecel(id, alt, kts, false), b = levelDecel(id, alt, kts, true); return { a, b, d: b.decel - a.decel, x: b.decel / a.decel }; };
+    const dsc = (alt, kts) => { const a = idleDescent(id, alt, kts, false), b = idleDescent(id, alt, kts, true); return { a, b, d: b.fpm - a.fpm }; };
+    const held = (...r) => r.every((o) => !o.a.f.crashed && !o.b.f.crashed && (o.a.dh ?? 0) < 30 && (o.b.dh ?? 0) < 30 && (o.a.err ?? 0) < 12 && (o.b.err ?? 0) < 12);
+    const fmtL = (r) => `${r.a.decel.toFixed(2)} → ${r.b.decel.toFixed(2)} kt/s (×${r.x.toFixed(2)})`;
+    const fmtD = (r) => `${r.a.fpm.toFixed(0)} → ${r.b.fpm.toFixed(0)} fpm (+${r.d.toFixed(0)})`;
+    if (id === 'b737') {
+      // Boeing 737 FCTM 4.20: idle descent clean → speedbrake 250 kt 1,700 → 2,300 fpm, M.78/280 kt 2,200 → 3,100 fpm,
+      // VREF40+70 1,100 → 1,400 fpm; level 280 → 250 kt: speedbrakes cut the time by ≈ 50 %
+      const d250 = dsc(3000, 250), d280 = dsc(3000, 280), d215 = dsc(2000, 215), l280 = lvl(3000, 280);
+      note(id, 'Speedbrake: idle descent 250 KIAS (3 km)', fmtD(d250), 'FCTM 1,700 → 2,300 fpm (+600)');
+      note(id, 'Speedbrake: idle descent 280 KIAS (3 km)', fmtD(d280), 'FCTM 2,200 → 3,100 fpm (+900)');
+      note(id, 'Speedbrake: idle descent 215 KIAS (≈VREF40+70)', fmtD(d215), 'FCTM 1,100 → 1,400 fpm (+300)');
+      note(id, 'Speedbrake: level idle deceleration 280 KIAS', fmtL(l280), 'FCTM 1.2 kt/s, time −50 % with speedbrake');
+      check(id, 'Speedbrake (FLIGHT detent) adds idle descent rate like the FCTM: +450…+800 fpm @250 KIAS, +650…+1,150 @280, +200…+500 @215',
+        held(d250, d280, d215) && d250.d > 450 && d250.d < 800 && d280.d > 650 && d280.d < 1150 && d215.d > 200 && d215.d < 500,
+        `+${d250.d.toFixed(0)} / +${d280.d.toFixed(0)} / +${d215.d.toFixed(0)} fpm`);
+      check(id, 'Speedbrake: level idle deceleration at 280 KIAS ×1.4–2.2', held(l280) && l280.x > 1.4 && l280.x < 2.2, fmtL(l280));
+    } else if (id === 'a320neo') {
+      // Airbus FCTM PR-NP-SOP-190: level deceleration ≈ 10 kt/NM, "twice i.e. 20 kt/NM, with the use of the speedbrakes";
+      // PR-NP-SOP-170: "Speedbrake is very effective in increasing descent rate"
+      const l250 = lvl(3000, 250), l210 = lvl(1500, 210), d250 = dsc(3000, 250);
+      note(id, 'Speedbrake: level idle deceleration 250 KIAS', fmtL(l250), 'FCTM: ×2 (10 → 20 kt/NM)');
+      note(id, 'Speedbrake: level idle deceleration 210 KIAS', fmtL(l210), '×2, "limited effect at low speeds"');
+      note(id, 'Speedbrake: idle descent 250 KIAS (3 km)', fmtD(d250), '"very effective in increasing descent rate"');
+      check(id, 'A320 at 250 KIAS idle: speedbrake adds ≥ 0.7 kt/s of deceleration, ×1.7–2.5 (FCTM 10 → 20 kt/NM); 210 KIAS ×1.5–2.3',
+        held(l250, l210) && l250.d >= 0.7 && l250.x > 1.7 && l250.x < 2.5 && l210.x > 1.5 && l210.x < 2.3, `${fmtL(l250)}; 210 KIAS ${fmtL(l210)}`);
+      check(id, 'Speedbrake: idle descent rate at 250 KIAS ×1.6–2.8, VLS effect (1 g AoA rises 0.4–2°)',
+        held(d250) && d250.b.fpm / d250.a.fpm > 1.6 && d250.b.fpm / d250.a.fpm < 2.8 && l250.b.f.aoa - l250.a.f.aoa > 0.4 && l250.b.f.aoa - l250.a.f.aoa < 2,
+        `${fmtD(d250)}, AoA ${l250.a.f.aoa.toFixed(1)} → ${l250.b.f.aoa.toFixed(1)}°`);
+    } else {
+      // fighters: drag-area estimates (F-16 split petals 1.38 m² at 60°, F-22 deflected control surfaces), see spec.js
+      const l250 = lvl(3000, 250), l350 = lvl(3000, 350), l450 = lvl(3000, 450);
+      note(id, 'Speedbrake: level idle deceleration 250 / 350 / 450 KIAS', `${l250.a.decel.toFixed(1)}→${l250.b.decel.toFixed(1)} / ${l350.a.decel.toFixed(1)}→${l350.b.decel.toFixed(1)} / ${l450.a.decel.toFixed(1)}→${l450.b.decel.toFixed(1)} kt/s`,
+        id === 'f16' ? 'ΔCD ≈ 0.055 (60° petals)' : 'ΔCD ≈ 0.03 (split surfaces)');
+      const r = id === 'f16' ? [3.3, 5.2] : [1.8, 3.6];
+      check(id, `Speedbrake at 350 KIAS idle (3 km): +${r[0]}…+${r[1]} kt/s of deceleration, grows with dynamic pressure`,
+        held(l250, l350, l450) && l350.d > r[0] && l350.d < r[1] && l450.d > l350.d * 1.3 && l350.d > l250.d * 1.5, `${fmtL(l350)}; +${l250.d.toFixed(1)} / +${l350.d.toFixed(1)} / +${l450.d.toFixed(1)} kt/s at 250 / 350 / 450`);
+    }
+    if (!isF) {
+      // airliners: the drag comes from the spoilers' extension (no instant separate board), ground spoilers stay stronger
+      const g = levelDecel(id, 3000, 250, true).f;
+      check(id, 'Airliner speedbrake = in-flight spoilers at speedbrakeMax (< ground-spoiler travel), no separate board',
+        Math.abs(g.spoilers - spec.speedbrakeMax) < 0.01 && spec.speedbrakeMax < 0.5 && (spec.aero.speedbrakeCD ?? 0.05) === 0, `spoilers ${g.spoilers.toFixed(2)}, speedbrakeCD ${spec.aero.speedbrakeCD}`);
+    }
   }
 }
 
