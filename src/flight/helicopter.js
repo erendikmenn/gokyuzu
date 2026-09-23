@@ -165,7 +165,7 @@ export class HelicopterModel {
       Ttr: 0, Ptr: 0, sev: 0, coning: 0, tgtLon: 0, tgtLat: 0, viss: 0, tauI: 0.1, vissT: 0, tauIT: 0.05, tauF: 0.07,
       Kb: 0, skew: 0, dTdcol: 0, dTtrdped: 0, wake: 0, thT: 0, stall: 0, nx: 0, ny: 1, nz: 0, vrs: 0 };
     this._sens = { theta: 0, phi: 0, psi: 0, p: 0, q: 0, r: 0, V: 0, u: 0, gsF: 0, gsR: 0, vz: 0, alt: 0, agl: 0, x: 0, z: 0, beta: 0,
-      wow: 1, Bq: 1, Bp: 5, Br: 1, Acol: 15, torque: 0, nr: 1, collective: 0 };
+      wow: 1, Bq: 1, Bp: 5, Br: 1, Acol: 15, torque: 0, nr: 1, collective: 0, onGround: true };
     this._pilot = { pitch: 0, roll: 0, yaw: 0, leverDelta: 0 };
     this._ctl = { cLon: 0, cLat: 0, cPed: 0, collective: NaN };
     this._engP = [0, 0];
@@ -826,11 +826,18 @@ export class HelicopterModel {
     this._loadAcc = 0; this._loadN = 0;
     const inp = input || {};
     this._handleLever(inp);
+    const apWasOn = this.afcs.ap.on;
     while (this._acc >= H) {
       this._prevPos.copy(this._pos); this._prevQuat.copy(this._quat);
       this._substep(H, inp, world);
       this._acc -= H;
       if (this.crashed) { this._acc = 0; break; }
+    }
+    if (apWasOn && !this.afcs.ap.on && !this.crashed) {
+      // the FPS released the collective (weight on wheels, …): the lever takes over from the current collective
+      this._leverMode = 'pickup'; this._leverHeld = this._col; this.pendingThrottle = this._col; this._syncLever = true;
+      this._syncAutopilot();
+      this._emit('autopilot', { on: false, mode: null });
     }
     if (this._loadN > 0) {
       const g = this._loadAcc / this._loadN;
@@ -924,6 +931,7 @@ export class HelicopterModel {
     S.nr = s.Om / P.Om0;
     S.torque = this.torque;
     S.collective = this._col;
+    S.onGround = this._contact;
     const pil = this._pilot;
     pil.pitch = clamp(inp.pitch || 0, -1, 1); pil.roll = clamp(inp.roll || 0, -1, 1); pil.yaw = clamp(inp.yaw || 0, -1, 1);
     const ctl = this.afcs.update(h, pil, S, this._ctl);
@@ -1108,7 +1116,7 @@ export class HelicopterModel {
           verticalSpeed: vs, onRunway: world && world.isOnRunway ? world.isOnRunway(pos.x, pos.z) : false,
           pitch: pitchDeg, roll: rollDeg, groundSpeed: Math.hypot(vel.x, vel.z),
         });
-        if (this.afcs.ap.on) { this.afcs.disengage(); this._leverMode = 'pickup'; this._leverHeld = this._col; this.pendingThrottle = this._col; this._syncAutopilot(); this._emit('autopilot', { on: false, mode: null }); }
+        if (this.afcs.ap.on && !this.afcs.isLanding()) this.afcs.disengage();   // handed over in step()
       }
       this._airTime = 0;
     }

@@ -885,6 +885,77 @@ let curve = [];
   }
 }
 
+// =================================================================================================
+// 30. (QA wave 3) landing with the hover hold on: collective-down beeps the height target through the ground
+// =================================================================================================
+{
+  const f = make();
+  hovering(f, flatWorld, GROUND + 1.55 + 10);
+  const inp = newInput();
+  fly(f, flatWorld, inp, 1.5);
+  f.command('autopilot');
+  const engaged = f.autopilot.on && f.autopilot.mode === 'hover';
+  let td = null, apOffAt = null, t = 0;
+  fly(f, flatWorld, inp, 60, 1 / 60, (tt, _f, i, dt) => {
+    t = tt;
+    // the QA player: Z held 0.4 s, released 0.3 s (the input module moves the back-driven lever at 0.35/s)
+    if (!f.onGround && (tt % 0.7) < 0.4) inp.throttle = Math.max(0, inp.throttle - 0.35 * dt);
+    if (!td) td = f.events.find((e) => e.e === 'touchdown') || null;
+    if (td && apOffAt === null && !f.autopilot.on) apOffAt = tt;
+    if (td && tt - td.t > 8) return false;
+    if (td && td.t === undefined) td.t = tt;
+  });
+  const ok = engaged && td && !f.crashed && Math.abs(td.verticalSpeed) <= 1.2 && !f.autopilot.on && f.onGround && f.collective < 0.35
+    && Math.abs(inp.throttle - f.collective) < 0.02 && hspeed(f) < 0.1;
+  check('30. Hover hold + collective down: descends to touchdown (≤ 1.2 m/s), height hold releases on the wheels, collective lowered',
+    ok, td ? `ground ${f.onGround}, speed ${hspeed(f).toFixed(2)} m/s, touchdown ${td.verticalSpeed.toFixed(2)} m/s at t ${td.t.toFixed(1)} s, hold off ${apOffAt === null ? 'never' : (apOffAt - td.t).toFixed(1) + ' s later'}, collective ${f.collective.toFixed(2)} (lever ${inp.throttle.toFixed(2)}), ${f.crashReason}` : `no touchdown (agl ${f.agl.toFixed(1)} m, AP ${f.autopilot.on})`);
+}
+
+// =================================================================================================
+// 31. (QA wave 3) deceleration from 120 kt to a hover: no lateral drift; O below 40 kt selects the hover hold
+// =================================================================================================
+{
+  const decel = (rollPilot) => {
+    const f = make();
+    f.reset({ x: 0, z: 0, heading: 0, altitude: GROUND + 120, speed: 120 * KT }, flatWorld);
+    const inp = newInput();
+    fly(f, flatWorld, inp, 0.1);
+    const st = {};
+    let maxLat = 0;
+    fly(f, flatWorld, inp, 120, 1 / 60, () => {
+      const kt = hspeed(f) / KT;
+      stickForPitch(f, inp, kt > 25 ? 12 : kt > 8 ? 6 : 4.5);
+      leverForVs(st, f, inp, 1 / 60, clamp(0.1 * (GROUND + 120 - f.altitude), -3, 3));
+      inp.roll = rollPilot(f);
+      const hd = f.heading / DEG;
+      const gsR = f.velocity.x * Math.cos(hd) + f.velocity.z * Math.sin(hd);
+      maxLat = Math.max(maxLat, Math.abs(gsR));
+      if (kt < 4) return false;
+    });
+    const kt = hspeed(f) / KT;
+    f.command('autopilot');
+    const mode = f.autopilot.mode;
+    fly(f, flatWorld, inp, 10, 1 / 60, () => { inp.pitch = 0; inp.roll = 0; });
+    return { maxLat: maxLat / KT, kt, mode, final: hspeed(f) / KT, crashed: f.crashed };
+  };
+  const a = decel(() => 0);                                                  // cyclic centred laterally
+  const b = decel((f) => (f.roll < -6 ? 0.5 : f.roll > 6 ? -0.5 : 0));        // player keeping the wings roughly level
+  check('31a. Decel 120 kt → hover, lateral cyclic centred: lateral drift < 3 kt; O then engages hover hold and stops',
+    !a.crashed && a.maxLat < 3 && a.mode === 'hover' && a.final < 1, `max lateral ${a.maxLat.toFixed(1)} kt, O at ${a.kt.toFixed(1)} kt → ${a.mode}, after 10 s ${a.final.toFixed(1)} kt`);
+  check('31b. Same with a wings-level (±6°) keyboard pilot: lateral drift < 5 kt, O → hover hold',
+    !b.crashed && b.maxLat < 5 && b.mode === 'hover' && b.final < 1, `max lateral ${b.maxLat.toFixed(1)} kt, O at ${b.kt.toFixed(1)} kt → ${b.mode}, after 10 s ${b.final.toFixed(1)} kt`);
+  // O at 35 kt selects the hover hold (not cruise) and brings the aircraft to a hover
+  const c = make();
+  c.reset({ x: 0, z: 0, heading: 0, altitude: GROUND + 80, speed: 35 * KT }, flatWorld);
+  const inp = newInput();
+  fly(c, flatWorld, inp, 0.5);
+  c.command('autopilot');
+  const mode = c.autopilot.mode;
+  fly(c, flatWorld, inp, 25);
+  check('31c. O at 35 kt ground speed engages the hover hold and decelerates to a hover', !c.crashed && mode === 'hover' && hspeed(c) < 0.5,
+    `mode ${mode}, speed after 25 s ${(hspeed(c) / KT).toFixed(1)} kt`);
+}
+
 // ---- report ------------------------------------------------------------------------------------
 const w1 = Math.max(...results.map((r) => r.name.length));
 console.log('\nUH-60M helicopter flight model tests\n');

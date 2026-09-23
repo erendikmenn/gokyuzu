@@ -16,13 +16,16 @@ const GAINS = {
   pitchRate: 20 * DEG, rollRate: 38 * DEG, yawRate: 45 * DEG,     // full-stick rate commands
   Kth: 1.8, Kq: 5.0, Kith: 1.0,                                   // pitch attitude / rate / integral
   Kph: 2.5, Kp: 8.0, Kiph: 1.5,                                   // roll
-  Kpsi: 1.3, Kr: 4.0, Kir: 0.8, Kbeta: 1.6, Kibeta: 0.25,         // yaw
+  Kpsi: 1.3, Kr: 4.0, Kir: 0.8, Kbeta: 1.6, Kibeta: 0.25, KbetaRate: 0.8,   // yaw
   hdgBank: 1.6, maxHdgBank: 6 * DEG, hdgTrimI: 0.12,              // heading hold through bank (forward flight)
   pitchLimit: 35 * DEG, rollLimit: 60 * DEG, refLead: 10 * DEG,
   // hover hold
   hoverSpeed: 10, hoverSpeedLat: 8, Ku: 0.55, Kui: 0.08, Kx: 0.22, maxAccel: 3.0, attSlew: 8 * DEG,
   // hover augmentation (FPS velocity stabilisation at low speed with the cyclic released)
   KuA: 0.12, KuiA: 0.02, augSlew: 6 * DEG, augLow: 5, augHigh: 10, augDelay: 0.5, augMaxDev: 4 * DEG, lowSpeedRate: 0.55,
+  // lateral drift / sideslip nulling below ≈ 40 kt (roll channel, cyclic centred)
+  KvL: 0.45, KviL: 0.03, latLow: 16, latHigh: 22, latMaxDev: 12 * DEG, latSlew: 10 * DEG, latDelay: 0.15,
+  hoverEngage: 40 * 0.514444,                                     // O selects hover hold below ≈ 40 kt ground speed
   // airspeed hold (FPS in forward flight with the cyclic released, and the cruise hold)
   KV: 0.25, KA: 0.8, KVi: 0.015, speedSlew: 8 * DEG, speedLow: 8, speedHigh: 14, settleRate: 5 * DEG,
   // altitude hold (collective)
@@ -46,13 +49,14 @@ export class AFCS {
     this.yawCaptured = true; this.hdgCaptured = !!t;
     this.hdgRef = psi;
     this.colI = t ? t.collective : 0;
-    this.Iu = 0; this.Iv = 0; this.IV = 0; this.IuA = 0; this.IvA = 0; this.relP = 9; this.relR = 9;
+    this.Iu = 0; this.Iv = 0; this.IV = 0; this.IuA = 0; this.IvA = 0; this.IvL = 0; this.relP = 9; this.relR = 9;
     this.vHold = t && t.speed ? t.speed : 0;
     this.settling = false; this.uDot = 0; this.uPrev = undefined;
     this.hoverAugment = this.hoverAugment ?? true;
     this.posCaptured = false; this.xRef = 0; this.zRef = 0;
     this.thBase = h.theta; this.phBase = h.phi;
     this.phTrimF = h.phi;       // wings-level bank in forward flight (tail-rotor side force), learned by the heading hold
+    this.bankByPilot = false;   // bank reference set by the pilot (held in turns) or by the SAS (levelled)
     this.ap.on = false; this.ap.mode = null;
     this.frozenLon = h.cLon; this.frozenLat = h.cLat; this.frozenPed = h.cPed;
   }
@@ -61,7 +65,7 @@ export class AFCS {
     if (s.wow > 0.3) return false;
     const ap = this.ap;
     ap.on = true;
-    ap.mode = Math.hypot(s.gsF, s.gsR) < 12 && s.V < 15 ? 'hover' : 'cruise';
+    ap.mode = Math.hypot(s.gsF, s.gsR) < GAINS.hoverEngage ? 'hover' : 'cruise';
     ap.radar = ap.mode === 'hover' && s.agl < 120;
     ap.altitude = ap.radar ? s.agl : s.alt;
     ap.heading = s.psi;
@@ -79,6 +83,9 @@ export class AFCS {
   }
 
   disengage() { this.ap.on = false; this.ap.mode = null; }
+
+  /** Hover hold beeped below the ground: coupled descent to touchdown (height hold released on the wheels). */
+  isLanding() { const ap = this.ap; return ap.on && ap.mode === 'hover' && ap.radar && ap.altitude < 0.5; }
 
   /** Trim pitch attitude (rad) for a forward airspeed (m/s), interpolated from the trim table. */
   thetaTrim(u) {
@@ -110,7 +117,10 @@ export class AFCS {
     }
 
     const ap = this.ap;
-    if (ap.on && s.wow > 0.5) this.disengage();
+    // on the wheels the hold releases; a coupled landing first lowers the collective to flat pitch
+    if (ap.on && s.wow > 0.5 && !(this.isLanding() && s.collective > 0.02)) this.disengage();
+    // hover hold engaged high up (baro): switch to the radar height reference below 100 m AGL
+    if (ap.on && ap.mode === 'hover' && !ap.radar && s.agl < 100) { ap.altitude -= s.alt - s.agl; ap.radar = true; }
     if (ap.on && ap.mode === 'cruise' && s.V < 9) {        // slowed down: cruise hold becomes hover hold
       ap.mode = 'hover'; ap.radar = s.agl < 120; ap.altitude = ap.radar ? s.agl : s.alt;
       this.thBase = this.hoverTrim.theta; this.phBase = this.hoverTrim.phi; this.Iu = 0; this.Iv = 0; this.posCaptured = false;
@@ -138,7 +148,9 @@ export class AFCS {
     const wAug = this.hoverAugment && wow < 0.5 ? 1 - smoothstep(K.augLow, K.augHigh, gs) : 0;
     const rateScale = lerp(K.lowSpeedRate, 1, wF);    // gentler attitude rates in the hover (keyboard taps)
     this.relP = sp ? 0 : this.relP + h; this.relR = sr ? 0 : this.relR + h;
-    const augP = wAug * smoothstep(0, K.augDelay, this.relP), augR = wAug * smoothstep(0, K.augDelay, this.relR);
+    const augP = wAug * smoothstep(0, K.augDelay, this.relP);
+    const uhL = Math.max(0, s.gsF);
+    const wLat = this.hoverAugment && wow < 0.5 ? (1 - smoothstep(K.latLow, K.latHigh, uhL)) * smoothstep(0, K.latDelay, this.relR) : 0;
     const sth = Math.sin(s.theta), cth = Math.cos(s.theta), sph = Math.sin(s.phi), cph = Math.cos(s.phi);
     let thDotFF = 0, phDotFF = 0;
 
@@ -202,18 +214,20 @@ export class AFCS {
       }
       // roll: rate command / attitude hold; forward flight: wings level + heading hold through bank
       if (sr) {
-        this.IvA = 0;
+        this.IvA = 0; this.IvL = 0; this.bankByPilot = true;
         phDotFF = sr * K.rollRate * rateScale;
         this.phRef += phDotFF * h;
         this.hdgCaptured = false;
-      } else if (augR > 0 && !ap.on) {
+      } else if (wLat > 0 && !ap.on) {
+        // cyclic centred below ≈ 40 kt: null the lateral ground speed (sideslip) around the hover roll trim
         const ev = -s.gsR;
-        if (Math.abs(ev) < 1) this.IvA = clamp(this.IvA + K.KuiA * ev * h, -1, 1);
-        const aR = clamp(K.KuA * ev + this.IvA, -2, 2);
+        if (Math.abs(ev) < 1) this.IvL = clamp(this.IvL + K.KviL * ev * h, -1, 1);
+        const aR = clamp(K.KvL * ev + this.IvL, -3, 3);
         const hp = this.hoverTrim.phi;
-        const target = clamp(hp + aR / G, hp - K.augMaxDev, hp + K.augMaxDev);
-        this.phRef = moveToward(this.phRef, lerp(this.phRef, target, augR), K.augSlew * augR * h);
-      } else if (wF > 0.5 && (Math.abs(this.phRef - this.phTrimF) < 5 * DEG || ap.on)) {
+        const target = clamp(hp + aR / G, hp - K.latMaxDev, hp + K.latMaxDev);
+        this.phRef = moveToward(this.phRef, lerp(this.phRef, target, wLat), K.latSlew * wLat * h);
+        if (wLat > 0.5) this.bankByPilot = false;
+      } else if (wF > 0.5 && (Math.abs(this.phRef - this.phTrimF) < 5 * DEG || !this.bankByPilot || ap.on)) {
         const psiDot = Math.abs(s.r);
         if (!this.hdgCaptured && psiDot < 2 * DEG && Math.abs(s.phi - this.phTrimF) < 6 * DEG) { this.hdgCaptured = true; this.hdgRef = s.psi; if (ap.on) ap.heading = s.psi; }
         let target = this.phTrimF;
@@ -229,15 +243,19 @@ export class AFCS {
     this.phRef = clamp(this.phRef, Math.max(-K.rollLimit, s.phi - K.refLead), Math.min(K.rollLimit, s.phi + K.refLead));
 
     // ---------------- yaw: heading hold (hover) / turn coordination (forward flight) ----------------
+    // Above ≈ 10 kt with the pedals centred the nose is kept into the relative wind (sideslip → yaw rate), so a
+    // lateral drift cannot build up in the transition; not while the hover hold flies a commanded sideward translation.
+    const wB = ap.on && ap.mode === 'hover' ? 0 : smoothstep(8, 12, s.V);
     let psiDotH;
     if (sy) { psiDotH = sy * K.yawRate; this.psiRef = s.psi; this.yawCaptured = false; }
+    else if (wB > 0.05 || wF > 0.95) { psiDotH = 0; this.psiRef = s.psi; this.yawCaptured = true; }
     else if (!this.yawCaptured) {
       psiDotH = 0;
       if (Math.abs(s.r) < 3 * DEG) { this.yawCaptured = true; this.psiRef = s.psi; }
     } else psiDotH = K.Kpsi * wrapPi(this.psiRef - s.psi);
-    const psiDotF = (G * Math.tan(clamp(s.phi - this.phTrimF, -1.2, 1.2))) / Math.max(s.V, 15) + sy * 12 * DEG;
-    if (wF > 0.95) { this.psiRef = s.psi; this.yawCaptured = true; }   // hand back to hover heading hold smoothly on deceleration
-    const psiDot = lerp(psiDotH, psiDotF, wF);
+    const psiDotTurn = (G * Math.tan(clamp(s.phi - this.phTrimF * wF, -1.2, 1.2))) / Math.max(s.V, 15) + sy * 12 * DEG;
+    const psiDot = lerp(psiDotH, psiDotTurn, wF) + (sy ? 0 : wB * K.KbetaRate * clamp(s.beta, -0.6, 0.6));
+    const wY = wB;
 
     // ---------------- Euler-rate → body-rate commands and rate loops ----------------
     const eth = this.thRef - s.theta, eph = this.phRef - s.phi;
@@ -249,7 +267,7 @@ export class AFCS {
     const qdd = K.Kq * (qc - s.q);
     const pdd = K.Kp * (pc - s.p);
     let rdd = K.Kr * (rc - s.r);
-    const betaFb = sy ? 0 : wF * K.Kbeta * clamp(s.beta, -0.5, 0.5);
+    const betaFb = sy ? 0 : wY * K.Kbeta * clamp(s.beta, -0.5, 0.5);
     rdd += betaFb;
 
     const Bq = Math.max(s.Bq, 0.3), Bp = Math.max(s.Bp, 1.0), Br = Math.max(s.Br, 0.3);
@@ -264,7 +282,7 @@ export class AFCS {
       if (!((cLon >= 1 && dLon > 0) || (cLon <= -1 && dLon < 0))) this.trimLon = clamp(this.trimLon + dLon, -1, 1);
       const dLat = (K.Kp * K.Kiph * eph / Bp) * h * air;
       if (!((cLat >= 1 && dLat > 0) || (cLat <= -1 && dLat < 0))) this.trimLat = clamp(this.trimLat + dLat, -1, 1);
-      const dPed = ((K.Kr * K.Kir * (rc - s.r) + (sy ? 0 : wF * K.Kibeta * s.beta * 4)) / Br) * h * air;
+      const dPed = ((K.Kr * K.Kir * (rc - s.r) + (sy ? 0 : wY * K.Kibeta * s.beta * 4)) / Br) * h * air;
       if (!((cPed >= 1 && dPed > 0) || (cPed <= -1 && dPed < 0))) this.trimPed = clamp(this.trimPed + dPed, -1, 1);
     }
 
@@ -283,14 +301,19 @@ export class AFCS {
     // ---------------- collective: altitude hold when coupled ----------------
     if (ap.on) {
       ap.altitude += pilot.leverDelta * K.beeper;
-      if (ap.radar) ap.altitude = Math.max(ap.altitude, 1.5);
+      if (ap.radar) ap.altitude = Math.max(ap.altitude, -1);        // beeping below the ground = land
       const hm = ap.radar ? s.agl : s.alt;
       const vzMax = ap.mode === 'hover' ? K.vzMaxHover : K.vzMaxCruise;
-      const vzc = clamp(K.Kh * (ap.altitude - hm), -vzMax, vzMax);
+      let vzc = clamp(K.Kh * (ap.altitude - hm), -vzMax, vzMax);
+      const landing = this.isLanding();
+      if (landing) vzc = -clamp(0.6 + 0.3 * Math.max(s.agl, 0), 0.6, vzMax);   // steady descent, ≈ 0.6–0.7 m/s at touchdown
+      vzc = Math.max(vzc, -(0.6 + 0.3 * Math.max(s.agl, 0)));       // never faster than that close to the ground
       const e = vzc - s.vz;
       const A = Math.max(s.Acol, 3);
       let dI = (K.Kvzi * e / A) * h;
       let col = this.colI + (K.Kvz * e) / A;
+      // on the wheels while landing: lower the collective, the height hold releases once the weight is on the gear
+      if (landing && (s.wow > 0 || s.onGround)) { dI = -0.35 * h; col = Math.min(col, this.colI + dI); }
       // torque / rotor-speed protection
       if ((s.torque > 1.0 || s.nr < 0.97) && col > s.collective) { col = s.collective; if (dI > 0) dI = 0; }
       this.colI = clamp(this.colI + dI, 0, 1);
