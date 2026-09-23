@@ -1,0 +1,14 @@
+{
+  "name": "Gökyüzü SF · San Francisco Körfezi uçuş simülatörü",
+  "short_name": "Gökyüzü SF",
+  "start_url": "./",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#0b1622",
+  "theme_color": "#0b1622",
+  "lang": "tr",
+  "icons": [
+    { "src": "favicon.svg", "sizes": "any", "type": "image/svg+xml" },
+    { "src": "favicon-180.png", "sizes": "180x180", "type": "image/png" }
+  ]
+}

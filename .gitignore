@@ -3,6 +3,8 @@ node_modules/
 *.png
 !docs/*.png
 !/favicon-180.png
+!/apple-touch-icon.png
+!/apple-touch-icon-precomposed.png
 .venv/
 __pycache__/
 *.pyc

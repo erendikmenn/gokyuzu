@@ -83,7 +83,7 @@ export function hideGpuNotice() { if (noticeEl) noticeEl.style.display = 'none';
  *   onHalt()     freeze the simulation + audio (the page is about to reload)
  *   onStepDown(id, reason)  apply the lower preset live (budget monitor); returns true when applied
  */
-export function createGpuGuard({ renderer, state, getQuality, onHalt = () => {}, onStepDown = () => false }) {
+export function createGpuGuard({ renderer, state, getQuality, onHalt = () => {}, onStepDown = () => false, onInAppFailure = null }) {
   const canvas = renderer.domElement;
   const meter = attachGpuMeter(renderer.getContext());
   const textures = createTexturePolicy(renderer, getQuality);
@@ -147,7 +147,10 @@ export function createGpuGuard({ renderer, state, getQuality, onHalt = () => {},
     const canRetry = n < MAX_LOSSES && (q.id !== 'low' || nextPr);
     const snap = state.flight && state.readyAt ? saveSnapshot(state, { alive: false, reason: 'gpu' }) : null;
     console.warn(`[gpu] ${reason}${detail ? ': ' + detail : ''} → ${canRetry ? `reload at ${nextQ}${nextPr ? ' pr ' + nextPr : ''}` : 'giving up'} (failure ${n} in 30 min)`);
-    report(reason, { n, next: canRetry ? nextQ : '', e: String(detail).slice(0, 80), snap: snap ? 1 : 0 });
+    report(reason, { fails: n, next: canRetry ? nextQ : '', e: String(detail).slice(0, 80), snap: snap ? 1 : 0 });
+    // mobile hook (docs/errors/audit.md #2): inside the X / Instagram webview a reload fails the same way — the caller
+    // offers the real browser instead (src/ui/touch-gate.js) and keeps the reload as the small "Yeniden dene"
+    if (onInAppFailure && onInAppFailure(() => { report('reload', { next: nextQ }); location.replace(reloadUrl(nextQ, nextPr)); })) return;
     if (canRetry) {
       setQualityCap(nextQ);   // later sessions on this device start no higher (cleared when the player raises it)
       showGpuNotice('Grafik belleği doldu, kalite düşürülerek devam ediliyor…');
@@ -196,6 +199,9 @@ export function createGpuGuard({ renderer, state, getQuality, onHalt = () => {},
       if (acc < 2) return;
       const span = acc;
       acc = 0;
+      // WebKit sometimes drops the context without a webglcontextlost event (its GPU process died): notice it ourselves
+      const gl = renderer.getContext();
+      if (gl && gl.isContextLost && gl.isContextLost()) { fail('lost', 'silent'); return; }
       if ((sweepAcc += span) >= 8) { sweepAcc = 0; textures.sweep(state.scene); }
       const q = getQuality();
       if (!q || !state.readyAt || !q.gpuBudgetMB || !budgetOn) return;

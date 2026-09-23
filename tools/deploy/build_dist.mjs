@@ -47,7 +47,7 @@ fs.mkdirSync(dist, { recursive: true });
 // pages
 addFile('index.html');
 addFile('ada.html');
-for (const f of ['favicon.ico', 'favicon.svg', 'favicon-180.png', 'robots.txt']) addFile(f);   // site icons + crawler rules
+for (const f of ['favicon.ico', 'favicon.svg', 'favicon-180.png', 'apple-touch-icon.png', 'apple-touch-icon-precomposed.png', 'manifest.json', 'robots.txt']) addFile(f);   // site icons (iOS probes the root apple-touch-icon names), web app manifest, crawler rules
 // code (no per-agent dev/test pages inside src)
 addTree('src', (rel) => !/\/(preview|view|cockpit_check)\.html$/.test(rel) && !rel.includes(`${path.sep}tools${path.sep}`));
 // shared data (runways, landmarks, region, …)

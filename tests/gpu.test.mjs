@@ -83,9 +83,10 @@ const snap = saveSnapshot(A);
 check('snapshot taken in flight (remaining route legs only)', snap && snap.aircraft === 'b737' && snap.ap && snap.ap.lnav && snap.route && snap.route.user.length === A.navRoute.user.length - A.navRoute.active && snap.route.user.length > 0,
   snap ? `ap ${JSON.stringify(snap.ap)} route ${snap.route && snap.route.user.length}/${A.navRoute.user.length} (active ${A.navRoute.active})` : 'null');
 check('resume after our reload (?resume=1)', !!readResume(new URLSearchParams('resume=1')));
-check('restart without pagehide (tab died) resumes as a crash', readResume(new URLSearchParams('')) && readResume(new URLSearchParams('')).crash === true);
+check('restart without pagehide (tab died) resumes as a crash', readResume(new URLSearchParams(''), 'reload') && readResume(new URLSearchParams(''), 'reload').crash === true);
+check('a new tab with a copied sessionStorage (navigate, not reload) does not take over the flight', readResume(new URLSearchParams(''), 'navigate') === null);
 markSnapshotClosed();
-check('no resume after a normal unload (pagehide)', readResume(new URLSearchParams('')) === null);
+check('no resume after a normal unload (pagehide)', readResume(new URLSearchParams(''), 'reload') === null);
 const B = makeState();
 B.flight.reset({ x: 0, z: 0, heading: 0 }, world);
 applyResume(B, readResume(new URLSearchParams('resume=1')), {});

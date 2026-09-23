@@ -63,11 +63,18 @@ export function markSnapshotAlive() { const s = load(); if (s && !s.alive && !s.
  * The snapshot to resume at startup, or null: after our own reload (?resume=1) or when the previous page of this tab
  * died without unloading (tab crash). `crash` tells the caller to treat it as a graphics failure too.
  */
-export function readResume(params) {
+function navigationType() {
+  try { return (performance.getEntriesByType('navigation')[0] || {}).type || ''; } catch { return ''; }
+}
+
+export function readResume(params, navType = navigationType()) {
   const s = load();
   if (!s || s.v !== 1 || !Number.isFinite(s.x) || !s.aircraft) return null;
   const age = Date.now() - (s.t || 0);
   if (params.get('resume') === '1') return age < MAX_AGE ? { ...s, crash: false } : null;
+  // A killed or discarded tab comes back as a *reload*. A new tab opened from the game (window.open, target=_blank,
+  // "Duplicate tab") gets a copy of sessionStorage too but navigates normally: it must not take over the other tab's flight.
+  if (navType !== 'reload') return null;
   if (s.alive && s.hidden && age < HIDDEN_AGE) return { ...s, crash: false, background: true };   // discarded in the background
   if (s.alive && age < CRASH_AGE) return { ...s, crash: true };
   return null;

@@ -20,6 +20,7 @@ import datetime as dt
 import gzip
 import hashlib
 import os
+import re
 import secrets
 import statistics
 import sys
@@ -99,7 +100,15 @@ def client(ua):
     u = ua.lower()
     if 'headless' in u:
         return 'test', 'test'
-    browser = ('Edge' if 'edg/' in u else 'Opera' if 'opr/' in u else 'Firefox' if 'firefox/' in u
+    if 'twitter' in u:
+        browser = 'X uygulaması'
+    elif 'instagram' in u:
+        browser = 'Instagram uygulaması'
+    elif 'fban' in u or 'fbav' in u:
+        browser = 'Facebook uygulaması'
+    else:
+        browser = None
+    browser = browser or ('Edge' if 'edg/' in u else 'Opera' if 'opr/' in u else 'Firefox' if 'firefox/' in u
                else 'Chrome' if 'chrome/' in u or 'crios/' in u else 'Safari' if 'safari/' in u else 'diğer')
     system = ('iOS' if 'iphone' in u or 'ipad' in u else 'Android' if 'android' in u else 'Windows' if 'windows' in u
               else 'macOS' if 'mac os x' in u else 'ChromeOS' if 'cros' in u else 'Linux' if 'linux' in u else 'diğer')
@@ -181,6 +190,7 @@ def main():
     geo = Geo()
 
     beacons = defaultdict(list)          # sid -> [(at, event dict, visitor)]
+    orphans = []                         # tutorial beacons of old builds whose session id was overwritten
     requests = defaultdict(list)         # visitor -> [(at, uri)]
     visitors = {}                        # visitor -> {browser, system, city, who}
     blocked = Counter()
@@ -205,10 +215,23 @@ def main():
         uri = row.get('cs-uri-stem', '')
         if uri == '/_e':
             q = query(row)
-            if q.get('s'):
+            if q.get('t') == 'tut' and re.fullmatch(r'\d+(\.\d+)?', q.get('s', '')):
+                # builds before the fix sent the step seconds as `s`, overwriting the session id: re-attach later
+                q['sec'] = q['s']
+                orphans.append((row['at'], q, vid))
+            elif q.get('s'):
                 beacons[q['s']].append((row['at'], q, vid))
         else:
             requests[vid].append((row['at'], uri))
+
+    # orphaned tutorial beacons → the same visitor's session that was running at that moment
+    starts = defaultdict(list)           # visitor -> [(first beacon time, sid)]
+    for sid, evs in beacons.items():
+        starts[evs[0][2]].append((min(e[0] for e in evs), sid))
+    for at, q, vid in orphans:
+        cands = [(t, sid) for t, sid in starts.get(vid, []) if t <= at]
+        if cands:
+            beacons[max(cands)[1]].append((at, q, vid))
 
     sessions = []
     covered = defaultdict(list)          # visitor -> [(start, end)] already described by beacons
@@ -228,11 +251,13 @@ def main():
             'took_off': 'takeoff' in kinds, 'landings': kinds.count('land'),
             'runway_landings': sum(1 for _, q, _ in evs if q.get('t') == 'land' and q.get('rw') == '1'),
             'crashes': [q.get('r') or q.get('d') or '?' for _, q, _ in evs if q.get('t') == 'crash'],
-            'tut_steps': [(q.get('sc'), q.get('st'), q.get('s'), q.get('x')) for q in tut],
+            'tut_steps': [(q.get('sc'), q.get('st'), q.get('sec'), q.get('x')) for q in tut],
+            'dead': [q for _, q, _ in evs if q.get('t') == 'dead'], 'fail': [q for _, q, _ in evs if q.get('t') == 'fail'],
+            'foreign': [q.get('e') for _, q, _ in evs if q.get('t') == 'err' and q.get('x') == 'foreign'],
             'vid': vid, 'start': start, 'minutes': max(minutes, (end - start).total_seconds() / 60), 'active': active,
             'aircraft': fly.get('ac'), 'spawn': fly.get('sp'), 'load': fly.get('lt'), 'fps': round(statistics.mean(fps)) if fps else None,
             'gpu': first.get('gpu'), 'quality': fly.get('q') or first.get('q'), 'version': first.get('v') or fly.get('v'),
-            'errors': [q.get('e') for _, q, _ in evs if q.get('t') == 'err'], 'exact': True,
+            'errors': [q.get('e') for _, q, _ in evs if q.get('t') == 'err' and q.get('x') != 'foreign'], 'exact': True,
         })
         covered[vid].append((start - SESSION_GAP, end + SESSION_GAP))
 
@@ -251,7 +276,7 @@ def main():
                 continue
             ac = next((p.split('/')[3] for _, p in g if p.startswith('/assets/aircraft/') and p.endswith('.glb')
                        and not p.endswith(('_lod.glb', '_cockpit.glb'))), None)
-            sessions.append({'took_off': None, 'landings': 0, 'runway_landings': 0, 'crashes': [], 'tut_steps': [],
+            sessions.append({'took_off': None, 'landings': 0, 'runway_landings': 0, 'crashes': [], 'tut_steps': [], 'dead': [], 'fail': [], 'foreign': [],
                              'vid': vid, 'start': start, 'minutes': (end - start).total_seconds() / 60, 'active': None,
                              'aircraft': ac, 'spawn': None, 'load': None, 'fps': None, 'gpu': None, 'quality': None,
                              'version': None, 'errors': [], 'exact': False})
@@ -314,6 +339,15 @@ def main():
     errs = Counter(e for s in real for e in s['errors'])
     if errs:
         print('Hatalar:', top(errs, 5))
+    foreign = Counter(e for s in real for e in s['foreign'])
+    if foreign:
+        print('Başka kaynaklı hatalar (eklenti / uygulama içi tarayıcı):', top(foreign, 3))
+    dead = [d for s in real for d in s['dead']]
+    if dead:
+        print(f"Uçuşta ölen sayfa (sonraki açılışta bildirilen): {len(dead)} · uçuştan sonra medyan {statistics.median(int(d.get('after', 0)) for d in dead):.0f} sn")
+    fails = Counter(f.get('ph', '?') + (' (ağ)' if f.get('net') == '1' else '') for s in real for f in s['fail'])
+    if fails:
+        print('Yükleme hataları:', top(fails, 5))
     if blocked:
         print('Eksik dosya (403):' if a.target == 'production' else 'IP kilidine takılan istek:', top(blocked, 5))
 
