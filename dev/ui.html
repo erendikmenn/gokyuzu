@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>UI önizleme · Gökyüzü SF</title>
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #0b1622; }
+    #app { position: fixed; inset: 0; }
+    #app canvas { display: block; width: 100%; height: 100%; }
+    #hud { position: fixed; inset: 0; pointer-events: none; }
+    #ui { position: fixed; inset: 0; pointer-events: none; }
+    #ui > * { pointer-events: auto; }
+    #dev { position: fixed; right: 8px; top: 8px; z-index: 100; font: 11px ui-monospace, Menlo, monospace; color: #9ab; background: rgba(0,0,0,.45); padding: 6px 8px; border-radius: 6px; pointer-events: auto; white-space: pre; }
+    #dev a { color: #7fe; margin-right: 6px; }
+  </style>
+  <script type="importmap">{ "imports": { "three": "../node_modules/three/build/three.module.js", "three/addons/": "../node_modules/three/examples/jsm/" } }</script>
+</head>
+<body>
+<div id="app"></div>
+<div id="hud"></div>
+<div id="ui"></div>
+<div id="dev"></div>
+<script type="module">
+// UI agent preview. ?screen=menu|loading|hud-fighter|hud-airliner|hud-heli|help|pause
+//   HUD screens render a small 3D scene with a placeholder aircraft flown by a scripted "fake flight" so the camera
+//   rig and HUD can be exercised without the real world/physics.  Extra params:
+//   cam=chase|cockpit|wing|orbit|flyby|tower   ground=1 (take-off roll)   warn=pullUp,stall,...   ap=1   p=0.4 (loading)
+//   Keys: C / Shift+C camera, T cockpit, H hud, P pause, F1 help, Y look back, 1..5 aircraft kind.
+import * as THREE from 'three';
+import { createMenu, createLoadingScreen, createHUD, createCameraRig } from '../src/ui/index.js';
+import { AIRCRAFT } from '../src/aircraft/registry.js';
+import { buildSpawns } from '../src/app/spawns.js';
+import { createAssetLoader } from '../src/core/assets.js';
+
+const q = new URLSearchParams(location.search);
+const screen = q.get('screen') || 'menu';
+const uiRoot = document.getElementById('ui');
+const hudRoot = document.getElementById('hud');
+const dev = document.getElementById('dev');
+const links = ['menu', 'loading', 'hud-fighter', 'hud-airliner', 'hud-heli', 'help', 'pause'].map((s) => `<a href="?screen=${s}">${s}</a>`).join('');
+dev.innerHTML = links;
+const [runways, landmarks] = await Promise.all([fetch('../data/sf/runways.json').then((r) => r.json()), fetch('../data/sf/landmarks.json').then((r) => r.json())]);
+
+if (screen === 'menu') {
+  if (q.get('thumbs') === '1') {
+    // fake 800×450 "renders" to preview the thumbnail layout
+    const { shared } = await import('../src/ui/shared.js');
+    shared.thumbOverride = (id) => {
+      const c = document.createElement('canvas'); c.width = 800; c.height = 450;
+      const g = c.getContext('2d');
+      const gr = g.createLinearGradient(0, 0, 0, 450); gr.addColorStop(0, '#6d97c4'); gr.addColorStop(0.62, '#c9d8e6'); gr.addColorStop(0.63, '#5b6b58'); gr.addColorStop(1, '#2f3a2e');
+      g.fillStyle = gr; g.fillRect(0, 0, 800, 450);
+      g.fillStyle = 'rgba(255,255,255,0.9)'; g.font = '700 64px -apple-system, sans-serif'; g.textAlign = 'center'; g.fillText(id.toUpperCase(), 400, 250);
+      return c.toDataURL('image/jpeg', 0.85);
+    };
+  }
+  const choice = await createMenu(uiRoot, { aircraft: AIRCRAFT, spawns: buildSpawns(runways) });
+  dev.textContent = `seçim: ${JSON.stringify(choice)}`;
+  window.__choice = choice;
+  const l = createLoadingScreen(uiRoot);
+  let p = 0;
+  const steps = ['Gökyüzü ve ışık', 'Arazi ve hava fotoğrafları', 'Havalimanları', 'Şehir', 'Simge yapılar', 'Uçak yükleniyor', 'Hazır'];
+  const iv = setInterval(() => { p += 0.07; l.setProgress(Math.min(1, p), steps[Math.min(steps.length - 1, Math.floor(p * steps.length))]); if (p >= 1.1) { clearInterval(iv); l.hide(); } }, 350);
+} else if (screen === 'loading') {
+  const l = createLoadingScreen(uiRoot);
+  const fixed = q.has('p') ? Number(q.get('p')) : null;
+  const steps = ['Gökyüzü ve ışık', 'Arazi ve hava fotoğrafları', 'Havalimanları', 'Şehir', 'Simge yapılar', 'Detaylar yükleniyor', 'Uçak yükleniyor', 'Hazır'];
+  if (fixed != null) l.setProgress(fixed, steps[Math.min(steps.length - 1, Math.floor(fixed * (steps.length - 1)))]);
+  else {
+    let p = 0;
+    setInterval(() => { p = (p + 0.013) % 1.05; l.setProgress(Math.min(1, p), steps[Math.min(steps.length - 1, Math.floor(p * (steps.length - 1)))]); }, 100);
+  }
+} else {
+  await runHud();
+}
+
+async function runHud() {
+  const kinds = { 'hud-fighter': 'f16', 'hud-airliner': 'a320neo', 'hud-heli': 'uh60', help: 'a320neo', pause: 'f16' };
+  let acId = q.get('aircraft') || kinds[screen] || 'f16';
+
+  // ---------- fake world ----------
+  const hill = (x, z, cx, cz, r, h) => { const d = Math.hypot(x - cx, z - cz) / r; return d < 1 ? h * (0.5 + 0.5 * Math.cos(Math.PI * d)) : 0; };
+  const bayMask = (x, z) => {
+    // crude bay: water east of the peninsula and north of the city
+    const peninsula = x < -1500 + 900 * Math.sin(z / 5200) && z > -24500;
+    const eastShore = x > 9500 + 1200 * Math.sin(z / 3000);
+    const alameda = Math.hypot((x - 5500) / 2600, (z + 18500) / 1200) < 1;
+    const sfo = Math.hypot((x) / 2400, (z) / 1900) < 1;
+    const oak = Math.hypot((x - 13500) / 2600, (z + 11500) / 2200) < 1;
+    return !(peninsula || eastShore || alameda || sfo || oak);
+  };
+  const world = {
+    runways, landmarks, region: { local: { minX: -16467, maxX: 20799, minZ: -28016, maxZ: 7745 } },
+    isWater: (x, z) => bayMask(x, z),
+    getGroundHeight(x, z) {
+      if (bayMask(x, z)) return 0;
+      return 4 + hill(x, z, -6964, -15074, 2600, 260) + hill(x, z, -4800, -8000, 5000, 380) + hill(x, z, 17000, -16000, 6000, 420) + hill(x, z, -12000, -26000, 5000, 300);
+    },
+    getObstacleHeight: () => -Infinity,
+  };
+
+  // ---------- scene ----------
+  const renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.setSize(innerWidth, innerHeight);
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  document.getElementById('app').appendChild(renderer.domElement);
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x8fb6dc);
+  scene.fog = new THREE.Fog(0xa9c4dd, 2000, 40000);
+  const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.5, 80000);
+  scene.add(camera);
+  addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
+  scene.add(new THREE.HemisphereLight(0xdfefff, 0x506040, 1.3));
+  const sun = new THREE.DirectionalLight(0xffffff, 2.2); sun.position.set(-1, 2, 1); scene.add(sun);
+  // terrain mesh (coarse) + water
+  const N = 220, W = 38000, D = 36000, cx0 = 2166, cz0 = -10135;
+  const g = new THREE.PlaneGeometry(W, D, N, N).rotateX(-Math.PI / 2);
+  const pos = g.attributes.position, col = new Float32Array(pos.count * 3);
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i) + cx0, z = pos.getZ(i) + cz0;
+    const water = world.isWater(x, z);
+    const h = water ? -2 : world.getGroundHeight(x, z);
+    pos.setY(i, h);
+    const c = water ? [0.12, 0.25, 0.36] : [0.33 + h / 2000, 0.4 + h / 3000, 0.28 + h / 2500];
+    col.set(c, i * 3);
+  }
+  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  g.computeVertexNormals();
+  const terr = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ vertexColors: true }));
+  terr.position.set(cx0, 0, cz0);
+  scene.add(terr);
+  const water = new THREE.Mesh(new THREE.PlaneGeometry(80000, 80000).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ color: 0x1d3b55 }));
+  water.position.y = 0.2; scene.add(water);
+  // runways
+  for (const a of runways.airports) for (const r of a.runways) {
+    const [e0, e1] = r.ends;
+    const len = Math.hypot(e1.x - e0.x, e1.z - e0.z);
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(r.width, len).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ color: 0x3a3d42 }));
+    m.position.set((e0.x + e1.x) / 2, r.elevation + 0.3, (e0.z + e1.z) / 2);
+    m.rotation.y = -Math.atan2(e1.x - e0.x, -(e1.z - e0.z));
+    scene.add(m);
+    // centerline dashes
+    const cl = new THREE.Mesh(new THREE.PlaneGeometry(1, len * 0.96).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xdddddd }));
+    cl.position.copy(m.position); cl.position.y += 0.05; cl.rotation.copy(m.rotation); scene.add(cl);
+  }
+  // a couple of towers for scale
+  for (const l of landmarks.landmarks) {
+    const h = l.kind === 'tower' ? 180 : l.kind === 'bridge' ? 60 : 30;
+    const b = new THREE.Mesh(new THREE.BoxGeometry(40, h, 40), new THREE.MeshLambertMaterial({ color: 0xc8c0b0 }));
+    b.position.set(l.x, world.getGroundHeight(l.x, l.z) + h / 2, l.z); scene.add(b);
+  }
+
+  // ---------- aircraft ----------
+  const loader = createAssetLoader(renderer);
+  const env = new THREE.PMREMGenerator(renderer);
+  const { RoomEnvironment } = await import('three/addons/environments/RoomEnvironment.js');
+  scene.environment = env.fromScene(new RoomEnvironment(), 0.04).texture;
+  const hud = createHUD(hudRoot);
+  const rigCam = createCameraRig(camera, renderer.domElement, { getGroundHeight: (x, z) => world.getGroundHeight(x, z) });
+  window.__game = { world, camera, cameraRig: rigCam, hud };
+  let flight, rig;
+  async function loadKind(id) {
+    acId = id;
+    const [mm, sm] = await Promise.all([import(`../src/aircraft/${id}/model.js`), import(`../src/aircraft/${id}/spec.js`)]);
+    const entry = AIRCRAFT.find((a) => a.id === id);
+    const def = { ...entry, model: mm.model, createRig: mm.createRig, spec: sm.default };
+    if (rig) scene.remove(rig.object);
+    let gltf = null;
+    const mu = def.model.url && (/^(https?:|\/)/.test(def.model.url) ? def.model.url : `../${def.model.url}`);
+    if (mu) { try { gltf = await loader.loadGLTF(mu); } catch (err) { console.warn('model load failed', err); } }
+    rig = def.createRig(gltf ? gltf.scene : null);
+    scene.add(rig.object);
+    flight = makeFlight(def.spec);
+    hud.setAircraft(def);
+    rigCam.setAircraft(rig, def);
+    window.__game.rig = rig; window.__game.flight = flight;
+  }
+
+  function makeFlight(spec) {
+    const cat = spec.category;
+    const ground = q.get('ground') === '1';
+    const f = {
+      spec, position: new THREE.Vector3(), quaternion: new THREE.Quaternion(), velocity: new THREE.Vector3(), angularVelocity: new THREE.Vector3(),
+      airspeed: 0, ias: 0, mach: 0, altitude: 0, agl: 0, heading: 0, pitch: 0, roll: 0, verticalSpeed: 0, gForce: 1, aoa: 0, sideslip: 0,
+      throttle: 0.7, onGround: ground, stalled: false, crashed: false, crashReason: '',
+      engines: Array.from({ length: spec.engines || 1 }, () => ({ n1: 0.8, thrust: 0, afterburner: 0, fuelFlow: 0 })),
+      gear: cat === 'fighter' && !ground ? 0 : 1, gearHandleDown: !(cat === 'fighter' && !ground), flaps: cat === 'airliner' ? 0.5 : 0, flapsIndex: 2,
+      flapsLabel: cat === 'airliner' ? (spec.id === 'b737' ? '15' : 'CONF 2') : cat === 'fighter' ? 'AUTO' : '', slats: 0, spoilers: 0, speedbrake: 0, reverser: 0, brakes: 0, fuel: cat === 'fighter' ? 3180 : cat === 'helicopter' ? 1100 : 9600,
+      warnings: { stall: false, overspeed: false, gear: false, bank: false, sinkRate: false, pullUp: false },
+      autopilot: { on: q.get('ap') === '1' || cat === 'airliner', altitude: 900, heading: 297, speed: 72, mode: cat === 'helicopter' ? 'hover' : 'HDG CLB', athr: true },
+      vSpeeds: cat === 'airliner' ? { vs1g: 61, vls: 75, vapp: 78, vr: 70, v2: 73, vref: 70, vmo: 180, mmo: 0.82, vfe: 103, vfeNext: 95, vle: 144, greenDot: 105 } : undefined,
+      autobrake: cat === 'airliner' ? 'MED' : '', parkingBrake: false,
+      rotorRPM: cat === 'helicopter' ? 1.0 : 0, collective: 0.55, torque: 0.68,
+      getVisualState() { return { time: performance.now() / 1000, airspeed: f.airspeed, mach: f.mach, onGround: f.onGround, aoa: 0, aileron: 0, elevator: 0, rudder: 0, flaps: f.flaps, slats: 0, spoilers: 0, speedbrake: 0, gear: f.gear, gearCompression: [0, 0, 0], wheelSpeed: f.airspeed, engines: f.engines.map((e) => ({ n1: e.n1, throttle: f.throttle, afterburner: e.afterburner, nozzle: 0, reverser: 0 })), tvc: { pitch: 0, yaw: 0 }, rotor: null, canopy: 0, lights: { nav: true, strobe: true, beacon: true, landing: false, taxi: false } }; },
+    };
+    for (const w of (q.get('warn') || '').split(',').filter(Boolean)) f.warnings[w] = true;
+    return f;
+  }
+
+  // scripted motion
+  let t = 0;
+  const e = new THREE.Euler(0, 0, 0, 'YXZ');
+  function fly(dt) {
+    const f = flight, cat = f.spec.category;
+    t += dt;
+    const ground = q.get('ground') === '1';
+    let speed, alt, hdg, pitch, roll;
+    if (ground) {
+      // take-off roll on KSFO 28R, then rotate and climb
+      const s = runways.airports[0].runways[2].ends[0];
+      hdg = 297.43;
+      const a = cat === 'fighter' ? 9 : cat === 'helicopter' ? 0 : 2.4;
+      speed = cat === 'helicopter' ? 0 : Math.min(a * t, 95);
+      const dist = cat === 'helicopter' ? 0 : 0.5 * a * Math.min(t, 95 / a) ** 2 + Math.max(0, t - 95 / a) * 95;
+      const h = hdg * Math.PI / 180;
+      f.position.set(s.x + Math.sin(h) * (40 + dist), 0, s.z - Math.cos(h) * (40 + dist));
+      const vr = cat === 'fighter' ? 75 : 72;
+      const air = speed > vr;
+      alt = 4 + (air ? (speed - vr) * 0.4 + Math.max(0, t - 95 / a) * 5 : 0) + (rig.contacts && rig.contacts.length ? -rig.contacts[0].position.y : 1.5);
+      pitch = air ? Math.min(10, (speed - vr) * 1.2) : 0; roll = 0;
+      f.onGround = !air;
+      f.position.y = alt;
+      f.velocity.set(Math.sin(h) * speed, air ? 3 : 0, -Math.cos(h) * speed);
+      f.gear = 1;
+    } else if (cat === 'helicopter') {
+      speed = 12 + 8 * Math.sin(t * 0.3); hdg = (t * 6) % 360; pitch = -4 - speed * 0.2; roll = 6 * Math.sin(t * 0.5);
+      const h = hdg * Math.PI / 180;
+      f.position.set(4800 + Math.sin(t * 0.1) * 300, 42 + 6 * Math.sin(t * 0.4), -18300 + Math.cos(t * 0.1) * 300);
+      f.velocity.set(Math.sin(h) * speed, 1.2 * Math.cos(t * 0.4), -Math.cos(h) * speed);
+    } else {
+      speed = cat === 'fighter' ? 190 + 40 * Math.sin(t * 0.2) : 78;
+      const R = cat === 'fighter' ? 4000 : 6000;
+      const w = speed / R;
+      const ang = t * w;
+      const c = cat === 'fighter' ? { x: -6000, z: -21000 } : { x: 4000, z: 3000 };
+      f.position.set(c.x + Math.sin(ang) * R, (cat === 'fighter' ? 700 : 500) + 60 * Math.sin(t * 0.25), c.z - Math.cos(ang) * R);
+      hdg = (ang * 180 / Math.PI + 90) % 360;
+      roll = Math.atan(speed * w / 9.81) * 180 / Math.PI;
+      pitch = 2 + 3 * Math.sin(t * 0.25);
+      const h = hdg * Math.PI / 180;
+      f.velocity.set(Math.sin(h) * speed, 15 * Math.cos(t * 0.25), -Math.cos(h) * speed);
+      f.gForce = 1 / Math.cos(roll * Math.PI / 180);
+    }
+    e.set(pitch * Math.PI / 180, -hdg * Math.PI / 180, -roll * Math.PI / 180, 'YXZ');
+    f.quaternion.setFromEuler(e);
+    f.airspeed = f.ias = f.velocity.length();
+    f.mach = f.airspeed / 340;
+    f.altitude = f.position.y;
+    f.agl = f.position.y - world.getGroundHeight(f.position.x, f.position.z) - (f.onGround ? f.position.y - world.getGroundHeight(f.position.x, f.position.z) : 1.5);
+    f.heading = hdg; f.pitch = pitch; f.roll = roll; f.verticalSpeed = f.velocity.y;
+    f.aoa = 3; f.throttle = cat === 'fighter' ? 0.8 + 0.18 * Math.sin(t * 0.2) : 0.62;
+    for (const en of f.engines) { en.n1 = cat === 'airliner' ? 0.82 : f.throttle; en.afterburner = f.throttle > 0.9 ? (f.throttle - 0.9) * 10 : 0; }
+    f.torque = 0.62 + 0.1 * Math.sin(t * 0.7); f.rotorRPM = 1.0;
+    if (q.has('g')) f.gForce = Number(q.get('g'));
+  }
+
+  await loadKind(acId);
+  if (q.get('cam')) rigCam.setMode(q.get('cam'));
+  let paused = screen === 'pause', helpOn = screen === 'help', hudOn = true;
+  const bindings = [
+    { keys: 'W / S  ·  ↑ / ↓', label: 'Burnu indir / kaldır' }, { keys: 'A / D  ·  ← / →', label: 'Sola / sağa yatış' },
+    { keys: 'Q / E', label: 'Dümen sola / sağa' }, { keys: 'Shift / Ctrl', label: 'Gaz artır / azalt' },
+    { keys: 'X / Z  ·  + / −', label: 'Gaz artır / azalt (Mac için)' }, { keys: '1 … 9  ·  0', label: 'Gaz %10 … %90  ·  %100' },
+    { keys: 'G', label: 'İniş takımı' }, { keys: 'F / V', label: 'Flap indir / topla' }, { keys: 'K', label: 'Hava freni' },
+    { keys: 'B / Boşluk', label: 'Fren' }, { keys: 'C', label: 'Kamera değiştir' }, { keys: 'T', label: 'Kokpit / dış görünüm' },
+    { keys: 'R', label: 'Yeniden başla' }, { keys: 'P / Esc', label: 'Duraklat' }, { keys: 'H', label: 'Göstergeleri gizle / göster' },
+    { keys: 'M', label: 'Sesi kapat / aç' }, { keys: 'F1 / ?', label: 'Yardım' },
+    { keys: 'Oyun kolu', label: 'Sol çubuk: burun / yatış · Sağ çubuk: dümen / gaz · RT / LT: gaz · LB / RB: dümen' },
+  ];
+  hud.setPaused(paused);
+  hud.showHelp(bindings, helpOn);
+  addEventListener('keydown', (ev) => {
+    if (ev.repeat) return;
+    if (ev.code === 'KeyC') hud.showMessage(`Kamera: ${ev.shiftKey ? rigCam.prev() : rigCam.next()}`, 1000);
+    if (ev.code === 'KeyT') hud.showMessage(rigCam.toggleView(), 1000);
+    if (ev.code === 'KeyY') rigCam.lookBack(true);
+    if (ev.code === 'KeyH') { hudOn = !hudOn; hud.setVisible(hudOn); }
+    if (ev.code === 'KeyP' || ev.code === 'Escape') { paused = !paused; hud.setPaused(paused); }
+    if (ev.code === 'F1') { ev.preventDefault(); helpOn = !helpOn; hud.showHelp(bindings, helpOn); }
+    if (ev.code === 'KeyG') { flight.gearHandleDown = !flight.gearHandleDown; flight.gear = flight.gearHandleDown ? 1 : 0; }
+    if (ev.code === 'KeyF') { flight.flaps = Math.min(1, flight.flaps + 0.25); flight.flapsLabel = `CONF ${Math.round(flight.flaps * 4)}`; }
+    if (ev.code === 'KeyM') hud.showMessage('Tereyağı gibi iniş!', 2500);
+    const k = { Digit1: 'f16', Digit2: 'f22', Digit3: 'a320neo', Digit4: 'b737', Digit5: 'uh60' }[ev.code];
+    if (k) loadKind(k);
+  });
+  addEventListener('keyup', (ev) => { if (ev.code === 'KeyY') rigCam.lookBack(false); });
+  hud.showMessage('Önizleme: C kamera · T kokpit · H göstergeler · P duraklat · F1 yardım', 3000);
+
+  const timer = new THREE.Timer(); timer.connect(document);
+  const dtJitter = q.get('dtj') === '1';
+  const probe = q.get('jitter') === '1' ? [] : null;
+  const _p = new THREE.Vector3();
+  // jitter metric: RMS of the on-screen aircraft position minus its 9-frame centred moving average (px)
+  window.__jitter = () => {
+    if (!probe || probe.length < 30) return null;
+    const P = probe.slice(10);
+    let sum = 0, n = 0, maxR = 0;
+    for (let i = 4; i < P.length - 4; i++) {
+      let mx = 0, my = 0;
+      for (let k = -4; k <= 4; k++) { mx += P[i + k][0]; my += P[i + k][1]; }
+      mx /= 9; my /= 9;
+      const r = Math.hypot(P[i][0] - mx, P[i][1] - my);
+      sum += r * r; n++; maxR = Math.max(maxR, r);
+    }
+    const xs = P.map((p) => p[0]), ys = P.map((p) => p[1]);
+    return { frames: P.length, rms: +Math.sqrt(sum / n).toFixed(3), max: +maxR.toFixed(2), rangeX: +(Math.max(...xs) - Math.min(...xs)).toFixed(1), rangeY: +(Math.max(...ys) - Math.min(...ys)).toFixed(1) };
+  };
+  let acc = 0, frames = 0;
+  function frame(ts) {
+    requestAnimationFrame(frame);
+    timer.update(ts);
+    let dt = Math.min(timer.getDelta(), 0.1);
+    if (dtJitter) dt = Math.min(0.1, dt * (0.35 + Math.random() * 1.3));   // simulate uneven frame pacing
+    if (!paused) fly(dt);
+    rig.object.position.copy(flight.position);
+    rig.object.quaternion.copy(flight.quaternion);
+    rig.update(dt, flight.getVisualState());
+    rigCam.update(dt, flight);
+    rig.setView(rigCam.view);
+    hud.update(flight, { world, spawn: null, view: rigCam.view });
+    renderer.render(scene, camera);
+    if (probe) {
+      _p.copy(rig.object.position).project(camera);
+      probe.push([_p.x * innerWidth / 2, -_p.y * innerHeight / 2, dt]);
+      if (probe.length > 2000) probe.shift();
+    }
+    acc += dt; frames++;
+    if (acc > 1) { window.__fps = frames / acc; acc = 0; frames = 0; dev.innerHTML = `${links}\n${acId} · ${rigCam.mode} · ${window.__fps.toFixed(0)} fps`; }
+  }
+  requestAnimationFrame(frame);
+}
+</script>
+</body>
+</html>

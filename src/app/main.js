@@ -118,7 +118,16 @@ function syncRig() {
 }
 
 // ---- actions ----
-const cameraRig = createCameraRig(camera, renderer.domElement, { getGroundHeight: (x, z) => (state.world ? state.world.getGroundHeight(x, z) : 0) });
+// The camera rig is created before the world exists: hand it a proxy that forwards to the real world once loaded.
+const worldProxy = new Proxy({}, {
+  get(_, key) {
+    const w = state.world;
+    if (!w) return key === 'getGroundHeight' || key === 'getObstacleHeight' ? () => 0 : key === 'hitTest' ? () => null : undefined;
+    const v = w[key];
+    return typeof v === 'function' ? v.bind(w) : v;
+  },
+});
+const cameraRig = createCameraRig(camera, renderer.domElement, worldProxy);
 const SYSTEM_ACTIONS = ['gear', 'flapsDown', 'flapsUp', 'speedbrake', 'reverser', 'canopy', 'lights', 'autopilot'];
 for (const a of SYSTEM_ACTIONS) input.on(a, () => { if (state.flight && state.flight.command) state.flight.command(a); });
 input.on('camera', () => hud.showMessage(`Kamera: ${cameraRig.next()}`, 1000));
