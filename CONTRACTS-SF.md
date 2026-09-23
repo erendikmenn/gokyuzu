@@ -250,3 +250,22 @@ contacts) → bind displays to `rig.screens` → `audio.loadAircraft` → loop: 
 flight → rig.update(flight.getVisualState()) → world.update → cameraRig.update → rig.setView(cameraRig.view) → displays
 (30 Hz) → hud.update → audio.update → render`. `window.__game` exposes `{ flight, world, rig, camera, cameraRig, input }`
 for tests; `window.__fps` is updated every second.
+
+## 8. Graphics quality (wave 5)
+
+Presets live in `src/core/quality.js` (`QUALITY.low|medium|high|ultra`, lead-owned). Settings are persisted by
+`src/core/settings.js` (`loadSettings()`, `saveSettings(s)` → broadcasts the `gokyuzu:settings` window event; main.js
+applies it live). The initial preset is auto-detected from the GPU (Intel/integrated → low, Apple M Pro/Max → ultra).
+
+- main.js applies the renderer-level fields (`pixelRatioMax`, `shadows`, `antialias` at startup) and calls
+  `world.setQuality(q)`, which forwards to `environment.setQuality(q)`, `terrain.setQuality(q)` and every layer's
+  `setQuality(q)` **if present**. The same preset is also in `ctx.quality` when the factories run.
+- Each world owner implements `setQuality(q)` for its part, live (no reload), reading only the fields it needs:
+  - W1 environment/terrain: `shadowMapSize`, `shadowCascades`, `shadows` (skip the shadow update when false),
+    `terrainError` (multiplier on the screen-space error), `imageryMaxLevel` (0 = all levels, −1/−2 = drop the finest
+    levels → also lower GPU memory), `water` ('simple'|'medium'|'high'), `clouds` ('low'|'medium'|'high'), `anisotropy`.
+  - W2 city: `cityLodScale` (→ `setLodScale`), `cityShadows`, `treeDensity` (0..1 fraction of instances drawn),
+    `treeDistance` (multiplier), `anisotropy`.
+  - W3 landmarks: `landmarkLodScale`, `shadows` (only the near LOD casts).  W4 airports: `airportLodScale`, `shadows`.
+- Target on **low**: a typical Intel Iris Xe / AMD integrated laptop at 1080p holds ≥ 40 fps and stays under
+  ~1 GB of GPU+JS memory at SFO and downtown. Measure your part's cost with each preset on this Mac and report.

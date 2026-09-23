@@ -6,11 +6,11 @@ import { createCity } from './city.js';
 import { createLandmarks } from './landmarks.js';
 import { createAirports } from './airports.js';
 
-export async function createSFWorld({ scene, renderer, camera, loader, focus = { x: 0, z: 0 }, onProgress = () => {} }) {
+export async function createSFWorld({ scene, renderer, camera, loader, quality = null, focus = { x: 0, z: 0 }, onProgress = () => {} }) {
   const [runways, landmarks, region] = await Promise.all([
     loader.loadJSON('data/sf/runways.json'), loader.loadJSON('data/sf/landmarks.json'), loader.loadJSON('data/sf/region.json'),
   ]);
-  const ctx = { scene, renderer, camera, loader, runways, landmarks, region, focus };
+  const ctx = { scene, renderer, camera, loader, runways, landmarks, region, focus, quality };   // quality: src/core/quality.js preset (factories may read it at creation)
   onProgress(0.05, 'Gökyüzü ve ışık');
   const environment = await createEnvironment(ctx);
   onProgress(0.15, 'Arazi ve hava fotoğrafları');
@@ -34,6 +34,7 @@ export async function createSFWorld({ scene, renderer, camera, loader, focus = {
   onProgress(0.85, 'Detaylar yükleniyor');
   await Promise.all([terrain.ready, ...layers.map((l) => l.ready)].map((p) => Promise.resolve(p).catch((e) => console.error(e))));
   onProgress(1, 'Hazır');
+  if (quality) for (const part of [environment, terrain, ...layers]) if (part && part.setQuality) { try { part.setQuality(quality); } catch (e) { console.error('[world] setQuality', e); } }
 
   // runway rectangles for isOnRunway
   const rects = [];
@@ -48,6 +49,11 @@ export async function createSFWorld({ scene, renderer, camera, loader, focus = {
     runways, landmarks, region, environment, terrain, layers,
     towers: layers.flatMap((l) => l.towers || []),   // control-tower cab eye points (airports layer) for the tower camera
     sunDirection: environment.sunDirection,
+    /** Apply a src/core/quality.js preset to every part that supports it (CONTRACTS-SF.md §8). */
+    setQuality(q) {
+      ctx.quality = q;
+      for (const part of [environment, terrain, ...layers]) if (part && part.setQuality) { try { part.setQuality(q); } catch (e) { console.error('[world] setQuality', e); } }
+    },
     getGroundHeight: (x, z) => terrain.getHeight(x, z),
     isWater: (x, z) => terrain.isWater(x, z),
     runwayAt(x, z) {

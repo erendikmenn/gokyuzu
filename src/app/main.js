@@ -10,25 +10,36 @@ import { createDisplay } from '../avionics/index.js';
 import { createAudioSystem } from '../audio/index.js';
 import { createMenu, createLoadingScreen, createHUD, createCameraRig } from '../ui/index.js';
 import { buildSpawns } from './spawns.js';
+import { loadSettings } from '../core/settings.js';
+import { QUALITY } from '../core/quality.js';
 
 const params = new URLSearchParams(location.search);
 const app = document.getElementById('app');
 const uiRoot = document.getElementById('ui');
 const hudRoot = document.getElementById('hud');
 
+// ---- settings / quality ----
+let settings = loadSettings();
+if (params.has('quality') && QUALITY[params.get('quality')]) settings.quality = params.get('quality');   // ?quality=low|medium|high|ultra
+let quality = QUALITY[settings.quality] || QUALITY.high;
+
 // ---- renderer ----
-const renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true, powerPreference: 'high-performance' });
-// Dynamic resolution: start at the display's pixel ratio (≤ 2) and step down when the frame rate drops
-// (e.g. Retina over downtown), stepping back up after a sustained smooth period. ?pr=<n> pins it.
-const maxPixelRatio = params.has('pr') ? Number(params.get('pr')) : Math.min(window.devicePixelRatio, 2);
-const minPixelRatio = params.has('pr') ? maxPixelRatio : Math.max(1, maxPixelRatio * 0.6);
+const renderer = new THREE.WebGLRenderer({ antialias: quality.antialias, logarithmicDepthBuffer: true, powerPreference: 'high-performance' });
+// Dynamic resolution: start at min(display pixel ratio, preset cap) and step down when the frame rate drops
+// (weak GPUs, Retina over downtown), stepping back up after a sustained smooth period. ?pr=<n> pins it.
+let maxPixelRatio, minPixelRatio;
+function pixelRatioLimits() {
+  maxPixelRatio = params.has('pr') ? Number(params.get('pr')) : Math.min(window.devicePixelRatio, quality.pixelRatioMax);
+  minPixelRatio = params.has('pr') ? maxPixelRatio : Math.max(0.6, maxPixelRatio * 0.6);
+}
+pixelRatioLimits();
 let pixelRatio = maxPixelRatio;
 renderer.setPixelRatio(pixelRatio);
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.0;
-renderer.shadowMap.enabled = true;
+renderer.shadowMap.enabled = quality.shadows;
 renderer.shadowMap.type = THREE.PCFShadowMap;
 app.appendChild(renderer.domElement);
 
@@ -64,13 +75,14 @@ async function start() {
   const loading = createLoadingScreen(uiRoot);
   const t0 = performance.now();
   if (!state.world) {
-    state.world = await createSFWorld({ scene, renderer, camera, loader, focus: { x: spawn.x, z: spawn.z }, onProgress: (p, t) => loading.setProgress(p * 0.8, t) });
+    state.world = await createSFWorld({ scene, renderer, camera, loader, quality, focus: { x: spawn.x, z: spawn.z }, onProgress: (p, t) => loading.setProgress(p * 0.8, t) });
   }
   loading.setProgress(0.85, 'Uçak yükleniyor');
   await loadAircraft(choice.aircraftId);
   resetFlight();
   loading.setProgress(1, 'Hazır');
   loading.hide();
+  state.readyAt = performance.now();   // dynamic resolution ignores the first seconds (shader compiles, tile bursts)
   console.log(`[app] ready in ${((performance.now() - t0) / 1000).toFixed(1)} s`);
   const heli = state.def.spec.category === 'helicopter';
   // airborne on final with gear + flaps already out: pressing G (as for a normal approach) would retract the gear
@@ -212,9 +224,34 @@ function frame(ts) {
     fpsAcc = 0; fpsFrames = 0;
   }
 }
+// Settings edited in the menu / pause screen (src/core/settings.js saveSettings) apply live.
+function applySettings(next) {
+  settings = next;
+  const q = QUALITY[settings.quality] || quality;
+  if (q !== quality) {
+    const shadowsChanged = q.shadows !== quality.shadows;
+    quality = q;
+    pixelRatioLimits();
+    pixelRatio = Math.min(Math.max(pixelRatio, minPixelRatio), maxPixelRatio);
+    renderer.setPixelRatio(pixelRatio);
+    if (shadowsChanged) {
+      renderer.shadowMap.enabled = q.shadows;
+      scene.traverse((o) => { if (o.material) [].concat(o.material).forEach((m) => { m.needsUpdate = true; }); });
+    }
+    if (state.world && state.world.setQuality) state.world.setQuality(q);
+    hud.showMessage(`Grafik kalitesi: ${q.label}`, 1500);
+  }
+  if (audio.setVolumes) audio.setVolumes(settings.volumes);
+  state.settings = settings; state.quality = quality;
+}
+window.addEventListener('gokyuzu:settings', (e) => applySettings(e.detail));
+Object.assign(state, { settings, quality });
+if (audio.setVolumes) audio.setVolumes(settings.volumes);
+
 let smoothFor = 0, sinceDrop = 99;
 function adaptResolution(fps, span) {
   if (!state.flight || maxPixelRatio === minPixelRatio) return;
+  if (!state.readyAt || performance.now() - state.readyAt < 6000) return;
   sinceDrop += span;
   if (fps < 50 && pixelRatio > minPixelRatio) {
     pixelRatio = Math.max(minPixelRatio, pixelRatio - 0.15);
