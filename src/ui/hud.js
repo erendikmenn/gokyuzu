@@ -10,6 +10,8 @@ import { createMinimap } from './minimap.js';
 import { AIRPORTS, LANDMARK_NAMES, CATEGORY_LABEL, AIRCRAFT_INFO } from './data.js';
 import { shared } from './shared.js';
 import { CAMERA_NAMES } from './camera.js';
+import { openSettings, openCredits, qualityHintSeen, markQualityHintSeen, qualityHintText } from './panels.js';
+import { loadSettings, saveSettings } from '../core/settings.js';
 
 const MONO = 'ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace';
 const SANS = '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif';
@@ -169,6 +171,8 @@ const CSS = `
 .gkh-pbtn.primary { background: var(--gk-teal); color: #04140f; border-color: var(--gk-teal); }
 .gkh-pbtn.primary:hover { background: #7ff7d6; }
 .gkh-pbtn kbd { font: 700 11px var(--gk-sans); padding: 2px 6px; border-radius: 5px; background: rgba(0, 0, 0, .18); border: 1px solid rgba(0, 0, 0, .2); }
+.gkh-plink { pointer-events: auto; margin-top: 4px; border: 0; background: none; color: var(--gk-faint); font: 600 12px var(--gk-sans); cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+.gkh-plink:hover { color: var(--gk-dim); }
 .gkh-pinfo { display: grid; grid-template-columns: repeat(3, auto); gap: 6px 26px; margin-top: 10px; font-size: 13px; color: var(--gk-dim); }
 .gkh-pinfo span { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
 `;
@@ -281,20 +285,26 @@ export function createHUD(container) {
   const helpBtn = el('button', 'gkh-pbtn', pbtns);
   helpBtn.append('Kontroller ');
   const helpKbd = el('kbd', null, helpBtn, 'F1');
+  const setBtn = el('button', 'gkh-pbtn', pbtns);
+  setBtn.append('Ayarlar');
   const menuBtn = el('button', 'gkh-pbtn', pbtns);
   menuBtn.append('Ana menü');
+  const credLink = el('button', 'gkh-plink', pause, 'Künye');
   const pinfo = el('div', 'gkh-pinfo', pause);
   let pauseCode = 'KeyP', helpCode = 'F1';
   resumeBtn.addEventListener('click', () => pressKey(pauseCode));
   helpBtn.addEventListener('click', () => pressKey(helpCode));
   menuBtn.addEventListener('click', () => { location.href = location.pathname; });
+  setBtn.addEventListener('click', () => openSettings(root));
+  credLink.addEventListener('click', () => openCredits(root));
 
   // ---------- state ----------
   let def = null, category = 'airliner', spec = {};
   const MODE_KEY = 'gokyuzu-sf.hudMode';
   const MODES = ['full', 'compact', 'off'];
   const MODE_NAMES = { full: 'Tam', compact: 'Sade', off: 'Kapalı' };
-  let hudMode = MODES.includes(storageGet(MODE_KEY)) ? storageGet(MODE_KEY) : 'compact';
+  const settingsMode = (() => { try { return loadSettings().hudMode; } catch { return null; } })();
+  let hudMode = MODES.includes(settingsMode) ? settingsMode : MODES.includes(storageGet(MODE_KEY)) ? storageGet(MODE_KEY) : 'compact';
   let visible = hudMode !== 'off', view = 'exterior', paused = false, cinematic = false;
   const compact = () => hudMode === 'compact';
   let lastT = performance.now(), pulse = 0;
@@ -1253,11 +1263,13 @@ export function createHUD(container) {
     setCls(root, 'gkh-top', !visible || cockpit || cinematic || compact());
     positionTopStack();
   }
-  function setMode(m) {
+  function setMode(m, persist = true) {
     if (!MODES.includes(m)) return hudMode;
+    if (m === hudMode && !persist) return hudMode;
     hudMode = m;
     visible = m !== 'off';
     storageSet(MODE_KEY, m);
+    if (persist) { try { const st = loadSettings(); if (st.hudMode !== m) saveSettings({ ...st, hudMode: m }); } catch { /* ignore */ } }
     layout();
     applyVisibility();
     return hudMode;
@@ -1265,6 +1277,9 @@ export function createHUD(container) {
 
   const hud = {
     setAircraft(d) {
+      if (!def && !qualityHintSeen()) {
+        setTimeout(() => { if (!qualityHintSeen()) { markQualityHintSeen(); hud.showMessage(`${qualityHintText()} (P → Ayarlar)`, 6500); } }, 7000);
+      }
       def = d || null;
       spec = (d && d.spec) || {};
       category = spec.category || (d && d.category) || 'airliner';
@@ -1389,6 +1404,10 @@ export function createHUD(container) {
     },
     get element() { return root; },
   };
+  window.addEventListener('gokyuzu:settings', (e) => {
+    const m = e.detail && e.detail.hudMode;
+    if (MODES.includes(m) && m !== hudMode) setMode(m, false);
+  });
   applyVisibility();
   buildStrip();
   return hud;

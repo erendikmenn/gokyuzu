@@ -6,6 +6,7 @@ import { TIPS, AIRCRAFT_INFO, AIRPORTS } from './data.js';
 import { shared } from './shared.js';
 import { spawnLabel } from './menu.js';
 import { AIRCRAFT } from '../aircraft/registry.js';
+import { deviceNotice } from './panels.js';
 
 const CSS = `
 .gkl { position: fixed; inset: 0; z-index: 40; overflow: hidden; color: var(--gk-fg); font-family: var(--gk-sans);
@@ -175,6 +176,7 @@ export function createLoadingScreen(container) {
   }
   layout();
   window.addEventListener('resize', layout);
+  if (!new URLSearchParams(location.search).has('nomobile')) deviceNotice(container);   // direct links skip the menu
 
   return {
     setProgress(p, text) {

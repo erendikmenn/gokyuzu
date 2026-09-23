@@ -193,6 +193,7 @@ input.on('menu', () => { location.href = location.pathname; });
 const timer = new THREE.Timer();
 timer.connect(document);
 let fpsAcc = 0, fpsFrames = 0, displayAcc = 0;
+const invertedInput = {};
 function frame(ts) {
   requestAnimationFrame(frame);
   timer.update(ts);
@@ -201,7 +202,13 @@ function frame(ts) {
   const { flight, rig, world } = state;
   if (flight && rig && world) {
     if (!state.paused) {
-      if (!flight.crashed) flight.step(dt, input.state, world);
+      if (!flight.crashed) {
+        // invert pitch (settings) on a copy so the input module's own smoothing state is untouched
+        let inp = input.state;
+        if (settings.invertPitch) { inp = Object.assign(invertedInput, input.state); inp.pitch = -inp.pitch; }
+        flight.step(dt, inp, world);
+        if (inp !== input.state) input.state.throttle = inp.throttle;   // models may back-drive the lever (helicopter hold)
+      }
       if (state.crashTimer > 0 && (state.crashTimer -= dt) <= 0) resetFlight();
     }
     syncRig();

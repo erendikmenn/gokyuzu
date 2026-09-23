@@ -5,6 +5,7 @@ import { goldenGateSceneSVG, planformSVG, SCENE_VB } from './art.js';
 import { AIRCRAFT_INFO, CATEGORY_LABEL, AIRPORTS, AIRPORT_ORDER, MENU_CONTROLS } from './data.js';
 import { shared } from './shared.js';
 import { createSpawnMap, SPAWN_MAP_CSS } from './baymap.js';
+import { openSettings, openCredits, deviceNotice, showQualityHint, CREDITS_LINE } from './panels.js';
 
 const STORE_KEY = 'gokyuzu-sf.menu';
 
@@ -315,6 +316,18 @@ const CSS = `
 
 .gkm-foot { display: flex; flex-wrap: wrap; gap: calc(6 * var(--u1)) calc(22 * var(--u1)); margin-top: calc(14 * var(--u1)); font-size: calc(12 * var(--u1)); color: var(--gk-faint); }
 .gkm-foot span { display: inline-flex; align-items: center; gap: calc(6 * var(--u1)); }
+.gkm-foot-r { margin-left: auto; display: flex; gap: calc(8 * var(--u1)); }
+.gkm-foot-r button { display: inline-flex; align-items: center; gap: calc(6 * var(--u1)); padding: calc(5 * var(--u1)) calc(11 * var(--u1)); border-radius: calc(9 * var(--u1));
+  border: 1px solid rgba(255, 255, 255, .16); background: rgba(8, 14, 26, .45); color: rgba(236, 244, 255, .88) !important; cursor: pointer;
+  font: 650 calc(12 * var(--u1)) var(--gk-sans) !important; -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); transition: background .15s, border-color .15s; }
+.gkm-foot-r button:hover { background: rgba(255, 255, 255, .12); border-color: rgba(255, 255, 255, .3); }
+.gkm-foot-r button:focus-visible { outline: 2px solid #fff; outline-offset: 1px; }
+.gkm-foot-r svg { width: calc(14 * var(--u1)); height: calc(14 * var(--u1)); }
+.gkm .gkp-hint.gkm-hint { position: absolute; left: calc(470 * var(--u1)); right: auto; top: calc(46 * var(--u1)); bottom: auto; transform: none;
+  max-width: calc(500 * var(--u1)); font-size: calc(13.5 * var(--u1)); z-index: 5; }
+.gkm-credit { position: absolute; left: calc(40 * var(--u1)); right: calc(440 * var(--u1)); bottom: calc(7 * var(--u1)); font-size: calc(10 * var(--u1));
+  color: rgba(208, 222, 240, .38); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.gkm-credit:hover { color: rgba(208, 222, 240, .7); }
 .gkm-foot kbd { font: 600 calc(10.5 * var(--u1)) var(--gk-sans); padding: calc(1 * var(--u1)) calc(6 * var(--u1)); border-radius: 5px; color: var(--gk-dim);
   background: rgba(255, 255, 255, .06); border: 1px solid rgba(255, 255, 255, .12); }
 
@@ -343,7 +356,7 @@ export function createMenu(container, { aircraft = [], spawns = [] } = {}) {
     let spawnManual = !!stored.spawnManual && spawns.some((s) => s.id === stored.spawnId);
     let spawnId = spawnManual ? stored.spawnId : (list[acIndex] && list[acIndex].defaultSpawn) || (spawns[0] && spawns[0].id);
     if (!spawns.some((s) => s.id === spawnId)) spawnId = spawns[0] ? spawns[0].id : null;
-    let closed = false;
+    let closed = false, hintBox = null;
 
     const root = el('div', 'gkm', container);
     root.setAttribute('lang', 'tr');
@@ -415,6 +428,18 @@ export function createMenu(container, { aircraft = [], spawns = [] } = {}) {
     hint(['↑', '↓'], 'başlangıç noktası');
     hint(['1', '…', String(list.length)], 'hızlı seçim');
     hint(['Enter'], 'uç');
+    const footR = el('span', 'gkm-foot-r', foot);
+    const setBtn = el('button', null, footR);
+    setBtn.type = 'button';
+    setBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>';
+    setBtn.append('Ayarlar');
+    const credBtn = el('button', null, footR, 'Künye');
+    credBtn.type = 'button';
+    setBtn.addEventListener('click', () => openSettings(container));
+    credBtn.addEventListener('click', () => openCredits(container));
+    const credit = el('div', 'gkm-credit', root, `${CREDITS_LINE} · Ticari olmayan hayran projesi`);
+    credit.title = 'Künye';
+    credit.addEventListener('click', () => openCredits(container));
 
     // side panel
     const side = el('aside', 'gkm-side', ui);
@@ -587,6 +612,7 @@ export function createMenu(container, { aircraft = [], spawns = [] } = {}) {
       const result = { aircraftId: a.id, spawnId: spawnId || a.defaultSpawn };
       shared.choice = { ...result, aircraftName: a.name, spawnName: s ? s.name : '', category: a.category };
       cleanup();
+      if (hintBox && hintBox.el.isConnected) hintBox.el.remove();
       root.classList.add('gkm-out');
       setTimeout(() => root.remove(), 600);
       resolve(result);
@@ -594,7 +620,7 @@ export function createMenu(container, { aircraft = [], spawns = [] } = {}) {
 
     // ---------- keyboard (captured before the game input sees it) ----------
     function onKey(e) {
-      if (closed) return;
+      if (closed || shared.modalOpen) return;            // the settings / credits modal handles its own keys
       e.stopPropagation();
       if (e.type !== 'keydown' || e.metaKey || e.ctrlKey || e.altKey) return;
       const k = e.code;
@@ -644,6 +670,10 @@ export function createMenu(container, { aircraft = [], spawns = [] } = {}) {
     renderHero(false);
     renderControls();
     refresh();
+    deviceNotice(container).then(() => {
+      if (closed) return;
+      setTimeout(() => { if (!closed && !shared.modalOpen) hintBox = showQualityHint(root, () => openSettings(container), 'gkm-hint'); }, 1600);
+    });
     requestAnimationFrame(() => { if (!closed) flyBtn.focus({ preventScroll: true }); });
   });
 }
