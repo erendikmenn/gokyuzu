@@ -1,11 +1,14 @@
-"""Voice warnings (macOS `say` + processing) and synthetic cockpit alert tones.
+"""Voice warnings (macOS `say` + cockpit-audio processing) and synthetic cockpit alert tones.
 
-F-16/F-22  'Bitching Betty' (Samantha, headset/radio band, slight grit)
-A320neo    FWC/EGPWS synthetic male (Rocko, digitised, cockpit loudspeaker) + single chime, CRC, cavalry charge,
-           cricket, C-chord
-737-800    EGPWS male (Reed, cockpit loudspeaker) + stick shaker, overspeed clacker, A/P disconnect wailer, whoop,
-           chime
-UH-60M     female voice (Shelley) + low-rotor tone (in gen_uh60)
+Only the standard macOS voices are installed on the build machine (no Premium/Enhanced/Siri voices), so the least
+robotic *concatenative* voices are used (recorded human speech units) instead of the formant synthesisers:
+  F-16 / F-22 / UH-60  'Bitching Betty'   Samantha (en_US female)  → headset/intercom chain
+  A320neo / 737-800    GPWS / FWC callouts Daniel (male)            → cockpit loudspeaker chain (+ small flight deck)
+Real voice-warning systems replay one recorded word, so repeated warnings ("pull up, pull up") are one rendering
+played twice with a fixed gap instead of two synthesised words with different intonation.
+Processing: trim → (pitch nudge) → syllable-levelling compressor → 300–3400 Hz band-limit + transducer EQ → light
+tanh saturation → small-room early reflections + short diffuse tail (speaker) → active-speech-level normalisation
+(-19 dBFS K-weighted active level) with a soft peak limit at -1 dBFS, so every callout has the same loudness.
 """
 import warnings
 
@@ -13,15 +16,14 @@ import numpy as np
 from scipy import signal
 
 from dsp import (N, SR, bump, butter, circ_filter, fade, hp, lp, modal, say, soft_clip, spectral_noise, tvec, undb,
-                 write_wav, bq)
+                 write_wav, bq, limit_peaks, _K1, _K2)
 
 warnings.filterwarnings('ignore')
 TAU = 2 * np.pi
 
 BETTY = 'Samantha'
-AIRBUS = 'Rocko (İngilizce (ABD))'
-BOEING = 'Reed (İngilizce (ABD))'
-HELO = 'Shelley (İngilizce (ABD))'
+GPWS = 'Daniel'
+HELO = 'Samantha'
 
 
 def compress(x, thresh_db=-18, ratio=3.0, att=0.003, rel=0.08):
@@ -38,43 +40,95 @@ def compress(x, thresh_db=-18, ratio=3.0, att=0.003, rel=0.08):
     return x * g
 
 
-def radio(x, rng, grit=2.2, hiss_db=-38):
-    """Headset / intercom: 300-3400 Hz band, compression, mild saturation, faint hiss."""
-    y = butter(x, 'highpass', 320, 4)
-    y = butter(y, 'lowpass', 3600, 4)
-    y = bq(y, 'peak', 1900, 1.2, 4)
-    y = compress(y / np.max(np.abs(y)), -20, 4)
-    y = soft_clip(y / np.max(np.abs(y)) * grit, 1.0)
-    pad = N(0.04)
-    y = np.concatenate([np.zeros(pad), y, np.zeros(N(0.08))])
-    h = spectral_noise(len(y), lambda f: bump(f, 2000, 1.0), rng) * undb(hiss_db)
-    env = np.convolve((np.abs(y) > 0.01).astype(float), np.ones(N(0.06)) / N(0.06), 'same')
-    return fade(y + h * np.clip(env * 3, 0, 1), 0.01, 0.03)
+def speech_level_db(x, frame=0.05):
+    """Active speech level: K-weighted RMS over the frames within 20 dB of the loudest frame (dBFS)."""
+    y = signal.lfilter(*_K2, signal.lfilter(*_K1, x))
+    n = N(frame)
+    m = len(y) // n
+    if m < 1:
+        return 20 * np.log10(np.sqrt(np.mean(y * y)) + 1e-12)
+    e = np.mean(y[:m * n].reshape(m, n) ** 2, axis=1)
+    ldb = 10 * np.log10(e + 1e-12)
+    act = e[ldb > ldb.max() - 20]
+    return 10 * np.log10(np.mean(act) + 1e-12)
 
 
-def speaker(x, rng, digitise=16000, room=True, lo=220, hi=5200, res=2400):
-    """Cockpit loudspeaker: digitised (reduced sample rate), speaker band + resonance, small-room reflections."""
-    if digitise:
-        from math import gcd
-        g = gcd(SR, digitise)
-        x = signal.resample_poly(x, digitise // g, SR // g)
-        x = np.round(x / np.max(np.abs(x)) * 2047) / 2047  # 12-bit
-        x = signal.resample_poly(x, SR // g, digitise // g)
-    y = butter(x, 'highpass', lo, 3)
-    y = butter(y, 'lowpass', hi, 3)
-    y = bq(y, 'peak', res, 1.5, 5)
-    y = bq(y, 'peak', 850, 1.0, 2)
-    y = soft_clip(compress(y / np.max(np.abs(y)), -16, 3) * 1.6, 1.0)
-    y = np.concatenate([np.zeros(N(0.01)), y, np.zeros(N(0.07))])
-    if room:
-        out = y.copy()
-        for d, a in ((0.0017, 0.28), (0.0031, -0.2), (0.0046, 0.14), (0.0072, 0.1), (0.011, 0.07)):
-            k = N(d)
-            out[k:] += a * y[:-k]
-        tail = spectral_noise(N(0.12), lambda f: bump(f, 1500, 1.5), rng) * np.exp(-tvec(N(0.12)) / 0.03)
-        out += 0.05 * np.convolve(y, tail / np.sum(np.abs(tail)) * 8, 'full')[:len(y)]
-        y = out
-    return fade(y, 0.005, 0.05)
+def pitch_nudge(x, factor):
+    """Small pitch change by resampling (±8 % keeps the timbre natural); factor < 1 lowers the voice."""
+    if abs(factor - 1) < 1e-3:
+        return x
+    from math import gcd
+    up, down = int(round(1000 / factor)), 1000
+    g = gcd(up, down)
+    return signal.resample_poly(x, up // g, down // g)
+
+
+def level_compress(x, ratio=3.0, att=0.004, rel=0.06, range_db=14):
+    """RMS-follower compressor that evens out syllable levels (threshold = active level - range_db/2)."""
+    env = np.sqrt(signal.lfilter([1 - np.exp(-1 / (0.008 * SR))], [1, -np.exp(-1 / (0.008 * SR))], x * x) + 1e-12)
+    a1, r1 = np.exp(-1 / (att * SR)), np.exp(-1 / (rel * SR))
+    e = np.zeros_like(env)
+    st = 0.0
+    for i, v in enumerate(env):
+        st = a1 * st + (1 - a1) * v if v > st else r1 * st + (1 - r1) * v
+        e[i] = st
+    ldb = 20 * np.log10(e + 1e-9)
+    thr = ldb.max() - range_db
+    g = undb(-np.maximum(ldb - thr, 0) * (1 - 1 / ratio))
+    return x * g
+
+
+def small_room(y, rng, early=((0.0013, 0.32), (0.0021, -0.24), (0.0034, 0.2), (0.0047, 0.15), (0.0062, -0.12),
+                              (0.0089, 0.09), (0.0118, 0.06)), tail_db=-17, rt60=0.2):
+    """Flight-deck acoustics: discrete early reflections (panels, windscreen) + a short, dark diffuse tail."""
+    out = y.copy()
+    for d, a in early:
+        k = N(d)
+        refl = np.concatenate([np.zeros(k), y[:-k]])
+        out += a * butter(refl, 'lowpass', 4500, 1)
+    nt = N(rt60 * 1.2)
+    t = tvec(nt)
+    ir = rng.standard_normal(nt) * np.exp(-6.91 * t / rt60) * (t > 0.012)
+    ir = butter(ir, 'lowpass', 2500, 2)
+    ir /= np.sqrt(np.sum(ir * ir)) + 1e-12
+    tail = signal.fftconvolve(y, ir)[:len(y)]
+    out += undb(tail_db) * tail * (np.sqrt(np.mean(y * y)) / (np.sqrt(np.mean(tail * tail)) + 1e-12))
+    return out
+
+
+def cockpit_audio(x, rng, kind='speaker', pitch=1.0, drive=1.8, hiss_db=None):
+    """kind: 'speaker' (flight-deck loudspeaker + room) or 'headset' (helmet / intercom earphones)."""
+    x = x - np.mean(x)
+    x = butter(x, 'highpass', 90, 2)
+    x = pitch_nudge(x, pitch)
+    x = x / (np.max(np.abs(x)) + 1e-12)
+    x = level_compress(x, ratio=3.0, range_db=12)
+    # 300-3400 Hz band-limit (4th order) + transducer colouration
+    y = butter(x, 'highpass', 300, 4)
+    y = butter(y, 'lowpass', 3400, 4)
+    if kind == 'speaker':
+        y = bq(y, 'peak', 2300, 1.3, 3.5)      # small cone resonance
+        y = bq(y, 'peak', 750, 1.0, -2.0)      # enclosure dip
+        y = bq(y, 'peak', 420, 1.4, 2.0)       # body
+    else:
+        y = bq(y, 'peak', 1700, 1.1, 3.0)      # earphone presence
+        y = bq(y, 'peak', 3000, 2.0, 1.5)
+    # light saturation (amplifier / transducer), then tame the added harmonics
+    y = y / (np.max(np.abs(y)) + 1e-12)
+    y = np.tanh(drive * y) / np.tanh(drive)
+    y = butter(y, 'lowpass', 4200, 2)
+    pad_a, pad_b = N(0.012), N(0.08)
+    y = np.concatenate([np.zeros(pad_a), y, np.zeros(pad_b)])
+    if kind == 'speaker':
+        y = small_room(y, rng)
+    if hiss_db is not None:   # intercom 'open mic' hiss, gated with the speech
+        g = np.convolve((np.abs(y) > 0.02 * np.max(np.abs(y))).astype(float), np.ones(N(0.08)) / N(0.08), 'same')
+        h = butter(rng.standard_normal(len(y)), 'bandpass', [400, 3200], 2)
+        y = y + undb(hiss_db) * np.max(np.abs(y)) * h / np.max(np.abs(h)) * np.clip(g * 2, 0, 1)
+    # consistent loudness: same active speech level for every file, soft peak limit
+    y = y * undb(-19.0 - speech_level_db(y))
+    y = limit_peaks(y, -1.0, knee=0.6)
+    return fade(y, 0.004, 0.04)
 
 
 def voice(text, v, rate=None):
@@ -83,6 +137,11 @@ def voice(text, v, rate=None):
 
 def silence(s):
     return np.zeros(N(s))
+
+
+def twice(x, gap):
+    """A recorded warning replayed twice (identical intonation, fixed gap) like a real voice-warning unit."""
+    return np.concatenate([x, silence(gap), x])
 
 
 # ------------------------------------------------------------------------------------------------ alert tones
@@ -224,51 +283,88 @@ def ding_dong():
     return y
 
 
-def gen_betty(aid, rng, voice_name=BETTY, grit=2.2):
-    phrases = {'v_warning': 'Warning. Warning.', 'v_caution': 'Caution. Caution.', 'v_pullup': 'Pull up. Pull up.',
-               'v_altitude': 'Altitude. Altitude.', 'v_bingo': 'Bingo. Bingo.', 'v_overg': 'Over G. Over G.',
-               'v_lowspeed': 'Low speed. Low speed.', 'v_gear': 'Landing gear.'}
-    for k, txt in phrases.items():
-        write_wav(f'{aid}/{k}.wav', radio(voice(txt, voice_name, 180), rng, grit), target_lufs=-18)
+# phrase table: key → (text, rate wpm, repeat twice?, gap s)
+BETTY_PHRASES = {
+    'v_warning': ('Warning', 170, True, 0.28), 'v_caution': ('Caution', 170, True, 0.28),
+    'v_pullup': ('Pull up', 175, True, 0.22), 'v_altitude': ('Altitude', 172, True, 0.25),
+    'v_bingo': ('Bingo', 168, True, 0.3), 'v_overg': ('Over G', 172, True, 0.25),
+    'v_lowspeed': ('Low speed', 172, True, 0.25), 'v_gear': ('Landing gear', 170, False, 0),
+}
+
+
+def render(text, v, rate, rep=False, gap=0.25):
+    x = voice(text, v, rate)
+    return twice(x, gap) if rep else x
+
+
+def gen_betty(aid, rng, voice_name=BETTY, drive=1.6, pitch=1.0, hiss_db=-40):
+    for k, (txt, rate, rep, gap) in BETTY_PHRASES.items():
+        x = render(txt, voice_name, rate, rep, gap)
+        write_wav(f'{aid}/{k}.wav', cockpit_audio(x, rng, 'headset', pitch=pitch, drive=drive, hiss_db=hiss_db))
 
 
 def gen_gpws(aid, v, rng, airbus):
-    rate = 185
-    common = {'v_sinkrate': 'Sink rate.', 'v_pullup': 'Pull up.', 'v_terrain': 'Terrain. Terrain.',
-              'v_toolow_gear': 'Too low. Gear.', 'v_toolow_flaps': 'Too low. Flaps.',
-              'v_toolow_terrain': 'Too low. Terrain.', 'v_bankangle': 'Bank angle. Bank angle.',
-              'v_dontsink': "Don't sink.", 'v_glideslope': 'Glide slope.', 'v_windshear': 'Windshear. Windshear.',
-              'v_1000': 'One thousand.', 'v_500': 'Five hundred.', 'v_100': 'One hundred.', 'v_50': 'Fifty.',
-              'v_40': 'Forty.', 'v_30': 'Thirty.', 'v_20': 'Twenty.', 'v_10': 'Ten.'}
+    # GPWS / FWC phrases: warnings emphatic and even, radio-altitude numbers quick and flat (no trailing period)
+    P = {'v_sinkrate': ('Sink rate', 182, False, 0), 'v_pullup': ('Pull up', 180, False, 0),
+         'v_terrain': ('Terrain', 180, True, 0.2), 'v_toolow_gear': ('Too low, gear', 185, False, 0),
+         'v_toolow_flaps': ('Too low, flaps', 185, False, 0), 'v_toolow_terrain': ('Too low, terrain', 185, False, 0),
+         'v_bankangle': ('Bank angle', 182, True, 0.22), 'v_dontsink': ("Don't sink", 182, False, 0),
+         'v_glideslope': ('Glide slope', 182, False, 0), 'v_windshear': ('Windshear', 180, True, 0.22),
+         'v_1000': ('One thousand', 190, False, 0), 'v_500': ('Five hundred', 190, False, 0),
+         'v_100': ('One hundred', 195, False, 0), 'v_50': ('Fifty', 205, False, 0), 'v_40': ('Forty', 205, False, 0),
+         'v_30': ('Thirty', 205, False, 0), 'v_20': ('Twenty', 205, False, 0), 'v_10': ('Ten', 205, False, 0)}
     if airbus:
-        common.update({'v_2500': 'Two thousand five hundred.', 'v_400': 'Four hundred.', 'v_300': 'Three hundred.',
-                       'v_200': 'Two hundred.', 'v_5': 'Five.', 'v_hundredabove': 'Hundred above.',
-                       'v_minimums': 'Minimum.', 'v_retard': 'Retard. Retard.', 'v_stall': 'Stall. Stall.'})
+        P.update({'v_2500': ('Two thousand five hundred', 195, False, 0), 'v_400': ('Four hundred', 195, False, 0),
+                  'v_300': ('Three hundred', 195, False, 0), 'v_200': ('Two hundred', 195, False, 0),
+                  'v_5': ('Five', 205, False, 0), 'v_hundredabove': ('Hundred above', 180, False, 0),
+                  'v_minimums': ('Minimum', 175, False, 0), 'v_retard': ('Retard', 185, True, 0.3),
+                  'v_stall': ('Stall', 180, True, 0.2)})
     else:
-        common.update({'v_2500': 'Twenty five hundred.', 'v_hundredabove': 'Approaching minimums.',
-                       'v_minimums': 'Minimums.'})
-    for k, txt in common.items():
-        # radio-altitude numbers are spoken fast (they follow each other quickly in the flare)
-        x = voice(txt, v, 215 if k[2:].isdigit() else rate)
+        P.update({'v_2500': ('Twenty five hundred', 195, False, 0),
+                  'v_hundredabove': ('Approaching minimums', 182, False, 0), 'v_minimums': ('Minimums', 178, False, 0)})
+    # the Airbus FWC voice is a little deeper and more compressed than the Honeywell EGPWS voice
+    pitch, drive = (0.95, 2.0) if airbus else (1.0, 1.6)
+    for k, (txt, rate, rep, gap) in P.items():
+        x = render(txt, v, rate, rep, gap)
         if k == 'v_stall' and airbus:
             cr = cricket(0.62)[:N(0.6)]
-            x = np.concatenate([cr / np.max(np.abs(cr)) * 0.5, silence(0.08), x / np.max(np.abs(x)) * 0.9])
+            y = cockpit_audio(x, rng, 'speaker', pitch=pitch, drive=drive)
+            c = cockpit_audio(cr, rng, 'speaker', pitch=1.0, drive=1.2) * undb(-4)
+            out = np.concatenate([c, silence(0.05), y])
+            write_wav(f'{aid}/{k}.wav', limit_peaks(out, -1.0, 0.6))
+            continue
         if k == 'v_pullup' and not airbus:
             w = whoop()
-            x = np.concatenate([w, silence(0.08), w, silence(0.12), x / np.max(np.abs(x)) * 0.9])
-        write_wav(f'{aid}/{k}.wav', speaker(x, rng, 16000 if airbus else 22050), target_lufs=-18)
+            y = cockpit_audio(x, rng, 'speaker', pitch=pitch, drive=drive)
+            ww = cockpit_audio(np.concatenate([w, silence(0.08), w]), rng, 'speaker', pitch=1.0, drive=1.3) * undb(-2)
+            write_wav(f'{aid}/{k}.wav', limit_peaks(np.concatenate([ww, silence(0.04), y]), -1.0, 0.6))
+            continue
+        write_wav(f'{aid}/{k}.wav', cockpit_audio(x, rng, 'speaker', pitch=pitch, drive=drive))
 
 
-def main():
+def gen_helo(rng):
+    for k, (txt, rate, rep, gap) in {'v_lowrotor': ('Low rotor R P M', 175, False, 0),
+                                     'v_altitude': ('Altitude', 172, True, 0.25), 'v_pullup': ('Pull up', 175, True, 0.22),
+                                     'v_bankangle': ('Bank angle', 175, False, 0)}.items():
+        x = render(txt, HELO, rate, rep, gap)
+        write_wav(f'uh60/{k}.wav', cockpit_audio(x, rng, 'headset', pitch=0.97, drive=2.2, hiss_db=-34))
+
+
+def main_voices():
     rng = np.random.default_rng(99)
     print('[voices]')
-    gen_betty('f16', rng)
-    gen_betty('f22', rng, BETTY, 1.6)
-    gen_gpws('a320neo', AIRBUS, rng, True)
-    gen_gpws('b737', BOEING, rng, False)
-    for k, txt in {'v_lowrotor': 'Low rotor R P M.', 'v_altitude': 'Altitude. Altitude.', 'v_pullup': 'Pull up.',
-                   'v_bankangle': 'Bank angle.'}.items():
-        write_wav(f'uh60/{k}.wav', radio(voice(txt, HELO, 175), rng, 1.8), target_lufs=-18)
+    gen_betty('f16', rng, BETTY, drive=1.8, pitch=1.0, hiss_db=-38)
+    gen_betty('f22', rng, BETTY, drive=1.3, pitch=1.02, hiss_db=None)    # F-22: cleaner digital audio
+    gen_gpws('a320neo', GPWS, rng, True)
+    gen_gpws('b737', GPWS, rng, False)
+    gen_helo(rng)
+
+
+def main(voices_only=False):
+    main_voices()
+    if voices_only:
+        return
+    rng = np.random.default_rng(99)
     print('[alerts]')
     write_wav('a320neo/single_chime.wav', chime(), target_lufs=-18)
     write_wav('a320neo/crc.wav', crc(), target_lufs=-18, loop=True)
@@ -283,4 +379,5 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    import sys
+    main(voices_only='--voices-only' in sys.argv)

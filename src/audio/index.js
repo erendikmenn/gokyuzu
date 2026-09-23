@@ -800,7 +800,7 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
     const tauView = 0.06;
     setP(I, 'ext', G.ext.gain, cockpit ? 0 : 1, tauView);
     setP(I, 'int', G.int.gain, cockpit ? 1 : 0, tauView);
-    setP(I, 'alert', G.alert.gain, cockpit ? 0.7 : 0.35, 0.1);
+    setP(I, 'alert', G.alert.gain, cockpit ? 1.0 : 0.5, 0.1);
     const canopy = s.canopy;
     const supersonicQuiet = I.profile.category === 'fighter' ? 1 - 0.55 * sstep(1.0, 1.25, s.mach) : 1;
     setP(I, 'intEng', G.intEng.gain, db((ip.engineDb ?? 0) + (ip.canopyOpenDb ?? 0) * canopy) * supersonicQuiet, 0.1);
