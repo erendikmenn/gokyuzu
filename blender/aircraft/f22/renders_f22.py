@@ -6,10 +6,10 @@ from mathutils import Vector, Quaternion, Euler
 
 import geom as G
 from geom import Y
-import shape as S
+import oml as S
 from util import REPO, nishita_sky, add_sun, add_camera
 
-OUT = os.path.join(REPO, 'renders', 'aircraft', 'f22')
+OUT = os.environ.get('F22_OUT') or os.path.join(REPO, 'renders', 'aircraft', 'f22')
 SRC = os.path.join(REPO, 'assets', 'aircraft', 'f22', 'src')
 ZG = S.Z_GROUND
 
@@ -24,7 +24,7 @@ def rot_x(name, deg):
     ob.rotation_quaternion = rest @ Quaternion((1, 0, 0), math.radians(deg))
 
 
-def pose(gear=1.0, nose_doors=88, main_doors=0, nozzle_open=4.0, tvc=0.0, canopy=0.0, flaperon=0.0, lef=0.0,
+def pose(gear=1.0, nose_doors=88, main_doors=85, nozzle_open=4.0, tvc=0.0, canopy=0.0, flaperon=0.0, lef=0.0,
          stab=0.0, rudder=0.0):
     rot_x('gear_door_nose_R', -nose_doors)
     rot_x('gear_door_nose_L', nose_doors)
@@ -36,6 +36,11 @@ def pose(gear=1.0, nose_doors=88, main_doors=0, nozzle_open=4.0, tvc=0.0, canopy
         rot_x(f'nozzle_flap_upper_{i}', -tvc - nozzle_open)
         rot_x(f'nozzle_flap_lower_{i}', -tvc + nozzle_open)
     rot_x('canopy', canopy)
+    # gear fully up: legs and wheels are stowed (hidden, as the rig does)
+    for n in ('gear_nose', 'gear_nose_steer', 'wheel_nose', 'gear_main_L', 'gear_main_R', 'wheel_main_L', 'wheel_main_R'):
+        ob = bpy.data.objects.get(n)
+        if ob:
+            ob.hide_render = gear < 0.01
     for sd in 'LR':
         rot_x(f'ctl_flaperon_{sd}', flaperon)
         rot_x(f'ctl_lef_{sd}', -lef)
@@ -60,7 +65,7 @@ def render_materials(ctx):
         p.inputs['Thin Wall'].default_value = True
     except Exception:
         pass
-    ctx.canopy.data.materials[0] = m
+    bpy.data.objects['canopy'].data.materials[0] = m
     # displays (emissive pages)
     def emis(name, file, strength=2.2, alpha=False):
         mm = bpy.data.materials.new(name)
@@ -89,7 +94,8 @@ def render_materials(ctx):
             nt.links.new(add.outputs[0], out.inputs['Surface'])
         return mm
     pages = {'screen_pmfd': 'disp_pmfd.png', 'screen_smfd_L': 'disp_smfd.png', 'screen_smfd_R': 'disp_pmfd.png',
-             'screen_smfd_C': 'disp_smfd.png', 'screen_ufd_L': 'disp_ufd.png', 'screen_ufd_R': 'disp_ufd.png'}
+             'screen_smfd_C': 'disp_smfd.png', 'screen_ufd_L': 'disp_ufd.png', 'screen_ufd_R': 'disp_ufd.png',
+             'sfd_display': 'disp_sfd.png'}
     for n, f in pages.items():
         ob = bpy.data.objects.get(n)
         if ob:
@@ -97,6 +103,9 @@ def render_materials(ctx):
     hud = bpy.data.objects.get('screen_hud')
     if hud:
         hud.data.materials[0] = emis('r_hud', 'disp_hud.png', 3.0, alpha=True)
+    for o in list(bpy.data.objects):
+        if o.name == 'cockpit_lite':
+            o.hide_render = True
     hg = bpy.data.objects.get('hud_glass')
     if hg:
         mm = bpy.data.materials.new('r_hudglass')
@@ -197,9 +206,6 @@ def flight(on):
         g.hide_render = on
     if w:
         w.hide_render = not on
-    pl = bpy.data.objects.get('pilot')
-    if pl:
-        pl.hide_render = not on
     if on:
         pose(gear=0.0, nose_doors=0, main_doors=0, nozzle_open=1.5)
     else:
@@ -260,7 +266,12 @@ def sky(elev, az, strength=1.0, sun_strength=4.0, sun_color=(1, 1, 1)):
     return sun
 
 
-def cam(loc, tgt, lens, name='rcam'):
+def cam(loc, tgt, lens, name='rcam', shift=True):
+    # camera positions are authored for the pre-wave-6 origin (Y0 = 10.10): shift with the origin
+    from geom import Y0
+    dy = (Y0 - 10.10) if shift else 0.0
+    loc = (loc[0], loc[1] + dy, loc[2])
+    tgt = (tgt[0], tgt[1] + dy, tgt[2])
     for o in [o for o in bpy.data.objects if o.type == 'CAMERA']:
         bpy.data.objects.remove(o)
     c = add_camera(loc, tgt, lens, name)
@@ -290,13 +301,14 @@ def render(ctx, which='all', samples=128):
     # aircraft heading: nose along +Y. Sun azimuth convention (util): rotation about Z.
     if 'hero' in shots:
         setup(max(samples, 192), 2560, 1440)
-        sky(6.0, 240, 0.30, 2.6, (1.0, 0.68, 0.42))
+        sky(16.0, 235, 0.36, 2.6, (1.0, 0.88, 0.74))
         cam((-13.8, 23.0, -1.30), (0.7, 1.4, -0.45), 48)
         shoot(os.path.join(OUT, 'hero.png'))
         make_thumb()
     if 'front' in shots:
         setup(samples, 1920, 1080)
         sky(24, 215, 0.25, 3.6)
+        bpy.context.scene.view_settings.exposure = -1.0
         flight(True)
         c = cam((15.0, 18.5, 4.2), (0, 0.6, -0.2), 50)
         c.rotation_euler.rotate_axis('Z', math.radians(-11))
@@ -312,6 +324,7 @@ def render(ctx, which='all', samples=128):
     if 'planform' in shots:
         setup(samples, 1920, 1080)
         sky(62, 150, 0.2, 3.4)
+        bpy.context.scene.view_settings.exposure = -1.1
         c = cam((0.0, 0.25, 75.0), (0.0, 0.25, 0.0), 85)
         c.rotation_euler = (0, 0, -math.pi / 2)
         shoot(os.path.join(OUT, 'planform.png'))
@@ -319,13 +332,20 @@ def render(ctx, which='all', samples=128):
         setup(samples, 1920, 1080)
         sky(18, 35, 0.25, 3.4)
         flight(True)
-        import cockpit as CK
-        e = Vector((CK.EYE_REAL[0], Y(CK.EYE_REAL[1]), CK.EYE_REAL[2]))
-        pl = bpy.data.objects.get('pilot')
-        if pl:
-            pl.hide_render = True
-        cam(tuple(e + Vector((0.0, 0.02, 0.02))), tuple(e + Vector((0.0, 1.0, -0.36))), 15)
+        import cklayout as L
+        e = Vector((L.EYE[0], Y(L.EYE[1]), L.EYE[2]))
+        hidden = []
+        for o in bpy.data.objects:
+            p = o
+            while p is not None and p.name != 'interior_lite':
+                p = p.parent
+            if p is not None and not o.hide_render:
+                o.hide_render = True
+                hidden.append(o)
+        cam(tuple(e + Vector((0.0, 0.02, 0.0))), tuple(e + Vector((0.0, 1.0, -0.36))), 16, shift=False)
         shoot(os.path.join(OUT, 'cockpit.png'))
+        for o in hidden:
+            o.hide_render = False
         flight(False)
 
 

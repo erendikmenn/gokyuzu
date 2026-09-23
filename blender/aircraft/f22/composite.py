@@ -17,7 +17,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 Image.MAX_IMAGE_PIXELS = None
 
-Y0 = 10.10
+from geom import Y0  # noqa: E402
 POS_OFF = np.array([10.0, 10.0, 3.0])
 POS_SCALE = np.array([20.0, 20.0, 6.0])
 
@@ -85,6 +85,7 @@ class ViewImg:
         self.line = ld('line').astype(np.float32) / 255
         self.tape = ld('tape').astype(np.float32) / 255
         self.tone = ld('tone').astype(np.float32)
+        self.shade = ld('shade').astype(np.float32)
         self.mark = ld('mark').astype(np.float32) / 255
         # soften (anti-alias)
         self.line = ndimage.gaussian_filter(self.line, 0.7)
@@ -122,8 +123,8 @@ class ViewImg:
 
 def main(cache, src, out):
     t0 = time.time()
-    import shape as S
-    import details as D
+    import oml as O
+    import surfaces as SF
     pos = np.load(os.path.join(cache, 'pos.npy')).astype(np.float32)
     nrm = np.load(os.path.join(cache, 'nrm.npy')).astype(np.float32)
     H, W = pos.shape[:2]
@@ -152,8 +153,11 @@ def main(cache, src, out):
     views = {n: ViewImg(src, n, meta) for n in meta}
 
     # ---------------- projection selection
-    fin_h = (ax - D.FIN_X0) * math.sin(D.FIN_CANT) + (z - D.FIN_Z0) * math.cos(D.FIN_CANT)
-    is_fin = (ax > 1.2) & (z > D.FIN_Z0 + 0.02) & (s > 12.6) & (s < 17.6) & (np.abs(nx) > 0.5)
+    cant = SF.FIN_CANT
+    fin_h = (ax - SF.FIN_X0) * math.sin(cant) + (z - SF.FIN_Z0) * math.cos(cant)
+    fin_off = (ax - SF.FIN_X0) * math.cos(cant) - (z - SF.FIN_Z0) * math.sin(cant)
+    fin_n = nx * np.sign(x) * math.cos(cant) - nz * math.sin(cant)
+    is_fin = (fin_h > -0.05) & (np.abs(fin_off) < 0.12) & (s > 12.8) & (s < 17.4) & (np.abs(fin_n) > 0.6)
     sel = np.full(M, -1, np.int8)
     order = ['top', 'bot', 'side_R', 'side_L', 'fin_R', 'fin_L']
     sel[(nz > 0.42)] = 0
@@ -166,6 +170,7 @@ def main(cache, src, out):
     line = np.zeros(M, np.float32)
     tape = np.zeros(M, np.float32)
     tone = np.full(M, 128, np.float32)
+    shade = np.full(M, 128, np.float32)
     mark = np.zeros((M, 4), np.float32)
     for k, name in enumerate(order):
         idx = np.nonzero(sel == k)[0]
@@ -181,36 +186,22 @@ def main(cache, src, out):
         line[idx] = V.sample(V.line, X, Yp)
         tape[idx] = V.sample(V.tape, X, Yp)
         tone[idx] = V.sample(V.tone, X, Yp, nearest=True)
+        shade[idx] = V.sample(V.shade, X, Yp)
         mk = V.sample(V.mark, X, Yp)
         if name.startswith('fin'):
-            # side of the fin mid-plane from the position (robust), consistent with the normal
-            sg = np.sign(x[idx])
-            off = (ax[idx] - D.FIN_X0) * math.cos(D.FIN_CANT) - (z[idx] - D.FIN_Z0) * math.sin(D.FIN_CANT)
-            outboard = (off > 0.002) & (np.sign(nx[idx]) == sg)
+            outboard = (fin_off[idx] > 0.0) & (fin_n[idx] > 0)
             mk[~outboard] = 0
+            # the inboard face gets the coating zones but no markings
         if name.startswith('side'):
             facing = (np.sign(nx[idx]) == np.sign(x[idx])) | (np.abs(nx[idx]) < 0.2)
             mk[~facing] = 0
+        if name == 'top':
+            mk[nz[idx] < 0.6] = 0
         mark[idx] = mk
     print(f'views sampled {time.time() - t0:.1f}s')
 
-    # ---------------- geometric features: leading-edge treatments, radome, control-surface gaps
-    le = np.zeros(M, np.float32)
-    on_wing = (ax > S.X_ROOT) & (ax < S.X_TIP + 0.01) & (np.abs(z - S.w_zc(np.clip(ax, S.X_ROOT, S.X_TIP)) * 1) < 0.35)
-    wle = S.W_S_LE0 + S.TAN_LE * ax
-    le = np.where(on_wing & (s - wle < 0.07) & (s - wle > -0.02), 1.0, le)
-    stab_le = 15.26 + S.TAN_LE * (ax - 1.75)
-    on_stab = (ax > 1.98) & (ax < 4.43) & (np.abs(z - 0.02) < 0.12) & (s > 15.0)
-    le = np.where(on_stab & (s - stab_le < 0.05) & (s - stab_le > -0.02), 1.0, le)
-    fin_le = D.FIN_S_LE0 + D.FIN_TAN_LE * np.maximum(fin_h, 0)
-    le = np.where(is_fin & (s - fin_le < 0.06) & (s - fin_le > -0.02), 1.0, le)
-    radome = (s < 2.25 + 0.09 * np.abs(np.sin(ax * 20 + z * 20)))
-    # RAM edge treatments: forebody chines, inlet lips, canopy sill outline
-    sc = np.clip(s, 0.0, S.S_TI)
-    xch = np.interp(sc, np.linspace(0, S.S_TI, 200), [S.x_ch_fore(t) for t in np.linspace(0, S.S_TI, 200)])
-    zch = np.interp(sc, np.linspace(0, S.S_TI, 200), [S.z_ch(t) for t in np.linspace(0, S.S_TI, 200)])
-    chine_d = np.hypot(ax - xch, z - zch)
-    le = np.where((s < S.S_TI) & (s > 0.3) & (chine_d < 0.03), 1.0, le)
+    # ---------------- geometric RAM treatments: intake lips, canopy sill surround, fin tips, nozzle edges
+    ram = np.zeros(M, np.float32)
 
     def seg_dist(p, a, b):
         a, b = np.asarray(a, np.float32), np.asarray(b, np.float32)
@@ -218,118 +209,107 @@ def main(cache, src, out):
         t = np.clip(((p - a) @ ab) / (ab @ ab), 0, 1)
         return np.linalg.norm(p - (a[None, :] + t[:, None] * ab[None, :]), axis=1)
     PL = np.stack([ax, s, z], 1).astype(np.float32)
-    near_lip = (s > 5.3) & (s < 7.3) & (ax > 0.6) & (ax < 2.2) & (z < 0.1)
+    near_lip = (s > 4.6) & (s < 6.8) & (ax > 0.3) & (ax < 2.1) & (z < 0.1)
     idx = np.nonzero(near_lip)[0]
     if len(idx):
-        TI, TO = (S.x_ch_fore(S.S_TI), S.S_TI, -0.02), (2.03, S.S_TO, -0.02)
-        zbo = S.z_belly(S.S_BO) + 0.06
-        BO = (2.03 - (0.0 - zbo) * math.tan(S.CANT_NAC), S.S_BO, zbo)
-        BI = (S.x_bi(S.S_BI), S.S_BI, S.z_belly(S.S_BI))
-        d = np.minimum.reduce([seg_dist(PL[idx], TI, TO), seg_dist(PL[idx], TO, BO), seg_dist(PL[idx], BO, BI),
-                               seg_dist(PL[idx], BI, TI)])
-        le[idx] = np.maximum(le[idx], (d < 0.045).astype(np.float32))
-    sill = np.zeros(M, np.float32)
-    inc = (s > S.S_CAN0 + 0.05) & (s < S.S_CAN1 - 0.05)
+        TI, TO, BO, BI = O.lip_TI(), O.lip_TO(), O.lip_BO(), O.lip_BI()
+        f = lambda p: (p[0], p[1], p[2])
+        d = np.minimum.reduce([seg_dist(PL[idx], f(TI), f(TO)), seg_dist(PL[idx], f(TO), f(BO)),
+                               seg_dist(PL[idx], f(BO), f(BI)), seg_dist(PL[idx], f(BI), f(TI))])
+        ram[idx] = np.maximum(ram[idx], np.clip(1 - d / 0.10, 0, 1))
+    inc = (s > O.S_CAN0 - 0.1) & (s < O.S_CAN1 + 0.1) & (z > 0.2)
     idx = np.nonzero(inc)[0]
+    sill = np.zeros(M, np.float32)
     if len(idx):
-        cx = np.interp(s[idx], np.linspace(S.S_CAN0, S.S_CAN1, 200), [S.can_x(t) for t in np.linspace(S.S_CAN0, S.S_CAN1, 200)])
-        cz = np.interp(s[idx], np.linspace(S.S_CAN0, S.S_CAN1, 200), [S.can_zs(t) for t in np.linspace(S.S_CAN0, S.S_CAN1, 200)])
+        ss = np.clip(s[idx], O.S_CAN0, O.S_CAN1)
+        grid = np.linspace(O.S_CAN0, O.S_CAN1, 200)
+        cx = np.interp(ss, grid, [O.can_x(t) for t in grid])
+        cz = np.interp(ss, grid, [O.can_zs(t) for t in grid])
         dd = np.hypot(ax[idx] - cx, z[idx] - cz)
-        sill[idx] = ((dd > 0.012) & (dd < 0.055)).astype(np.float32)
+        sill[idx] = np.clip(1 - np.abs(dd - 0.07) / 0.06, 0, 1)
+    radome = s < 2.32 + 0.06 * np.abs(np.sin(ax * 18 + z * 18))
 
     # ---------------- colours (linear)
-    c_a = srgb_to_lin(np.array([101, 105, 110]) / 255.0)      # FS 36176 (lighter)
-    c_b = srgb_to_lin(np.array([88, 92, 98]) / 255.0)         # FS 36170 (darker)
-    camo = fbm(P * np.array([0.28, 0.22, 0.28]) + 3.1, 3)
-    camo = smoothstep(0.47, 0.53, camo)
-    base = c_a[None, :] * (1 - camo[:, None]) + c_b[None, :] * camo[:, None]
-    # panel tones (+-4 %), sheen panels
+    c_base = srgb_to_lin(np.array([118, 122, 127]) / 255.0)     # Have Glass V gray as it photographs (FS 36170 + flake sheen)
+    c_alt = srgb_to_lin(np.array([108, 112, 117]) / 255.0)
+    camo = fbm(P * np.array([0.35, 0.28, 0.35]) + 3.1, 3)
+    camo = smoothstep(0.45, 0.58, camo)
+    base = c_base[None, :] * (1 - 0.5 * camo[:, None]) + c_alt[None, :] * 0.5 * camo[:, None]
     tnorm = (tone - 128) / 127.0
     in_panel = np.abs(tone - 128) > 0.5
-    base *= (1 + 0.035 * tnorm * in_panel)[:, None]
-    sheen = in_panel & ((tone > 196) | (tone < 52))
-    sheen_col = srgb_to_lin(np.array([116, 120, 126]) / 255.0)
-    base = np.where(sheen[:, None], base * 0.35 + sheen_col[None, :] * 0.65, base)
-    # radome slightly different tone
-    base = np.where(radome[:, None], base * 1.05, base)
-    # leading edges darker (RAM LE treatment)
-    le_col = srgb_to_lin(np.array([70, 74, 80]) / 255.0)
-    base = base * (1 - 0.75 * le[:, None]) + le_col[None, :] * 0.75 * le[:, None]
-    # canopy sill seal (light gray RAM tape band)
-    sill_col = srgb_to_lin(np.array([122, 126, 130]) / 255.0)
-    base = base * (1 - 0.6 * sill[:, None]) + sill_col[None, :] * 0.6 * sill[:, None]
-    # seam tape (lighter) + grooves (darker)
-    tape_col = srgb_to_lin(np.array([126, 130, 134]) / 255.0)
-    tt = np.clip(tape, 0, 1) * 0.55
+    base *= (1 + 0.09 * tnorm * in_panel)[:, None]
+    # deliberate coating zones: lighter RAM edges / darker fin centres
+    sh = (shade - 128) / 127.0
+    lighter = srgb_to_lin(np.array([142, 146, 150]) / 255.0)
+    darker = srgb_to_lin(np.array([86, 90, 95]) / 255.0)
+    base = np.where(sh[:, None] > 0, base * (1 - sh[:, None] * 1.4).clip(0, 1) + lighter[None, :] * (sh[:, None] * 1.4).clip(0, 1),
+                    base * (1 + sh[:, None] * 1.6).clip(0, 1) + darker[None, :] * (-sh[:, None] * 1.6).clip(0, 1))
+    ramc = srgb_to_lin(np.array([138, 142, 146]) / 255.0)
+    rr = np.clip(ram * 0.8 + sill * 0.55, 0, 1)
+    base = base * (1 - rr[:, None]) + ramc[None, :] * rr[:, None]
+    base = np.where(radome[:, None], base * 0.96, base)
+    tape_col = srgb_to_lin(np.array([140, 144, 148]) / 255.0)
+    tt = np.clip(tape, 0, 1) * 0.6
     base = base * (1 - tt[:, None]) + tape_col[None, :] * tt[:, None]
-    base *= (1 - 0.42 * np.clip(line, 0, 1))[:, None]
-    # weathering: large blotches, fine grain, aft streaks, lower-surface grime
+    base *= (1 - 0.45 * np.clip(line, 0, 1))[:, None]
     grime = fbm(P * 1.3 + 11.0, 4)
-    base *= (0.965 + 0.07 * grime)[:, None]
+    base *= (0.96 + 0.08 * grime)[:, None]
     fine = vnoise(P * 22.0)
     base *= (0.985 + 0.03 * fine)[:, None]
     streak = fbm(np.stack([x * 5.0, s * 0.45, z * 5.0], 1) + 5.0, 3)
-    base *= (1 - 0.035 * smoothstep(0.55, 0.8, streak) * (1 - 0.6 * is_fin))[:, None]
+    base *= (1 - 0.04 * smoothstep(0.55, 0.8, streak))[:, None]
     lower = smoothstep(-0.2, -0.9, nz)
-    base *= (1 - 0.05 * lower * fbm(P * 2.5, 3))[:, None]
-    # exhaust / heat staining on the aft deck, booms, stabilator roots
-    heat = smoothstep(16.0, 17.4, s) * (ax < 1.6) * (z > -0.1)
-    heat_col = srgb_to_lin(np.array([92, 86, 80]) / 255.0)
-    hmix = (0.45 * heat * (0.7 + 0.3 * fbm(P * 3.0, 3)))[:, None]
+    base *= (1 - 0.06 * lower * fbm(P * 2.5, 3))[:, None]
+    heat = smoothstep(14.9, 15.6, s) * (ax < 1.3)
+    heat_col = srgb_to_lin(np.array([98, 94, 90]) / 255.0)
+    hmix = (0.4 * heat * (0.7 + 0.3 * fbm(P * 3.0, 3)))[:, None]
     base = base * (1 - hmix) + heat_col[None, :] * hmix
-    # markings
     mcol = srgb_to_lin(mark[:, :3])
     ma = mark[:, 3:4]
     base = base * (1 - ma) + mcol * ma
-    # classes
     skin = C < 0.2
     dark = (C >= 0.2) & (C < 0.4)
     hot = (C >= 0.4) & (C < 0.6)
     bay = C >= 0.6
-    hot_col = srgb_to_lin(np.array([158, 148, 134]) / 255.0) * (0.8 + 0.4 * fbm(P * 4.0, 3))[:, None]
-    tint = smoothstep(16.3, 17.8, s)[:, None]
-    hot_col = hot_col * (1 - 0.35 * tint) + srgb_to_lin(np.array([96, 84, 104]) / 255.0)[None, :] * 0.35 * tint
-    # ceramic-matrix tiles on the nozzle flaps / tunnel (10 x 12 cm grid)
+    hot_col = srgb_to_lin(np.array([112, 104, 96]) / 255.0) * (0.8 + 0.4 * fbm(P * 4.0, 3))[:, None]
+    tint = smoothstep(15.9, 17.1, s)[:, None]
+    hot_col = hot_col * (1 - 0.3 * tint) + srgb_to_lin(np.array([84, 76, 92]) / 255.0)[None, :] * 0.3 * tint
     tu = np.abs(((x * 10.0) % 1.0) - 0.5)
     tv = np.abs(((s * 8.3) % 1.0) - 0.5)
     tiles = np.clip((np.maximum(tu, tv) - 0.44) / 0.06, 0, 1)
-    hot_col = hot_col * (1 - 0.45 * tiles)[:, None]
+    hot_col = hot_col * (1 - 0.35 * tiles)[:, None]
     base = np.where(hot[:, None], hot_col, base)
     base = np.where(dark[:, None], srgb_to_lin(np.array([14, 14, 15]) / 255.0)[None, :], base)
-    bay_col = srgb_to_lin(np.array([176, 178, 172]) / 255.0) * (0.93 + 0.1 * fbm(P * 3.0, 2))[:, None]
+    bay_col = srgb_to_lin(np.array([196, 198, 192]) / 255.0) * (0.93 + 0.1 * fbm(P * 3.0, 2))[:, None]
     base = np.where(bay[:, None], bay_col, base)
-    # ambient occlusion
     aoe = np.clip(A, 0, 1)
-    occl = np.where(bay | dark, 0.25 + 0.75 * aoe, 0.45 + 0.55 * aoe)
+    occl = np.where(bay | dark, 0.25 + 0.75 * aoe, 0.62 + 0.38 * aoe)
     occl = np.where(hot, 0.62 + 0.38 * aoe, occl)
     base *= occl[:, None]
 
-    # ---------------- roughness / metallic
-    rough = 0.66 + 0.07 * (grime - 0.5) + 0.03 * (fine - 0.5)
-    metal = np.full(M, 0.04, np.float32)
-    rough = np.where(sheen, 0.47 + 0.05 * grime, rough)
-    metal = np.where(sheen, 0.32, metal)
-    rough = rough + 0.08 * tt
-    metal = metal * (1 - tt)
-    rough = np.where(le > 0.5, 0.62, rough)
-    rough = rough * (1 - ma[:, 0]) + 0.5 * ma[:, 0]
-    rough = np.where(hot, 0.5 + 0.12 * fbm(P * 5.0, 2), rough)
-    metal = np.where(hot, 0.3, metal)
-    rough = np.where(bay, 0.62, rough)
+    # ---------------- roughness / metallic (Have Glass V: metallic flake sheen; RAM edges and tape duller)
+    rough = 0.42 + 0.08 * (grime - 0.5) + 0.03 * (fine - 0.5) + 0.05 * tnorm * in_panel
+    metal = np.full(M, 0.22, np.float32)
+    lit = np.clip(sh, 0, 1)
+    rough = rough + 0.18 * lit + 0.15 * rr + 0.1 * tt
+    metal = metal * (1 - 0.7 * lit) * (1 - 0.7 * rr) * (1 - 0.5 * tt)
+    metal = np.where(sh < -0.1, 0.12, metal)
+    rough = rough * (1 - ma[:, 0]) + 0.55 * ma[:, 0]
+    metal = metal * (1 - ma[:, 0]) + 0.1 * ma[:, 0]
+    rough = np.where(hot, 0.45 + 0.12 * fbm(P * 5.0, 2), rough)
+    metal = np.where(hot, 0.45, metal)
+    rough = np.where(bay, 0.6, rough)
     metal = np.where(bay, 0.0, metal)
     rough = np.where(dark, 0.8, rough)
     metal = np.where(dark, 0.0, metal)
     print(f'shading {time.time() - t0:.1f}s')
 
-    # ---------------- write base colour (4096)
     img = np.zeros((H, W, 3), np.float32)
     img[iy, ix] = lin_to_srgb(base)
-    # dilate into the empty area (so mip levels don't bleed black)
     img = dilate_fill(img, mask)
     Image.fromarray((np.flipud(img) * 255 + 0.5).astype(np.uint8)).save(os.path.join(out, 'f22_basecolor.jpg'),
                                                                           quality=92, subsampling=0)
     del img
-    # ---------------- metallic/roughness (2048): R = 1 (unused / occlusion), G = rough, B = metal
     mr = np.zeros((H, W, 3), np.float32)
     mr[..., 0] = 1.0
     mr[iy, ix, 1] = np.clip(rough, 0.04, 1)
@@ -339,13 +319,12 @@ def main(cache, src, out):
     Image.fromarray((np.flipud(mr2) * 255 + 0.5).astype(np.uint8)).save(os.path.join(out, 'f22_metalrough.jpg'),
                                                                          quality=92, subsampling=0)
     del mr, mr2
-    # ---------------- normal map from panel grooves / seam tape (2048)
     hgt = np.zeros((H, W), np.float32)
     hgt[iy, ix] = -np.clip(line, 0, 1) * 1.0 - np.clip(tape, 0, 1) * 0.08 + 0.02 * (fine - 0.5)
     hgt = dilate_fill(hgt[..., None], mask)[..., 0]
     hgt = ndimage.gaussian_filter(hgt, 1.2)
     h2 = hgt.reshape(H // 2, 2, W // 2, 2).mean(axis=(1, 3))
-    gy, gx = np.gradient(h2)            # gy: along rows (v up in Blender orientation), gx: along u
+    gy, gx = np.gradient(h2)
     k = 2.2
     nmap = np.stack([-gx * k, -gy * k, np.ones_like(h2)], -1)
     nmap /= np.linalg.norm(nmap, axis=-1, keepdims=True)

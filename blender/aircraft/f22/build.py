@@ -6,7 +6,8 @@ Stages:
   (always)        regenerate the 2-D texture sources with the project venv (textures.py, textures_ext.py -> assets/.../src)
   --bake          Cycles-bake position/normal/class/AO into the UV atlas and composite the skin maps
                   (assets/aircraft/f22/tex/); runs automatically when the maps are missing
-  --glb           export assets/aircraft/f22/f22.glb
+  --ckbake        re-bake the cockpit texture (art + soft interior light); runs automatically when missing
+  --glb           export assets/aircraft/f22/f22.glb (exterior + interior_lite) and f22_cockpit.glb (interior)
   --lod           export assets/aircraft/f22/f22_lod.glb (<= 40k tris, parked pose)
   --renders       Cycles renders into renders/aircraft/f22/ (hero 2560x1440, front_34, rear_nozzles, planform,
                   cockpit, thumb.jpg)
@@ -25,7 +26,8 @@ sys.path.insert(0, os.path.join(HERE, '..', '..', 'common'))
 import bpy  # noqa: E402
 from util import reset_scene, REPO  # noqa: E402
 
-for m in ('geom', 'shape', 'airframe', 'details', 'cockpit', 'materials', 'scene_f22', 'renders_f22'):
+for m in ('geom', 'oml', 'fuselage', 'surfaces', 'aft', 'gear', 'canopy', 'extras', 'exterior', 'cklayout', 'cockpit',
+          'ckbake', 'pilot', 'materials', 'scene_f22', 'renders_f22'):
     if m in sys.modules:
         del sys.modules[m]
 
@@ -35,7 +37,7 @@ import scene_f22  # noqa: E402
 def parse_args():
     argv = sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else []
     opts = {'preview': None, 'glb': False, 'lod': False, 'renders': None, 'bake': False, 'blend': False,
-            'samples': 128, 'only': None}
+            'samples': 128, 'only': None, 'ckbake': None}
     i = 0
     while i < len(argv):
         a = argv[i]
@@ -80,13 +82,12 @@ def main():
     if not os.path.exists(tex):
         opts['bake'] = True
     reset_scene()
-    ctx = scene_f22.build_all(bake=opts['bake'])
+    ctx = scene_f22.build_all(bake=opts['bake'], cockpit_bake=True if opts.get('ckbake') else None)
     print(f'[f22] built scene in {time.time() - t0:.1f}s')
     scene_f22.report(ctx)
-    if opts['preview']:
-        scene_f22.preview(ctx, opts['preview'], opts.get('views'))
     if opts['glb']:
         scene_f22.export_main(ctx)
+        scene_f22.export_cockpit(ctx)
     if opts['lod']:
         scene_f22.export_lod(ctx)
     if opts['blend']:

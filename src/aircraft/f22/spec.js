@@ -87,13 +87,13 @@ export default {
     lateralFriction: 0.7, breakaway: 0.02, maxSink: 5.0,
   },
   contacts: [
-    { name: 'contact_nose', kind: 'nose', position: { x: 0, y: -1.9, z: -5.2 } },
-    { name: 'contact_main_L', kind: 'main', position: { x: -1.6, y: -1.9, z: 0.8 } },
-    { name: 'contact_main_R', kind: 'main', position: { x: 1.6, y: -1.9, z: 0.8 } },
+    { name: 'contact_nose', kind: 'nose', position: { x: 0, y: -2.11, z: -5.04 } },   // wave 6 airframe (rig contacts)
+    { name: 'contact_main_L', kind: 'main', position: { x: -1.68, y: -2.11, z: 0.9 } },
+    { name: 'contact_main_R', kind: 'main', position: { x: 1.68, y: -2.11, z: 0.9 } },
   ],
   structure: {
-    tail: { z: 7.5, strikeDeg: 15 },
-    nose: { z: -9.5, height: 1.5 },
+    tail: { z: 8.3, strikeDeg: 15 },   // nozzle/stinger end of the wave 6 geometry
+    nose: { z: -10.6, height: 1.5 },   // pitot tip
     belly: { z: 0, height: 0.8 },
     wingtip: { x: 6.78, z: 2.5, height: 1.5 },
     top: { height: 5.08, z: 6 },

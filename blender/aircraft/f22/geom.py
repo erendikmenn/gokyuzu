@@ -12,7 +12,7 @@ try:
 except ImportError:    # plain python (texture scripts)
     bpy = bmesh = Vector = Matrix = None
 
-Y0 = 10.10          # station of the centre of gravity (object origin): y = Y0 - s
+Y0 = 10.60          # station of the centre of gravity (object origin): y = Y0 - s (main gear 0.9 m aft)
 
 
 def Y(s):

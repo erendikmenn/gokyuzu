@@ -9,6 +9,8 @@ const asset = (p) => new URL(`../../../${p}`, import.meta.url).href;
 export const model = {
   url: asset('assets/aircraft/f22/f22.glb'),
   lodUrl: asset('assets/aircraft/f22/f22_lod.glb'),
+  // detailed cockpit (CONTRACTS-SF.md §6.2.1): streamed after the exterior, root node 'interior', same frame
+  cockpitUrl: asset('assets/aircraft/f22/f22_cockpit.glb'),
   displays: {
     screen_hud: 'f22.hud',
     screen_pmfd: 'f22.pmfd',
@@ -30,7 +32,7 @@ const num = (v, d = 0) => (Number.isFinite(v) ? v : d);
 // control-surface travel (deg)
 const MAX = {
   aileron: 25, flaperonRoll: 16, flaperonFlap: 35, stab: 25, stabRoll: 8, rudder: 30, lefDroop: 25,
-  tvc: 20, nozzleOpen: 9, canopy: 38, noseGear: 96, mainGear: 92, noseDoor: 88, mainDoor: 95,
+  tvc: 20, nozzleOpen: 9, canopy: 38, noseGear: 96, mainGear: 92, noseDoor: 88, mainDoor: 85,
 };
 
 function radialTexture(inner = '#ffffff', mid = 'rgba(255,255,255,0.35)') {
@@ -193,7 +195,7 @@ export function createRig(gltfScene) {
     canopy.traverse((o) => {
       if (!o.isMesh) return;
       const m = o.material;
-      if (m && (m.transparent || /canopy/i.test(m.name))) {
+      if (m && !/frame/i.test(m.name) && (m.transparent || /canopy/i.test(m.name))) {
         const g = new THREE.MeshPhysicalMaterial({
           name: 'f22_canopy_rt', color: new THREE.Color(0.62, 0.52, 0.30), metalness: 0.0, roughness: 0.04,
           transparent: true, opacity: 0.42, iridescence: 1.0, iridescenceIOR: 1.9, iridescenceThicknessRange: [260, 520],
@@ -207,12 +209,14 @@ export function createRig(gltfScene) {
       }
     });
   }
-  const hudGlass = node('hud_glass');
-  if (hudGlass && hudGlass.isMesh) {
-    hudGlass.material = new THREE.MeshPhysicalMaterial({ color: 0x9fd6b8, roughness: 0.05, transparent: true, opacity: 0.1,
-      side: THREE.DoubleSide, depthWrite: false });
-    hudGlass.castShadow = false;
-  }
+  const hudGlassMat = new THREE.MeshPhysicalMaterial({ color: 0x9fd6b8, roughness: 0.05, transparent: true, opacity: 0.1,
+    side: THREE.DoubleSide, depthWrite: false });
+  const setupHudGlass = (root) => {
+    root.traverse((o) => {
+      if (o.isMesh && /^hud_glass/.test(o.name)) { o.material = hudGlassMat; o.castShadow = false; o.renderOrder = 4; }
+    });
+  };
+  setupHudGlass(gltfScene);
 
   // ---------------- screens
   const screens = {};
@@ -243,10 +247,10 @@ export function createRig(gltfScene) {
     return o;
   });
   const plumes = [1, 2].map((i) => {
-    const p = localPos(`nozzle_${i}`) || new THREE.Vector3(i === 1 ? -0.7 : 0.7, 0, 7.9);
+    const p = localPos(`nozzle_${i}`) || new THREE.Vector3(i === 1 ? -0.7 : 0.7, 0, 7.4);
     const holder = new THREE.Group();
     holder.position.copy(p);
-    const pl = makePlume(0.98, 0.42, 5.5, i * 1.7);
+    const pl = makePlume(0.90, 0.52, 5.5, i * 1.7);
     holder.add(pl.group);
     holder.visible = false;
     object.add(holder);
@@ -312,7 +316,7 @@ export function createRig(gltfScene) {
     if (p) contacts.push({ name: n, position: p, kind });
   }
   const eye = { pilot: localPos('eye_pilot') || new THREE.Vector3(0, 0.9, -5.3) };
-  const bounds = { length: 18.92, span: 13.56, height: 5.08, radius: 10.4 };
+  const bounds = { length: 18.92, span: 13.56, height: 5.08, radius: 10.8 };
 
   // wheels: radius from geometry
   const wheelR = {};
@@ -326,14 +330,16 @@ export function createRig(gltfScene) {
   // nose strut axis (steer node local +X) expressed in its parent's frame, for oleo travel
   const noseUp = new THREE.Vector3(1, 0, 0);
   if (pivots.gear_nose_steer) noseUp.applyQuaternion(pivots.gear_nose_steer.rest);
-  const interior = node('interior');
+  let interior = node('interior');                 // legacy single-GLB builds only; the detailed one comes with attachCockpit
+  const interiorLite = node('interior_lite');
   const pilot = node('pilot');
+  let cockpitReady = !!interior;
   // meshes that must never cast shadows (glass would darken the cockpit; plumes/glows are light)
   const noShadow = [];
   const collectNoShadow = () => {
     noShadow.length = 0;
-    for (const n of ['canopy', 'hud_glass', 'screen_hud', 'formation_lights', 'ab_glow_1', 'ab_glow_2']) {
-      const o = node(n);
+    for (const n of ['canopy', 'hud_glass', 'hud_glass_lite', 'screen_hud', 'formation_lights', 'ab_glow_1', 'ab_glow_2']) {
+      const o = node(n) || (interior && interior.getObjectByName(n));
       if (o) o.traverse((m) => { if (m.isMesh && (n !== 'canopy' || m.material === glassMats[0] || glassMats.includes(m.material))) noShadow.push(m); });
     }
     for (const pl of plumes) pl.group.traverse((m) => { if (m.isMesh) noShadow.push(m); });
@@ -351,6 +357,7 @@ export function createRig(gltfScene) {
   const FLAP_U = ['nozzle_flap_upper_1', 'nozzle_flap_upper_2'], FLAP_L = ['nozzle_flap_lower_1', 'nozzle_flap_lower_2'];
   const MAIN_WHEELS = [['wheel_main_L', 1], ['wheel_main_R', 2]];
   const WHEELS = ['wheel_nose', 'wheel_main_L', 'wheel_main_R'];
+  const GEAR_NODES = ['gear_nose', 'gear_main_L', 'gear_main_R'];
   const NO_ENGINE = {};
   const EMPTY = [];
   let compArr = EMPTY;
@@ -434,11 +441,14 @@ export function createRig(gltfScene) {
     st.gear = gear;
     const doorsNose = sstep(0.0, 0.22, gear);                       // nose doors stay open when down
     const leg = sstep(0.2, 0.85, gear);
-    const mainDoor = gear < 0.85 ? sstep(0.0, 0.2, gear) : 1 - sstep(0.88, 1.0, gear);   // open, then close again
+    const mainDoor = sstep(0.0, 0.2, gear);          // main doors hang open while the gear is down (F-22)
     rotX('gear_door_nose_R', -doorsNose * MAX.noseDoor * D2R);
     rotX('gear_door_nose_L', doorsNose * MAX.noseDoor * D2R);
     rotX('gear_door_main_R', -mainDoor * MAX.mainDoor * D2R);
     rotX('gear_door_main_L', mainDoor * MAX.mainDoor * D2R);
+    // stowed gear is hidden (the legs would otherwise poke through the closed bays)
+    const stowed = leg < 0.01;
+    for (let k = 0; k < GEAR_NODES.length; k++) { const g = pivots[GEAR_NODES[k]]; if (g) g.o.visible = !stowed; }
     rotX('gear_nose', (1 - leg) * MAX.noseGear * D2R);
     rotX('gear_main_L', (1 - leg) * MAX.mainGear * D2R);
     rotX('gear_main_R', (1 - leg) * MAX.mainGear * D2R);
@@ -493,17 +503,52 @@ export function createRig(gltfScene) {
     for (const o of formationMeshes) o.material.emissiveIntensity = nav ? 1.6 : 0;
   }
 
-  function setView(vw) {
-    if (vw === view) return;
-    view = vw;
-    const inside = vw === 'cockpit';
+  // cockpit view: the detailed interior (when attached) replaces interior_lite; the pilot figure is never shown inside
+  function applyView() {
+    const inside = view === 'cockpit';
     for (const g of glassMats) {
       g.opacity = inside ? 0.14 : 0.42;
       g.iridescence = inside ? 0.35 : 1.0;
     }
-    if (interior) interior.visible = true;
-    if (pilot) pilot.visible = !inside;       // the camera sits inside the pilot's helmet in cockpit view
+    const detailed = !!(interior && interior !== interiorLite);
+    if (detailed) interior.visible = inside;
+    if (interiorLite) interiorLite.visible = !(inside && detailed);
+    if (pilot) pilot.visible = !inside;
   }
 
-  return { object, eye, contacts, screens, bounds, update, setView };
+  function setView(vw) {
+    if (vw === view) return;
+    view = vw;
+    applyView();
+  }
+
+  /** CONTRACTS-SF.md §6.2.1: add the detailed cockpit GLB (root node 'interior', same frame as the exterior). */
+  function attachCockpit(cockpitScene) {
+    if (!cockpitScene) return;
+    object.add(cockpitScene);
+    cockpitScene.updateMatrixWorld(true);
+    interior = cockpitScene.getObjectByName('interior') || cockpitScene;
+    cockpitScene.traverse((o) => { if (o.isMesh && o.name.startsWith('screen_')) { screens[o.name] = o; o.castShadow = false; } });
+    for (const n of ['cockpit_stick', 'cockpit_throttle']) {
+      const o = interior.getObjectByName(n);
+      if (o) pivots[n] = { o, rest: o.quaternion.clone(), restPos: o.position.clone() };
+    }
+    setupHudGlass(cockpitScene);
+    const sfd = interior.getObjectByName('sfd_display');
+    if (sfd && sfd.isMesh && sfd.material) {
+      sfd.material = sfd.material.clone();
+      sfd.material.emissiveIntensity = 1.2;
+      sfd.material.toneMapped = false;
+    }
+    collectNoShadow();
+    shadowFix = 0;
+    cockpitReady = true;
+    applyView();
+  }
+
+  applyView();
+  return {
+    object, eye, contacts, screens, bounds, update, setView, attachCockpit,
+    get cockpitReady() { return cockpitReady; },
+  };
 }
