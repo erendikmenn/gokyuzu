@@ -8,7 +8,7 @@ import { createHelicopterModel } from '../flight/helicopter.js';
 import { createInput } from '../flight/input.js';
 import { createDisplay } from '../avionics/index.js';
 import { createAudioSystem } from '../audio/index.js';
-import { createMenu, createLoadingScreen, createHUD, createCameraRig } from '../ui/index.js';
+import { createMenu, createLoadingScreen, createHUD, createCameraRig, createOnboarding } from '../ui/index.js';
 import { buildSpawns } from './spawns.js';
 import { loadSettings } from '../core/settings.js';
 import { QUALITY } from '../core/quality.js';
@@ -59,9 +59,12 @@ const loader = createAssetLoader(renderer);
 const input = createInput(window);
 const audio = createAudioSystem({ camera });
 const hud = createHUD(hudRoot, null);
+// onboarding hook (src/ui/tutorial.js): first-flight tutorial / key card / hints; "Eğitimi yeniden başlat" resets the flight
+const onboarding = createOnboarding(hudRoot, { input, hud, restart: () => { if (state.flight) resetFlight(); } });
 
 const state = { world: null, def: null, rig: null, flight: null, displays: [], paused: false, hudVisible: true, helpVisible: false, crashTimer: 0, spawn: null, userMuted: false };
 state.input = input;
+state.onboarding = onboarding;   // test hook
 window.__game = state;
 
 let loading = null;   // loading screen (also used by startFailed)
@@ -94,10 +97,8 @@ async function start() {
   console.log(`[app] ready in ${((performance.now() - t0) / 1000).toFixed(1)} s`);
   state.aircraftId = choice.aircraftId;
   trackFlight(choice.aircraftId, spawn.id, (performance.now() - t0) / 1000, settings.quality);
-  const heli = state.def.spec.category === 'helicopter';
-  // airborne on final with gear + flaps already out: pressing G (as for a normal approach) would retract the gear
-  const onFinal = spawn.altitude && state.def.spec.category === 'airliner' && state.flight.gearHandleDown;
-  hud.showMessage(onFinal ? 'Takım ve flaplar iniş konumunda · O: otomatik ILS inişi' : spawn.altitude ? 'İyi uçuşlar!' : heli ? 'Kolektifi artır (Shift / X), havalanınca O ile askıda kal' : 'Gaz ver (Shift / X), kalkış hızında burnu kaldır (S)', 4000);
+  // onboarding hook: tutorial on the first flight of the category, otherwise the key card + start message
+  onboarding.begin({ flight: state.flight, def: state.def, spawn });
 }
 
 async function loadAircraft(id) {
@@ -188,6 +189,7 @@ function resetFlight() {
   state.crashTimer = 0;
   if (input.setThrottle) input.setThrottle(state.flight.throttle ?? 0);   // lever follows the reset engine state
   syncRig(1);
+  onboarding.reset();   // onboarding hook: a running tutorial starts over from its first step
 }
 
 let prevPos = new THREE.Vector3(), prevQuat = new THREE.Quaternion();
@@ -259,6 +261,7 @@ function frame(ts) {
     displayAcc += dt;
     if (displayAcc > 1 / 30) { for (const d of state.displays) d.display.update(displayAcc, flight, world); displayAcc = 0; }
     hud.update(flight, { world, spawn: state.spawn, view: cameraRig.view });
+    onboarding.update(dt, flight, { view: cameraRig.view, paused: state.paused });   // onboarding hook
     audio.update(dt, flight, { view: cameraRig.view, aircraftObject: rig.object, camera });
   }
   renderer.render(scene, camera);

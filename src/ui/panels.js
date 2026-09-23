@@ -7,6 +7,7 @@ import { el, clamp } from './util.js';
 import { shared } from './shared.js';
 import { loadSettings, saveSettings, DEFAULT_SETTINGS } from '../core/settings.js';
 import { QUALITY, QUALITY_ORDER, detectQuality } from '../core/quality.js';
+import { resetTutorials } from './tutorial.js';
 
 export const CREDITS_LINE = 'Harita verisi © OpenStreetMap katkıcıları (ODbL) · Arazi ve hava fotoğrafları: USGS 3DEP, USDA NAIP · Batimetri: NOAA · Bina verisi: DataSF · Three.js (MIT) · B612 font (OFL)';
 export const DISCLAIMER = 'Bu ücretsiz, ticari olmayan bir hayran projesidir. Turkish Airlines, Airbus, Boeing, Lockheed Martin, General Dynamics ve Sikorsky ile hiçbir bağlantısı yoktur; isimler ve boyalar yalnızca tanımlayıcı amaçla kullanılmıştır.';
@@ -74,6 +75,10 @@ const CSS = `
   font: 650 13.5px var(--gk-sans); cursor: pointer; }
 .gkp-btn:hover { background: rgba(255, 255, 255, .13); }
 .gkp-btn.primary { background: var(--gk-teal); border-color: var(--gk-teal); color: #04140f; }
+.gkp-link { margin: 0; padding: 0; border: 0; background: none; cursor: pointer; font: 600 12px var(--gk-sans); color: var(--gk-dim);
+  text-decoration: underline; text-underline-offset: 3px; text-decoration-color: rgba(208, 222, 240, .3); }
+.gkp-link:hover { color: var(--gk-fg); }
+.gkp-link:disabled { cursor: default; text-decoration: none; color: var(--gk-teal); }
 .gkp-credits p { margin: 12px 0 0; font-size: 14px; line-height: 1.6; color: rgba(236, 244, 255, .88); text-wrap: pretty; }
 .gkp-credits ul { margin: 10px 0 0; padding: 0; list-style: none; display: grid; gap: 7px; }
 .gkp-credits li { display: grid; grid-template-columns: 150px 1fr; gap: 12px; font-size: 13.5px; line-height: 1.4; }
@@ -227,6 +232,12 @@ export function openSettings(container) {
   el('div', 'gkp-h', c, 'Kontroller');
   const inv = toggle(c, 'Burun kontrolünü ters çevir', 'Yukarı ok / W burnu kaldırır', s.invertPitch, (v) => { s.invertPitch = v; commit(); });
   const atc = 'atc' in s ? toggle(c, 'Otomatik ATC telsizi', 'Kule ve yaklaşma anonsları', s.atc, (v) => { s.atc = v; commit(); }) : null;
+  // onboarding (src/ui/tutorial.js): first-flight tutorial per aircraft category, opening key card, contextual hints
+  const tut = toggle(c, 'Eğitim ve ipuçları', 'İlk uçuşta adım adım eğitim, tuş kartı ve durumsal ipuçları', s.tutorial !== false, (v) => { s.tutorial = v; commit(); });
+  const tutNote = el('div', 'gkp-note', c);
+  const tutReset = el('button', 'gkp-link', tutNote, 'Tamamlanan eğitimleri sıfırla');
+  tutReset.type = 'button';
+  tutReset.addEventListener('click', () => { resetTutorials(); tutReset.textContent = 'Sıfırlandı: her uçak türünün eğitimi bir sonraki uçuşta yeniden başlar.'; tutReset.disabled = true; });
 
   // HUD
   const h = el('div', 'gkp-sec', m.card);
@@ -242,11 +253,11 @@ export function openSettings(container) {
   okb.type = 'button';
   okb.addEventListener('click', m.close);
   reset.addEventListener('click', () => {
-    s = { ...s, quality: auto, volumes: { ...DEFAULT_SETTINGS.volumes }, invertPitch: DEFAULT_SETTINGS.invertPitch, atc: DEFAULT_SETTINGS.atc, hudMode: null };
+    s = { ...s, quality: auto, volumes: { ...DEFAULT_SETTINGS.volumes }, invertPitch: DEFAULT_SETTINGS.invertPitch, atc: DEFAULT_SETTINGS.atc, tutorial: DEFAULT_SETTINGS.tutorial, hudMode: null };
     commit();
     qs.set(s.quality); updateNote();
     for (const [key, { r, show }] of Object.entries(sliders)) { r.value = String(Math.round((s.volumes[key] ?? 1) * 100)); show(); }
-    inv.set(s.invertPitch); if (atc) atc.set(s.atc); hud.set('compact');
+    inv.set(s.invertPitch); if (atc) atc.set(s.atc); tut.set(s.tutorial !== false); hud.set('compact');
   });
   return m.done;
 }
@@ -269,7 +280,7 @@ export function openCredits(container) {
   for (const [k, v] of rows) { const li = el('li', null, ul); el('b', null, li, k); el('span', null, li, v); }
   el('p', 'gkp-disc', box, DISCLAIMER);
   // CONTRACTS-SF.md §11 (src/core/telemetry.js)
-  el('p', 'gkp-disc', box, 'Gizlilik: Oyunu geliştirmek için anonim kullanım istatistikleri toplanır (seçilen uçak, oynama süresi, kare hızı, hatalar). Çerez kullanılmaz, kişisel bilgi toplanmaz, sunucu kayıtları 30 gün sonra silinir. Tarayıcında “Do Not Track” veya “Global Privacy Control” açıksa istatistik gönderilmez.');
+  el('p', 'gkp-disc', box, 'Gizlilik: Oyunu geliştirmek için anonim kullanım istatistikleri toplanır (seçilen uçak, oynama süresi, kare hızı, hatalar, kalkış / iniş / kaza sayıları ve eğitim adımlarının süresi). Çerez kullanılmaz, kişisel bilgi toplanmaz, sunucu kayıtları 30 gün sonra silinir. Tarayıcında “Do Not Track” veya “Global Privacy Control” açıksa istatistik gönderilmez.');
   const f = el('div', 'gkp-foot', m.card);
   el('span', null, f, 'Ücretsiz · ticari olmayan hayran projesi');
   const okb = el('button', 'gkp-btn primary', f, 'Kapat');

@@ -1,7 +1,8 @@
 // Anonymous usage statistics (CONTRACTS-SF.md §11).
 // The game sends small GET beacons to /_e on its own origin; a CloudFront Function answers 204 at the edge and the
 // access log line (query string = the event) is all that is kept, for 30 days. No cookies, no stored id, nothing personal:
-// a random session id that lives only in this page, the chosen aircraft/spawn, minutes played, frame rate, errors.
+// a random session id that lives only in this page, the chosen aircraft/spawn, minutes played, frame rate, errors, and
+// gameplay events (takeoff, landing sink rate, crash cause, tutorial step times) through trackEvent().
 // Off on localhost (unless ?telemetry=1), with ?telemetry=0, and when the browser sends Do Not Track / Global Privacy Control.
 
 const params = new URLSearchParams(location.search);
@@ -60,6 +61,19 @@ export function startTelemetry({ build, renderer, quality, state }) {
 /** A flight started: aircraft, spawn, seconds from the menu click to the first playable frame. */
 export function trackFlight(aircraft, spawn, loadSeconds, quality) {
   send('fly', { ac: aircraft, sp: spawn, lt: loadSeconds.toFixed(1), q: quality });
+}
+
+// Gameplay events (takeoff, land, crash, tutorial steps): same anonymous beacon, capped per type and page so a crash
+// loop or a bouncing landing cannot flood the log. Values are short codes and numbers, never anything personal.
+const EVENT_CAP = 40;
+const eventCount = {};
+/** Generic gameplay event, e.g. trackEvent('land', { ac: 'a320neo', vs: -1.2, rw: 1 }). */
+export function trackEvent(type, data = {}) {
+  const t = String(type || '').replace(/[^a-z0-9_-]/gi, '').slice(0, 16);
+  if (!t) return;
+  eventCount[t] = (eventCount[t] || 0) + 1;
+  if (eventCount[t] > EVENT_CAP) return;
+  send(t, data);
 }
 
 function reportError(message, file, line) {

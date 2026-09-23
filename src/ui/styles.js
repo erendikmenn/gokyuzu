@@ -33,6 +33,7 @@ export const BASE_CSS = `
   color: var(--gk-fg); background: rgba(255, 255, 255, 0.1);
   border: 1px solid rgba(255, 255, 255, 0.16); border-bottom-width: 2px;
 }
+kbd.gk-ikbd { display: inline-block; font-size: .86em; padding: 1px 6px; margin: 0 1px; vertical-align: .06em; line-height: 1.25; border-radius: 5px; }
 .gk-keys .gk-or { color: var(--gk-faint); font-size: 11px; }
 .gk-keys .gk-dot { color: var(--gk-faint); font-size: 14px; margin: 0 3px; }
 `;

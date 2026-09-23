@@ -10,6 +10,7 @@ export const DEFAULT_SETTINGS = {
   invertPitch: false,
   hudMode: null,            // owned by the HUD (full/compact/off); null = HUD default
   atc: true,                // automatic ATC radio in solo mode
+  tutorial: true,           // first-flight tutorial, opening key card and contextual hints (src/ui/tutorial.js)
   units: 'aviation',        // kt / ft (the only option for now)
 };
 

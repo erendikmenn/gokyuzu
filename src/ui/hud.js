@@ -5,12 +5,13 @@
 // Canvases are redrawn every frame; DOM nodes are only touched when their value changes.
 import * as THREE from 'three';
 import { injectCSS, BASE_CSS } from './styles.js';
-import { el, clamp, smoothstep, wrap360, wrap180, num, fmtInt, fmtDist, keyChips, codeForKeyLabel, pressKey, storageGet, storageSet, KT, FT, FPM, DEG } from './util.js';
+import { el, clamp, smoothstep, wrap360, wrap180, num, fmtInt, fmtDist, keyChips, richText, codeForKeyLabel, pressKey, storageGet, storageSet, KT, FT, FPM, DEG } from './util.js';
 import { createMinimap } from './minimap.js';
 import { AIRPORTS, LANDMARK_NAMES, CATEGORY_LABEL, AIRCRAFT_INFO } from './data.js';
 import { shared } from './shared.js';
 import { CAMERA_NAMES } from './camera.js';
 import { openSettings, openCredits, qualityHintSeen, markQualityHintSeen, qualityHintText } from './panels.js';
+import { explainCrash } from './hints.js';
 import { loadSettings, saveSettings } from '../core/settings.js';
 import { goToMenu } from '../core/leave.js';
 
@@ -112,7 +113,7 @@ const CSS = `
   -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); box-shadow: 0 12px 40px rgba(0, 0, 0, .25);
   opacity: 0; transition: opacity .45s ease; }
 .gkh-toast.show { opacity: 1; transition: opacity .12s ease; }
-.gkh-chip { position: absolute; left: 50%; bottom: calc(92px * var(--ps)); transform: translateX(-50%);
+.gkh-chip { position: absolute; left: 50%; bottom: max(calc(92px * var(--ps)), calc(var(--gk-bottom, 0px) + 8px)); transform: translateX(-50%);
   padding: calc(7px * var(--ps)) calc(16px * var(--ps)); border-radius: 999px; font-size: calc(14px * var(--ps)); font-weight: 650; white-space: nowrap;
   background: rgba(6, 12, 20, 0.6); border: 1px solid rgba(255, 255, 255, 0.14); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
   opacity: 0; transition: opacity .35s ease; }
@@ -133,6 +134,11 @@ const CSS = `
 .gkh-ccard.on { opacity: 1; visibility: visible; transform: translate(-50%, -50%) scale(1); transition: opacity .2s ease .15s, transform .35s cubic-bezier(.2, .9, .3, 1.2) .15s; }
 .gkh-ccard b { display: block; font-size: calc(34px * var(--ps)); font-weight: 850; letter-spacing: .26em; padding-left: .26em; color: #ff5a5f; text-shadow: 0 0 24px rgba(255, 60, 60, .5); }
 .gkh-ccard span { display: block; margin-top: calc(4px * var(--ps)); font-size: calc(16px * var(--ps)); font-weight: 650; color: #fff; }
+.gkh-ccard p.gkh-ctip { max-width: min(80vw, calc(430px * var(--ps))); margin: calc(10px * var(--ps)) auto 0; font-size: calc(13.5px * var(--ps)); font-weight: 550; line-height: 1.45;
+  color: rgba(255, 236, 236, .9); text-wrap: balance; }
+.gkh-ccard p.gkh-ctip:empty { display: none; }
+.gkh-ccard p.gkh-ctip em { font-style: normal; font-weight: 750; color: #ffb4b4; }
+.gkh-ccard p.gkh-ctip kbd.gk-ikbd { font-size: calc(11.5px * var(--ps)); }
 .gkh-ccard small { display: block; margin-top: calc(12px * var(--ps)); font-size: calc(11px * var(--ps)); font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: rgba(255, 220, 220, .6); }
 .gkh-ccard i { display: block; height: 3px; margin-top: calc(8px * var(--ps)); border-radius: 3px; background: rgba(255, 255, 255, .12); overflow: hidden; }
 .gkh-ccard i::after { content: ""; display: block; height: 100%; width: 100%; background: #ff5a5f; transform-origin: 0 50%; transform: scaleX(0); }
@@ -156,6 +162,11 @@ const CSS = `
 .gkh-cams span { font-size: 12.5px; font-weight: 600; padding: 4px 10px; border-radius: 999px; border: 1px solid rgba(255, 255, 255, .14); color: var(--gk-dim); }
 .gkh-cams span.on { color: #04140f; background: var(--gk-teal); border-color: var(--gk-teal); }
 .gkh-help .gkh-foot { margin-top: 16px; font-size: 12px; color: var(--gk-dim); text-align: center; }
+.gkh-help-tut { position: absolute; top: 22px; right: 26px; display: flex; flex-direction: column; align-items: flex-end; gap: 5px; max-width: 46%; }
+.gkh-help-tut .gkh-pbtn { padding: 8px 13px; font-size: 13px; gap: 8px; border-color: rgba(92, 242, 200, .4); background: rgba(92, 242, 200, .08); }
+.gkh-help-tut .gkh-pbtn:hover { background: rgba(92, 242, 200, .16); }
+.gkh-help-tut .gkh-pbtn svg { width: 15px; height: 15px; }
+.gkh-help-tut span { font-size: 11.5px; line-height: 1.35; color: var(--gk-faint); text-align: right; }
 
 .gkh-pause { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px;
   background: radial-gradient(ellipse at center, rgba(4, 10, 18, 0.5), rgba(2, 6, 12, 0.8));
@@ -256,6 +267,7 @@ export function createHUD(container) {
   const ccard = el('div', 'gkh-ccard', root);
   el('b', null, ccard, 'KAZA');
   const ccReason = el('span', null, ccard, '');
+  const ccTip = el('p', 'gkh-ctip', ccard, '');     // plain-Turkish cause + one tip (src/ui/hints.js explainCrash)
   el('small', null, ccard, 'Yeniden başlatılıyor');
   el('i', null, ccard);
   const warnBox = el('div', 'gkh-warn', root);
@@ -273,6 +285,7 @@ export function createHUD(container) {
   const help = el('div', 'gkh-help', root);
   const helpCard = el('div', 'gkh-panel gkh-help-card', help);
   let helpBindings = null;
+  let tutorialRestart = null;                          // "Eğitimi yeniden başlat" (src/ui/tutorial.js)
   const pause = el('div', 'gkh-pause', root);
   el('div', 'gkh-pt', pause, 'DURAKLATILDI');
   const ps = el('div', 'gkh-ps', pause);
@@ -1180,7 +1193,7 @@ export function createHUD(container) {
     const cr = !!f.crashed;
     if (cr !== prev.crashed) {
       crash.classList.toggle('on', cr);
-      if (cr) ccReason.textContent = f.crashReason || 'Uçak hasar gördü';
+      if (cr) setCrashText(f.crashReason);
       ccard.classList.toggle('on', cr);
       prev.crashed = cr;
     }
@@ -1204,6 +1217,15 @@ export function createHUD(container) {
     el('h2', null, helpCard, 'Kontroller');
     const nm = def ? `${def.name || ''} · ${CATEGORY_LABEL[category] || ''}` : '';
     el('p', 'gkh-sub', helpCard, nm || 'Uçuş kontrolleri ve kamera');
+    if (tutorialRestart) {                               // header action: replay the step-by-step flight tutorial
+      const tr = el('div', 'gkh-help-tut', helpCard);
+      const tb = el('button', 'gkh-pbtn', tr);
+      tb.type = 'button';
+      tb.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1"/><path d="M3.5 4v5h5"/></svg>';
+      tb.append('Eğitimi yeniden başlat');
+      el('span', null, tr, 'Uçak başlangıç noktasına döner');
+      tb.addEventListener('click', () => { tb.blur(); pressKey(helpCode); tutorialRestart(); });
+    }
     const list = (Array.isArray(bindings) ? bindings : []).filter(Boolean);
     const isLong = (b) => String(b.label ?? '').length > 40 || String(b.keys ?? '').length > 24;
     const short = list.filter((b) => !isLong(b)), long = list.filter(isLong);
@@ -1241,6 +1263,15 @@ export function createHUD(container) {
     for (const [l, k] of rows) { const s2 = el('span', null, pinfo, l); el('kbd', 'gk-kbd', s2, k); }
   }
   buildPauseInfo();
+
+  // ---------- crash card text ----------
+  function setCrashText(reason) {
+    const x = explainCrash(reason, category);
+    ccReason.textContent = x.text;
+    const frag = richText(document.createDocumentFragment(), x.tip);
+    ccTip.textContent = '';
+    ccTip.append(el('em', null, null, 'İpucu: '), frag);
+  }
 
   // ---------- messages ----------
   let toastTimer = 0, chipTimer = 0;
@@ -1369,7 +1400,7 @@ export function createHUD(container) {
       const str = String(textStr ?? '');
       const km = str.match(/^kaza!?\s*(.*)$/i);
       if (km) {                                            // crash → the crash card instead of a toast
-        ccReason.textContent = km[1] || ccReason.textContent || 'Uçak hasar gördü';
+        if (km[1] || !ccReason.textContent) setCrashText(km[1]);
         if (!prev.crashed) { crash.classList.add('on'); ccard.classList.add('on'); prev.crashed = true; }
         return;
       }
@@ -1404,6 +1435,10 @@ export function createHUD(container) {
       if (paused && !helpCard.firstChild) buildHelp(helpBindings || []);
     },
     get element() { return root; },
+    /** Add an overlay layer (onboarding cards) above the instruments but below toasts, help and pause. */
+    mountLayer(node) { root.insertBefore(node, toast); },
+    /** Show "Eğitimi yeniden başlat" in the help overlay; fn restarts the flight tutorial. */
+    setTutorialRestart(fn) { tutorialRestart = typeof fn === 'function' ? fn : null; helpBindings = null; },
   };
   window.addEventListener('gokyuzu:settings', (e) => {
     const m = e.detail && e.detail.hudMode;

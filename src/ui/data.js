@@ -120,6 +120,8 @@ export const TIPS = [
   'San Francisco’nun ünlü sisi (Karl) yazın öğleden sonra Golden Gate’ten içeri süzülür.',
   'Serbest kamerada fareyle sürükleyerek uçağın etrafında dön, tekerlekle uzaklaş.',
   'P veya Esc oyunu duraklatır, F1 tüm kontrolleri gösterir.',
+  'Her uçak türünün ilk uçuşunda adım adım eğitim seni yönlendirir. F1 ekranından istediğin zaman yeniden başlatabilirsin.',
+  'Havada yavaşlamak için tekerlek freni (B) değil, hava freni (K) kullanılır; gazı da azaltmayı unutma.',
   'Yumuşak iniş için pist başında gazı kes ve burnu hafifçe kaldırarak alçalma hızını azalt.',
 ];
 

@@ -71,6 +71,25 @@ export function keyChips(parent, keys, cls = 'gk-keys') {
   return wrap;
 }
 
+/**
+ * Text with inline key chips: "{X} tuşunu basılı tut" → "X" in a <kbd class="gk-kbd gk-ikbd">, the rest as text nodes.
+ * Replaces the children of `parent` (call it when the text changes, not every frame).
+ */
+export function richText(parent, str) {
+  parent.textContent = '';
+  const s = String(str ?? '');
+  let i = 0;
+  for (const m of s.matchAll(/\{([^{}]+)\}/g)) {
+    if (m.index > i) parent.append(s.slice(i, m.index));
+    el('kbd', 'gk-kbd gk-ikbd', parent, m[1]);
+    i = m.index + m[0].length;
+  }
+  if (i < s.length) parent.append(s.slice(i));
+  return parent;
+}
+/** The same text without the chip braces (aria labels, logs). */
+export const plainText = (str) => String(str ?? '').replace(/\{([^{}]+)\}/g, '$1');
+
 /** Map a human key label ("P", "Esc", "F1", "Boşluk") to a KeyboardEvent.code. */
 export function codeForKeyLabel(label) {
   const k = String(label || '').trim();
