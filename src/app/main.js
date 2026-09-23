@@ -9,9 +9,12 @@ import { createInput } from '../flight/input.js';
 import { createDisplay } from '../avionics/index.js';
 import { createAudioSystem } from '../audio/index.js';
 import { createMenu, createLoadingScreen, createHUD, createCameraRig, createOnboarding } from '../ui/index.js';
+import { createTimeWeatherControl } from '../ui/menu.js';   // time & weather hook: picker on the pause screen
 import { buildSpawns } from './spawns.js';
 import { loadSettings } from '../core/settings.js';
-import { QUALITY } from '../core/quality.js';
+import { QUALITY, resolveQuality, lowerQuality, setQualityCap } from '../core/quality.js';
+import { createGpuGuard, noteGpuFailure } from '../core/gpu-guard.js';          // robustness: context loss, GPU budget
+import { readResume, applyResume, clearResume } from '../core/gpu-resume.js';
 import { IS_MAC } from '../core/platform.js';
 import { goToMenu, guardUnload } from '../core/leave.js';
 import { startTelemetry, trackFlight } from '../core/telemetry.js';
@@ -26,7 +29,13 @@ const hudRoot = document.getElementById('hud');
 // ---- settings / quality ----
 let settings = loadSettings();
 if (params.has('quality') && QUALITY[params.get('quality')]) settings.quality = params.get('quality');   // ?quality=low|medium|high|ultra
-let quality = QUALITY[settings.quality] || QUALITY.high;
+// robustness hook: a flight saved before a graphics failure (?resume=1 reload, or this tab died mid-flight)
+let resume = readResume(params);
+if (resume && resume.crash) {   // the previous page of this tab died without unloading: treat it as a GPU failure too
+  if (noteGpuFailure() >= 3) resume = null;   // it keeps dying: start normally (menu / direct link) instead
+  else { const lower = lowerQuality(settings.quality) || 'low'; settings.quality = lower; setQualityCap(lower); }
+}
+let quality = resolveQuality(QUALITY[settings.quality] ? settings.quality : 'high');   // preset + device caps (src/core/quality.js)
 
 // ---- renderer ----
 const renderer = new THREE.WebGLRenderer({ antialias: quality.antialias, logarithmicDepthBuffer: true, powerPreference: 'high-performance' });
@@ -51,13 +60,24 @@ app.appendChild(renderer.domElement);
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.3, 80000);
 scene.add(camera);
-window.addEventListener('resize', () => {
-  camera.aspect = window.innerWidth / window.innerHeight;
+function onResize() {
+  const w = window.innerWidth, h = window.innerHeight;
+  if (!(w > 1 && h > 1)) return;   // robustness: transient 0-size viewports (iOS rotation, hidden tabs) keep the last size
+  camera.aspect = w / h;
   camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
-});
+  renderer.setSize(w, h);
+}
+window.addEventListener('resize', onResize);
+// iOS / iPadOS report the new size late after a rotation: measure again once the viewport has settled
+window.addEventListener('orientationchange', () => { setTimeout(onResize, 250); setTimeout(onResize, 800); });
+if (window.visualViewport) window.visualViewport.addEventListener('resize', onResize);
 
 const loader = createAssetLoader(renderer);
+// robustness hook (src/core/gpu-guard.js): context loss → save + reload one step lower into the same flight; GPU budget
+// monitor; GLB texture downscale / release policy; `gfx` telemetry
+let gpu = null;
+loader.gltf.register(() => gpu.plugin());
+if (quality.deviceClass === 'phone' || quality.deviceClass === 'tablet') loader.draco.setWorkerLimit(2);   // fewer Draco WASM heaps on mobile
 const input = createInput(window);
 const audio = createAudioSystem({ camera });
 const hud = createHUD(hudRoot, null);
@@ -82,7 +102,9 @@ async function start() {
   const spawns = buildSpawns(runways);
   let choice;
   const direct = AIRCRAFT.find((a) => a.id === params.get('aircraft'));   // ?aircraft=<id>&spawn=<id> skips the menu
-  if (direct) choice = { aircraftId: direct.id, spawnId: spawns.some((s) => s.id === params.get('spawn')) ? params.get('spawn') : direct.defaultSpawn };
+  const resumed = resume && AIRCRAFT.some((a) => a.id === resume.aircraft) ? resume : null;   // robustness hook: same flight
+  if (resumed) choice = { aircraftId: resumed.aircraft, spawnId: spawns.some((s) => s.id === resumed.spawn) ? resumed.spawn : spawns[0].id, time: resumed.time ?? undefined, weather: resumed.weather || undefined };
+  else if (direct) choice = { aircraftId: direct.id, spawnId: spawns.some((s) => s.id === params.get('spawn')) ? params.get('spawn') : direct.defaultSpawn };
   else choice = await createMenu(uiRoot, { aircraft: AIRCRAFT, spawns });
   audio.start();
   state.choice = choice;
@@ -94,17 +116,28 @@ async function start() {
   // fetch the aircraft model in parallel with the world (loadGLTF caches the promise, loadAircraft reuses it)
   loadAircraftDefinition(choice.aircraftId).then((d) => d.model.url && loader.loadGLTF(d.model.url)).catch(() => {});
   if (!state.world) {
-    state.world = await createSFWorld({ scene, renderer, camera, loader, quality, focus: { x: spawn.x, z: spawn.z }, onProgress: (p, t) => loading.setProgress(p * 0.8, t) });
+    const focus = resumed ? { x: resumed.x, z: resumed.z } : { x: spawn.x, z: spawn.z };   // robustness hook: load around the resumed aircraft
+    state.world = await createSFWorld({ scene, renderer, camera, loader, quality, focus, onProgress: (p, t) => loading.setProgress(p * 0.8, t),
+      time: choice.time, weather: choice.weather });   // time & weather hook (menu choice; ?time= / ?weather= otherwise)
+    mountTimeWeather();
   }
   loading.setProgress(0.85, 'Uçak yükleniyor');
   await loadAircraft(choice.aircraftId);
   resetFlight();
+  let resumeNote = null;
+  if (resumed) { try { resumeNote = applyResume(state, resumed, { input }); } catch (e) { console.warn('[resume]', e); } }   // robustness hook
   loading.setProgress(1, 'Hazır');
   loading.hide();
   state.readyAt = performance.now();   // dynamic resolution ignores the first seconds (shader compiles, tile bursts)
   console.log(`[app] ready in ${((performance.now() - t0) / 1000).toFixed(1)} s`);
   state.aircraftId = choice.aircraftId;
   trackFlight(choice.aircraftId, spawn.id, (performance.now() - t0) / 1000, settings.quality);
+  if (resumed) {   // robustness hook: back in the same flight after a graphics failure (no tutorial / key card)
+    gpu.report('resume', { why: resumed.crash ? 'crash' : resumed.reason || 'gpu', ac: choice.aircraftId });
+    hud.showMessage(`Uçuşa kaldığın yerden devam ediliyor · Grafik: ${quality.label}${resumeNote ? ' · ' + resumeNote : ''}`, 4500);
+    return;
+  }
+  clearResume();
   // onboarding hook: tutorial on the first flight of the category, otherwise the key card + start message
   onboarding.begin({ flight: state.flight, def: state.def, spawn });
 }
@@ -136,13 +169,18 @@ async function loadAircraft(id) {
   Object.assign(state, { def, rig, flight });
   if (lazyCockpit) {
     // detailed cockpit (CONTRACTS-SF.md §6.2.1): streamed after the exterior; the game only waits for it when it starts in the cockpit
-    const ready = loader.loadGLTF(def.model.cockpitUrl).then((g) => {
+    const loadCockpit = () => loader.loadGLTF(def.model.cockpitUrl).then((g) => {
       if (state.rig !== rig) return;   // another aircraft was loaded meanwhile
       rig.attachCockpit(g.scene);
       setupShadows(g.scene);
       bindDisplays(def, rig);
     }).catch((e) => console.warn('[app] cockpit', e));
-    if (cameraRig.view === 'cockpit') await ready;
+    // robustness hook: memory-limited devices (quality.lazyCockpit) fetch it only when the cockpit view is first entered
+    if (quality.lazyCockpit && cameraRig.view !== 'cockpit') state.loadCockpit = loadCockpit;
+    else {
+      const ready = loadCockpit();
+      if (cameraRig.view === 'cockpit') await ready;
+    }
   }
 }
 
@@ -204,6 +242,8 @@ function resetFlight() {
 
 let prevPos = new THREE.Vector3(), prevQuat = new THREE.Quaternion();
 function syncRig() {
+  const p = state.flight.position, q = state.flight.quaternion;
+  if (!Number.isFinite(p.x + p.y + p.z + q.x + q.y + q.z + q.w)) return;   // robustness: keep the last valid pose (the models crash themselves on NaN)
   state.rig.object.position.copy(state.flight.position);
   state.rig.object.quaternion.copy(state.flight.quaternion);
 }
@@ -220,6 +260,13 @@ const worldProxy = new Proxy({}, {
 });
 const cameraRig = createCameraRig(camera, renderer.domElement, worldProxy);
 Object.assign(state, { camera, cameraRig, renderer, scene, hud, audio });   // test hooks (CONTRACTS-SF.md §7)
+// robustness hook: context loss / GPU budget guard (src/core/gpu-guard.js); state.gpu is a test hook
+gpu = createGpuGuard({
+  renderer, state, getQuality: () => quality,
+  onHalt: () => { state.halted = true; audio.setPaused(true); },
+  onStepDown: (id) => { setQualityLive(resolveQuality(id), `Grafik belleği sınırda: kalite ${QUALITY[id].label} yapıldı`); return true; },
+});
+state.gpu = gpu;
 const SYSTEM_ACTIONS = ['gear', 'flapsDown', 'flapsUp', 'speedbrake', 'reverser', 'canopy', 'lights', 'autopilot'];
 for (const a of SYSTEM_ACTIONS) input.on(a, () => { if (state.flight && state.flight.command) state.flight.command(a); });
 input.on('autopilot', () => { if (audio.acknowledge) audio.acknowledge(); });   // silences an AP-disconnect alert (the causing press is ignored by audio)
@@ -235,13 +282,23 @@ for (const a of ['camera', 'cameraPrev', 'view', 'cameraSelect']) input.on(a, ()
 input.on('lookBack', () => cameraRig.lookBack(true));
 input.on('reset', () => { if (state.flight) { resetFlight(); hud.showMessage('Yeniden başlatıldı', 1000); } });
 input.on('pause', () => { state.paused = !state.paused; hud.setPaused(state.paused); audio.setPaused(state.paused); });
+input.on('pause', () => { if (state.twControl && state.world) state.twControl.set(state.world.time, state.world.weather.preset); });   // time & weather hook
+// time & weather hook: live time of day + weather from the pause screen (src/ui/menu.js control, world.setTime / setWeather)
+function mountTimeWeather() {
+  if (state.twControl || !hud.mountPauseControl || !state.world.setTime) return;
+  state.twControl = createTimeWeatherControl(null, {
+    time: state.world.time, weather: state.world.weather.preset, className: 'gkm-tw-pause',
+    onChange: (v) => { state.world.setTime(v.time); if (v.weather !== state.world.weather.preset) state.world.setWeather(v.weather); if (state.choice) Object.assign(state.choice, v); },
+  });
+  hud.mountPauseControl(state.twControl.el);
+}
 input.on('hud', () => { if (hud.cycleMode) hud.cycleMode(); else { state.hudVisible = !state.hudVisible; hud.setVisible(state.hudVisible); } });   // full → compact → off
 input.on('mute', () => { state.userMuted = !state.userMuted; audio.setMuted(state.userMuted); hud.showMessage(state.userMuted ? 'Ses kapalı' : 'Ses açık', 900); });
 input.on('help', () => { state.helpVisible = !state.helpVisible; hud.showHelp(input.bindings, state.helpVisible); });
 input.on('menu', goToMenu);
 input.on('map', () => navMap.toggle('key'));   // navigation hook: J opens / closes the map (Esc closes it too)
 // an accidental tab close / reload mid-flight (Ctrl+W on Windows, Cmd+W, F5) asks first instead of losing the flight
-guardUnload(() => !!state.flight);
+guardUnload(() => !!state.flight && !state.halted);   // (robustness: the graphics-failure reload is not asked about)
 
 // ---- loop ----
 const timer = new THREE.Timer();
@@ -253,9 +310,10 @@ function frame(ts) {
   timer.update(ts);
   const dt = Math.min(timer.getDelta(), 0.1);
   input.update(dt);
+  if (state.halted) return;   // robustness: graphics failure being handled (notice shown, page reloading)
   const { flight, rig, world } = state;
   if (flight && rig && world) {
-    if (!state.paused) {
+    if (!state.paused && !state.halted) {
       if (!flight.crashed) {
         // invert pitch (settings) on a copy so the input module's own smoothing state is untouched
         let inp = input.state;
@@ -268,7 +326,9 @@ function frame(ts) {
     syncRig();
     rig.update(dt, flight.getVisualState());
     cameraRig.update(dt, flight);
+    guardCamera();   // robustness hook
     rig.setView(cameraRig.view);
+    if (state.loadCockpit && cameraRig.view === 'cockpit') { const load = state.loadCockpit; state.loadCockpit = null; hud.showMessage('Kokpit yükleniyor…', 1500); load(); }   // lazy cockpit
     if (state.cockpitFill) state.cockpitFill.intensity = cameraRig.view === 'cockpit' ? 2.5 : 0;
     world.update(dt, camera);
     displayAcc += dt;
@@ -278,7 +338,10 @@ function frame(ts) {
     onboarding.update(dt, flight, { view: cameraRig.view, paused: state.paused });   // onboarding hook
     audio.update(dt, flight, { view: cameraRig.view, aircraftObject: rig.object, camera });
   }
-  renderer.render(scene, camera);
+  // robustness hook: a render that throws every frame draws nothing (the canvas shows the page background) → the guard
+  // recovers like after a context loss; texture releases, GPU budget and the flight snapshot run in gpu.tick
+  try { renderer.render(scene, camera); gpu.renderOk(); } catch (e) { gpu.renderFailed(e); }
+  gpu.tick(dt);
   fpsAcc += dt; fpsFrames++;
   if (fpsAcc >= 1) {
     const fps = fpsFrames / fpsAcc;
@@ -287,23 +350,42 @@ function frame(ts) {
     fpsAcc = 0; fpsFrames = 0;
   }
 }
+// Camera sanity (robustness): a non-finite camera pose / lens draws nothing, and the rig's smoothing would keep it that
+// way. Restore the last valid pose and restart the mode (its smoothing state re-initialises).
+const lastCamPos = new THREE.Vector3(0, 100, 0), lastCamQuat = new THREE.Quaternion();
+let camFaults = 0;
+function guardCamera() {
+  const p = camera.position, q = camera.quaternion;
+  if (Number.isFinite(p.x + p.y + p.z + q.x + q.y + q.z + q.w + camera.fov + camera.near)) { lastCamPos.copy(p); lastCamQuat.copy(q); return; }
+  p.copy(lastCamPos); q.copy(lastCamQuat);
+  if (!Number.isFinite(camera.fov) || !Number.isFinite(camera.near)) { camera.fov = 60; camera.near = 0.5; camera.updateProjectionMatrix(); }
+  const m = cameraRig.mode;
+  try { cameraRig.select(m === 'orbit' ? 'chase' : 'orbit'); cameraRig.select(m); } catch { /* ignore */ }
+  if (camFaults++ < 3) { console.warn('[app] camera pose was not finite; restored', m); gpu.report('nan', { cam: m }); }
+}
+
+// Quality change (settings or the GPU budget monitor), applied live.
+function setQualityLive(q, message) {
+  if (!q || q === quality) return;
+  const shadowsChanged = q.shadows !== quality.shadows;
+  quality = q;
+  pixelRatioLimits();
+  pixelRatio = Math.min(Math.max(pixelRatio, minPixelRatio), maxPixelRatio);
+  renderer.setPixelRatio(pixelRatio);
+  if (shadowsChanged) {
+    renderer.shadowMap.enabled = q.shadows;
+    scene.traverse((o) => { if (o.material) [].concat(o.material).forEach((m) => { m.needsUpdate = true; }); });
+  }
+  if (state.world && state.world.setQuality) state.world.setQuality(q);
+  hud.showMessage(message || `Grafik kalitesi: ${q.label}`, message ? 3000 : 1500);
+  state.quality = quality;
+}
 // Settings edited in the menu / pause screen (src/core/settings.js saveSettings) apply live.
+let appliedQualityId = settings.quality;
 function applySettings(next) {
   settings = next;
-  const q = QUALITY[settings.quality] || quality;
-  if (q !== quality) {
-    const shadowsChanged = q.shadows !== quality.shadows;
-    quality = q;
-    pixelRatioLimits();
-    pixelRatio = Math.min(Math.max(pixelRatio, minPixelRatio), maxPixelRatio);
-    renderer.setPixelRatio(pixelRatio);
-    if (shadowsChanged) {
-      renderer.shadowMap.enabled = q.shadows;
-      scene.traverse((o) => { if (o.material) [].concat(o.material).forEach((m) => { m.needsUpdate = true; }); });
-    }
-    if (state.world && state.world.setQuality) state.world.setQuality(q);
-    hud.showMessage(`Grafik kalitesi: ${q.label}`, 1500);
-  }
+  // only a changed choice moves the quality (a budget step-down stays until the player picks a preset)
+  if (settings.quality !== appliedQualityId && QUALITY[settings.quality]) { appliedQualityId = settings.quality; setQualityLive(resolveQuality(settings.quality)); }
   if (audio.setVolumes) audio.setVolumes(settings.volumes);
   state.settings = settings; state.quality = quality;
 }
@@ -352,6 +434,7 @@ function startFailed(e) {
   if (!loading) loading = createLoadingScreen(uiRoot);   // failed before the loading screen (version map, runways)
   const q = new URLSearchParams(location.search);
   if (state.choice) { q.set('aircraft', state.choice.aircraftId); q.set('spawn', state.choice.spawnId); }
+  if (state.choice && state.choice.time != null) { q.set('time', String(state.choice.time)); if (state.choice.weather) q.set('weather', state.choice.weather); }   // time & weather hook
   const url = q.toString() ? `${location.pathname}?${q}` : location.pathname;
   loading.showError(net ? undefined : `Oyun yüklenemedi: ${e.message}`, () => location.replace(url));
 }

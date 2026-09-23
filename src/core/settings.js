@@ -1,7 +1,7 @@
 // Lead-owned: persistent player settings (localStorage 'gokyuzu.settings').
 // The UI edits them (menu / pause screen) through saveSettings(); main.js listens for the
 // 'gokyuzu:settings' window event and applies changes live.
-import { detectQuality } from './quality.js';
+import { detectQuality, capQuality, getQualityCap, clearQualityCap, qualityRank } from './quality.js';
 
 const KEY = 'gokyuzu.settings';
 export const DEFAULT_SETTINGS = {
@@ -19,11 +19,15 @@ export function loadSettings() {
   try { s = JSON.parse(localStorage.getItem(KEY) || '{}') || {}; } catch { s = {}; }
   const merged = { ...DEFAULT_SETTINGS, ...s, volumes: { ...DEFAULT_SETTINGS.volumes, ...(s.volumes || {}) } };
   if (!merged.quality) merged.quality = detectQuality();
+  merged.quality = capQuality(merged.quality);   // ceiling left by a graphics-memory failure on this device (gpu-guard.js)
   return merged;
 }
 
 /** Persist and broadcast: window event 'gokyuzu:settings' with detail = the full settings object. */
 export function saveSettings(settings) {
+  // the player raised the quality above the post-failure ceiling themselves: respect that from now on
+  const cap = getQualityCap();
+  if (cap && settings && qualityRank(settings.quality) > qualityRank(cap.q)) clearQualityCap();
   try { localStorage.setItem(KEY, JSON.stringify(settings)); } catch { /* private mode */ }
   window.dispatchEvent(new CustomEvent('gokyuzu:settings', { detail: settings }));
   return settings;

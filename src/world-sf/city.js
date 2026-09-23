@@ -8,8 +8,15 @@ import { assetData, withRetry, isNetworkError, reportLoadFailure, retryDelay } f
 import { createCityMaterial, prepareCityGeometry, setAnisotropy } from './city_material.js';
 import { createCityObstacles } from './city_obstacles.js';
 import { createCityTrees } from './city_trees.js';
+import { SKY_STATE } from './environment.js';   // time & weather: window lights follow the sky
 
 const BASE = 'assets/sf/city/';
+/** Time & weather: share of lit windows by local time (evening peak, few in the small hours). */
+function windowOccupancy(h) {
+  const k = [[0, 0.26], [2, 0.14], [4.5, 0.1], [6, 0.2], [7.5, 0.3], [17, 0.4], [19.5, 0.52], [21.5, 0.48], [23, 0.36], [24, 0.26]];
+  for (let i = 1; i < k.length; i++) if (h <= k[i][0]) { const t = (h - k[i - 1][0]) / (k[i][0] - k[i - 1][0]); return k[i - 1][1] + (k[i][1] - k[i - 1][1]) * t; }
+  return 0.26;
+}
 function freeArray() { this.array = null; }
 const DEFAULTS = { r0: 1300, r1: 3600, r2: 8000, rMax: 26000, maxLoads: 4, unloadAfter: 20, frameBudgetMs: 3, uploadsPerFrame: 1, warmUpload: true, lodScale: 1, shadows: true, readyRadius: 900 };
 
@@ -19,6 +26,7 @@ export async function createCity(ctx, options = {}) {
   if (q0) {   // CONTRACTS-SF §8: pick the LOD scale before the first request so low never loads tiles it won't show
     if (q0.cityLodScale != null && options.lodScale == null) opt.lodScale = q0.cityLodScale;
     if (q0.cityShadows != null) opt.shadows = !!q0.cityShadows;
+    if (q0.cityUnloadAfter != null && options.unloadAfter == null) opt.unloadAfter = q0.cityUnloadAfter;   // robustness: memory-limited devices drop passed tiles sooner
   }
   const base = options.base || BASE;
   const { terrain, focus = { x: 0, z: 0 } } = ctx;
@@ -332,6 +340,7 @@ export async function createCity(ctx, options = {}) {
     // with the other layers / the aircraft for bandwidth before the first playable frame
   })();
   let started = false;
+  let nightOverride = null;
 
   return {
     object: group,
@@ -344,7 +353,8 @@ export async function createCity(ctx, options = {}) {
       for (const r of loadedTiles) if (r.mesh && r.mesh.visible) { visible++; tris += r.tris; }
       return { loaded: loadedTiles.size, visible, tris, queued: queue.length, active, trees: trees ? trees.stats : null };
     },
-    setNight(v) { uniforms.uCityNight.value = v; },
+    /** Force the window-light factor (0..1); null = follow the time of day. */
+    setNight(v) { nightOverride = v; if (v != null) uniforms.uCityNight.value = v; },
     /** LOD distance multiplier (e.g. 0.8 on very high resolutions / low-end GPUs, 1.3 for screenshots). */
     setLodScale(s) { opt.lodScale = Math.max(0.3, s); lastSelect = -1; },
     /** CONTRACTS-SF §8 (live): cityLodScale, cityShadows, treeDensity, treeDistance, anisotropy. */
@@ -352,6 +362,7 @@ export async function createCity(ctx, options = {}) {
       if (!q) return;
       lastQuality = q;
       if (q.cityLodScale != null) this.setLodScale(q.cityLodScale);
+      if (q.cityUnloadAfter != null) opt.unloadAfter = q.cityUnloadAfter;   // robustness (GPU budget)
       if (q.cityShadows != null) {
         opt.shadows = !!q.cityShadows;
         for (const r of loadedTiles) if (r.mesh) r.mesh.castShadow = r.level === 0 && opt.shadows;
@@ -361,6 +372,8 @@ export async function createCity(ctx, options = {}) {
     },
     update(dt, camera) {
       if (!started) { started = true; preloadRadius = Infinity; startTrees(); }
+      if (nightOverride == null) uniforms.uCityNight.value = SKY_STATE.lights;   // time & weather
+      uniforms.uCityOcc.value = windowOccupancy(SKY_STATE.hours);
       clock += dt;
       camera.getWorldPosition(camPos);
       const moved = camPos.distanceToSquared(lastCam) > 15 * 15;

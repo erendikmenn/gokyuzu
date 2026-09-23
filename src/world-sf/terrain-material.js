@@ -69,6 +69,10 @@ export function createTerrainShared({ depthTex, waveTex, detailTex, rootMinX, ro
     uLandSpec: { value: 0.3 },
     uSunVisOn: { value: 0 },
     uDebug: { value: 0 },
+    // time & weather (src/world-sf/lights.js): ground light map at night (street light pools, road glow)
+    uNightMap: { value: null },
+    uNightXf: { value: new THREE.Vector4(0, 0, -10, -10) },   // uv = xz * xy + zw (outside [0,1] = no light)
+    uNightGain: { value: 0 },
   };
 }
 
@@ -103,6 +107,9 @@ uniform float uWaveScale;
 uniform float uLandSpec;
 uniform float uSunVisOn;
 uniform float uDebug;
+uniform sampler2D uNightMap;
+uniform vec4 uNightXf;
+uniform float uNightGain;
 varying float vSunVis;
 varying vec2 vSfUv;
 varying vec3 vSfWorld;
@@ -199,6 +206,9 @@ const FRAG_MAP = /* glsl */`
 #endif
   float foam = (swash * 0.6 * smoothstep(0.3, 0.7, foamN) + surf) * seaLvl;
   wcol = mix(wcol, vec3(0.62), clamp(foam, 0.0, 1.0) * 0.85);
+  #ifdef SF_WET
+    land *= 1.0 - 0.28 * SF_WET;   // time & weather: wet ground is darker
+  #endif
   diffuseColor.rgb = mix(wcol, land, sfLandA);
   if (uDebug > 0.5) {
     float dv = uDebug < 1.5 ? ocean : uDebug < 2.5 ? shoreDist / 500.0 : uDebug < 3.5 ? depth / 20.0 : uDebug < 4.5 ? surfZone : uDebug < 5.5 ? sfShore : uDebug < 6.5 ? vSunVis
@@ -212,7 +222,23 @@ const FRAG_ROUGH = /* glsl */`
 float roughnessFactor = roughness;
 {
   float wr = mix(0.05, 0.24, smoothstep(200.0, 7000.0, sfDist));
-  roughnessFactor = mix(wr, roughness, sfLandA);
+  float lr = roughness;
+  #ifdef SF_WET
+    lr = mix(roughness, 0.42, SF_WET);   // time & weather: wet ground has a sheen
+  #endif
+  roughnessFactor = mix(wr, lr, sfLandA);
+}
+`;
+// time & weather: street lights seen from above (light pools + road glow) from the ground light map, land only
+const FRAG_NIGHT = /* glsl */`
+if (uNightGain > 0.0) {
+  vec2 nuv = vSfWorld.xz * uNightXf.xy + uNightXf.zw;
+  if (nuv.x > 0.0 && nuv.x < 1.0 && nuv.y > 0.0 && nuv.y < 1.0) {
+    vec2 nl = texture2D(uNightMap, nuv).rg;
+    nl = nl * nl * 1.6;
+    // near the camera the lamp sprites and their pools carry the street; the blurred map fades back
+    totalEmissiveRadiance += (nl.r * vec3(1.0, 0.86, 0.66) + nl.g * vec3(1.0, 0.52, 0.16)) * uNightGain * sfLandA * mix(0.4, 1.0, smoothstep(150.0, 1400.0, sfDist));
+  }
 }
 `;
 
@@ -267,9 +293,10 @@ export function createTerrainMaterial(shared, tile) {
       .replace('#include <roughnessmap_fragment>', FRAG_ROUGH)
       .replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\n' + FRAG_NORMAL)
       .replace('#include <lights_physical_fragment>', '#include <lights_physical_fragment>\n' + FRAG_SPEC)
-      .replace('#include <lights_fragment_begin>', LIGHTS_BEGIN_SUNVIS);
+      .replace('#include <lights_fragment_begin>', LIGHTS_BEGIN_SUNVIS)
+      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n' + FRAG_NIGHT);
   };
-  m.customProgramCacheKey = () => 'sf-terrain-4';   // defines (SF_WATER) are part of three's program key
+  m.customProgramCacheKey = () => 'sf-terrain-5';   // defines (SF_WATER) are part of three's program key
   m.userData.sfId = _id++;
   return m;
 }
