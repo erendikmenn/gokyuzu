@@ -231,7 +231,7 @@ def quilt_tile():
     h = np.sin(fx * np.pi) ** 0.6 * np.sin(fy * np.pi) ** 0.6
     h += 0.04 * noise_img(W, W, 2, 1.0, 21)
     stitch = (np.minimum(np.minimum(fx, 1 - fx), np.minimum(fy, 1 - fy)) < 0.012)
-    col = np.ones((W, W, 3), np.float32) * np.array([88, 90, 76], np.float32)
+    col = np.ones((W, W, 3), np.float32) * np.array([122, 119, 101], np.float32)   # tan soundproofing blankets
     col *= (0.88 + 0.12 * h)[..., None]
     col += noise_img(W, W, 0.8, 3, 22)[..., None]
     col[stitch] *= 0.82

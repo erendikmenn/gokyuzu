@@ -51,8 +51,8 @@ def make_materials(textured=False):
     M['paint'] = principled('paint', ARMY_GREEN, rough=0.6)
     M['paint_dark'] = principled('paint_dark', '#2e322a', rough=0.62)
     M['metal'] = principled('metal', '#55585a', rough=0.48, metal=0.85)
-    M['metal_dark'] = principled('metal_dark', '#3a3c3e', rough=0.45, metal=0.85)
-    M['titanium'] = principled('titanium', '#626463', rough=0.42, metal=0.8)
+    M['metal_dark'] = principled('metal_dark', '#1d1e1f', rough=0.5, metal=0.35)      # black-painted dynamic parts
+    M['titanium'] = principled('titanium', '#27292a', rough=0.45, metal=0.5)          # painted hub forging
     M['chrome'] = principled('chrome', '#d8dadc', rough=0.08, metal=1.0)
     M['rubber'] = principled('rubber', '#141414', rough=0.85)
     M['black'] = principled('black', '#0c0c0c', rough=0.6)
@@ -64,7 +64,13 @@ def make_materials(textured=False):
     M['light_green'] = principled('light_green', '#20ff50', rough=0.2, emit='#10ff40', emit_strength=4.0)
     M['light_white'] = principled('light_white', '#ffffff', rough=0.2, emit='#fff6e8', emit_strength=4.0)
     M['lens'] = principled('lens', '#e8eef0', rough=0.05, alpha=0.35)
+    M['lens_blue'] = principled('lens_blue', '#1d3f8a', rough=0.08, spec=0.8)
     M['blade_le'] = principled('blade_le', '#7a7c7a', rough=0.3, metal=0.9)
+    M['mast'] = principled('mast', '#b9bcbd', rough=0.32, metal=0.95)
+    M['label_white'] = principled('label_white', '#d9d9d2', rough=0.5)
+    M['label_yellow'] = principled('label_yellow', '#c9a431', rough=0.5)
+    M['label_blue'] = principled('label_blue', '#2f6fb0', rough=0.5)
+    M['label_red'] = principled('label_red', '#b3302a', rough=0.5)
     M['blur_main'] = principled('blur_main', '#26282a', rough=0.6, alpha=0.12)
     M['blur_tail'] = principled('blur_tail', '#26282a', rough=0.6, alpha=0.15)
     M['int_wall'] = principled('int_wall', '#4a4f47', rough=0.8)
@@ -85,10 +91,10 @@ def make_materials(textured=False):
     M['int_seatframe'] = principled('int_seatframe', '#474c43', rough=0.55)
     M['int_cushion'] = principled('int_cushion', '#1d1f1e', rough=0.9)
     M['int_armor'] = principled('int_armor', '#575b49', rough=0.6)
-    M['int_strap'] = principled('int_strap', '#4b4935', rough=0.9)
+    M['int_strap'] = principled('int_strap', '#2a2b2d', rough=0.9)
     M['int_floor'] = principled('int_floor', '#46484a', rough=0.85)
     M['int_quilt'] = principled('int_quilt', '#6f6b57', rough=0.92)
-    M['int_canvas'] = principled('int_canvas', '#55553f', rough=0.92)
+    M['int_canvas'] = principled('int_canvas', '#8a907a', rough=0.92)      # sage-green troop seat canvas
     M['int_tube'] = principled('int_tube', '#a3a5a7', rough=0.4, metal=0.9)
     M['int_lamp'] = principled('int_lamp', '#ffffff', rough=0.3, emit='#fff2dc', emit_strength=0.6)
     M['int_cockpit'] = principled('int_cockpit', '#2d3032', rough=0.7)
@@ -110,10 +116,6 @@ def set_culling(M):
 def texture_interior(M, texdir):
     import os
     j = lambda n: os.path.join(texdir, n)
-    textured_material(M['int_panel'], j('int_panel.jpg'))
-    textured_material(M['int_bezel'], j('int_bezel.jpg'))
-    textured_material(M['int_console'], j('int_console.jpg'))
-    textured_material(M['int_floor'], j('int_floor.jpg'))
     textured_material(M['int_quilt'], j('int_quilt.jpg'), normal=j('int_quilt_nrm.jpg'))
     textured_material(M['blade'], j('blade.jpg'))
     textured_material(M['screen'], j('screen_off.jpg'))
@@ -175,4 +177,66 @@ def textured_material(mat, base=None, orm=None, normal=None, normal_strength=1.0
         nt.links.new(uv.outputs['UV'], t.inputs['Vector'])
         nt.links.new(t.outputs['Color'], b.inputs['Emission Color'])
         b.inputs['Emission Strength'].default_value = 1.0
+    return mat
+
+
+INTERIOR_COLORS = {
+    # key: (sRGB, roughness, metallic)
+    'int_panelpaint': ('#2a2c2f', 0.58, 0.0),     # UH-60M panels: very dark grey
+    'int_knob': ('#151515', 0.42, 0.0),
+    'int_switch': ('#b4b6b8', 0.28, 0.9),         # toggle bats
+    'int_button': ('#2b2c2e', 0.5, 0.0),
+    'int_lens': ('#1b1b19', 0.15, 0.0),
+    'int_cb': ('#1f1f1f', 0.45, 0.0),
+    'int_seatshell': ('#1f2021', 0.7, 0.0),        # armoured seat bucket / side armour (black)
+    'int_cushion': ('#232425', 0.95, 0.0),
+    'int_frame': ('#3a3d3f', 0.6, 0.0),
+    'int_framepaint': ('#5d605b', 0.7, 0.0),
+    'int_stick': ('#1c1c1c', 0.45, 0.0),
+    'int_grip': ('#121212', 0.72, 0.0),
+    'int_pedal': ('#2a2c2e', 0.6, 0.0),
+    'int_yellow': ('#c9a227', 0.5, 0.0),
+    'int_track': ('#6d6f71', 0.4, 0.85),
+    'int_hatch': ('#44464a', 0.8, 0.0),
+    'int_lampbody': ('#2e3032', 0.5, 0.0),
+    'int_glarepad': ('#1c1d1e', 0.95, 0.0),
+    'int_structure': ('#26282a', 0.7, 0.0),        # cockpit structure paint (black-grey)
+    'int_bezelbody': ('#303236', 0.45, 0.0),
+    'int_fuelknob': ('#1d1d1d', 0.5, 0.0),
+    'int_palmrest': ('#141416', 0.55, 0.0),        # black padded palm rests behind the CDUs
+}
+
+
+TEXEL = {   # relative atlas resolution per material (large plain surfaces need little, legends a lot)
+    'int_labels': 2.0, 'int_glarepad': 0.35, 'int_structure': 0.4, 'int_panelpaint': 0.55, 'int_bezelbody': 0.6,
+    'int_floor_cp': 0.45, 'int_floor': 0.55, 'int_quiltpad': 0.6, 'int_framepaint': 0.6, 'int_frame': 0.8,
+    'int_seatshell': 1.1, 'int_cushion': 0.9,
+}
+
+
+def interior_materials(M):
+    for k, (c, r, m) in INTERIOR_COLORS.items():
+        M[k] = principled(k, c, rough=r, metal=m)
+    M['int_labels'] = principled('int_labels', '#202122', rough=0.55)
+    M['int_quiltpad'] = principled('int_quiltpad', '#6f6b57', rough=0.92)
+    for k, t in TEXEL.items():
+        if k in M:
+            M[k]['texel'] = t
+    return M
+
+
+def box_textured(mat, img_path, tile=0.45, normal=None, blend=0.25):
+    """Tiling texture via box projection of object coordinates (bake sources without UVs)."""
+    nt = mat.node_tree
+    b = nt.nodes.get('Principled BSDF')
+    tc = nt.nodes.new('ShaderNodeTexCoord')
+    mp = nt.nodes.new('ShaderNodeMapping')
+    mp.inputs['Scale'].default_value = (1 / tile, 1 / tile, 1 / tile)
+    nt.links.new(tc.outputs['Object'], mp.inputs['Vector'])
+    t = nt.nodes.new('ShaderNodeTexImage')
+    t.image = load_image(img_path)
+    t.projection = 'BOX'
+    t.projection_blend = blend
+    nt.links.new(mp.outputs['Vector'], t.inputs['Vector'])
+    nt.links.new(t.outputs['Color'], b.inputs['Base Color'])
     return mat

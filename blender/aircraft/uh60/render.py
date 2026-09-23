@@ -86,6 +86,12 @@ def blades(beta_deg=-3.2, feather_deg=0.0, rpm_pose=False):
         b = obj(f'blade_{i + 1}')
         th = i * math.pi / 2
         b.rotation_euler = (feather_deg * DEG, -beta_deg * DEG, th)
+        if beta_deg < 0:
+            # parked blades sag in a curve (flexible composite spar), not as a straight line: render-only bend
+            m = b.modifiers.new('droop', 'SIMPLE_DEFORM')
+            m.deform_method = 'BEND'
+            m.deform_axis = 'Y'
+            m.angle = math.radians(float(arg('--droop', 7.0)))
 
 
 def spin_rotors(rpm_frac=1.0, fps=24, shutter=0.5):
@@ -126,6 +132,14 @@ def hide(names, v=True):
 
 def base_setup():
     hide(['rotor_main_blur', 'rotor_tail_blur'])
+    # renders show the detailed interior; the lite stand-in (exterior GLB) is hidden
+    il = obj('interior_lite')
+    if il and obj('interior') and not arg('--lite'):
+        for o in il.children_recursive:
+            o.hide_render = True
+    elif arg('--lite') and obj('interior'):
+        for o in obj('interior').children_recursive:
+            o.hide_render = True
     h = bpy.data.materials.get('hull')
     if h and h.node_tree:
         h.node_tree.nodes['Principled BSDF'].inputs['Emission Strength'].default_value = float(arg('--formation', 0.0))
@@ -235,6 +249,8 @@ def camera(loc, look, lens, name='Cam', dof=None):
 
 
 def render(path):
+    if os.path.exists(path):
+        os.remove(path)              # new inode: never write through a hard link (dist/ links the published renders)
     util.render_still(path)
     print('[render] saved', path, flush=True)
 
@@ -670,7 +686,7 @@ def shot_cockpit():
     blades(-3.4)
     screens()
     sc.view_settings.look = arg('--look_', 'AgX - Medium High Contrast')
-    world_sky(float(arg('--sunel', 18)), float(arg('--sunaz', 60)), strength=0.28, exposure=float(arg('--exp', 0.0)))
+    world_sky(float(arg('--sunel', 38)), float(arg('--sunaz', 60)), strength=0.28, exposure=float(arg('--exp', -0.3)))
     airfield_ground(True, 90, 11)
     rig_empty((0, 0, CG[2]))
     c = [float(v) for v in arg('--cam', '-0.50,2.62,1.84').split(',')]
@@ -681,9 +697,78 @@ def shot_cockpit():
     render(arg('--out', os.path.join(OUT, 'cockpit.png')))
 
 
+def shot_rotorhead():
+    """Close 3/4 front-right view of the main rotor head from a maintenance-stand height."""
+    sc = setup(int(arg('--samples', 192)), 1920, 1080)
+    base_setup()
+    blades(-3.4)
+    stabilator(40)
+    world_sky(float(arg('--sunel', 32)), float(arg('--sunaz', 115)), strength=0.28, exposure=float(arg('--exp', -1.1)))
+    airfield_ground(True, 231, 7)
+    rig_empty((0, 0, CG[2]))
+    off = Vector((0, -CG[1], 0))
+    c = [float(v) for v in arg('--cam', '2.5,2.9,4.25').split(',')]
+    t = [float(v) for v in arg('--look', '0.0,-0.05,3.30').split(',')]
+    camera(Vector(c) + off, Vector(t) + off, float(arg('--lens', 32)))
+    render(arg('--out', os.path.join(OUT, 'rotorhead.png')))
+
+
+def shot_cabin():
+    """Cabin interior seen through the open right cabin door."""
+    sc = setup(int(arg('--samples', 192)), 1920, 1080)
+    base_setup()
+    blades(-3.4)
+    stabilator(40)
+    cabin_doors(1.0)
+    world_sky(float(arg('--sunel', 30)), float(arg('--sunaz', 70)), strength=0.28, exposure=float(arg('--exp', -1.1)))
+    airfield_ground(True, 180, 9)
+    rig_empty((0, 0, CG[2]))
+    off = Vector((0, -CG[1], 0))
+    c = [float(v) for v in arg('--cam', '2.95,0.30,1.72').split(',')]
+    t = [float(v) for v in arg('--look', '-0.5,-0.25,1.05').split(',')]
+    cam = camera(Vector(c) + off, Vector(t) + off, float(arg('--lens', 18)))
+    cam.data.clip_start = 0.02
+    render(arg('--out', os.path.join(OUT, 'cabin.png')))
+
+
+def shot_cockpit_ref():
+    """Cockpit from behind and between the seats, the viewpoint of the reference photo (DVIDS 815181)."""
+    sc = setup(int(arg('--samples', 192)), 1920, 1080)
+    base_setup()
+    blades(-3.4)
+    screens()
+    sc.view_settings.look = arg('--look_', 'AgX - Medium High Contrast')
+    world_sky(float(arg('--sunel', 34)), float(arg('--sunaz', 20)), strength=0.28, exposure=float(arg('--exp', 0.4)))
+    airfield_ground(True, 90, 11)
+    rig_empty((0, 0, CG[2]))
+    off = Vector((0, -CG[1], 0))
+    c = [float(v) for v in arg('--cam', '0.0,2.78,1.93').split(',')]
+    t = [float(v) for v in arg('--look', '0.0,3.60,1.18').split(',')]
+    cam = camera(Vector(c) + off, Vector(t) + off, float(arg('--lens', 15)))
+    cam.data.clip_start = 0.02
+    render(arg('--out', os.path.join(OUT, 'cockpit_ref.png')))
+
+
+def shot_front():
+    """Head-on at standing height (reference: exterior_front_01)."""
+    sc = setup(int(arg('--samples', 192)), 1920, 1080)
+    base_setup()
+    blades(-3.4)
+    stabilator(40)
+    world_sky(float(arg('--sunel', 30)), float(arg('--sunaz', 150)), strength=0.28, exposure=float(arg('--exp', -1.1)))
+    airfield_ground(True, 20, 5)
+    rig_empty((0, 0, CG[2]))
+    off = Vector((0, -CG[1], 0))
+    c = [float(v) for v in arg('--cam', '0.35,13.15,1.55').split(',')]
+    t = [float(v) for v in arg('--look', '0.0,2.65,1.75').split(',')]
+    camera(Vector(c) + off, Vector(t) + off, float(arg('--lens', 60)))
+    render(arg('--out', os.path.join(OUT, 'front.png')))
+
+
 def main():
-    bpy.ops.wm.open_mainfile(filepath=BLEND)
-    shots = {'lookdev': shot_lookdev, 'hero': shot_hero, 'helipad': shot_helipad, 'side': shot_side, 'cockpit': shot_cockpit}
+    bpy.ops.wm.open_mainfile(filepath=arg('--blend', BLEND))
+    shots = {'lookdev': shot_lookdev, 'hero': shot_hero, 'helipad': shot_helipad, 'side': shot_side, 'cockpit': shot_cockpit,
+             'rotorhead': shot_rotorhead, 'cabin': shot_cabin, 'cockpit_ref': shot_cockpit_ref, 'front': shot_front}
     shots.get(SHOT, shot_lookdev)()
 
 

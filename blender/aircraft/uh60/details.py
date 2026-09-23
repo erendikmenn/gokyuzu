@@ -146,14 +146,14 @@ def build_details(M, root):
     v, f = prim_tube([(0, 2.46, 2.25), (0, 2.62, 2.46), (0, 2.78, 2.62)], [0.03, 0.022, 0.012], n=6)
     objs_metal.append(new_mesh_obj('_wc1', v, f, metal, smooth=False))
     objs_paint.append(fin('_wcf', (0, 2.50, 2.22), 0.38, 0.30, 0.10, 42, mat=paint, taper=0.25))
-    v, f = prim_tube([(0, 3.66, 1.74), (0, 3.12, 2.00), (0, 2.66, 2.22)], 0.018, n=6)
-    objs_metal.append(new_mesh_obj('_wd', v, f, metal, smooth=True))
+    # (UH-60M: no deflector across the centre pane; the upper cutter sits on the roof above the windshield)
     objs_paint.append(fin('_wcl', (0, 3.95, 0.60), 0.30, 0.22, 0.10, -50, up=(0, 0.25, -1), mat=paint, taper=0.3))
     # ---- windshield wipers (parked along the lower frame of each pane)
     import openings as _op
     for sgn in (-1, 1):
-        piv = _op.WS_B + np.array([sgn * 0.42, 0, 0]) + _op.WS_D * 0.02 + _op.WS_N * 0.02
-        tip = piv + np.array([sgn * 0.30, 0, 0]) + _op.WS_D * 0.10 + _op.WS_N * 0.005
+        # parked wipers on the side panes: pivot at the bottom middle of the pane, arm leaning inboard-up
+        piv = _op.WS_B + np.array([sgn * 0.58, 0, 0]) + _op.WS_D * 0.03 + _op.WS_N * 0.02
+        tip = piv + np.array([-sgn * 0.10, 0, 0]) + _op.WS_D * 0.36 + _op.WS_N * 0.005
         v, f = prim_tube([tuple(piv), tuple(tip)], 0.009, n=6)
         objs_black.append(new_mesh_obj('_wip', v, f, M['black'], smooth=True))
         mid = (piv + tip) / 2
@@ -167,11 +167,41 @@ def build_details(M, root):
         objs_paint.append(new_mesh_obj('_ptm', v, f, paint, smooth=True))
         v, f = prim_tube([(s * 0.40, 2.62, 2.38), (s * 0.40, 2.98, 2.38)], [0.016, 0.012], n=8)
         objs_metal.append(new_mesh_obj('_pt', v, f, metal, smooth=True))
-    # ---- ALQ-144 IR jammer on the aft doghouse
-    v, f = prim_cylinder(0.16, 0.16, 0.26, n=20, center=(0, -1.62, 2.72))
-    objs_dark.append(new_mesh_obj('_irj', v, f, dark, smooth=True, sharp_deg=40))
-    v, f = prim_sphere(0.15, n=16, m=8, center=(0, -1.62, 2.98), scale=(1, 1, 0.55))
-    objs_black.append(new_mesh_obj('_irjd', v, f, M['black'], smooth=True))
+    # ---- UH-60M: no ALQ-144 'disco ball'; a low SATCOM / GPS radome sits on the aft doghouse instead
+    v, f = prim_sphere(0.17, n=20, m=10, center=(0, -1.70, 2.70), scale=(1.0, 1.35, 0.32))
+    objs_dark.append(new_mesh_obj('_rdome', v, f, dark, smooth=True))
+    # ---- cargo hook under the belly (hook well + swivel + hook)
+    v, f = prim_box((0.52, 0.62, 0.04), center=(0, -0.05, 0.395))
+    objs_black.append(new_mesh_obj('_hookwell', v, f, M['black'], smooth=False))
+    v, f = prim_cylinder(0.07, 0.06, 0.10, n=14, center=(0, -0.05, 0.30))
+    objs_metal.append(new_mesh_obj('_hookb', v, f, M['metal_dark'], smooth=True))
+    v, f = prim_tube([(0, -0.05, 0.30), (0, -0.05, 0.19), (0, 0.03, 0.14), (0, 0.10, 0.17), (0, 0.10, 0.22)], 0.022, n=8)
+    objs_metal.append(new_mesh_obj('_hook', v, f, M['metal'], smooth=True))
+    # ---- louvred vents on the aft tail cone sides (transmission / battery bay cooling) and kick-in steps / handholds
+    for s_ in (-1, 1):
+        for yv in (-7.05, -7.30):
+            xw = hull.fuse_halfwidth_at(yv, 1.35)
+            for k in range(5):
+                v, f = prim_box((0.012, 0.16, 0.012), center=(s_ * (xw + 0.004), yv, 1.28 + k * 0.03))
+                objs_black.append(new_mesh_obj('_lv', v, f, M['black'], smooth=False))
+        for (y, z) in ((-3.9, 1.05), (-4.9, 1.20)):
+            xw = hull.fuse_halfwidth_at(y, z)
+            v, f = prim_box((0.012, 0.13, 0.05), center=(s_ * (xw + 0.003), y, z))
+            objs_black.append(new_mesh_obj('_kstep', v, f, M['black'], smooth=False))
+        # tail-boom handhold rails (as on the M, above 'UNITED STATES ARMY')
+        pts = []
+        for y in np.linspace(-3.6, -4.3, 6):
+            xw = hull.fuse_halfwidth_at(y, 1.62)
+            pts.append((s_ * (xw + 0.035), y, 1.62))
+        v, f = prim_tube(pts, 0.012, n=6)
+        objs_metal.append(new_mesh_obj('_hhr', v, f, M['metal_dark'], smooth=True))
+        for y in (-3.6, -4.3):
+            xw = hull.fuse_halfwidth_at(y, 1.62)
+            v, f = prim_tube([(s_ * xw, y, 1.62), (s_ * (xw + 0.04), y, 1.62)], 0.012, n=6)
+            objs_metal.append(new_mesh_obj('_hhp', v, f, M['metal_dark'], smooth=True))
+    # ---- extra blade antennas on the tail boom top and the cabin roof (UH-60M)
+    objs_paint.append(fin('_ant5', (0, -6.3, 1.66), 0.20, 0.18, 0.10, 30, mat=paint))
+    objs_paint.append(fin('_ant7', (0, -7.3, 0.92), 0.24, 0.20, 0.10, 35, up=(0, 0, -1), mat=paint))
     # ---- mast base boot on the transmission fairing
     v, f = prim_cylinder(0.30, 0.18, 0.12, n=28, center=(0, 0.01, 2.72))
     objs_paint.append(new_mesh_obj('_boot', v, f, paint, smooth=True, sharp_deg=40))
@@ -181,35 +211,22 @@ def build_details(M, root):
         objs_black.append(new_mesh_obj('_inl', v, f, M['black'], smooth=False))
         v, f = prim_sphere(0.09, n=16, m=8, center=(s * hull.NAC_X, hull.NAC_Y0 - 0.17, hull.NAC_Z), scale=(1, 1.3, 1))
         objs_metal.append(new_mesh_obj('_inh', v, f, M['metal_dark'], smooth=True))
-    # ---- HIRSS exhaust exits (soot) : dark inner plug inside the duct end
+    # ---- HIRSS exits: sooty inner duct (the dark disc deep inside the oblique exit) + exhaust mixer vanes
     for s in (-1, 1):
-        pts = hull.hirss_path(s)
-        p, q = pts[-1], pts[-2]
-        t = (p - q) / np.linalg.norm(p - q)
-        c = p - t * 0.06
-        up = np.array([0, 0, 1.0])
-        b = np.cross(t, up); b /= np.linalg.norm(b)
-        u = np.cross(b, t)
-        ring = []
-        for k in range(24):
-            a = 2 * math.pi * k / 24
-            ca, sa = math.cos(a), math.sin(a)
-            e = 0.5
-            ring.append(c + np.sign(ca) * abs(ca) ** e * 0.22 * b + np.sign(sa) * abs(sa) ** e * 0.19 * u)
-        v = [tuple(x) for x in ring] + [tuple(c - t * 0.02)]
-        f = [(k, (k + 1) % 24, 24) for k in range(24)]
+        ring = hull.hirss_ring(s, hull.HIRSS_Y1, cut=True)
+        c = ring.mean(0)
+        deep = c + (ring - c) * 0.80
+        deep[:, 1] += 0.35
+        v = [tuple(p) for p in deep] + [tuple(deep.mean(0) + np.array([0, 0.05, 0]))]
+        n = len(deep)
+        f = [(k, (k + 1) % n, n) for k in range(n)]
+        if s > 0:
+            f = [ff[::-1] for ff in f]
         objs_black.append(new_mesh_obj('_hx', v, f, M['soot'], smooth=True))
-        # exhaust louvers (vanes across the exit)
-        for k in range(4):
-            off = u * (-0.12 + k * 0.08)
-            cc = p - t * 0.03 + off
-            R, U, Nn = b, t * 0.5 + u * 0.866, np.cross(b, t * 0.5 + u * 0.866)
-            vv = []
-            for a_ in (-0.2, 0.2):
-                for b_ in (-0.035, 0.035):
-                    for c_ in (-0.004, 0.004):
-                        vv.append(tuple(cc + R * a_ + U * b_ + Nn * c_))
-            ff = [(0, 1, 3, 2), (4, 6, 7, 5), (0, 4, 5, 1), (2, 3, 7, 6), (0, 2, 6, 4), (1, 5, 7, 3)]
+        dc = deep.mean(0)
+        for k in range(3):
+            off = np.array([0, 0.04 * k, -0.15 + 0.15 * k])
+            vv, ff = prim_box((0.36, 0.012, 0.03), center=tuple(dc + off + np.array([0, -0.05, 0])))
             objs_black.append(new_mesh_obj('_hl', vv, ff, M['soot'], smooth=False))
     # ---- cabin door rails (upper and lower), both sides
     for s in (-1, 1):
@@ -242,10 +259,33 @@ def build_details(M, root):
     # whip antenna on the tail cone
     v, f = prim_tube([(0.12, -6.5, 1.62), (0.14, -6.6, 2.35)], [0.008, 0.004], n=5)
     objs_black.append(new_mesh_obj('_whip', v, f, M['black'], smooth=True))
-    # ---- CMWS / missile warning sensors (small domes) nose + aft
-    for (x, y, z) in ((0.55, 4.35, 1.28), (-0.55, 4.35, 1.28), (0.30, -8.9, 1.25), (-0.30, -8.9, 1.25)):
+    # ---- APR-39 radar-warning spiral antennas: flat discs on the nose sides (facing 45 deg out) and on the tail cone
+    for sx in (-1, 1):
+        z = 1.03
+        c = Vector((sx * 0.27, 4.40, z))
+        # march forward until the point reaches the nose skin (front face)
+        for _ in range(80):
+            if abs(c.x) >= hull.fuse_halfwidth_at(c.y + 0.005, z) - 0.004 or c.y > 4.74:
+                break
+            c.y += 0.005
+        nrm = Vector((sx * 0.40, 0.92, 0.0)).normalized()
+        R = nrm.cross(Vector((0, 0, 1))).normalized()
+        U = R.cross(nrm).normalized()
+        import cplib as _c
+        v, f = _c.place(_c.lathe_z([(0, 0.0), (0.072, 0.0), (0.072, 0.012), (0.062, 0.018), (0, 0.020)], 20), _c.frame(c, R, U, nrm))
+        objs_dark.append(new_mesh_obj('_rwr', v, f, dark, smooth=True, sharp_deg=40))
+        v, f = _c.place(_c.lathe_z([(0, 0.0), (0.050, 0.0), (0.050, 0.004), (0, 0.004)], 20), _c.frame(c + nrm * 0.018, R, U, nrm))
+        objs_black.append(new_mesh_obj('_rwrf', v, f, M['black'], smooth=True))
+    for (x, y, z) in ((0.30, -8.9, 1.25), (-0.30, -8.9, 1.25)):
         v, f = prim_sphere(0.055, n=12, m=6, center=(x, y, z))
         objs_black.append(new_mesh_obj('_cm', v, f, M['black'], smooth=True))
+    # ---- blade antenna on the aft cockpit roof (right) and the drag-beam fairings with their lenses
+    objs_paint.append(fin('_ant8', (0.60, 2.42, 2.13), 0.24, 0.26, 0.10, 38, up=(0.3, 0, 1), mat=paint))
+    for sx in (-1, 1):
+        v, f = prim_sphere(0.20, n=18, m=10, center=(sx * 0.78, 2.72, 0.60), scale=(0.55, 1.45, 0.55))
+        objs_paint.append(new_mesh_obj('_dbf', v, f, paint, smooth=True))
+        v, f = prim_sphere(0.035, n=12, m=6, center=(sx * 0.88, 2.78, 0.60), scale=(0.6, 1.0, 0.8))
+        objs_black.append(new_mesh_obj('_dbl', v, f, M['lens_blue'], smooth=True))
     # ---- M130 chaff/flare dispensers on the tail cone sides
     for s in (-1, 1):
         y, z = -4.6, 1.02

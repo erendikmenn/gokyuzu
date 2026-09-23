@@ -7,11 +7,14 @@ const repo = (p) => new URL(`../../../${p}`, import.meta.url).href;
 export const model = {
   url: repo('assets/aircraft/uh60/uh60.glb'),
   lodUrl: repo('assets/aircraft/uh60/uh60_lod.glb'),
+  // detailed cockpit + cabin (CONTRACTS-SF.md §6.2.1), streamed after the exterior; same frame, root node 'interior'
+  cockpitUrl: repo('assets/aircraft/uh60/uh60_cockpit.glb'),
   displays: {
-    screen_mfd_1: 'uh60.mfd.pfd', // pilot (right seat) PFD
-    screen_mfd_2: 'uh60.mfd.nd', // pilot ND
-    screen_mfd_3: 'uh60.mfd.eng', // engine / system page (centre)
-    screen_mfd_4: 'uh60.mfd.pfd', // copilot PFD
+    // four 8x6 in MFDs mounted landscape in two pairs; the portrait avionics pages are pillar-boxed in the glass
+    screen_mfd_1: 'uh60.mfd.pfd', // pilot (right seat) outboard: flight page
+    screen_mfd_2: 'uh60.mfd.nd', // pilot inboard: moving map
+    screen_mfd_3: 'uh60.mfd.eng', // copilot inboard: engine / system page
+    screen_mfd_4: 'uh60.mfd.pfd', // copilot (left seat) outboard: flight page
   },
   thumbnail: repo('renders/aircraft/uh60/thumb.jpg'),
 };
@@ -183,7 +186,9 @@ export function createRig(gltfScene) {
   const blurTail = find('rotor_tail_blur');
   const swash = find('swashplate');
   const stab = find('ctl_stabilator');
-  const interior = find('interior');
+  const interiorLite = find('interior_lite');
+  let interior = find('interior'); // legacy single-GLB build; the detailed one arrives with attachCockpit
+  let cockpitReady = !!interior;
   const blades = [1, 2, 3, 4].map((i) => find(`blade_${i}`)).filter(Boolean);
   const tailBlades = [1, 2, 3, 4].map((i) => find(`tail_blade_${i}`)).filter(Boolean);
   const bladeBase = blades.map((b) => b.quaternion.clone());
@@ -249,19 +254,22 @@ export function createRig(gltfScene) {
 
   // ---- interior fill: the cabin/cockpit sit inside a closed shell, so image-based light and the sun barely reach them.
   // Interior materials get an emissive term equal to their own albedo, scaled by a day factor from the scene's sun.
-  const interiorMats = new Set();
-  gltfScene.traverse((o) => {
-    if (!o.isMesh) return;
-    for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
-      if (m && /^int_/.test(m.name) && !/lamp/.test(m.name) && m.emissive) interiorMats.add(m);
-    }
-  });
-  for (const m of interiorMats) {
-    m.emissive.copy(m.color);
-    if (m.map) m.emissiveMap = m.map;
-    m.emissiveIntensity = 0;
-    m.needsUpdate = true;
+  // Baked-lighting atlases (int_atlas_*) already carry their ambient occlusion, so they take a lower fill.
+  const interiorMats = new Map();
+  function addInteriorMats(root) {
+    root.traverse((o) => {
+      if (!o.isMesh) return;
+      for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
+        if (!m || interiorMats.has(m) || !/^int_/.test(m.name) || /lamp|glow/.test(m.name) || !m.emissive) continue;
+        interiorMats.set(m, /^int_atlas/.test(m.name) ? 0.62 : 0.95);
+        m.emissive.copy(m.color);
+        if (m.map) m.emissiveMap = m.map;
+        m.emissiveIntensity = 0;
+        m.needsUpdate = true;
+      }
+    });
   }
+  addInteriorMats(gltfScene);
   // electroluminescent formation lights (emissive mask in the hull atlas), on with the nav lights, stronger at night
   let hullMat = null;
   gltfScene.traverse((o) => {
@@ -286,8 +294,7 @@ export function createRig(gltfScene) {
       day = smooth(-0.04, 0.25, _sd.y) * Math.min(1.2, sunLight.intensity / 3);
     }
     dayLevel = Math.min(1, day);
-    const k = 0.95 * day + 0.03;
-    for (const m of interiorMats) m.emissiveIntensity = k;
+    for (const [m, f] of interiorMats) m.emissiveIntensity = f * day + 0.03;
   }
 
   // ---- state
@@ -426,12 +433,38 @@ export function createRig(gltfScene) {
     if (L.landing) L.landing.visible = land;
   }
 
+  // exterior view: the light stand-in (interior_lite) furnishes the cabin seen through the windows and open doors;
+  // cockpit view: the detailed interior (when attached) replaces it
+  function applyView() {
+    const cp = view === 'cockpit';
+    const detailed = interior && interior !== interiorLite;
+    if (detailed) interior.visible = cp || !interiorLite;
+    if (interiorLite) interiorLite.visible = !(cp && detailed);
+  }
+
   function setView(vw) {
     if (vw === view) return;
     view = vw;
-    if (interior) interior.visible = true; // the cabin/cockpit is visible through the large windows in both views
+    applyView();
+  }
+
+  /** CONTRACTS-SF.md §6.2.1: add the detailed cockpit/cabin GLB (root node 'interior', same frame as the exterior). */
+  function attachCockpit(cockpitScene) {
+    if (!cockpitScene) return;
+    object.add(cockpitScene);
+    cockpitScene.updateMatrixWorld(true);
+    interior = cockpitScene.getObjectByName('interior') || cockpitScene;
+    cockpitScene.traverse((o) => { if (o.isMesh && o.name.startsWith('screen_')) screens[o.name] = o; });
+    addInteriorMats(cockpitScene);
+    interiorFill(0);
+    cockpitReady = true;
+    applyView();
   }
 
   update(0, { rotor: { rpm: 0, collective: 0, cyclicX: 0, cyclicY: 0, pedal: 0 }, airspeed: 0, lights: {}, canopy: 0 });
-  return { object, eye, contacts, screens, bounds, update, setView };
+  applyView();
+  return {
+    object, eye, contacts, screens, bounds, update, setView, attachCockpit,
+    get cockpitReady() { return cockpitReady; },
+  };
 }

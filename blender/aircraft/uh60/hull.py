@@ -7,13 +7,13 @@ from lib import (pchip, half_profile, ring_from_half, loft_rings, new_mesh_obj, 
 # station table: y, zb (belly), zm (z of max width), zt (roof crown), w (half width), nb, nt, tt (tumblehome)
 FUSE = np.array([
     # y      zb     zm     zt     w      nb    nt    tt
-    [4.745, 0.975, 1.010, 1.045, 0.035, 2.0, 2.0, 0.00],
-    [4.715, 0.880, 1.000, 1.150, 0.170, 2.1, 2.1, 0.00],
-    [4.620, 0.770, 0.995, 1.270, 0.330, 2.3, 2.2, 0.02],
-    [4.450, 0.690, 0.995, 1.410, 0.500, 2.5, 2.3, 0.04],
-    [4.200, 0.635, 1.005, 1.560, 0.665, 2.7, 2.45, 0.07],
-    [3.950, 0.605, 1.020, 1.665, 0.790, 2.9, 2.6, 0.10],
-    [3.710, 0.585, 1.040, 1.735, 0.890, 3.0, 2.7, 0.12],
+    [4.745, 0.975, 1.010, 1.045, 0.060, 2.0, 2.0, 0.00],
+    [4.715, 0.880, 1.000, 1.150, 0.360, 3.0, 2.6, 0.00],     # blunt, broad nose: nearly flat front face (UH-60M head-on)
+    [4.620, 0.770, 0.995, 1.270, 0.580, 3.3, 2.9, 0.02],
+    [4.450, 0.690, 0.995, 1.410, 0.720, 3.4, 3.0, 0.04],
+    [4.200, 0.635, 1.005, 1.560, 0.810, 3.4, 2.9, 0.07],
+    [3.950, 0.605, 1.020, 1.665, 0.860, 3.2, 2.8, 0.10],
+    [3.710, 0.585, 1.040, 1.735, 0.900, 3.2, 2.8, 0.12],
     [3.300, 0.565, 1.070, 1.930, 1.010, 3.2, 3.3, 0.13],
     [2.900, 0.540, 1.095, 2.110, 1.095, 3.4, 4.0, 0.12],
     [2.570, 0.515, 1.115, 2.230, 1.145, 3.5, 4.4, 0.12],
@@ -147,37 +147,53 @@ def build_nacelle(side, mat):
 
 
 # ------------------------------------------------------------------------------------------------ HIRSS exhaust
+HIRSS_Y0, HIRSS_Y1 = -1.42, -2.62      # suppressor fairing: straight continuation of the nacelle, oblique outboard exit
+
+
 def hirss_path(side):
-    # centreline from inside the engine nacelle, going aft and outboard, ending with an outboard/aft facing exit
-    pts = np.array([[0.86, -1.05, 2.40], [0.88, -1.45, 2.405], [0.94, -1.80, 2.415], [1.05, -2.15, 2.43], [1.16, -2.45, 2.46]])
+    """Centre line of the suppressor (nacelle axis, toeing slightly outboard and up aft). Last point = exit centre."""
+    pts = np.array([[NAC_X, HIRSS_Y0, NAC_Z], [NAC_X + 0.05, -1.90, NAC_Z + 0.013], [NAC_X + 0.20, -2.30, NAC_Z + 0.03],
+                    [NAC_X + 0.24, -2.40, NAC_Z + 0.035]])
     pts[:, 0] *= side
     return pts
 
 
+def hirss_ring(side, y, n=32, cut=None):
+    """Suppressor section at station y (rx, rz semi axes shrinking a little aft). cut: exit plane -> per-point y."""
+    t = (HIRSS_Y0 - y) / (HIRSS_Y0 - HIRSS_Y1)
+    rx = 0.318 - 0.03 * t
+    rz = 0.335 - 0.045 * t
+    cx = side * (NAC_X + 0.30 * t * t)          # toes out: 9 ft 8 in overall width across the suppressors
+    cz = NAC_Z + 0.04 * t
+    a = np.linspace(0, 2 * math.pi, n, endpoint=False)
+    ca, sa = np.cos(a), np.sin(a)
+    e = 2 / 2.6
+    x = cx + rx * np.sign(ca) * np.abs(ca) ** e
+    z = cz + rz * np.sign(sa) * np.abs(sa) ** e
+    yy = np.full_like(x, y)
+    if cut is not None:
+        # oblique exit: the outboard side ends ~0.55 m further forward than the inboard side, the top a little aft
+        o = side * ca                               # +1 outboard ... -1 inboard
+        yy = y + 0.28 * (1 + o) - 0.06 * sa
+    return np.stack([x, yy, z], 1)
+
+
 def build_hirss(side, mat):
-    pts = hirss_path(side)
-    sizes = [(0.24, 0.26), (0.285, 0.29), (0.28, 0.27), (0.26, 0.24), (0.24, 0.21)]
-    expo = [2.0, 2.2, 2.8, 3.6, 4.0]
-    rings = []
-    n = 32
-    for k in range(len(pts)):
-        p = pts[k]
-        if k < len(pts) - 1:
-            t = pts[k + 1] - p
-        else:
-            t = p - pts[k - 1]
-        t = t / np.linalg.norm(t)
-        up = np.array([0, 0, 1.0])
-        b = np.cross(t, up); b /= np.linalg.norm(b)
-        u = np.cross(b, t)
-        a = np.linspace(0, 2 * math.pi, n, endpoint=False)
-        ca, sa = np.cos(a), np.sin(a)
-        e = 2 / expo[k]
-        hx, hz = sizes[k]
-        ring = p + np.outer(np.sign(ca) * np.abs(ca) ** e * hx, b) + np.outer(np.sign(sa) * np.abs(sa) ** e * hz, u)
-        rings.append(ring)
-    verts, faces = loft_rings(rings, cap_start='fan', cap_end=None)
-    return new_mesh_obj(f'hirss_{"R" if side > 0 else "L"}', verts, faces, mat, smooth=True)
+    ys = list(np.linspace(HIRSS_Y0, HIRSS_Y1 + 0.25, 10))
+    rings = [hirss_ring(side, y) for y in ys]
+    rings.append(hirss_ring(side, HIRSS_Y1, cut=True))
+    # rolled exit lip turning inward, then the dark inner duct wall a short way back in
+    lip = hirss_ring(side, HIRSS_Y1, cut=True)
+    c = lip.mean(0)
+    inner = c + (lip - c) * 0.88
+    inner[:, 1] += 0.03
+    deep = c + (lip - c) * 0.80
+    deep[:, 1] += 0.35
+    rings += [inner, deep]
+    verts, faces = loft_rings(rings, cap_start=None, cap_end='fan')
+    if side < 0:
+        faces = [f[::-1] for f in faces]
+    return new_mesh_obj(f'hirss_{"R" if side > 0 else "L"}', verts, faces, mat, smooth=True, sharp_deg=55)
 
 
 # ------------------------------------------------------------------------------------------------ tail pylon

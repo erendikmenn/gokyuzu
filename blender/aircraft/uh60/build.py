@@ -26,6 +26,8 @@ import openings
 import rotor
 import details
 import interior
+import lite
+import ibake
 import bake
 import subprocess
 import tempfile
@@ -52,6 +54,10 @@ def log(*a):
     print('[uh60]', *a, flush=True)
 
 
+if arg('--outdir'):               # test builds export elsewhere (the game keeps loading assets/aircraft/uh60)
+    OUT_DIR = os.path.abspath(arg('--outdir'))
+
+
 def reparent_G(child, parent, G):
     """Parent 'child' under 'parent' so that the child's G-frame placement is preserved.
     G: dict object -> G-frame matrix (matrix_basis before parenting). Root children keep their G matrix."""
@@ -74,7 +80,6 @@ def build_exterior(M, root):
     for s in (1, -1):
         P[f'nacelle_{s}'] = hull.build_nacelle(s, M['hull'])
         h = hull.build_hirss(s, M['hull'])
-        lib.add_modifier_apply(h, 'SOLIDIFY', thickness=0.02, offset=-1.0)
         P[f'hirss_{s}'] = h
     P['pylon'] = hull.build_pylon(M['hull'])
     P['shaft_cover'] = hull.build_shaft_cover(M['hull'])
@@ -129,6 +134,8 @@ def build_all(M):
         lib.empty(f'nozzle_{i}', tuple(p), parent=root)
     inter = lib.empty('interior', (0, 0, 0), parent=root)
     interior.build_interior(M, inter)
+    il = lib.empty('interior_lite', (0, 0, 0), parent=root)
+    lite.build_lite(M, il)
     return root, P
 
 
@@ -166,11 +173,86 @@ def texture_hull(M, size=4096):
     root.location = (-CG[0], -CG[1], -CG[2])
 
 
+def descendants(ob):
+    out = []
+    for c in ob.children:
+        out.append(c)
+        out += descendants(c)
+    return out
+
+
+def bake_interior(M, size_scale=1.0):
+    """Join the detailed interior into atlas groups and bake albedo x soft light into their textures (ibake.py)."""
+    root = bpy.data.objects['uh60']
+    root.location = (0, 0, 0)
+    bpy.context.view_layer.update()
+    inter = bpy.data.objects['interior']
+    groups = {}
+    for o in descendants(inter):
+        g = o.get('atlas')
+        if o.type == 'MESH' and g:
+            groups.setdefault(g, []).append(o)
+    sizes = {k: int(v * size_scale) for k, v in interior.ATLAS_SIZES.items()}
+    # light enters through the window openings: glass, blur discs and the lite stand-in are hidden while baking
+    hide = [o for o in bpy.data.objects if o.name.startswith(('glass_', 'rotor_main_blur', 'rotor_tail_blur', 'lens_'))]
+    hide += [o for o in descendants(bpy.data.objects['interior_lite'])]
+    # cabin doors open for the bake (the cabin is mostly seen with the doors open)
+    moved = []
+    for n, sgn in (('door_cabin_L', -1), ('door_cabin_R', 1)):
+        o = bpy.data.objects.get(n)
+        if o:
+            moved.append((o, o.location.copy()))
+            o.location = (o.location.x + sgn * 0.045, o.location.y - 1.74, o.location.z)
+    bpy.context.view_layer.update()
+    atlas_objs = ibake.run(groups, os.path.join(CACHE, 'ibake'), TEX, VENV_PY, os.path.join(HERE, 'ibake_compose.py'), sizes,
+                           hide=hide, light_samples=int(arg('--ilight', 192)))
+    # lite stand-in: one mesh, one small atlas projected from the detailed interior's final colours
+    il = bpy.data.objects['interior_lite']
+    lite_objs = [o for o in descendants(il) if o.type == 'MESH']
+    lob = ibake.join_group(lite_objs, 'interior_lite_mesh', il)
+    ibake.unwrap_group(lob, margin=0.004)
+    lsize = int(1024 * max(1.0, size_scale))
+    ibake.bake_lite(lob, atlas_objs, lsize, os.path.join(CACHE, 'ibake'), TEX, VENV_PY, os.path.join(HERE, 'ibake_compose.py'))
+    ibake.finalize(lob, TEX, None, rough_default=0.75)
+    for o, loc in moved:
+        o.location = loc
+    root.location = (-CG[0], -CG[1], -CG[2])
+    bpy.context.view_layer.update()
+
+
+def export_split():
+    """uh60.glb: exterior + interior_lite (no screens); uh60_cockpit.glb: root node 'interior' in the same frame."""
+    root = bpy.data.objects['uh60']
+    inter = bpy.data.objects['interior']
+    int_objs = [inter] + descendants(inter)
+    ids = set(o.name for o in int_objs)
+    ext = [o for o in bpy.data.objects if o.name not in ids]
+    assert not [o for o in ext if o.name.startswith('screen_')], 'screens must live in the cockpit GLB'
+    p_ext = os.path.join(OUT_DIR, 'uh60.glb')
+    for p_ in (p_ext, os.path.join(OUT_DIR, 'uh60_cockpit.glb')):
+        if os.path.exists(p_):
+            os.remove(p_)            # new inode: never write through a hard link (dist/ links the published files)
+    util.export_glb(p_ext, objects=ext)
+    log('exported exterior', os.path.getsize(p_ext) // 1024, 'KiB, triangles', count_tris(ext),
+        'lite', count_tris(descendants(bpy.data.objects['interior_lite'])))
+    # cockpit: 'interior' becomes a root node carrying the root's -CG offset, so both files share one frame
+    mw = inter.matrix_world.copy()
+    inter.parent = None
+    inter.matrix_world = mw
+    p_cp = os.path.join(OUT_DIR, 'uh60_cockpit.glb')
+    util.export_glb(p_cp, objects=int_objs)
+    log('exported cockpit', os.path.getsize(p_cp) // 1024, 'KiB, triangles', count_tris(int_objs))
+    inter.parent = root
+    inter.matrix_parent_inverse.identity()
+    inter.matrix_basis.identity()
+
+
 def build_lod(M, target=36000):
     """Destructive: turn the current scene into the <=40k-triangle LOD (parked copies) and export it."""
     inter = bpy.data.objects['interior']
-    kill = [o for o in bpy.data.objects if o.parent == inter or o.name.startswith(('glass_door_cabin', 'lens_'))
-            or o.name in ('details_metal', 'swashplate', 'searchlight')]
+    il = bpy.data.objects['interior_lite']
+    kill = [o for o in bpy.data.objects if o in descendants(inter) or o in descendants(il)
+            or o.name.startswith(('glass_door_cabin', 'lens_')) or o.name in ('details_metal', 'swashplate', 'searchlight')]
     for o in kill:
         bpy.data.objects.remove(o, do_unlink=True)
     # glass -> opaque dark tinted (no interior behind it)
@@ -222,6 +304,8 @@ def build_lod(M, target=36000):
             lib.add_modifier_apply(o, 'DECIMATE', ratio=r, use_collapse_triangulate=True)
     n = count_tris([o for o in bpy.data.objects if o.type == 'MESH'])
     log('LOD triangles:', n)
+    if os.path.exists(os.path.join(OUT_DIR, 'uh60_lod.glb')):
+        os.remove(os.path.join(OUT_DIR, 'uh60_lod.glb'))
     util.export_glb(os.path.join(OUT_DIR, 'uh60_lod.glb'))
     log('LOD exported', os.path.getsize(os.path.join(OUT_DIR, 'uh60_lod.glb')) // 1024, 'KiB')
     return n
@@ -321,6 +405,8 @@ def main():
     check_names()
     if not arg('--notex'):
         texture_hull(M, int(arg('--texsize', 4096)))
+        if not arg('--noibake'):
+            bake_interior(M, float(arg('--iscale', 1.0)))
     ext = [o for o in bpy.data.objects if o.type == 'MESH']
     log('exterior+interior triangles:', count_tris(ext), 'objects:', len(ext))
     pv = arg('--preview')
@@ -328,8 +414,7 @@ def main():
         preview(pv)
     if not arg('--noexport'):
         os.makedirs(OUT_DIR, exist_ok=True)
-        util.export_glb(os.path.join(OUT_DIR, 'uh60.glb'))
-        log('exported', os.path.getsize(os.path.join(OUT_DIR, 'uh60.glb')) // 1024, 'KiB')
+        export_split()
     if arg('--save'):
         bpy.context.preferences.filepaths.save_version = 0      # no .blend1 backups
         try:
