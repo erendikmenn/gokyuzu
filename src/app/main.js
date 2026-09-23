@@ -42,6 +42,7 @@ const audio = createAudioSystem({ camera });
 const hud = createHUD(hudRoot, null);
 
 const state = { world: null, def: null, rig: null, flight: null, displays: [], paused: false, hudVisible: true, helpVisible: false, crashTimer: 0, spawn: null, userMuted: false };
+state.input = input;
 window.__game = state;
 
 async function start() {
@@ -108,6 +109,7 @@ function resetFlight() {
   const s = state.spawn;
   state.flight.reset({ x: s.x, z: s.z, heading: s.heading, altitude: s.altitude, speed: s.altitude ? state.def.spec.spawnSpeed : undefined }, state.world);
   state.crashTimer = 0;
+  if (input.setThrottle) input.setThrottle(state.flight.throttle ?? 0);   // lever follows the reset engine state
   syncRig(1);
 }
 
