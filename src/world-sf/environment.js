@@ -150,7 +150,8 @@ export async function createEnvironment(ctx) {
 
   // ---------------- Golden Gate fog bank ----------------
   // always created (cheap) so it can be toggled at runtime; ?fogbank=0 starts with it off
-  const bank = createFogBank({ sunDir: sunDirection, sunE: sunRGB, amb: ambient, ground: await loadBankHeight() });
+  const bank = createFogBank({ sunDir: sunDirection, sunE: sunRGB, amb: ambient, ground: null });   // ground map loads after start
+  let bankGroundRequested = false;
   bank.mesh.visible = useBank;
   scene.add(bank.mesh);
 
@@ -183,6 +184,7 @@ export async function createEnvironment(ctx) {
     setFogBank(on) { bank.mesh.visible = !!on; },
     get fogBankEnabled() { return bank.mesh.visible; },
     update(dt, camera) {
+      if (!bankGroundRequested) { bankGroundRequested = true; loadBankHeight().then((g) => bank.setGround(g)); }
       time += dt;
       skyUniforms.uTime.value = time;
       if (scene.fog && scene.fog.isFog) scene.fog.far = time % 100000;

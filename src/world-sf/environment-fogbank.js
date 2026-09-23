@@ -200,6 +200,12 @@ export function createFogBank({ sunDir, sunE, amb, ground }) {
   return {
     mesh,
     uniforms,
+    /** Terrain height map for soft fog edges on hills (loaded after start). */
+    setGround(g) {
+      if (!g) return;
+      uniforms.uGround.value = g.tex; uniforms.uGroundXf.value.copy(g.xform);
+      if (!mat.defines.SF_GROUND) { mat.defines.SF_GROUND = 1; mat.needsUpdate = true; }
+    },
     /** clouds quality 'low' drops the finest billow octave */
     setQuality(c) {
       const v = c === 'low' ? '0.0' : '1.0';

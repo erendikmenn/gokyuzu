@@ -30,6 +30,25 @@ function getSharedIndex() {
   sharedIndex = new THREE.BufferAttribute(new Uint16Array(idx), 1);
   return sharedIndex;
 }
+/** Compact index (tools/geo/terrain_pinpack.py): deflated header JSON + 12-byte node records -> index.json layout. */
+async function loadIndexBin() {
+  const r = await fetch(BASE + 'index.bin');
+  if (!r.ok || typeof DecompressionStream === 'undefined') throw new Error(`index.bin ${r.status}`);
+  const buf = await new Response(r.body.pipeThrough(new DecompressionStream('deflate'))).arrayBuffer();
+  const dv = new DataView(buf);
+  const hl = dv.getUint32(0, true);
+  const index = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 4, hl)));
+  const nodes = new Array(index.nodeCount);
+  let o = 4 + hl;
+  for (let k = 0; k < nodes.length; k++, o += 12) {
+    const f = dv.getUint8(o + 5);
+    nodes[k] = [dv.getUint8(o), dv.getUint16(o + 1, true), dv.getUint16(o + 3, true), f & 1, dv.getUint16(o + 6, true) / 100,
+      dv.getInt16(o + 8, true) / 10, dv.getInt16(o + 10, true) / 10, (f >> 2) & 3, (f >> 1) & 1];
+  }
+  index.nodes = nodes;
+  return index;
+}
+
 function flatPlaceholder({ region }) {
   const b = region.local;
   const mesh = new THREE.Mesh(new THREE.PlaneGeometry(b.maxX - b.minX, b.maxZ - b.minZ).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x6d7a5a, roughness: 1 }));
@@ -56,7 +75,7 @@ export async function createTerrain(ctx) {
   const q = new URLSearchParams(location.search);
   let index;
   try {
-    index = await fetch(BASE + 'index.json').then((r) => { if (!r.ok) throw new Error(`terrain index ${r.status}`); return r.json(); });
+    index = await loadIndexBin().catch(() => fetch(BASE + 'index.json').then((r) => { if (!r.ok) throw new Error(`terrain index ${r.status}`); return r.json(); }));
   } catch (e) {
     console.error('[terrain] assets/sf/terrain missing - run tools/geo/terrain_build.py + imagery_build.py. Using a flat placeholder.', e);
     return flatPlaceholder(ctx);
@@ -106,22 +125,32 @@ export async function createTerrain(ctx) {
 
   // ---------------- shared GPU resources ----------------
   const texLoader = new THREE.TextureLoader();
-  const depthTex = await texLoader.loadAsync(BASE + 'water_depth.png');
-  depthTex.flipY = false;   // row 0 = north (rootMinZ), like every other terrain texture
-  depthTex.needsUpdate = true;
-  depthTex.colorSpace = THREE.NoColorSpace;
-  depthTex.minFilter = THREE.LinearMipmapLinearFilter;
-  depthTex.magFilter = THREE.LinearFilter;
+  // non-essential textures load after start (placeholders until then): bathymetry/shore distance and ground detail
+  const flat = (r, g, b) => { const t = new THREE.DataTexture(new Uint8Array([r, g, b, 255]), 1, 1, THREE.RGBAFormat); t.needsUpdate = true; return t; };
+  const depthTex = flat(150, 255, 0);   // ~20 m deep, far from shore
+  const lateTextures = () => {
+    texLoader.loadAsync(BASE + 'water_depth.png').then((t) => {
+      t.flipY = false;   // row 0 = north (rootMinZ), like every other terrain texture
+      t.colorSpace = THREE.NoColorSpace;
+      t.minFilter = THREE.LinearMipmapLinearFilter;
+      t.magFilter = THREE.LinearFilter;
+      t.needsUpdate = true;
+      shared.uDepthTex.value = t;
+    }).catch((e) => console.warn('[terrain] water_depth', e));
+    texLoader.loadAsync(BASE + 'detail.png').then((t) => {
+      t.colorSpace = THREE.NoColorSpace;
+      t.wrapS = t.wrapT = THREE.RepeatWrapping;
+      t.anisotropy = Math.min(qual.aniso, maxAniso);
+      shared.uDetailTex.value = t;
+    }).catch((e) => console.warn('[terrain] detail', e));
+  };
   const waveTex = await texLoader.loadAsync(BASE + 'waves.png');
   waveTex.colorSpace = THREE.NoColorSpace;
   waveTex.wrapS = waveTex.wrapT = THREE.RepeatWrapping;
   waveTex.minFilter = THREE.LinearMipmapLinearFilter;
   waveTex.anisotropy = 8;
   const maxAniso = renderer.capabilities.getMaxAnisotropy();
-  const detailTex = await texLoader.loadAsync(BASE + 'detail.png');
-  detailTex.colorSpace = THREE.NoColorSpace;
-  detailTex.wrapS = detailTex.wrapT = THREE.RepeatWrapping;
-  detailTex.anisotropy = 8;
+  const detailTex = flat(128, 128, 128);
   const shared = createTerrainShared({ depthTex, waveTex, detailTex, rootMinX: RX, rootMinZ: RZ });
   // baked terrain shadows are valid only for the sun they were computed for
   if (index.bakedSun && ctx.sunDirection) {
@@ -158,7 +187,7 @@ export async function createTerrain(ctx) {
     n.state = LOADING;
     inflight++;
     try {
-      const hp = n.heights ? Promise.resolve(null) : fetchHeights(n);
+      const hp = n.heights && !n.packed ? Promise.resolve(null) : fetchHeights(n);
       const ip = hasImg(n) ? fetch(`${BASE}img/${n.L}/${n.i}_${n.j}.webp`).then((r) => {
         if (!r.ok) throw new Error(`img ${n.L}/${n.i}/${n.j}: ${r.status}`);
         return r.blob();
@@ -190,9 +219,47 @@ export async function createTerrain(ctx) {
     const hdr = new Float32Array(ab, 0, 2);
     n.hBase = hdr[0]; n.hScale = hdr[1];
     n.heights = new Uint16Array(ab, 8, NS * NS);   // quantized; h = hBase + v * hScale
+    n.packed = false;
     const wOff = 8 + NS * NS * 2, wLen = (NS * NS + 7) >> 3;
     n.wbits = new Uint8Array(ab, wOff, wLen);
     n.sunVis = ab.byteLength >= wOff + wLen + NV * NV ? new Uint8Array(ab, wOff + wLen, NV * NV) : null;
+  }
+
+  /** Precomputed compressed height pack (tools/geo/terrain_pinpack.py): airports at full depth + landmarks.
+   *  Tiles get heights + water bits (no baked sun visibility: the full tile is fetched when it is first rendered). */
+  async function loadPinPack() {
+    const r = await fetch(BASE + 'pins.bin');
+    if (!r.ok || typeof DecompressionStream === 'undefined') throw new Error(`pins.bin ${r.status}`);
+    const buf = await new Response(r.body.pipeThrough(new DecompressionStream('deflate'))).arrayBuffer();
+    const dv = new DataView(buf);
+    const hl = dv.getUint32(0, true);
+    const hdr = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 4, hl)));
+    const q = hdr.q, WB = (NS * NS + 7) >> 3, TS = NS * NS * 2 + WB;
+    let off = 4 + hl, count = 0;
+    const acc = new Int32Array(NS * NS);
+    for (const [L, i, j] of hdr.tiles) {
+      const n = nodes.get(key(L, i, j));
+      if (n && !n.heights) {
+        // undo the 2D delta: c[y][x] = d[y][x] + c[y-1][x] + c[y][x-1] - c[y-1][x-1]
+        const d = new Int16Array(buf.slice(off, off + NS * NS * 2));
+        let cmin = Infinity;
+        for (let y = 0; y < NS; y++) for (let x = 0; x < NS; x++) {
+          const k = y * NS + x;
+          const up = y ? acc[k - NS] : 0, left = x ? acc[k - 1] : 0, ul = x && y ? acc[k - NS - 1] : 0;
+          const c = d[k] + up + left - ul;
+          acc[k] = c;
+          if (c < cmin) cmin = c;
+        }
+        const u = new Uint16Array(NS * NS);
+        for (let k = 0; k < u.length; k++) u[k] = acc[k] - cmin;
+        n.heights = u; n.hBase = cmin * q; n.hScale = q;
+        n.wbits = new Uint8Array(buf.slice(off + NS * NS * 2, off + TS));
+        n.sunVis = null; n.packed = true; n.pinned = true;
+        count++;
+      }
+      off += TS;
+    }
+    return count;
   }
 
   /** Height data (no mesh/texture) at full depth over areas other layers sample at build time (airports, landmarks).
@@ -392,7 +459,7 @@ export async function createTerrain(ctx) {
     if (n.children) {
       const sseG = n.err * K / d;
       const sseT = n.childImg ? (n.size / 512) * K / d : 0;
-      const relax = omni && d > 1200 ? 4 : 1;   // pre-start omni selection: full detail only near the focus
+      const relax = omni ? (isReady ? 4 : 3) : 1;   // pre-start omni selection: coarse view around the focus
       refine = sseG > GEO_PX * qual.geo * relax * (n.L >= 9 ? 2 : 1) || sseT > TEX_PX * qual.tex * relax;
       if (refine && !omni && d > 1200 && !inFrustum(n)) refine = false;
     }
@@ -413,7 +480,7 @@ export async function createTerrain(ctx) {
         for (const c of n.children) traverse(c, omni);
         return;
       }
-      if (d < 700) pendingNear++;
+      if (d < 3000) pendingNear++;
     }
     n.selected = frame;
     selectedCount++;
@@ -561,14 +628,17 @@ export async function createTerrain(ctx) {
   }
 
   function internalPump() {
-    if (performance.now() - lastExternal > 400) {
+    if (isReady && lastExternal < 0) {
+      processBuilt(4, 2);   // started, but the game loop is not running yet: no new downloads before playable
+    } else if (performance.now() - lastExternal > 400) {
       const g = getHeight(focus.x, focus.z);
       focusCam.position.set(focus.x, g + 40, focus.z);
       focusCam.lookAt(focus.x + 100, g + 30, focus.z);
       step(focusCam, true, 0.016);
-      if (!isReady && ((root.state === READY && focusLeafReady() && pendingNear === 0 && inflight === 0) || performance.now() - t0 > 25000)) {
+      if (!isReady && ((root.state === READY && pinsDone && pendingNear === 0 && inflight === 0 && built.length === 0) || performance.now() - t0 > 25000)) {
         isReady = true;
         readyResolve();
+        lateTextures();
       }
     }
     if (!disposed) setTimeout(internalPump, isReady ? 100 : 8);
@@ -586,11 +656,19 @@ export async function createTerrain(ctx) {
     const m = l.kind === 'bridge' ? 1600 : 450;
     pinAreas.push({ x0: l.x - m, x1: l.x + m, z0: l.z - m, z1: l.z + m });
   }
+  let pinsDone = false;
   request(root, 0);
-  internalPump();   // start streaming the focus area while the pinned heights load
+  internalPump();   // start streaming the coarse focus view while the pinned heights load
   const tp = performance.now();
-  // reduced presets pin one level less (4x fewer tiles; L9 is within 1 m of L10, airport pavement is flat at every level)
-  const pinned = await pinHeights(pinAreas, ctx.quality && (ctx.quality.imageryMaxLevel ?? 0) < 0 ? 9 : 99);
+  let pinned = 0;
+  try {
+    pinned = await loadPinPack();
+  } catch (e) {
+    // fallback (no pack / no DecompressionStream): range-request the airport + landmark tiles
+    console.warn('[terrain] pin pack unavailable, fetching tiles', e.message);
+    pinned = await pinHeights(pinAreas, ctx.quality && (ctx.quality.imageryMaxLevel ?? 0) < 0 ? 9 : 99);
+  }
+  pinsDone = true;
   stats.pinned = pinned; stats.pinSeconds = +((performance.now() - tp) / 1000).toFixed(2);
 
   return {
@@ -625,7 +703,7 @@ export async function createTerrain(ctx) {
         for (const n of built.splice(0)) { if (n.bitmap && n.bitmap.close) n.bitmap.close(); n.bitmap = null; n.state = UNLOADED; }
       }
       if (waterChanged) for (const n of loadedSet) if (n.mesh) applyWaterDefine(n.mesh.material);
-      waveTex.anisotropy = detailTex.anisotropy = Math.min(qual.aniso, maxAniso);
+      waveTex.anisotropy = shared.uDetailTex.value.anisotropy = Math.min(qual.aniso, maxAniso);
     },
     get quality() { return { ...qual }; },
     dispose() {
