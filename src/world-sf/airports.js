@@ -2,6 +2,7 @@
 // Data: assets/sf/airports/<icao>.json + .bin (tools/geo/airports_build.py), buildings/props GLBs (blender/airports/*).
 // Everything is draped on ctx.terrain (getHeight + small offsets); the layer implements the contract Layer interface.
 import * as THREE from 'three';
+import { isNetworkError, reportLoadFailure, retryDelay } from '../core/assets.js';
 import { readArrays, buildGround, buildStructures } from './airports_ground.js';
 import { buildLights, updateLights } from './airports_lights.js';
 import { buildSigns } from './airports_signs.js';
@@ -102,16 +103,23 @@ export async function createAirports(ctx) {
   }
 
   /** Heavy optional parts, loaded in the background: buildings GLB and the aircraft agents' LOD models. */
+  /** Returns true when a part failed on a lost connection (the background loop tries the airport again later). */
   async function buildHeavy(apt) {
-    try {
-      apt.buildings = await loadBuildings(apt.meta, ctx, colliders);
-      if (apt.buildings) apt.root.add(apt.buildings.object);
-    } catch (e) { console.warn('[airports] buildings', apt.meta.icao, e); }
+    let again = false;
+    if (!apt.buildings) {
+      try {
+        apt.buildings = await loadBuildings(apt.meta, ctx, colliders);
+        if (apt.buildings) apt.root.add(apt.buildings.object);
+      } catch (e) { again = isNetworkError(e); reportLoadFailure('airports', `buildings ${apt.meta.icao}`, e); }
+    }
     await frame();
-    try { await addAgentLods(apt.props, ctx); } catch (e) { console.warn('[airports] lods', apt.meta.icao, e); }
+    if (!apt.lodsDone) {
+      try { await addAgentLods(apt.props, ctx); apt.lodsDone = true; } catch (e) { console.warn('[airports] lods', apt.meta.icao, e); }
+    }
     setupDrape(apt);
     applyQuality(apt);
     group.updateMatrixWorld(true);
+    return again;
   }
 
   function setupDrape(apt) {
@@ -142,22 +150,35 @@ export async function createAirports(ctx) {
     if (ctx.terrain && ctx.terrain.ready) {
       await Promise.race([Promise.resolve(ctx.terrain.ready).catch(() => {}), new Promise((r) => setTimeout(r, 20000))]);
     }
-    try { await buildCore(near.icao.toLowerCase()); } catch (e) { console.warn('[airports]', near.icao, e.message); }
+    try { await buildCore(near.icao.toLowerCase()); } catch (e) {
+      if (isNetworkError(e)) throw e;   // connection lost before the start (the background loop below retries it too)
+      console.warn('[airports]', near.icao, e.message);
+    }
     timing.first = performance.now() - timing.t0;
   })();
   const all = (async () => {
-    await ready;
+    await ready.catch(() => {});
     // start after the first game frame (or after 12 s on pages that never call update)
     await Promise.race([started, new Promise((r) => setTimeout(r, 12000))]);
     await frame();
-    for (const a of order) {
-      const icao = a.icao.toLowerCase();
-      try {
-        let apt = airports.find((x) => x.meta.icao === a.icao);
-        if (!apt) { apt = await buildCore(icao); await frame(); }
-        await buildHeavy(apt);
-        await frame();
-      } catch (e) { console.warn('[airports]', a.icao, e.message); }
+    // airports (or their buildings) that failed on a lost connection are tried again in later rounds
+    let todo = order;
+    for (let round = 1; todo.length; round++) {
+      const again = [];
+      for (const a of todo) {
+        const icao = a.icao.toLowerCase();
+        try {
+          let apt = airports.find((x) => x.meta.icao === a.icao);
+          if (!apt) { apt = await buildCore(icao); await frame(); }
+          if (await buildHeavy(apt)) again.push(a);
+          await frame();
+        } catch (e) {
+          if (isNetworkError(e)) again.push(a);
+          reportLoadFailure('airports', a.icao, e);
+        }
+      }
+      todo = again;
+      if (todo.length) await new Promise((r) => setTimeout(r, retryDelay(round)));
     }
     timing.all = performance.now() - timing.t0;
   })();

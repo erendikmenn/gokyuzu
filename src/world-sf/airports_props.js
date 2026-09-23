@@ -6,6 +6,7 @@
 // untextured materials are collapsed into one vertex-coloured part so each agent LOD costs only a few draw calls.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { isNetworkError } from '../core/assets.js';
 
 const ROOT = new URL('../../', import.meta.url).href;
 const PROPS_URL = ROOT + 'assets/sf/airports/props.glb';
@@ -100,6 +101,7 @@ function loadLibrary(ctx) {
       bmat.name = 'apt-props';
       return { lib, bmat };
     });
+    libP.catch(() => { libP = null; });   // a failed download is tried again by the next airport
   }
   return libP;
 }
@@ -178,6 +180,7 @@ function loadAgentLod(id, ctx) {
         }
         return parts.length ? { parts, tris } : null;
       } catch (e) {
+        if (isNetworkError(e)) agentCache.delete(id);   // connection lost: the next airport asks again
         return null;
       }
     })());

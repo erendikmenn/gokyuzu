@@ -3,6 +3,8 @@
 // and a solids table (anchor x, anchor z, top above the anchor ground). Heights are resolved against the live terrain
 // exactly like the rendered buildings are placed: top = terrain(anchor) + topRel.
 
+import { assetData, isNetworkError, reportLoadFailure, retryDelay } from '../core/assets.js';
+
 const HEADER = 4 + 4 + 4 + 4 + 4 + 2 + 2;
 
 async function gunzip(buf) {
@@ -15,6 +17,7 @@ export function createCityObstacles({ base, index, terrain }) {
   const available = new Set(index.tiles);
   const tiles = new Map();      // key -> { solids, raster, n, x0, z0, ground }
   const pending = new Map();
+  const retry = new Map();      // key -> { at, fails }: tiles whose download failed on a lost connection
   const lru = [];
   const MAX = 160;
   const getH = (x, z) => (terrain ? terrain.getHeight(x, z) : 0);
@@ -24,7 +27,9 @@ export function createCityObstacles({ base, index, terrain }) {
   function load(i, j) {
     const k = key(i, j);
     if (tiles.has(k) || pending.has(k) || !available.has(k)) return pending.get(k) || Promise.resolve();
-    const p = fetch(`${base}${index.dir}/${k}.bin.gz`).then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(`${r.status} ${k}`))))
+    const rt = retry.get(k);
+    if (rt && performance.now() < rt.at) return Promise.resolve();
+    const p = assetData(`${base}${index.dir}/${k}.bin.gz`, 'arrayBuffer')
       .then(gunzip).then((buf) => {
         const dv = new DataView(buf);
         const n = dv.getUint32(12, true), w = dv.getUint16(20, true), h = dv.getUint16(22, true);
@@ -35,7 +40,14 @@ export function createCityObstacles({ base, index, terrain }) {
         lru.push(k);
         while (lru.length > MAX) tiles.delete(lru.shift());
         pending.delete(k);
-      }).catch((e) => { pending.delete(k); available.delete(k); console.warn('[city] obstacle tile', k, e.message); });
+        retry.delete(k);
+      }).catch((e) => {
+        pending.delete(k);
+        // connection lost: query again after a delay (buildings collide again once it is back); missing tile: give up
+        if (isNetworkError(e)) { const fails = (rt ? rt.fails : 0) + 1; retry.set(k, { at: performance.now() + retryDelay(fails), fails }); }
+        else available.delete(k);
+        reportLoadFailure('city', `obstacle tile ${k}`, e);
+      });
     pending.set(k, p);
     return p;
   }

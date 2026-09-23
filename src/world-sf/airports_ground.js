@@ -2,6 +2,7 @@
 // Geometry comes from tools/geo/airports_build.py (<icao>.bin, x/z relative to the airport origin); heights are sampled
 // from ctx.terrain.getHeight per vertex. Log-depth aware depth bias keeps the layers ordered without z-fighting.
 import * as THREE from 'three';
+import { assetImage, isNetworkError, reportLoadFailure, retryDelay } from '../core/assets.js';
 
 const TEX = 'assets/sf/airports/tex/';
 
@@ -35,10 +36,18 @@ export function depthBias(mat, layer, onCompile) {
 
 let texCache = null;
 let texOpts = null;
+/** Fill `t` with the image at url (versioned, retried); after a lost connection it tries again later. Until then the
+ *  texture has no image (three.js skips the upload), like a THREE.TextureLoader texture that is still loading. */
+function loadInto(t, url, fails = 0) {
+  assetImage(url).then((img) => { t.image = img; t.needsUpdate = true; }).catch((e) => {
+    reportLoadFailure('airports', url, e);
+    if (isNetworkError(e)) setTimeout(() => loadInto(t, url, fails + 1), retryDelay(fails + 1));
+  });
+}
 /** Ground textures, each loaded on first use (an airport only downloads what its pavements use). */
 export function groundTextures(loader, renderer) {
   if (texCache) return texCache;
-  texOpts = { manager: loader && loader.manager, aniso: renderer ? renderer.capabilities.getMaxAnisotropy() : 8 };
+  texOpts = { aniso: renderer ? renderer.capabilities.getMaxAnisotropy() : 8 };
   const FILES = {
     asphaltRwy: ['asphalt_rwy.jpg', true], asphaltTwy: ['asphalt_twy.jpg', true], shoulder: ['shoulder.jpg', true],
     concrete: ['concrete.jpg', true], concreteRwy: ['concrete_rwy.jpg', true],
@@ -51,7 +60,8 @@ export function groundTextures(loader, renderer) {
       enumerable: true,
       get() {
         if (!t) {
-          t = new THREE.TextureLoader(texOpts.manager).load(TEX + name);
+          t = new THREE.Texture();
+          loadInto(t, TEX + name);
           t.wrapS = t.wrapT = THREE.RepeatWrapping;
           t.anisotropy = texOpts.aniso;
           t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;

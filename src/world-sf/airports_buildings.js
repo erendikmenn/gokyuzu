@@ -4,11 +4,17 @@
 // material (few draw calls). Night: window materials (userData / name containing "glass" or "win") glow.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { isNetworkError } from '../core/assets.js';
 
 const BASE = 'assets/sf/airports/';
 let manifestP = null;
 export function assetManifest(loader) {
-  if (!manifestP) manifestP = loader.loadJSON(BASE + 'manifest.json').catch(() => ({}));
+  if (!manifestP) {
+    manifestP = loader.loadJSON(BASE + 'manifest.json').catch((e) => {
+      if (isNetworkError(e)) { manifestP = null; throw e; }   // connection lost: asked again by the next caller
+      return {};                                              // not built: fallback extrusions
+    });
+  }
   return manifestP;
 }
 

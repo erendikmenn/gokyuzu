@@ -3,9 +3,10 @@
 // is patched (onBeforeCompile) to sample albedo / (tint mask, roughness, window mask) / (normal xy, metalness) by the
 // per-vertex layer index, apply the per-building tint through the tint mask and light windows at night.
 import * as THREE from 'three';
+import { assetData } from '../core/assets.js';
 
 async function loadPixels(url, size) {
-  const blob = await (await fetch(url)).blob();
+  const blob = await assetData(url, 'blob');
   const bmp = await createImageBitmap(blob, { colorSpaceConversion: 'none', premultiplyAlpha: 'none' });
   const canvas = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(size, size) : Object.assign(document.createElement('canvas'), { width: size, height: size });
   const g = canvas.getContext('2d', { willReadFrequently: true });
@@ -61,7 +62,7 @@ export function setAnisotropy(renderer, textures, value) {
 
 /** Loads the atlas and returns { material, uniforms, meta }. */
 export async function createCityMaterial(renderer, base, anisotropy = null) {
-  const meta = await (await fetch(base + 'atlas.json')).json();
+  const meta = await assetData(base + 'atlas.json', 'json');
   const aniso = Math.min(anisotropy || 16, renderer?.capabilities?.getMaxAnisotropy?.() || 8);
   const [alb, mat, nrm] = await Promise.all(['albedo', 'mat', 'nrm'].map((k) => loadPixels(base + meta.images[k], meta.size)));
   const tAlbedo = toArrayTexture(alb, meta, true, aniso);

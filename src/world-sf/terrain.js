@@ -6,6 +6,7 @@
 import * as THREE from 'three';
 import { createTerrainShared, createTerrainMaterial, setTerrainWaterQuality, applyWaterDefine } from './terrain-material.js';
 import { createHorizonRing } from './terrain-horizon.js';
+import { assetData, assetImage, isNetworkError, reportLoadFailure, retryDelay } from '../core/assets.js';
 
 const BASE = new URL('../../assets/sf/terrain/', import.meta.url).href;
 const Q = 64, NV = 65, NS = 67;          // quads, vertices per edge, samples per edge (1 border)
@@ -30,11 +31,22 @@ function getSharedIndex() {
   sharedIndex = new THREE.BufferAttribute(new Uint16Array(idx), 1);
   return sharedIndex;
 }
+/** Inflate a deflate-compressed download (downloaded whole first, so a broken connection is retried by assetData). */
+async function loadDeflated(url) {
+  if (typeof DecompressionStream === 'undefined') throw new Error('no DecompressionStream');
+  const raw = await assetData(url, 'arrayBuffer');
+  return new Response(new Blob([raw]).stream().pipeThrough(new DecompressionStream('deflate'))).arrayBuffer();
+}
+/** Image file -> THREE.Texture (versioned URL, retried like every asset request). */
+async function loadTexture(url) {
+  const t = new THREE.Texture(await assetImage(url));
+  t.needsUpdate = true;
+  return t;
+}
+
 /** Compact index (tools/geo/terrain_pinpack.py): deflated header JSON + 12-byte node records -> index.json layout. */
 async function loadIndexBin() {
-  const r = await fetch(BASE + 'index.bin');
-  if (!r.ok || typeof DecompressionStream === 'undefined') throw new Error(`index.bin ${r.status}`);
-  const buf = await new Response(r.body.pipeThrough(new DecompressionStream('deflate'))).arrayBuffer();
+  const buf = await loadDeflated(BASE + 'index.bin');
   const dv = new DataView(buf);
   const hl = dv.getUint32(0, true);
   const index = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 4, hl)));
@@ -75,8 +87,9 @@ export async function createTerrain(ctx) {
   const q = new URLSearchParams(location.search);
   let index;
   try {
-    index = await loadIndexBin().catch(() => fetch(BASE + 'index.json').then((r) => { if (!r.ok) throw new Error(`terrain index ${r.status}`); return r.json(); }));
+    index = await loadIndexBin().catch((e) => { if (isNetworkError(e)) throw e; return assetData(BASE + 'index.json', 'json'); });
   } catch (e) {
+    if (isNetworkError(e)) throw e;   // connection lost: the game shows its connection error screen (not a flat world)
     console.error('[terrain] assets/sf/terrain missing - run tools/geo/terrain_build.py + imagery_build.py. Using a flat placeholder.', e);
     return flatPlaceholder(ctx);
   }
@@ -93,7 +106,7 @@ export async function createTerrain(ctx) {
     nodes.set(key(L, i, j), {
       L, i, j, size, x0: RX + i * size, z0: RZ + j * size, err, hmin, hmax, water, img: !!img, hasKids: !!hasKids,
       rank: rankCounter[L]++, parent: null, children: null, state: UNLOADED, heights: null, wbits: null,
-      mesh: null, tex: null, texNode: null, lastUsed: 0, selected: -1, prio: 0, childImg: false, retry: 0,
+      mesh: null, tex: null, texNode: null, lastUsed: 0, selected: -1, prio: 0, childImg: false, retry: 0, retryAt: 0,
     });
   }
   for (const n of nodes.values()) {
@@ -124,12 +137,11 @@ export async function createTerrain(ctx) {
   refreshChildImg();
 
   // ---------------- shared GPU resources ----------------
-  const texLoader = new THREE.TextureLoader();
   // non-essential textures load after start (placeholders until then): bathymetry/shore distance and ground detail
   const flat = (r, g, b) => { const t = new THREE.DataTexture(new Uint8Array([r, g, b, 255]), 1, 1, THREE.RGBAFormat); t.needsUpdate = true; return t; };
   const depthTex = flat(150, 255, 0);   // ~20 m deep, far from shore
   const lateTextures = () => {
-    texLoader.loadAsync(BASE + 'water_depth.png').then((t) => {
+    loadTexture(BASE + 'water_depth.png').then((t) => {
       t.flipY = false;   // row 0 = north (rootMinZ), like every other terrain texture
       t.colorSpace = THREE.NoColorSpace;
       t.minFilter = THREE.LinearMipmapLinearFilter;
@@ -137,14 +149,14 @@ export async function createTerrain(ctx) {
       t.needsUpdate = true;
       shared.uDepthTex.value = t;
     }).catch((e) => console.warn('[terrain] water_depth', e));
-    texLoader.loadAsync(BASE + 'detail.png').then((t) => {
+    loadTexture(BASE + 'detail.png').then((t) => {
       t.colorSpace = THREE.NoColorSpace;
       t.wrapS = t.wrapT = THREE.RepeatWrapping;
       t.anisotropy = Math.min(qual.aniso, maxAniso);
       shared.uDetailTex.value = t;
     }).catch((e) => console.warn('[terrain] detail', e));
   };
-  const waveTex = await texLoader.loadAsync(BASE + 'waves.png');
+  const waveTex = await loadTexture(BASE + 'waves.png');
   waveTex.colorSpace = THREE.NoColorSpace;
   waveTex.wrapS = waveTex.wrapT = THREE.RepeatWrapping;
   waveTex.minFilter = THREE.LinearMipmapLinearFilter;
@@ -179,6 +191,7 @@ export async function createTerrain(ctx) {
 
   function request(n, prio) {
     if (n.state !== UNLOADED) return;
+    if (n.retryAt && n.retryAt > performance.now()) return;   // failed download: wait before asking again
     n.prio = prio;
     pending.add(n);
   }
@@ -188,19 +201,22 @@ export async function createTerrain(ctx) {
     inflight++;
     try {
       const hp = n.heights && !n.packed ? Promise.resolve(null) : fetchHeights(n);
-      const ip = hasImg(n) ? fetch(`${BASE}img/${n.L}/${n.i}_${n.j}.webp`).then((r) => {
-        if (!r.ok) throw new Error(`img ${n.L}/${n.i}/${n.j}: ${r.status}`);
-        return r.blob();
-      }).then((b) => createImageBitmap(b, { premultiplyAlpha: 'none', colorSpaceConversion: 'none' })) : null;
+      const ip = hasImg(n) ? assetData(`${BASE}img/${n.L}/${n.i}_${n.j}.webp`, 'blob')
+        .then((b) => createImageBitmap(b, { premultiplyAlpha: 'none', colorSpaceConversion: 'none' })) : null;
       const [buf, bmp] = await Promise.all([hp, ip]);
       if (buf) decodeHeights(n, buf);
       n.bitmap = bmp;
       n.state = LOADED;
+      n.retryAt = 0;
       built.push(n);
     } catch (e) {
       n.retry++;
-      n.state = n.retry < 3 ? UNLOADED : FAILED;
-      if (n.state === FAILED) console.warn('[terrain]', e.message);
+      // connection problems: keep the coarser parent on screen and ask again later (never give up during a flight);
+      // missing/broken files: a few quick retries, then FAILED
+      const net = isNetworkError(e);
+      if (net) { n.state = UNLOADED; n.retryAt = performance.now() + retryDelay(n.retry); }
+      else n.state = n.retry < 3 ? UNLOADED : FAILED;
+      if (net || n.state === FAILED) reportLoadFailure('terrain', `tile ${n.L}/${n.i}_${n.j}`, e);
     } finally {
       inflight--;
     }
@@ -208,10 +224,7 @@ export async function createTerrain(ctx) {
 
   function fetchHeights(n) {
     const start = n.rank * TILE_BYTES;
-    return fetch(`${BASE}h/${n.L}.bin`, { headers: { Range: `bytes=${start}-${start + TILE_BYTES - 1}` } }).then((r) => {
-      if (!r.ok) throw new Error(`height ${n.L}/${n.i}/${n.j}: ${r.status}`);
-      return r.arrayBuffer();
-    });
+    return assetData(`${BASE}h/${n.L}.bin`, 'arrayBuffer', { headers: { Range: `bytes=${start}-${start + TILE_BYTES - 1}` } });
   }
   function decodeHeights(n, buf) {
     let ab = buf;
@@ -228,9 +241,7 @@ export async function createTerrain(ctx) {
   /** Precomputed compressed height pack (tools/geo/terrain_pinpack.py): airports at full depth + landmarks.
    *  Tiles get heights + water bits (no baked sun visibility: the full tile is fetched when it is first rendered). */
   async function loadPinPack() {
-    const r = await fetch(BASE + 'pins.bin');
-    if (!r.ok || typeof DecompressionStream === 'undefined') throw new Error(`pins.bin ${r.status}`);
-    const buf = await new Response(r.body.pipeThrough(new DecompressionStream('deflate'))).arrayBuffer();
+    const buf = await loadDeflated(BASE + 'pins.bin');
     const dv = new DataView(buf);
     const hl = dv.getUint32(0, true);
     const hdr = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 4, hl)));
@@ -287,12 +298,10 @@ export async function createTerrain(ctx) {
         const run = runs[k++];
         const a = run.nodes[0].rank * TILE_BYTES, b = (run.nodes[run.nodes.length - 1].rank + 1) * TILE_BYTES - 1;
         try {
-          const r = await fetch(`${BASE}h/${run.L}.bin`, { headers: { Range: `bytes=${a}-${b}` } });
-          if (!r.ok) throw new Error(`pin ${run.L}: ${r.status}`);
-          const buf = await r.arrayBuffer();
+          const buf = await assetData(`${BASE}h/${run.L}.bin`, 'arrayBuffer', { headers: { Range: `bytes=${a}-${b}` } });
           const off0 = buf.byteLength > b - a + 1 ? a : 0;   // server ignored Range -> whole file
           run.nodes.forEach((n, t) => { if (!n.heights) decodeHeights(n, buf.slice(off0 + t * TILE_BYTES, off0 + (t + 1) * TILE_BYTES)); });
-        } catch (e) { console.warn('[terrain]', e.message); }
+        } catch (e) { reportLoadFailure('terrain', `height run ${run.L}`, e); }   // streamed later like any tile
       }
     };
     await Promise.all(Array.from({ length: 8 }, worker));
@@ -422,7 +431,7 @@ export async function createTerrain(ctx) {
       texCount--;
     }
     if (!n.pinned) { n.heights = null; n.wbits = null; }
-    n.state = UNLOADED; n.retry = 0; n.drawn = false;
+    n.state = UNLOADED; n.retry = 0; n.retryAt = 0; n.drawn = false;
     loadedCount--;
   }
 
@@ -664,6 +673,7 @@ export async function createTerrain(ctx) {
   try {
     pinned = await loadPinPack();
   } catch (e) {
+    if (isNetworkError(e)) { disposed = true; throw e; }   // connection lost before the start: connection error screen
     // fallback (no pack / no DecompressionStream): range-request the airport + landmark tiles
     console.warn('[terrain] pin pack unavailable, fetching tiles', e.message);
     pinned = await pinHeights(pinAreas, ctx.quality && (ctx.quality.imageryMaxLevel ?? 0) < 0 ? 9 : 99);

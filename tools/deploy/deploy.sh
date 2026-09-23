@@ -20,10 +20,18 @@ esac
 node tools/make_gallery.mjs >/dev/null
 DEPLOY_TARGET="$TARGET" node tools/deploy/build_dist.mjs --gallery
 aws s3 sync dist/node_modules $BUCKET/node_modules --delete --only-show-errors --cache-control "public, max-age=604800"
-aws s3 sync dist/assets $BUCKET/assets --delete --only-show-errors --cache-control "public, max-age=86400"
+# Game files are requested as <file>?v=<hash of its directory> (CONTRACTS-SF.md §9, dist/assets/versions.json), so a
+# changed file gets a new URL and no browser keeps an old copy. They still get 1 day, not a year + immutable: S3 and
+# CloudFront send one Cache-Control per object whatever the query string, some requests stay unversioned (render gallery,
+# dev pages), a player who loaded the old version map just before a deploy fetches new bytes under old ?v= URLs while
+# the sync runs, and rollback.py brings old hashes back. One day bounds all of these.
+aws s3 sync dist/assets $BUCKET/assets --delete --only-show-errors --exclude "versions.json" --cache-control "public, max-age=86400"
 # manifests/indexes change with every build: keep them short-lived so browsers never mix old lists with new files
-aws s3 cp $BUCKET/assets $BUCKET/assets --recursive --exclude "*" --include "*.json" --metadata-directive REPLACE --cache-control "public, max-age=300" --content-type "application/json" --only-show-errors
+aws s3 cp $BUCKET/assets $BUCKET/assets --recursive --exclude "*" --include "*.json" --exclude "versions.json" --metadata-directive REPLACE --cache-control "public, max-age=300" --content-type "application/json" --only-show-errors
 aws s3 sync dist/renders $BUCKET/renders --delete --only-show-errors --cache-control "public, max-age=86400"
+# the version map goes up only after every file it points to (nobody gets a new ?v= URL before its file is there);
+# short-lived like the other JSON, and the game revalidates it on every start (fetch cache: 'no-cache')
+aws s3 cp dist/assets/versions.json $BUCKET/assets/versions.json --only-show-errors --cache-control "public, max-age=300" --content-type "application/json"
 aws s3 sync dist $BUCKET --delete --only-show-errors --exclude "assets/*" --exclude "node_modules/*" --exclude "renders/*" --cache-control "public, max-age=300"
 aws cloudfront create-invalidation --distribution-id $DIST_ID --paths "/*" --query "Invalidation.Id" --output text >/dev/null
 if [ "$TARGET" = "production" ]; then

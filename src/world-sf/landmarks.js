@@ -3,6 +3,7 @@
 // (placements, LOD distances, collision primitives, light positions). See CONTRACTS-SF.md §6.1 (Layer).
 import * as THREE from 'three';
 import { createTraffic } from './landmarks_traffic.js';
+import { isNetworkError, reportLoadFailure, retryDelay } from '../core/assets.js';
 
 const BASE = 'assets/sf/landmarks/';
 const CELL = 128;                     // collision grid cell (m)
@@ -325,6 +326,8 @@ class Landmark {
     parent.add(this.group);
     this.lods = def.lods.map(() => null);     // loaded Object3D per LOD
     this.pending = def.lods.map(() => null);
+    this.retryAt = def.lods.map(() => 0);     // LOD downloads that failed on a lost connection are asked again after this
+    this.fails = 0;
     this.shown = -1;
     const b = def.bounds || { min: [-100, 0, -100], max: [100, 100, 100] };
     this.bmin = b.min; this.bmax = b.max;
@@ -412,6 +415,7 @@ class Landmark {
 
   load(i) {
     if (this.lods[i] || this.pending[i]) return this.pending[i] || Promise.resolve(this.lods[i]);
+    if (this.retryAt[i] > performance.now()) return Promise.resolve(null);
     const url = this.def.lods[i].url;
     this.pending[i] = this.ctx.loader.loadGLTF(url).then((gltf) => {
       let obj = gltf.scene;
@@ -425,7 +429,16 @@ class Landmark {
       obj.updateMatrixWorld(true);
       this.lods[i] = obj;
       return obj;
-    }).catch((e) => { console.error(`[landmarks] ${url}`, e); this.failed = true; });
+    }).catch((e) => {
+      if (isNetworkError(e)) {   // connection lost: coarser/other LODs stay on screen, this one is requested again later
+        this.pending[i] = null;
+        this.retryAt[i] = performance.now() + retryDelay(++this.fails);
+        reportLoadFailure('landmarks', url, e);
+        return null;
+      }
+      console.error(`[landmarks] ${url}`, e);   // missing / broken model: not retried
+      this.failed = true;
+    });
     return this.pending[i];
   }
 
@@ -474,6 +487,7 @@ export async function createLandmarks(ctx) {
   try {
     index = await ctx.loader.loadJSON(`${BASE}index.json`);
   } catch (e) {
+    if (isNetworkError(e)) throw e;   // connection lost, not a missing build
     console.warn('[landmarks] no index.json yet', e);
     return empty;
   }

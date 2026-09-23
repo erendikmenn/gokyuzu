@@ -1,4 +1,5 @@
-// Loading screen: Golden Gate line art drawing itself, progress bar with the current step, rotating tips.
+// Loading screen: Golden Gate line art drawing itself, progress bar with the current step, rotating tips; on a failed
+// download showError() swaps the progress bar for a Turkish message and a "Tekrar dene" button.
 import { injectCSS, BASE_CSS } from './styles.js';
 import { el, clamp } from './util.js';
 import { goldenGateLineSVG } from './art.js';
@@ -74,8 +75,26 @@ const CSS = `
 .gkl-dots { position: absolute; left: 0; right: 0; bottom: calc(-18 * var(--u1)); display: flex; justify-content: center; gap: 6px; }
 .gkl-dots i { width: 5px; height: 5px; border-radius: 50%; background: rgba(255, 255, 255, .18); transition: background .3s; }
 .gkl-dots i.on { background: var(--gk-orange-2); }
+.gkl-err { display: none; flex-direction: column; align-items: center; gap: calc(18 * var(--u1)); width: min(86vw, calc(600 * var(--u1)));
+  margin-top: calc(30 * var(--u1)); animation: gkl-up .5s cubic-bezier(.2, .8, .2, 1) both; }
+.gkl.gkl-failed .gkl-err { display: flex; }
+.gkl.gkl-failed .gkl-prog, .gkl.gkl-failed .gkl-tip { display: none; }
+.gkl-err-box { display: flex; gap: calc(14 * var(--u1)); align-items: flex-start; padding: calc(16 * var(--u1)) calc(20 * var(--u1));
+  border-radius: calc(14 * var(--u1)); background: rgba(255, 77, 79, .09); border: 1px solid rgba(255, 128, 96, .38); }
+.gkl-err-box svg { flex: 0 0 auto; width: calc(26 * var(--u1)); height: calc(26 * var(--u1)); margin-top: calc(1 * var(--u1)); }
+.gkl-err-msg { font-size: calc(15.5 * var(--u1)); line-height: 1.5; color: rgba(240, 246, 255, .95); text-wrap: pretty; user-select: text; -webkit-user-select: text; }
+.gkl-retry { font: 750 calc(16 * var(--u1)) var(--gk-sans); padding: calc(12 * var(--u1)) calc(30 * var(--u1)); border: 0; border-radius: calc(12 * var(--u1));
+  cursor: pointer; color: #1c0e06; background: linear-gradient(135deg, #ff5d33 0%, #ff8a45 60%, #ffb257 100%); outline: none;
+  box-shadow: 0 12px 30px rgba(255, 96, 50, .36), inset 0 1px 0 rgba(255, 255, 255, .45); transition: transform .2s cubic-bezier(.2, .8, .2, 1), filter .2s, box-shadow .2s; }
+.gkl-retry:hover { transform: translateY(-1px); filter: brightness(1.06); }
+.gkl-retry:active { transform: translateY(1px) scale(.99); }
+.gkl-retry:focus-visible { box-shadow: 0 0 0 2px #fff, 0 0 0 6px rgba(255, 107, 61, .55); }
 @media (prefers-reduced-motion: reduce) { .gkl *, .gkl { animation-duration: .001s !important; } }
 `;
+
+/** Default text of showError(): the connection failed while downloading game files. */
+export const CONNECTION_ERROR_TEXT = 'Bağlantı sorunu: oyun dosyaları indirilemedi. İnternet bağlantını kontrol edip tekrar dene.';
+const WARN_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="#ff8a5c" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5 2.8 19.5h18.4z"/><path d="M12 9.5v4.6"/><circle cx="12" cy="17" r=".6" fill="#ff8a5c"/></svg>';
 
 function describeChoice() {
   const c = shared.choice;
@@ -132,6 +151,26 @@ export function createLoadingScreen(container) {
   const track = el('div', 'gkl-track', prog);
   const fill = el('div', 'gkl-fill', track);
 
+  // error state (showError): message + retry button in place of the progress bar
+  const err = el('div', 'gkl-err', main);
+  err.setAttribute('role', 'alert');
+  const errBox = el('div', 'gkl-err-box', err);
+  errBox.insertAdjacentHTML('beforeend', WARN_ICON);
+  const errMsg = el('div', 'gkl-err-msg', errBox, '');
+  const retryBtn = el('button', 'gkl-retry', err, 'Tekrar dene');
+  retryBtn.type = 'button';
+  let failed = false, retryHandler = null;
+  retryBtn.addEventListener('click', () => {
+    if (!failed) return;
+    failed = false;
+    root.classList.remove('gkl-failed');
+    root.setAttribute('aria-label', 'Yükleniyor');
+    step.textContent = 'Yeniden deneniyor…';
+    const h = retryHandler;
+    retryHandler = null;
+    h();
+  });
+
   // tips
   const tipBox = el('div', 'gkl-tip', root);
   el('div', 'gkl-tip-l', tipBox, 'İpucu');
@@ -179,6 +218,21 @@ export function createLoadingScreen(container) {
   if (!new URLSearchParams(location.search).has('nomobile')) deviceNotice(container);   // direct links skip the menu
 
   return {
+    /**
+     * Show a load failure: `message` (default CONNECTION_ERROR_TEXT) and a "Tekrar dene" button that calls `onRetry`
+     * (default: reload the page). The click restores the progress view first, so a retry that loads in place can keep
+     * calling setProgress / hide / showError. Returns false if the screen was already hidden.
+     */
+    showError(message, onRetry) {
+      if (hidden) return false;
+      failed = true;
+      retryHandler = typeof onRetry === 'function' ? onRetry : () => location.reload();
+      errMsg.textContent = message || CONNECTION_ERROR_TEXT;
+      root.classList.add('gkl-failed');
+      root.setAttribute('aria-label', 'Yükleme başarısız');
+      setTimeout(() => { if (failed) retryBtn.focus({ preventScroll: true }); }, 60);
+      return true;
+    },
     setProgress(p, text) {
       if (hidden) return;
       const v = clamp(Number.isFinite(p) ? p : 0, 0, 1);

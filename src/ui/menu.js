@@ -1,6 +1,7 @@
 // Main menu: cinematic Golden Gate dusk scene, aircraft cards, grouped spawn list, controls summary, "Uç".
 import { injectCSS, BASE_CSS } from './styles.js';
 import { el, clamp, rootUrl, storageGet, storageSet, keyChips } from './util.js';
+import { assetUrl } from '../core/assets.js';
 import { goldenGateSceneSVG, planformSVG, SCENE_VB } from './art.js';
 import { AIRCRAFT_INFO, CATEGORY_LABEL, AIRPORTS, AIRPORT_ORDER, MENU_CONTROLS } from './data.js';
 import { shared } from './shared.js';
@@ -58,7 +59,7 @@ export function loadThumbnail(id) {
   if (typeof shared.thumbOverride === 'function') return Promise.resolve(shared.thumbOverride(id));   // dev preview hook
   if (!thumbCache.has(id)) {
     const p = import(new URL(`../aircraft/${id}/model.js`, import.meta.url).href)
-      .then((m) => (m && m.model && m.model.thumbnail ? rootUrl(m.model.thumbnail) : null))
+      .then((m) => (m && m.model && m.model.thumbnail ? assetUrl(rootUrl(m.model.thumbnail)) : null))   // §9: ?v=<hash>
       .then((url) => (url ? new Promise((res) => {
         const img = new Image();
         img.onload = () => res(img.naturalWidth > 8 ? url : null);

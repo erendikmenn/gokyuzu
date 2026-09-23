@@ -4,6 +4,7 @@
 // LOD1 far) is mostly bulk copies. Trees sit on ctx.terrain. heightAt/hitTest here are available for tools but the
 // city layer does not report trees as obstacles (helicopters must be able to land next to / GPWS ignores canopy).
 import * as THREE from 'three';
+import { assetData, withRetry, isNetworkError, reportLoadFailure, retryDelay } from '../core/assets.js';
 
 const CELL = 250;
 const DEF = { r0: 260, r1: 1900, rShrub: 650, tileRadius: 2300, maxPerSpecies: 40000, maxNearPerSpecies: 4000, frameBudgetMs: 2 };
@@ -16,7 +17,7 @@ export async function createCityTrees(ctx) {
     opt.maxNearPerSpecies = Math.round(opt.maxNearPerSpecies * Math.min(1, Math.max(0.5, ctx.quality.treeDensity * 1.5)));
   }
   const { base, getH } = ctx;
-  const meta = await (await fetch(ctx.indexUrl)).json();
+  const meta = await assetData(ctx.indexUrl, 'json');
   const species = meta.species;
   const refH = meta.refHeight;
   const gltf = ctx.loader?.gltf || (await import('../core/assets.js')).createAssetLoader(ctx.renderer).gltf;
@@ -25,7 +26,8 @@ export async function createCityTrees(ctx) {
 
   // ---- species models ---------------------------------------------------------------------------------------------
   const models = await Promise.all(species.map(async (sp) => {
-    const g = await gltf.loadAsync(`${base}trees/${sp}.glb`);
+    const url = `${base}trees/${sp}.glb`;
+    const g = await withRetry(() => gltf.loadAsync(url), url);
     const lods = [null, null];
     g.scene.traverse((o) => {
       if (!o.isMesh && !o.isGroup) return;
@@ -79,17 +81,21 @@ export async function createCityTrees(ctx) {
   // update() under a per-frame time budget, so a forest tile never freezes a frame.
   const jobs = [];
 
+  const fails = new Map();   // tile key -> failed downloads on a lost connection (retried with growing delays)
   async function loadTile(key) {
     const t = { state: 'loading', cells: [], key, lastUsed: performance.now() };
     tiles.set(key, t);
     loading++;
     try {
-      const buf = await (await fetch(`${base}trees/${key}.bin`)).arrayBuffer();
+      const buf = await assetData(`${base}trees/${key}.bin`, 'arrayBuffer');
       t.state = 'processing';
+      fails.delete(key);
       jobs.push({ t, it: processTile(t, buf) });
     } catch (e) {
-      console.warn('[city] tree tile', key, e.message);
       t.state = 'failed';
+      if (isNetworkError(e)) { const n = (fails.get(key) || 0) + 1; fails.set(key, n); t.retryAt = performance.now() + retryDelay(n); }
+      else avail.delete(key);   // missing tile: never asked again
+      reportLoadFailure('city', `tree tile ${key}`, e);
     } finally {
       loading--;
     }
@@ -250,6 +256,8 @@ export async function createCityTrees(ctx) {
     for (let i = Math.floor((x - R) / size); i <= Math.floor((x + R) / size); i++)
       for (let j = Math.floor((z - R) / size); j <= Math.floor((z + R) / size); j++) {
         const key = `${i}_${j}`;
+        const old = tiles.get(key);
+        if (old && old.state === 'failed' && performance.now() >= old.retryAt) tiles.delete(key);   // retry a failed download
         if (!avail.has(key) || tiles.has(key)) continue;
         const dx = Math.max(0, i * size - x, x - (i + 1) * size), dz = Math.max(0, j * size - z, z - (j + 1) * size);
         if (Math.hypot(dx, dz) > R) continue;

@@ -5,6 +5,7 @@ import { createTerrain } from './terrain.js';
 import { createCity } from './city.js';
 import { createLandmarks } from './landmarks.js';
 import { createAirports } from './airports.js';
+import { isNetworkError } from '../core/assets.js';
 
 export async function createSFWorld({ scene, renderer, camera, loader, quality = null, focus = { x: 0, z: 0 }, onProgress = () => {} }) {
   const [runways, landmarks, region] = await Promise.all([
@@ -28,11 +29,12 @@ export async function createSFWorld({ scene, renderer, camera, loader, quality =
       scene.add(layer.object);
       layers.push(layer);
     } catch (e) {
+      if (isNetworkError(e)) throw e;   // connection lost: main.js shows the connection error screen
       console.error(`[world] ${label} failed to load`, e);
     }
   }
   onProgress(0.85, 'Detaylar yükleniyor');
-  await Promise.all([terrain.ready, ...layers.map((l) => l.ready)].map((p) => Promise.resolve(p).catch((e) => console.error(e))));
+  await Promise.all([terrain.ready, ...layers.map((l) => l.ready)].map((p) => Promise.resolve(p).catch((e) => { if (isNetworkError(e)) throw e; console.error(e); })));
   onProgress(1, 'Hazır');
   if (quality) for (const part of [environment, terrain, ...layers]) if (part && part.setQuality) { try { part.setQuality(quality); } catch (e) { console.error('[world] setQuality', e); } }
 

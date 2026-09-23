@@ -4,6 +4,7 @@
 // once every tile of the new level is loaded (no holes), drops every building onto the live terrain
 // (ctx.terrain.getHeight) and answers heightAt / hitTest from 4 m building obstacle rasters (trees are not obstacles).
 import * as THREE from 'three';
+import { assetData, withRetry, isNetworkError, reportLoadFailure, retryDelay } from '../core/assets.js';
 import { createCityMaterial, prepareCityGeometry, setAnisotropy } from './city_material.js';
 import { createCityObstacles } from './city_obstacles.js';
 import { createCityTrees } from './city_trees.js';
@@ -22,7 +23,7 @@ export async function createCity(ctx, options = {}) {
   const base = options.base || BASE;
   const { terrain, focus = { x: 0, z: 0 } } = ctx;
   const getH = (x, z) => (terrain ? terrain.getHeight(x, z) : 0);
-  const index = await (await fetch(base + 'index.json')).json();
+  const index = await assetData(base + 'index.json', 'json');
   const { material, materialFar, uniforms, textures } = await createCityMaterial(ctx.renderer, base + 'atlas/', q0 && q0.anisotropy);
   const gltf = ctx.loader?.gltf || (await import('../core/assets.js')).createAssetLoader(ctx.renderer).gltf;
 
@@ -89,7 +90,8 @@ export async function createCity(ctx, options = {}) {
     while (queue.length && active < opt.maxLoads) {
       const rec = queue.shift();
       active++;
-      gltf.loadAsync(`${base}${rec.dir}/${rec.i}_${rec.j}.glb`).then((g) => {
+      const url = `${base}${rec.dir}/${rec.i}_${rec.j}.glb`;
+      withRetry(() => gltf.loadAsync(url), url).then((g) => {
         let mesh = null;
         g.scene.traverse((o) => { if (o.isMesh && !mesh) mesh = o; });
         if (!mesh) throw new Error('no mesh');
@@ -98,9 +100,13 @@ export async function createCity(ctx, options = {}) {
         prepareCityGeometry(mesh.geometry);
         jobs.push({ rec, mesh, cx: mesh.position.x, cz: mesh.position.z, v: 0, phase: 'place', lastA: NaN, lastB: NaN, lastG: 0 });
         rec.state = 'processing';
+        rec.fails = 0;
       }).catch((e) => {
-        console.warn('[city] tile failed', rec.dir, rec.i, rec.j, e.message);
+        // connection lost: asked again after a delay (select); missing/broken tile: stays failed (a hole, no retries)
+        rec.fails = (rec.fails || 0) + 1;
+        rec.retryAt = isNetworkError(e) ? clock + retryDelay(rec.fails) / 1000 : 0;
         rec.state = 'failed';
+        reportLoadFailure('city', `tile ${rec.dir}/${rec.i}_${rec.j}`, e);
       }).finally(() => { active--; });
     }
   }
@@ -250,6 +256,7 @@ export async function createCity(ctx, options = {}) {
       let allReady = true;
       for (const t of w.tiles) {
         t.lastUsed = now;
+        if (t.state === 'failed' && t.retryAt && now >= t.retryAt) { t.state = 'none'; t.retryAt = 0; }
         if (t.state !== 'ready' && t.state !== 'failed') {
           allReady = false;
           if (t.state === 'processing') continue;
@@ -281,12 +288,17 @@ export async function createCity(ctx, options = {}) {
   // trees (models ~4 MB + instance tiles) are not needed to start: they load after `ready`, then stream with budgets
   const startTrees = async () => {
     if (!index.trees) return;
-    try {
-      trees = await createCityTrees({ ...ctx, base, getH, indexUrl: base + index.trees });
-      if (lastQuality || q0) trees.setQuality(lastQuality || q0);
-      group.add(trees.object);
-    } catch (e) {
-      console.warn('[city] trees unavailable:', e.message);
+    for (let fails = 1; ; fails++) {
+      try {
+        trees = await createCityTrees({ ...ctx, base, getH, indexUrl: base + index.trees });
+        if (lastQuality || q0) trees.setQuality(lastQuality || q0);
+        group.add(trees.object);
+        return;
+      } catch (e) {
+        if (!isNetworkError(e)) { console.warn('[city] trees unavailable:', e.message); return; }
+        reportLoadFailure('city', 'trees', e);   // connection lost: try again later
+        await new Promise((r) => setTimeout(r, retryDelay(fails)));
+      }
     }
   };
 

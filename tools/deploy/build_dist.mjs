@@ -18,12 +18,14 @@ const SKIP_UNDER = [['assets/aircraft', 'tex']];
 const SKIP_FILE = /(\.(blend\d?|exr|tif|tiff|py|pyc|psd|kra|log)$)|(^\.)|(^compare)|(^cmp)/i;
 
 let files = 0, bytes = 0;
+const published = new Map();   // dist-relative posix path -> file whose content is published (for versions.json)
 function link(src, rel) {
   const dst = path.join(dist, rel);
   if (fs.existsSync(dst)) return;   // already added (e.g. menu thumbnails + gallery)
   fs.mkdirSync(path.dirname(dst), { recursive: true });
   try { fs.linkSync(src, dst); } catch (e) { if (e.code === 'EXDEV') fs.copyFileSync(src, dst); else throw e; }
   files++; bytes += fs.statSync(src).size;
+  published.set(rel.split(path.sep).join('/'), src);
 }
 function addTree(relDir, filter = () => true) {
   const abs = path.join(root, relDir);
@@ -80,7 +82,57 @@ if (withGallery) {
     }
     fs.unlinkSync(manPath);
     fs.writeFileSync(manPath, JSON.stringify(man));
+    published.set('assets/audio/manifest.json', manPath);
   }
+}
+
+// Cache busting for every asset (CONTRACTS-SF.md §9): dist/assets/versions.json maps each directory under assets/ and
+// renders/ that holds published files to a short hash over the names + contents of those files; the game appends
+// ?v=<hash> to every request in that directory (src/core/assets.js assetUrl). File hashes are cached by path + size +
+// mtime in node_modules/.cache/ (gitignored), so a rebuild only reads files that changed (first build: ~2 GB, seconds).
+const VERSIONS_REL = 'assets/versions.json';
+{
+  const t0 = Date.now();
+  const cacheFile = path.join(root, 'node_modules/.cache/gokyuzu/file-hashes.json');
+  let cache = {};
+  try { cache = JSON.parse(fs.readFileSync(cacheFile, 'utf8')); } catch { /* first build */ }
+  const seen = {};
+  const buf = Buffer.allocUnsafe(8 << 20);
+  let hashedFiles = 0, hashedBytes = 0;
+  const fileHash = (abs) => {
+    const st = fs.statSync(abs);
+    const key = path.relative(root, abs).split(path.sep).join('/');
+    const c = cache[key];
+    if (c && c[0] === st.size && c[1] === st.mtimeMs) { seen[key] = c; return c[2]; }
+    const h = crypto.createHash('sha256');   // hardware-accelerated on Apple silicon (~2 GB/s)
+    const fd = fs.openSync(abs, 'r');
+    try { for (let n; (n = fs.readSync(fd, buf, 0, buf.length, null)) > 0;) h.update(buf.subarray(0, n)); } finally { fs.closeSync(fd); }
+    seen[key] = [st.size, st.mtimeMs, h.digest('hex').slice(0, 20)];
+    hashedFiles++; hashedBytes += st.size;
+    return seen[key][2];
+  };
+  const dirs = new Map();
+  for (const [rel, src] of published) {
+    if (!/^(assets|renders)\//.test(rel) || rel === VERSIONS_REL) continue;
+    const k = rel.lastIndexOf('/');
+    const dir = rel.slice(0, k);
+    if (!dirs.has(dir)) dirs.set(dir, []);
+    dirs.get(dir).push([rel.slice(k + 1), fileHash(src)]);
+  }
+  const versions = {};
+  for (const dir of [...dirs.keys()].sort()) {
+    const h = crypto.createHash('sha256');
+    for (const [name, fh] of dirs.get(dir).sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))) h.update(`${name}\0${fh}\n`);
+    versions[dir] = h.digest('hex').slice(0, 10);
+  }
+  const out = path.join(dist, VERSIONS_REL);
+  fs.rmSync(out, { force: true });   // never write through a hard link into the source tree
+  fs.writeFileSync(out, JSON.stringify(versions, null, 0));
+  // keep cache entries of files that still exist (e.g. gallery renders skipped by a build without --gallery)
+  for (const [key, c] of Object.entries(cache)) if (!seen[key] && !key.startsWith('dist/') && fs.existsSync(path.join(root, key))) seen[key] = c;
+  fs.mkdirSync(path.dirname(cacheFile), { recursive: true });
+  fs.writeFileSync(cacheFile, JSON.stringify(seen));
+  console.log(`versions.json: ${Object.keys(versions).length} directories (${hashedFiles} files / ${(hashedBytes / 1e6).toFixed(0)} MB hashed, rest cached) in ${((Date.now() - t0) / 1000).toFixed(1)} s`);
 }
 
 // Build stamp: shown in the game (STAGING ribbon on staging) and used for support/rollback.
@@ -89,6 +141,7 @@ if (withGallery) {
   const stamp = {
     version: git('describe --tags --always --dirty'), commit: git('rev-parse --short HEAD'), branch: git('branch --show-current'),
     builtAt: new Date().toISOString(), target: process.env.DEPLOY_TARGET || 'local',
+    versions: VERSIONS_REL,   // tells the game to load the asset version map (dev servers have none: no 404 probe)
   };
   fs.writeFileSync(path.join(dist, 'build.json'), JSON.stringify(stamp));
 }

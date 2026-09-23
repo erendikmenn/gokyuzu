@@ -1,6 +1,6 @@
 // Lead-owned entry point of the San Francisco game.
 import * as THREE from 'three';
-import { createAssetLoader } from '../core/assets.js';
+import { createAssetLoader, loadAssetVersions, isNetworkError } from '../core/assets.js';
 import { createSFWorld } from '../world-sf/index.js';
 import { AIRCRAFT, loadAircraftDefinition } from '../aircraft/registry.js';
 import { createFixedWingModel } from '../flight/fixedwing.js';
@@ -64,7 +64,9 @@ const state = { world: null, def: null, rig: null, flight: null, displays: [], p
 state.input = input;
 window.__game = state;
 
+let loading = null;   // loading screen (also used by startFailed)
 async function start() {
+  await loadAssetVersions();   // CONTRACTS-SF.md §9: version map before any asset request (menu thumbnails too)
   const runways = await loader.loadJSON('data/sf/runways.json');
   const spawns = buildSpawns(runways);
   let choice;
@@ -72,10 +74,11 @@ async function start() {
   if (direct) choice = { aircraftId: direct.id, spawnId: spawns.some((s) => s.id === params.get('spawn')) ? params.get('spawn') : direct.defaultSpawn };
   else choice = await createMenu(uiRoot, { aircraft: AIRCRAFT, spawns });
   audio.start();
+  state.choice = choice;
   const spawn = spawns.find((s) => s.id === choice.spawnId) || spawns[0];
   state.spawn = spawn;
 
-  const loading = createLoadingScreen(uiRoot);
+  loading = createLoadingScreen(uiRoot);
   const t0 = performance.now();
   // fetch the aircraft model in parallel with the world (loadGLTF caches the promise, loadAircraft reuses it)
   loadAircraftDefinition(choice.aircraftId).then((d) => d.model.url && loader.loadGLTF(d.model.url)).catch(() => {});
@@ -323,4 +326,15 @@ fetch('build.json', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null))
 }));
 
 requestAnimationFrame(frame);
-start().catch((e) => { console.error(e); hud.showMessage(`Hata: ${e.message}`, 10000); });
+start().catch(startFailed);
+
+/** Loading failed: connection error screen (other errors: their text) with "Tekrar dene", which reloads straight into the chosen flight. */
+function startFailed(e) {
+  const net = isNetworkError(e);
+  (net ? console.warn : console.error)('[app] start failed', e);
+  if (!loading) loading = createLoadingScreen(uiRoot);   // failed before the loading screen (version map, runways)
+  const q = new URLSearchParams(location.search);
+  if (state.choice) { q.set('aircraft', state.choice.aircraftId); q.set('spawn', state.choice.spawnId); }
+  const url = q.toString() ? `${location.pathname}?${q}` : location.pathname;
+  loading.showError(net ? undefined : `Oyun yüklenemedi: ${e.message}`, () => location.replace(url));
+}

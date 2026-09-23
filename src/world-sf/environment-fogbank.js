@@ -4,6 +4,7 @@
 // and aircraft poke through naturally. Being inside the layer is handled cheaply by the aerial-perspective chunk
 // (CPU evaluates the layer at the camera once per frame).
 import * as THREE from 'three';
+import { assetData, isNetworkError, reportLoadFailure, retryDelay } from '../core/assets.js';
 import { NOISE_GLSL } from './environment-clouds.js';
 
 export const BANK_GLSL = /* glsl */`
@@ -88,12 +89,18 @@ export function bankTop(x, z, time) {
 // ---------------------------------------------------------------- mesh
 /** Terrain height map under the fog bank (64 m, built by tools/geo/terrain_fogmap.py); null if missing. */
 export async function loadBankHeight() {
+  const base = new URL('../../assets/sf/terrain/', import.meta.url).href;
+  let meta, buf;
+  for (let failures = 1; !buf; failures++) {
+    try {
+      [meta, buf] = await Promise.all([assetData(base + 'bank_height.json', 'json'), assetData(base + 'bank_height.bin', 'arrayBuffer')]);
+    } catch (e) {
+      if (!isNetworkError(e)) return null;   // not built
+      reportLoadFailure('environment', 'fog bank height map', e);   // connection lost: try again later
+      await new Promise((r) => setTimeout(r, retryDelay(failures)));
+    }
+  }
   try {
-    const base = new URL('../../assets/sf/terrain/', import.meta.url).href;
-    const [meta, buf] = await Promise.all([
-      fetch(base + 'bank_height.json').then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); }),
-      fetch(base + 'bank_height.bin').then((r) => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); }),
-    ]);
     const src = new Uint16Array(buf), n = meta.width * meta.height;
     const half = new Uint16Array(n);
     for (let k = 0; k < n; k++) half[k] = THREE.DataUtils.toHalfFloat(Math.max(src[k] / 10 - 100, 0));
