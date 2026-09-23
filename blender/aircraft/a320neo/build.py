@@ -1,9 +1,15 @@
 """A320neo (CFM LEAP-1A) — Turkish Airlines TC-LUA (livery from textures.py / livery_thy.py). Deterministic Blender build.
 
+.venv/bin/python blender/aircraft/a320neo/cockpit_tex.py          # flight-deck panel atlases first
 /Applications/Blender.app/Contents/MacOS/Blender -b -P blender/aircraft/a320neo/build.py -- [--no-export] [--no-lod]
-    [--save-blend] [--skip-interior] [--preview]
+    [--save-blend] [--skip-interior] [--no-bake] [--bake-samples N]
 
-Outputs: assets/aircraft/a320neo/a320neo.glb, a320neo_lod.glb (and a320neo.blend with --save-blend).
+Outputs (CONTRACTS-SF.md 6.2.1):
+  assets/aircraft/a320neo/a320neo.glb          exterior + `interior_lite` (light stand-in seen through the windows)
+  assets/aircraft/a320neo/a320neo_cockpit.glb  root `interior`: detailed flight deck (same frame), all screen_* meshes
+  assets/aircraft/a320neo/a320neo_lod.glb      static LOD
+  assets/aircraft/a320neo/a320neo.blend        (--save-blend) exterior + detailed flight deck with unbaked materials,
+                                               used by render.py for the Cycles renders
 """
 import os
 import sys
@@ -99,10 +105,11 @@ def main(lod=False):
         log('exported LOD', tl, 'tris', round(os.path.getsize(path) / 1e6, 2), 'MB')
         return
 
+    grp = None
     if '--skip-interior' not in ARGS:
         import cockpit as CK
         importlib.reload(CK)
-        CK.build(col_int, mats)
+        grp = CK.build(col_int, mats)
         log('cockpit')
 
     # parent every top-level object to the root
@@ -115,16 +122,40 @@ def main(lod=False):
         top = o
         while top.parent is not None and top.parent is not root:
             top = top.parent
-        key = 'interior' if (top.name == 'interior' or o.name.startswith('ck_')) else 'exterior'
+        key = 'interior' if top.name == 'interior' else 'exterior'
         tris[key] = tris.get(key, 0) + geo.tri_count(o)
     log('triangles', tris)
 
-    if '--no-export' not in ARGS:
-        util.export_glb(os.path.join(OUT, 'a320neo.glb'))
-        log('exported', os.path.getsize(os.path.join(OUT, 'a320neo.glb')) / 1e6, 'MB')
     if '--save-blend' in ARGS:
         bpy.ops.wm.save_as_mainfile(filepath=os.path.join(OUT, 'a320neo.blend'))
         log('saved blend')
+    if '--no-export' in ARGS:
+        return
+    if grp is not None:
+        import cockpit_bake as CB
+        importlib.reload(CB)
+        if '--no-bake' not in ARGS:
+            CB.bake(grp, samples=int(ARGS[ARGS.index('--bake-samples') + 1]) if '--bake-samples' in ARGS else 96)
+            log('baked')
+        CB.finalize(grp)
+        interior = bpy.data.objects['interior']
+        objs = [interior] + list(interior.children_recursive)
+        path = os.path.join(OUT, 'a320neo_cockpit.glb')
+        util.export_glb(path, objects=objs)
+        ti = sum(geo.tri_count(o) for o in objs)
+        log('exported cockpit', ti, 'tris', round(os.path.getsize(path) / 1e6, 2), 'MB')
+        lite_src = CB.lite_sources(grp)
+        import cockpit_lite as LT
+        importlib.reload(LT)
+        lite = LT.build(col_int, lite_src)
+        for o in objs:
+            bpy.data.objects.remove(o, do_unlink=True)
+        geo.parent_keep(lite, root)
+        tl = sum(geo.tri_count(o) for o in [lite] + list(lite.children_recursive))
+        log('interior_lite', tl, 'tris')
+    path = os.path.join(OUT, 'a320neo.glb')
+    util.export_glb(path)
+    log('exported', round(os.path.getsize(path) / 1e6, 2), 'MB')
 
 
 if '--lod-only' in ARGS:

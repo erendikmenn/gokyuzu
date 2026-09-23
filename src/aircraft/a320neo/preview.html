@@ -56,6 +56,12 @@ if (q.get('lod') === '1') {
   rig = { object: o, contacts: [{ position: new THREE.Vector3(0, -3.9, 0) }], screens: {}, eye: { pilot: new THREE.Vector3() }, update() {}, setView() {} };
 } else rig = createRig(gltf.scene);
 rig.object.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+// detailed flight deck (second GLB), as the game host does it
+if (q.get('lod') !== '1' && model.cockpitUrl && q.get('cockpit') !== '0') {
+  const ck = await loader.loadGLTF(model.cockpitUrl);
+  rig.attachCockpit(ck.scene);
+  ck.scene.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+}
 const gy = -Math.min(...rig.contacts.map((c) => c.position.y));
 rig.object.position.y = gy;
 scene.add(rig.object);

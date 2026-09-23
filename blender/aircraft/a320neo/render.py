@@ -86,9 +86,14 @@ def prep_materials():
         if o:
             o.hide_render = True
     # panel emissive (integral lighting) is too strong in daylight renders
-    m = bpy.data.materials.get('ck_panel')
-    if m:
-        m.node_tree.nodes['Principled BSDF'].inputs['Emission Strength'].default_value = 0.6
+    for n in ('ck_panel', 'ck_panelA', 'ck_panelB'):
+        m = bpy.data.materials.get(n)
+        if m:
+            m.node_tree.nodes['Principled BSDF'].inputs['Emission Strength'].default_value = 0.6
+    # the light stand-in is only for the realtime exterior view
+    for o in bpy.data.objects:
+        if o.name == 'interior_lite' or (o.parent and o.parent.name == 'interior_lite'):
+            o.hide_render = True
 
 
 def concrete_material(name='apron', slab=5.0, runway=False):
@@ -447,15 +452,49 @@ def fill_light(loc, target, power, size=1.0, color=(1.0, 0.95, 0.88)):
     return o
 
 
-def shot_flightdeck():
+def out_path(name):
+    """--outdir <dir relative to renders/aircraft/a320neo> (e.g. before) redirects the flight-deck shots."""
+    d = os.path.join(OUT, arg('--outdir', '')) if '--outdir' in ARGS else OUT
+    return os.path.join(d, name)
+
+
+def deck_setup(exposure=0.9):
+    for o in list(bpy.data.objects):
+        if o.name.startswith('fill'):
+            bpy.data.objects.remove(o, do_unlink=True)
     build_ground('apron')
     sky(24, 320, 1.0)
-    cycles(1920, 1080, SAMPLES, exposure=0.9)
-    # classic flight-deck photo from the observer seat, between and behind the pilot seats; soft fill from behind
-    loc = (0.0, LY.S_CG - 3.30, 0.90)
-    cam(loc, (0.0, LY.S_CG - 1.70, 0.18), 15)
+    cycles(1920, 1080, SAMPLES, exposure=exposure)
+    # soft fill from behind the seats (cabin light through the open door / dome lights)
     fill_light((0.0, LY.S_CG - 3.6, 0.95), (0.0, LY.S_CG - 1.7, 0.1), 60, size=1.2)
-    util.render_still(os.path.join(OUT, 'flightdeck.png'))
+
+
+def shot_flightdeck():
+    # classic flight-deck photo from the observer seat, between and behind the pilot seats
+    deck_setup()
+    cam((0.0, LY.S_CG - 3.30, 0.90), (0.0, LY.S_CG - 1.70, 0.18), 15)
+    util.render_still(out_path('flightdeck.png'))
+
+
+def shot_fd_capt():
+    # captain's design eye looking forward/down at the PFD/ND and the glareshield
+    deck_setup()
+    cam((-LY.EYE_Y, LY.S_CG - LY.EYE_S, LY.EYE_Z), (-0.30, LY.S_CG - 1.70, 0.22), 18)
+    util.render_still(out_path('fd_capt.png'))
+
+
+def shot_fd_ovh():
+    # overhead panel seen from between the seats, looking up and forward
+    deck_setup()
+    cam((0.0, LY.S_CG - 3.35, 0.42), (0.0, LY.S_CG - 2.55, 1.25), 16)
+    util.render_still(out_path('fd_ovh.png'))
+
+
+def shot_fd_ped():
+    # centre pedestal from above and behind (MCDUs, thrust levers, ECAM control panel, RMPs)
+    deck_setup()
+    cam((0.0, LY.S_CG - 3.05, 0.78), (0.0, LY.S_CG - 2.25, -0.32), 20)
+    util.render_still(out_path('fd_ped.png'))
 
 
 def overcast(level=0.75):
@@ -527,8 +566,17 @@ def shot_ams():
     util.render_still(os.path.join(OUT, arg('--out', 'compare_ams.png')))
 
 
-SHOTS = dict(ams=shot_ams, hero=shot_hero, front34=shot_front34, takeoff=shot_takeoff, planform=shot_planform,
-             flightdeck=shot_flightdeck)
+def shot_custom():
+    """Debug view: --cam s,y,z --look s,y,z (flight-deck coordinates) --lens mm --out name.png"""
+    deck_setup()
+    c = [float(v) for v in arg('--cam', '2.41,-0.53,0.66').split(',')]
+    t = [float(v) for v in arg('--look', '1.7,-0.3,0.3').split(',')]
+    cam((c[1], LY.S_CG - c[0], c[2]), (t[1], LY.S_CG - t[0], t[2]), arg('--lens', 35.0))
+    util.render_still(out_path(arg('--name', 'custom.png')))
+
+
+SHOTS = dict(custom=shot_custom, ams=shot_ams, hero=shot_hero, front34=shot_front34, takeoff=shot_takeoff, planform=shot_planform,
+             flightdeck=shot_flightdeck, fd_capt=shot_fd_capt, fd_ovh=shot_fd_ovh, fd_ped=shot_fd_ped)
 
 if __name__ == '__main__':
     prep_materials()

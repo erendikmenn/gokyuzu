@@ -2,12 +2,16 @@
 // Rig: control surfaces, Fowler flaps + slats, spoilers (speedbrake / ground spoilers / roll), gear sequence with
 // doors + folding side stays, strut compression, wheel spin + nose-wheel steering, fan spin + blur disc,
 // translating-sleeve reversers, lights (nav, double-flash strobes, beacons, landing spot), cockpit view.
+// The detailed flight deck is a second GLB (CONTRACTS-SF.md 6.2.1): the exterior carries a light stand-in
+// `interior_lite` (seen through the windows); attachCockpit() adds `interior` with the screens and the animated
+// thrust levers, side-sticks, speed brake / flap / gear levers and rudder pedals.
 import * as THREE from 'three';
 
 // URLs resolved against this module so they work from index.html and from dev/*.html alike.
 const repo = (p) => new URL(`../../../${p}`, import.meta.url).href;
 export const model = {
   url: repo('assets/aircraft/a320neo/a320neo.glb'),
+  cockpitUrl: repo('assets/aircraft/a320neo/a320neo_cockpit.glb'),
   lodUrl: repo('assets/aircraft/a320neo/a320neo_lod.glb'),
   displays: {
     screen_pfd_capt: 'a320.pfd', screen_nd_capt: 'a320.nd', screen_ewd: 'a320.ewd', screen_sd: 'a320.sd',
@@ -72,8 +76,8 @@ export function createRig(gltfScene) {
 
   // ---------------------------------------------------------------- hinged parts (rest quaternion * axis rotation)
   const hinges = [];
-  function hinge(name, axis) {
-    const o = N(name); if (!o) return null;
+  function hinge(name, axis, lookup = N) {
+    const o = lookup(name); if (!o) return null;
     const h = { o, q0: o.quaternion.clone(), p0: o.position.clone(), axis, q: new THREE.Quaternion(), angle: 0 };
     hinges.push(h); return h;
   }
@@ -94,11 +98,16 @@ export function createRig(gltfScene) {
   for (const s of ['L', 'R']) for (let i = 1; i <= 5; i++) { const h = hinge(`ctl_spoiler_${s}_${i}`, X); if (h) { h.side = s; h.idx = i; spoilers.push(h); } }
 
   // ---------------------------------------------------------------- flight-deck controls (local frames = aircraft axes)
-  const ck = {
-    thr: [hinge('ck_thr_1', X), hinge('ck_thr_2', X)], flap: hinge('ck_flap_lever', X), sb: hinge('ck_sb_lever', X),
-    gearLever: hinge('ck_gear_lever', X), stickC: hinge('ck_stick_capt', X), stickF: hinge('ck_stick_fo', X),
-    pedals: ['capt', 'fo'].flatMap((s) => [hinge(`ck_pedal_${s}_L`, X), hinge(`ck_pedal_${s}_R`, X)]),
-  };
+  // bound when the detailed cockpit is attached (they live in a320neo_cockpit.glb)
+  const ck = { thr: [null, null], flap: null, sb: null, gearLever: null, stickC: null, stickF: null, pedals: [] };
+  function bindControls(lookup) {
+    ck.thr = [hinge('ck_thr_1', X, lookup), hinge('ck_thr_2', X, lookup)];
+    ck.flap = hinge('ck_flap_lever', X, lookup); ck.sb = hinge('ck_sb_lever', X, lookup);
+    ck.gearLever = hinge('ck_gear_lever', X, lookup);
+    ck.stickC = hinge('ck_stick_capt', X, lookup); ck.stickF = hinge('ck_stick_fo', X, lookup);
+    ck.pedals = ['capt', 'fo'].flatMap((s) => [hinge(`ck_pedal_${s}_L`, X, lookup), hinge(`ck_pedal_${s}_R`, X, lookup)]);
+  }
+  bindControls(N);
   const ckQ = new THREE.Quaternion(), ckQ2 = new THREE.Quaternion();
   let gearLeverDown = true, lastGear = 1;
   function setStick(h, pitch, roll) {
@@ -210,31 +219,36 @@ export function createRig(gltfScene) {
   object.add(spot, spot.target);
 
   // ---------------------------------------------------------------- interior / cockpit view
-  const interior = N('interior');
+  // `interior_lite` (exterior GLB) is shown from outside and until the detailed `interior` is attached
+  let interior = N('interior');
+  const lite = N('interior_lite');
   const glass = N('cockpit_glass');
   const glassMats = [];
   if (glass) glass.traverse((o) => { if (o.isMesh) { o.material = o.material.clone(); glassMats.push(o.material); } });
   for (const m of glassMats) { m.transparent = true; m.depthWrite = false; }
-  const plug = N('ck_plug');
-  let view = 'exterior', camNear = false;
-  if (glass) {
-    glass.traverse((o) => {
-      if (!o.isMesh) return;
-      o.onBeforeRender = (renderer, scene, camera) => {
-        o.getWorldPosition(tmpV2);
-        camNear = camera.position.distanceToSquared(tmpV2) < 40 * 40;
-      };
-    });
-  }
+  let view = 'exterior';
+  let interiorFix = !!interior;     // shadow / material tweaks applied on the next update (after the host's setup)
   function applyView() {
     const inCk = view === 'cockpit';
-    const showInt = inCk || camNear;
-    if (interior) interior.visible = showInt;
-    if (plug) plug.visible = !showInt;
+    if (interior) interior.visible = inCk;
+    if (lite) lite.visible = !(inCk && interior);
     for (const m of glassMats) {
       m.opacity = inCk ? 0.10 : 0.82; m.side = inCk ? THREE.DoubleSide : THREE.FrontSide;
       m.roughness = inCk ? 0.02 : 0.05; m.needsUpdate = true;
     }
+  }
+  // flight-deck parts that cast shadows (sun through the windows): glareshield, panel boxes, seats, sticks, levers
+  const CK_CAST = /^(ck_shell_cast|ck_stick|ck_thr|ck_sb_|ck_flap_|ck_seat)/;
+  function fixInterior() {
+    if (!interior) return;
+    interior.traverse((o) => {
+      if (!o.isMesh) return;
+      o.castShadow = CK_CAST.test(o.name);
+      o.receiveShadow = !o.name.startsWith('screen_');
+      const ms = Array.isArray(o.material) ? o.material : [o.material];
+      // lighting is baked into the colour textures; the sky IBL only lifts it (it ignores the fuselage occlusion)
+      for (const m of ms) if (m && 'envMapIntensity' in m && !o.name.startsWith('screen_')) m.envMapIntensity = 0.55;
+    });
   }
 
   // ---------------------------------------------------------------- screens (UV orientation follows the texture flipY)
@@ -271,13 +285,13 @@ export function createRig(gltfScene) {
     dt = Math.min(Math.max(dt || 0, 0), 0.1);
     if (st.first) {
       st.first = false;
-      // interior and tiny parts do not cast shadows (main.js enables shadows on every mesh after createRig)
-      // interior: no shadow casting; damp the image-based ambient (env maps ignore the fuselage occlusion)
-      if (interior) interior.traverse((o) => {
+      // the light stand-in and tiny parts do not cast shadows (main.js enables shadows on every mesh after createRig);
+      // damp the image-based ambient inside the fuselage (env maps ignore its occlusion)
+      if (lite) lite.traverse((o) => {
         if (!o.isMesh) return;
         o.castShadow = false;
         const ms = Array.isArray(o.material) ? o.material : [o.material];
-        for (const m of ms) if (m && 'envMapIntensity' in m && !o.name.startsWith('screen_')) m.envMapIntensity = 0.35;
+        for (const m of ms) if (m && 'envMapIntensity' in m) m.envMapIntensity = 0.35;
       });
       if (glass) glass.traverse((o) => { if (o.isMesh) { o.castShadow = false; o.receiveShadow = false; } });
       for (const sp of sprites) sp.castShadow = false;
@@ -401,8 +415,8 @@ export function createRig(gltfScene) {
     }
     spot.intensity = lt.landing && legT > 0.5 ? 380 : 0;
     spot.visible = spot.intensity > 0;
+    if (interiorFix) { interiorFix = false; fixInterior(); }
     syncScreenUV();
-    if (view === 'exterior') { const vis = interior ? interior.visible : false; if (vis !== camNear) applyView(); }
   }
 
   function setView(v) {
@@ -410,5 +424,24 @@ export function createRig(gltfScene) {
     view = v; applyView();
   }
 
-  return { object, eye, contacts, screens, bounds, update, setView };
+  const rig = { object, eye, contacts, screens, bounds, update, setView, attachCockpit, cockpitReady: !!interior };
+
+  // detailed flight deck (a320neo_cockpit.glb, same frame as the exterior: origin = CG, nose -Z)
+  function attachCockpit(cockpitScene) {
+    if (!cockpitScene || rig.cockpitReady) return;
+    object.add(cockpitScene);
+    cockpitScene.updateMatrixWorld(true);
+    const map = new Map();
+    cockpitScene.traverse((o) => { if (o.name && !map.has(o.name)) map.set(o.name, o); });
+    interior = map.get('interior') || cockpitScene;
+    bindControls((n) => map.get(n) || null);
+    cockpitScene.traverse((o) => {
+      if (o.isMesh && o.name.startsWith('screen_')) { screens[o.name] = o; o.userData.uvFlipped = false; }
+    });
+    interiorFix = true;
+    rig.cockpitReady = true;
+    applyView();
+  }
+
+  return rig;
 }

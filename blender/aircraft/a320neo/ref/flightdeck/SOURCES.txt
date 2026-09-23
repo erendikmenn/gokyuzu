@@ -1,0 +1,24 @@
+# A320 flight-deck reference photos (reference use only, never shipped): file, licence, source page
+A320-cockpit-night.jpg	CC BY-SA 3.0	https://commons.wikimedia.org/wiki/File:A320-cockpit-night.jpg
+A32S_Pedestal_7978377378_.jpg	GFDL 1.2	https://commons.wikimedia.org/wiki/File:A32S_Pedestal_(7978377378).jpg
+Airbus_A320-211_Vueling_EC-FNR_cockpit_6503776229_.jpg	CC BY 2.0	https://commons.wikimedia.org/wiki/File:Airbus_A320-211_Vueling_EC-FNR_cockpit_(6503776229).jpg
+Airbus_A320-214_Vueling_EC-HHA_cockpit_5508849819_.jpg	CC BY 2.0	https://commons.wikimedia.org/wiki/File:Airbus_A320-214_Vueling_EC-HHA_cockpit_(5508849819).jpg
+Airbus_A320-214_Vueling_EC-HQJ_cockpit_detail_6500487277_.jpg	CC BY 2.0	https://commons.wikimedia.org/wiki/File:Airbus_A320-214_Vueling_EC-HQJ_cockpit_detail_(6500487277).jpg
+Airbus_A320_EC-KNM_Iberia_cockpit_6211312309_.jpg	CC BY 2.0	https://commons.wikimedia.org/wiki/File:Airbus_A320_EC-KNM_Iberia_cockpit_(6211312309).jpg
+Airbus_A320_EC-KNM_Iberia_cockpit_6211312673_.jpg	CC BY 2.0	https://commons.wikimedia.org/wiki/File:Airbus_A320_EC-KNM_Iberia_cockpit_(6211312673).jpg
+Airbus_A320_Glass_Cockpit.jpg	CC BY 2.0	https://commons.wikimedia.org/wiki/File:Airbus_A320_Glass_Cockpit.jpg
+Airbus_A320_pilot_in_the_flight_deck_6768127977_.jpg	CC BY-SA 2.0	https://commons.wikimedia.org/wiki/File:Airbus_A320_pilot_in_the_flight_deck_(6768127977).jpg
+Airbus_A321_cockpit_-_G-EUXG_British_Airways.jpg	CC0	https://commons.wikimedia.org/wiki/File:Airbus_A321_cockpit_-_G-EUXG_British_Airways.jpg
+Avianca_Airbus_A320_N446AV_-_Pedestal_6887813915_.jpg	GFDL 1.2	https://commons.wikimedia.org/wiki/File:Avianca_Airbus_A320_N446AV_-_Pedestal_(6887813915).jpg
+Cockpit_View_PR-AVP_A320-214_msn_4891_6349154954_.jpg	CC BY 2.0	https://commons.wikimedia.org/wiki/File:Cockpit_View_PR-AVP_A320-214_msn_4891_(6349154954).jpg
+Cockpit_detail_ready_for_start_5669632616_.jpg	CC BY 2.0	https://commons.wikimedia.org/wiki/File:Cockpit_detail,_ready_for_start_(5669632616).jpg
+Cockpit_of_Airbus_A320-211_Air_France_F-GFKH_.jpg	CC BY-SA 2.0	https://commons.wikimedia.org/wiki/File:Cockpit_of_Airbus_A320-211_Air_France_(F-GFKH).jpg
+Cockpit_of_Kam_Air_Airbus_A320.jpg	GFDL	https://commons.wikimedia.org/wiki/File:Cockpit_of_Kam_Air_Airbus_A320.jpeg
+EasyJet_airbus_A320_cockpit.jpg	CC BY 4.0	https://commons.wikimedia.org/wiki/File:EasyJet_airbus_A320_cockpit.jpg
+Flight_Deck_5669063517_.jpg	CC BY 2.0	https://commons.wikimedia.org/wiki/File:Flight_Deck_(5669063517).jpg
+Flight_Deck_5669063983_.jpg	CC BY 2.0	https://commons.wikimedia.org/wiki/File:Flight_Deck_(5669063983).jpg
+HA-LYN_kokpit.jpg	CC BY-SA 4.0	https://commons.wikimedia.org/wiki/File:HA-LYN_kokpit.jpg
+IndiGo_A320_flight_cockpit_shot_in_Rajiv_Gandhi_International_airport_Hyderabad.jpg	CC BY-SA 3.0	https://commons.wikimedia.org/wiki/File:IndiGo_A320_flight_cockpit,_shot_in_Rajiv_Gandhi_International_airport,_Hyderabad.JPG
+Overhead_panel_of_A320_aircraft_at_parking_stand.jpg	CC BY-SA 3.0	https://commons.wikimedia.org/wiki/File:Overhead_panel_of_A320_aircraft_at_parking_stand.jpg
+Thrust_levers_of_an_Airbus_A320.jpg	CC BY-SA 3.0	https://commons.wikimedia.org/wiki/File:Thrust_levers_of_an_Airbus_A320.jpg
+Turkish_Airlines_Airbus_A321_cockpit_Karakas.jpg	GFDL	https://commons.wikimedia.org/wiki/File:Turkish_Airlines_Airbus_A321_cockpit_Karakas.jpg
