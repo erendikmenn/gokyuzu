@@ -186,7 +186,8 @@ const FRAG_MAP = /* glsl */`
   wcol = mix(wcol, vec3(0.62), clamp(foam, 0.0, 1.0) * 0.85);
   diffuseColor.rgb = mix(wcol, land, sfLandA);
   if (uDebug > 0.5) {
-    float dv = uDebug < 1.5 ? ocean : uDebug < 2.5 ? shoreDist / 500.0 : uDebug < 3.5 ? depth / 20.0 : uDebug < 4.5 ? surfZone : uDebug < 5.5 ? sfShore : vSunVis;
+    float dv = uDebug < 1.5 ? ocean : uDebug < 2.5 ? shoreDist / 500.0 : uDebug < 3.5 ? depth / 20.0 : uDebug < 4.5 ? surfZone : uDebug < 5.5 ? sfShore : uDebug < 6.5 ? vSunVis
+      : uDebug < 7.5 ? sfLandA : uDebug < 8.5 ? uTile.x / 32.0 : uDebug < 9.5 ? img.a * 10.0 : abs(vSfWorld.y) * 0.5;
     diffuseColor.rgb = vec3(dv);
   }
 }

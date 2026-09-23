@@ -260,15 +260,15 @@ export async function createTerrain(ctx) {
     for (let k = 0; k < h.length; k++) h[k] = hb + hq[k] * hs;
     const d = n.size / Q;
     const pos = new Float32Array(VERT_COUNT * 3);
-    const nor = new Float32Array(VERT_COUNT * 3);
+    const nor = new Int8Array(VERT_COUNT * 3);
     for (let j = 0; j < NV; j++) for (let i = 0; i < NV; i++) {
       const k = j * NV + i;
       const s = (j + 1) * NS + (i + 1);
       pos[k * 3] = i * d; pos[k * 3 + 1] = h[s]; pos[k * 3 + 2] = j * d;
       const dx = h[s + 1] - h[s - 1], dz = h[s + NS] - h[s - NS];
       const nx = -dx, ny = 2 * d, nz = -dz;
-      const il = 1 / Math.hypot(nx, ny, nz);
-      nor[k * 3] = nx * il; nor[k * 3 + 1] = ny * il; nor[k * 3 + 2] = nz * il;
+      const il = 127 / Math.hypot(nx, ny, nz);
+      nor[k * 3] = Math.round(nx * il); nor[k * 3 + 1] = Math.round(ny * il); nor[k * 3 + 2] = Math.round(nz * il);
     }
     const perim = perimeter();
     const skirt = Math.max(2, n.err * 2.5 + n.size * 0.004);
@@ -291,7 +291,7 @@ export async function createTerrain(ctx) {
       for (let k = 0; k < PERIM; k++) sv[NV * NV + k] = n.sunVis[perim[k]];
     }
     g.setAttribute('sunVis', new THREE.BufferAttribute(sv, 1, true));
-    g.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+    g.setAttribute('normal', new THREE.BufferAttribute(nor, 3, true));
     g.setIndex(getSharedIndex());
     const hmin = Math.min(n.hmin, n.hmax) - skirt, hmax = n.hmax;
     g.boundingBox = new THREE.Box3(new THREE.Vector3(0, hmin, 0), new THREE.Vector3(n.size, hmax, n.size));
@@ -338,7 +338,7 @@ export async function createTerrain(ctx) {
       texCount--;
     }
     if (!n.pinned) { n.heights = null; n.wbits = null; }
-    n.state = UNLOADED; n.retry = 0;
+    n.state = UNLOADED; n.retry = 0; n.drawn = false;
     loadedCount--;
   }
 
@@ -380,12 +380,17 @@ export async function createTerrain(ctx) {
       if (refine && !omni && d > 1200 && !inFrustum(n)) refine = false;
     }
     if (refine) {
-      let ready = true;
+      let ready = true, fresh = 0;
       for (const c of n.children) {
         if (c.state !== READY) {
           ready = false;
           if (c.state === UNLOADED) request(c, c.L * 0.5 + distTo(c) / 1000);
-        }
+        } else if (!c.drawn) fresh++;
+      }
+      // GPU buffers of a tile are uploaded on its first draw: cap first-time activations per frame (no upload spikes)
+      if (ready && fresh && !omni) {
+        if (activations + fresh > MAX_ACTIVATIONS) ready = false;
+        else activations += fresh;
       }
       if (ready) {
         for (const c of n.children) traverse(c, omni);
@@ -395,12 +400,15 @@ export async function createTerrain(ctx) {
     }
     n.selected = frame;
     selectedCount++;
-    if (n.mesh) visibleNow.push(n.mesh);
+    if (n.mesh) { visibleNow.push(n.mesh); n.drawn = true; }
   }
 
   const prevVisible = [];
   let morphStep = 0.05;
+  const MAX_ACTIVATIONS = 8;   // ~8 x 90 KB of vertex data per frame
+  let activations = 0;
   function select(cam, omni = false) {
+    activations = 0;
     frame++;
     cam.updateMatrixWorld();
     camPos.setFromMatrixPosition(cam.matrixWorld);
@@ -422,14 +430,16 @@ export async function createTerrain(ctx) {
     }
   }
 
-  function processBuilt(budgetMs) {
+  function processBuilt(budgetMs, maxTex) {
     const t0 = performance.now();
     // parents first so texture sources exist
     built.sort((a, b) => a.L - b.L);
-    let k = 0;
+    let k = 0, tex = 0;
     while (k < built.length && performance.now() - t0 < budgetMs) {
       const n = built[k];
       if (n.parent && n.parent.state !== READY) { k++; continue; }
+      if (n.bitmap && tex >= maxTex) { k++; continue; }
+      if (n.bitmap) tex++;
       built.splice(k, 1);
       buildNode(n);
     }
@@ -523,7 +533,7 @@ export async function createTerrain(ctx) {
     t2 = performance.now(); prof.select = Math.max(prof.select, t2 - t); t = t2;
     pump();
     t2 = performance.now(); prof.pump = Math.max(prof.pump, t2 - t); t = t2;
-    processBuilt(omni ? 12 : 4);
+    processBuilt(omni ? 12 : 3, omni ? 16 : 2);
     t2 = performance.now(); prof.build = Math.max(prof.build, t2 - t); t = t2;
     if ((frame & 7) === 0) evict();
     t2 = performance.now(); prof.evict = Math.max(prof.evict, t2 - t);
