@@ -159,13 +159,32 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
     });
   }
 
+  // Delivery format: AAC/M4A (≈8× smaller; decodeAudioData in Safari/Chrome/Firefox trims the encoder priming) when
+  // the browser can play it and the manifest lists it, else the WAV master. Loops are encoded with 0.1 s of
+  // wrap-around guard material and played through loopStart/loopEnd, which keeps them gapless.
+  let m4aOK = null;
+  function canM4A() {
+    if (m4aOK === null) {
+      try { m4aOK = !!(typeof Audio !== 'undefined' && new Audio().canPlayType('audio/mp4; codecs="mp4a.40.2"')); } catch { m4aOK = false; }
+    }
+    return m4aOK;
+  }
+  const fetchDecode = (url) => fetch(url).then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.arrayBuffer(); }).then(decode);
+
   function getBuffer(rel) {
     if (!rel) return Promise.resolve(null);
     if (!bufCache.has(rel)) {
-      const p = fetch(ASSET_BASE + rel + '.wav')
-        .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.arrayBuffer(); })
-        .then(decode)
-        .catch((e) => { warnOnce('f:' + rel, `sound ${rel}.wav unavailable (${e.message || e})`); return null; });
+      const p = loadManifest().then((man) => {
+        const m = man && man[rel];
+        const wav = () => fetchDecode(ASSET_BASE + rel + '.wav');
+        if (m && m.m4a && canM4A()) {
+          return fetchDecode(ASSET_BASE + rel + '.m4a').then((buf) => {
+            if (typeof m.loopStart === 'number' && typeof m.loopDur === 'number') buf.__loop = { start: m.loopStart, dur: m.loopDur };
+            return buf;
+          }, () => wav());
+        }
+        return wav();
+      }).catch((e) => { warnOnce('f:' + rel, `sound ${rel} unavailable (${e.message || e})`); return null; });
       bufCache.set(rel, p);
     }
     return bufCache.get(rel);
@@ -300,8 +319,17 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
       if (!buf || inst !== I || I.dead) return;
       const src = ctx.createBufferSource();
       src.buffer = buf; src.loop = true;
-      src.connect(L.input);
-      src.start(ctx.currentTime + 0.02, Math.random() * buf.duration * 0.999);
+      let start = Math.random() * buf.duration * 0.999;
+      if (buf.__loop) {            // compressed loop: play the periodic window between the guards
+        src.loopStart = buf.__loop.start; src.loopEnd = buf.__loop.start + buf.__loop.dur;
+        start = buf.__loop.start + Math.random() * buf.__loop.dur * 0.999;
+      }
+      // buffers may arrive seconds after the layer is running (the game no longer waits for audio): fade in
+      const fadeIn = gainNode(0);
+      src.connect(fadeIn).connect(L.input);
+      const t = ctx.currentTime + 0.02;
+      fadeIn.gain.setValueAtTime(0, t); fadeIn.gain.setTargetAtTime(1, t, 0.12);
+      src.start(t, start);
       L.src = src;
       L.norm = normFor(L.def.file, true);
       L.last.rate = undefined;
@@ -513,10 +541,12 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
   }
 
   // ------------------------------------------------------------------------------------------------ one-shots
-  function playFile(I, rel, { em = null, ext = 1, int = 1, gain = 1, rate = 1, bus = null, delay = 0 } = {}) {
+  function playFile(I, rel, { em = null, ext = 1, int = 1, gain = 1, rate = 1, bus = null, delay = 0, maxLate = 0.5 } = {}) {
     if (!ctx || !rel) return;
+    const asked = ctx.currentTime;
     getBuffer(rel).then((buf) => {
       if (!buf || (I && inst !== I)) return;
+      if (ctx.currentTime - asked > maxLate) return;       // still downloading when the event happened: skip, don't play late
       const src = ctx.createBufferSource();
       src.buffer = buf;
       src.playbackRate.value = rate;

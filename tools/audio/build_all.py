@@ -1,7 +1,9 @@
 """Regenerate every sound and the loudness manifest.
 
 Usage: .venv/bin/python tools/audio/build_all.py [--only common,fighters,airliners,uh60,voices] [--manifest-only]
-Outputs: assets/audio/{common,f16,f22,a320neo,b737,uh60}/*.wav (48 kHz mono 16-bit) + assets/audio/manifest.json
+                                                [--no-encode] [--check]
+Outputs: assets/audio/{common,f16,f22,a320neo,b737,uh60}/*.wav (48 kHz mono 16-bit masters), *.m4a (AAC delivery
+copies, loops with wrap-around guards, see encode.py) + assets/audio/manifest.json (loudness, loop windows)
 """
 import glob
 import json
@@ -43,6 +45,9 @@ def main():
                 fn()
         print(f'generated in {time.time() - t0:.1f} s')
     manifest()
+    if '--no-encode' not in sys.argv:
+        import encode
+        encode.main()
 
 
 if __name__ == '__main__':
