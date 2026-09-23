@@ -76,6 +76,10 @@ async function loadAircraft(id) {
   rig.object.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
   if (state.rig) scene.remove(state.rig.object);
   scene.add(rig.object);
+  // dim flight-deck flood light (always present so the light count never changes; only lit in cockpit view)
+  state.cockpitFill = new THREE.PointLight(0xfff0dc, 0, 3.5, 2);
+  state.cockpitFill.position.copy(rig.eye.pilot).add(new THREE.Vector3(0, 0.35, 0.25));
+  rig.object.add(state.cockpitFill);
   const factory = def.spec.category === 'helicopter' ? createHelicopterModel : createFixedWingModel;
   const flight = factory(def.spec, { contacts: rig.contacts });
   bindFlightEvents(flight);
@@ -170,6 +174,7 @@ function frame(ts) {
     rig.update(dt, flight.getVisualState());
     cameraRig.update(dt, flight);
     rig.setView(cameraRig.view);
+    if (state.cockpitFill) state.cockpitFill.intensity = cameraRig.view === 'cockpit' ? 2.5 : 0;
     world.update(dt, camera);
     displayAcc += dt;
     if (displayAcc > 1 / 30) { for (const d of state.displays) d.display.update(displayAcc, flight, world); displayAcc = 0; }

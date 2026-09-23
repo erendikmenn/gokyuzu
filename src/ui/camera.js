@@ -143,7 +143,7 @@ export function createCameraRig(camera, dom, world) {
     });
     dom.addEventListener('gestureend', (e) => e.preventDefault());
     dom.addEventListener('dblclick', () => {
-      if (mode === 'cockpit' || mode === 'wing') { hYawT = 0; hPitchT = 0; cockpitFovT = defaultCockpitFov(); }
+      if (mode === 'cockpit' || mode === 'wing') { hYawT = 0; hPitchT = mode === 'cockpit' ? restPitch() : 0; cockpitFovT = defaultCockpitFov(); }
       else if (mode === 'chase') { cYawT = 0; cPitchT = 0; chaseZoom = 1; }
       else if (mode === 'orbit') orbitInit = true;
       else if (mode === 'tower') towerFovMul = 1;
@@ -205,6 +205,10 @@ export function createCameraRig(camera, dom, world) {
     if (eyePos.distanceToSquared(target) < 1e-8) return;
     m4.lookAt(eyePos, target, upv);
     camera.quaternion.setFromRotationMatrix(m4);
+  }
+  // resting head pitch in the cockpit: airliner/helicopter pilots glance down enough to see the main displays
+  function restPitch() {
+    return category === 'airliner' ? -12 * DEG : category === 'helicopter' ? -8 * DEG : -2 * DEG;
   }
   function defaultCockpitFov() {
     return category === 'fighter' ? 74 : category === 'helicopter' ? 76 : 70;
@@ -337,7 +341,7 @@ export function createCameraRig(camera, dom, world) {
     hIdle += dt;
     if (allowReturn && !dragging && hIdle > 3 && !lookBackOn) {
       hYawT -= hYawT * damp(1.6, dt);
-      hPitchT -= hPitchT * damp(1.6, dt);
+      hPitchT -= (hPitchT - (mode === 'cockpit' ? restPitch() : 0)) * damp(1.6, dt);
     }
     const yGoal = lookBackOn ? (hYawT >= -0.3 ? HEAD_YAW_MAX : -HEAD_YAW_MAX) : hYawT;
     const pGoal = lookBackOn ? 10 * DEG : hPitchT;
@@ -623,7 +627,7 @@ export function createCameraRig(camera, dom, world) {
     if (m === 'flyby') flyValid = false;
     if (m === 'tower') { towerKey = null; towerFovMul = 1; spotValid = false; }
     shared.cameraSub = null;
-    if (m === 'cockpit' || m === 'wing') { hYaw = hYawT = 0; hPitch = hPitchT = 0; }
+    if (m === 'cockpit' || m === 'wing') { hYaw = hYawT = 0; hPitch = hPitchT = m === 'cockpit' ? restPitch() : 0; }
     if (m === 'chase') { cYaw = cYawT = 0; cPitch = cPitchT = 0; }
     if (mode !== 'cockpit') lastExterior = mode;
     mode = m;
