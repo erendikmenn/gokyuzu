@@ -1,9 +1,13 @@
 """Boeing 737-800 builder (Blender 5.2, headless).
 
-  Blender -b -P blender/aircraft/b737/build.py -- [--notex] [--noexport] [--preview out_dir] [--save]
+  Blender -b -P blender/aircraft/b737/build.py -- [--notex] [--noexport] [--nobake] [--bakeres 4096] [--preview out_dir] [--save]
 
-Builds the complete aircraft from code (shape.py = shared analytic geometry), exports
-assets/aircraft/b737/b737.glb and b737_lod.glb, optionally saves a .blend for the render script.
+Builds the complete aircraft from code (shape.py = shared analytic geometry) and exports
+  assets/aircraft/b737/b737.glb          exterior + interior_lite (CONTRACTS-SF.md 6.2.1)
+  assets/aircraft/b737/b737_cockpit.glb  root `interior`: detailed flight deck (+ passenger cabin), all screen_* meshes
+  assets/aircraft/b737/b737_lod.glb      (--lod run) static low-poly copy
+optionally saves a .blend for the render script. The flight deck colour textures get ambient occlusion and soft
+interior light baked in (bake_fd.py, Cycles) unless --nobake.
 """
 import os
 import sys
@@ -13,7 +17,7 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(HERE, '..', '..', 'common'))
-for m in ('shape', 'mk', 'exterior', 'materials', 'engine', 'gear', 'details', 'interior', 'cabin', 'lod'):
+for m in ('shape', 'mk', 'exterior', 'materials', 'engine', 'gear', 'details', 'interior', 'cabin', 'lod', 'fdlayout', 'bake_fd', 'lite'):
     sys.modules.pop(m, None)
 
 import bpy
@@ -71,13 +75,16 @@ def build_all():
     import details
     details.build_details(mats)
     log('details')
-    fd = INT.build_interior(imats)
+    fd = INT.build_interior(imats, shell_obj=shell)
     log('flight deck', len(fd))
+    body = bpy.data.objects['flightdeck_body']
+    lite_src = INT.finish_shell(shell, imats, body)
+    log('lining')
     if '--nocabin' not in ARG:
         import cabin
         cabin.build_cabin(imats, fus)
         log('cabin')
-    return dict(mats=mats, imats=imats, fus=fus, glass=glass, shell=shell, reveal=rev)
+    return dict(mats=mats, imats=imats, fus=fus, glass=glass, lite_src=lite_src)
 
 
 def join(target_name, names, new_name=None):
@@ -114,13 +121,29 @@ def finalize():
 
 def export_all():
     objs = [o for o in bpy.data.objects if o.type in ('MESH', 'EMPTY') and not o.name.startswith('_')]
+    ext = [o for o in objs if not is_interior(o)]
+    inte = [o for o in objs if is_interior(o)]
     path = os.path.join(OUT_DIR, 'b737.glb')
-    export_glb(path, objects=objs, draco=True)
-    ext = [o for o in objs if o.type == 'MESH' and not is_interior(o)]
-    inte = [o for o in objs if o.type == 'MESH' and is_interior(o)]
-    cab = [o for o in inte if o.parent and o.parent.name == 'interior_cabin']
-    log('EXPORT', path, f'{os.path.getsize(path) / 1e6:.2f} MB', 'tris exterior', mk.tri_count(ext),
-        'flight deck', mk.tri_count(inte) - mk.tri_count(cab), 'cabin', mk.tri_count(cab))
+    export_glb(path, objects=ext, draco=True)
+    cpath = os.path.join(OUT_DIR, 'b737_cockpit.glb')
+    export_glb(cpath, objects=inte, draco=True)
+    ext_m = [o for o in ext if o.type == 'MESH']
+    lite = [o for o in ext_m if is_under(o, 'interior_lite')]
+    inte_m = [o for o in inte if o.type == 'MESH']
+    cab = [o for o in inte_m if is_under(o, 'interior_cabin')]
+    log('EXPORT', path, f'{os.path.getsize(path) / 1e6:.2f} MB', 'tris exterior', mk.tri_count(ext_m) - mk.tri_count(lite),
+        'interior_lite', mk.tri_count(lite))
+    log('EXPORT', cpath, f'{os.path.getsize(cpath) / 1e6:.2f} MB', 'tris flight deck', mk.tri_count(inte_m) - mk.tri_count(cab),
+        'cabin', mk.tri_count(cab), 'total', mk.tri_count(inte_m))
+
+
+def is_under(o, name):
+    p = o
+    while p is not None:
+        if p.name == name:
+            return True
+        p = p.parent
+    return False
 
 
 def is_interior(o):
@@ -189,6 +212,17 @@ def main():
             mn = [round(min(b[i] for b in bb), 2) for i in range(3)]
             mx = [round(max(b[i] for b in bb), 2) for i in range(3)]
             print('  M', o.name, mk.tri_count([o]), mn, mx, 'parent=' + (o.parent.name if o.parent else '-'))
+    if not LOD and '--nobake' not in ARG:
+        import bake_fd
+        r = int(argval('--bakeres', 4096))
+        bake_fd.bake_all(parts['imats'], res_panel=r, res_body=r, res_irr=min(2048, r // 2),
+                         spp_ao=int(argval('--aospp', 96)), spp_irr=int(argval('--irrspp', 192)))
+        log('baked')
+    if not LOD:
+        import lite
+        lite.build_lite(parts['lite_src'])
+        bpy.data.objects.remove(parts['lite_src'])
+        log('interior_lite')
     if argval('--preview'):
         v = argval('--views')
         preview(argval('--preview'), v.split(',') if v else None, 'RANDOM' if '--random' in ARG else 'MATERIAL')
@@ -198,7 +232,7 @@ def main():
         for im in bpy.data.images:
             if im.filepath:
                 im.filepath = bpy.path.abspath(im.filepath)
-        bpy.ops.wm.save_as_mainfile(filepath=os.path.join(OUT_DIR, 'b737.blend'), relative_remap=False)
+        bpy.ops.wm.save_as_mainfile(filepath=argval('--blend', os.path.join(OUT_DIR, 'b737.blend')), relative_remap=False)
     log('done')
 
 

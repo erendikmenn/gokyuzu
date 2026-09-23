@@ -61,7 +61,11 @@ const gltf = await loader.loadGLTF(useLod ? model.lodUrl : model.url);
 let rig;
 if (useLod) {
   rig = { object: gltf.scene, eye: { pilot: new THREE.Vector3() }, contacts: [{ position: new THREE.Vector3(0, -2.9, 0) }], screens: {}, update() {}, setView() {} };
-} else rig = createRig(gltf.scene);
+} else {
+  rig = createRig(gltf.scene);
+  // detailed flight deck: second GLB (CONTRACTS-SF.md 6.2.1); ?cockpit=0 shows interior_lite only
+  if (model.cockpitUrl && q.get('cockpit') !== '0') rig.attachCockpit((await loader.loadGLTF(model.cockpitUrl)).scene);
+}
 rig.object.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
 const gy = -Math.min(...rig.contacts.map((c) => c.position.y));
 rig.object.position.y = gy;

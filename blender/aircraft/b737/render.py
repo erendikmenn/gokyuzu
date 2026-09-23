@@ -103,7 +103,7 @@ def piston_extend(amount):
 
 
 # ------------------------------------------------------------------ environment
-def world_sky(elev, azim, strength=1.0):
+def world_sky(elev, azim, strength=1.0, sun_disc=True):
     sc = bpy.context.scene
     w = bpy.data.worlds.new('SkyW')
     sc.world = w
@@ -128,7 +128,7 @@ def world_sky(elev, azim, strength=1.0):
         except AttributeError:
             pass
     try:
-        sky.sun_disc = True
+        sky.sun_disc = sun_disc
     except AttributeError:
         pass
     bg = nt.nodes.new('ShaderNodeBackground')
@@ -277,9 +277,12 @@ def lights_on(nav=True, beacon=True, landing=False, strobe=False):
 
 def screens():
     for sname, img in (('screen_pfd_capt', 'pfd'), ('screen_pfd_fo', 'pfd'), ('screen_nd_capt', 'nd'), ('screen_nd_fo', 'nd'),
-                       ('screen_eicas_upper', 'eicas'), ('screen_eicas_lower', 'cdu'), ('screen_cdu_capt', 'cdu'), ('screen_cdu_fo', 'cdu')):
+                       ('screen_eicas_upper', 'eicas'), ('screen_eicas_lower', 'lower'), ('screen_cdu_capt', 'cdu'), ('screen_cdu_fo', 'cdu'),
+                       ('screen_isfd', 'isfd')):
         o = ob(sname)
-        p = os.path.join(TEX, f'fd_screen_{img}.png')
+        p = os.path.join(arg('--screendir', TEX), f'fd_screen_{img}.png')
+        if not os.path.exists(p) and img == 'lower':
+            p = os.path.join(arg('--screendir', TEX), 'fd_screen_eicas.png')
         if o is None or not os.path.exists(p):
             continue
         m = o.data.materials[0]
@@ -396,14 +399,105 @@ def finish(name, w, h, samples):
         sc.view_settings.exposure = float(arg('--exposure'))
     if arg('--out') and name != 'custom':
         name = arg('--out')
-    path = os.path.join(OUT, f'{name}.png')
+    path = os.path.join(arg('--outdir', OUT), f'{name}.png')
     render_still(path)
     print('RENDERED', path)
     return path
 
 
+FD_CAMS = {
+    # captain's eye looking straight ahead through the windshield
+    'fd_fwd': ((3.13, -0.53, 3.86), (2.13, -0.53, 3.66), 18),
+    # from between the seats (jumpseat), looking up at the forward overhead panel
+    'fd_overhead': ((4.00, 0.0, 3.72), (3.20, 0.0, 4.30), 17),
+    # from above the centre, looking down at the control stand
+    'fd_pedestal': ((3.95, 0.0, 4.22), (3.00, 0.0, 2.95), 22),
+    # classic overview from behind the seats
+    # jumpseat view: camera pose solved from the WN 737-8H4 reference photo (PnP on known panel points)
+    'fd_overview': ((3.384, -0.017, 3.561), (2.402, -0.017, 3.370), 15.1),
+    # inspection close-ups
+    'fd_yoke': ((3.10, -0.25, 3.62), (2.70, -0.53, 3.15), 28),
+    'fd_mcp': ((3.00, 0.0, 3.80), (2.52, 0.0, 3.46), 26),
+    'fd_tq': ((3.30, 0.02, 3.62), (2.93, 0.0, 2.93), 24),
+    # camera solved from the WN 737-8H4 reference photo (4:3, 100 deg)
+    'fd_wn': ((3.384, -0.017, 3.561), (2.402, -0.017, 3.370), 15.1),
+}
+
+
+FD_EXPOSURE = 0.3
+
+
+def white_balance(kelvin):
+    vs = bpy.context.scene.view_settings
+    try:
+        vs.use_white_balance = True
+        vs.white_balance_temperature = kelvin
+        vs.white_balance_tint = 0.0
+    except AttributeError:
+        pass
+
+
+def fd_setup():
+    pose(flaps=0.0, gear=1.0)
+    hide_interior(False)
+    glass_for_render(True)
+    screens()
+    skin_backfaces_transparent()
+    # overcast day like the reference photos (no sun disc: soft light through the windows) + cockpit dome/flood lights
+    world_sky(float(arg('--sunel', 32)), float(arg('--az', 330)), float(arg('--sky', 0.9)), sun_disc=arg('--sundisc', '0') == '1')
+    add_ground(rot_deg=0)
+    if arg('--domelight', '1') == '1':
+        cockpit_lights()
+    white_balance(float(arg('--wb', 7200)))
+
+
+def cockpit_lights():
+    """Dome light (ceiling behind the seats) + panel flood lights under the glareshield, like the cockpit photos."""
+    def area(name, loc_g, tgt_g, size, energy, color=(1.0, 0.95, 0.88)):
+        ld = bpy.data.lights.new(name, 'AREA')
+        ld.shape = 'RECTANGLE'
+        ld.size, ld.size_y = size
+        ld.energy = energy
+        ld.color = color
+        lo = bpy.data.objects.new(name, ld)
+        bpy.context.scene.collection.objects.link(lo)
+        p = Vector(S.to_b(*loc_g)); t = Vector(S.to_b(*tgt_g))
+        lo.location = p
+        lo.rotation_euler = (t - p).to_track_quat('-Z', 'Y').to_euler()
+        return lo
+    k = float(arg('--domek', 1.0))
+    area('dome', (3.75, 0.0, 4.62), (3.4, 0.0, 3.0), (0.50, 0.30), 55 * k)
+    area('flood', (2.50, 0.0, 3.405), (2.40, 0.0, 3.0), (1.3, 0.04), 6 * k, (1.0, 0.93, 0.82))
+    area('ovhflood', (3.40, 0.0, 3.70), (3.25, 0.0, 4.5), (0.6, 0.2), 10 * k)
+
+
+def hide_tree(name, h=True):
+    o = ob(name)
+    stack = [o] if o else []
+    while stack:
+        o = stack.pop()
+        o.hide_render = h
+        stack.extend(o.children)
+
+
+def remap_textures(texdir):
+    """Point images that live in tex/ to another folder (renders of an older .blend with its own textures)."""
+    for im in bpy.data.images:
+        fp = bpy.path.abspath(im.filepath) if im.filepath else ''
+        if fp and os.path.dirname(os.path.abspath(fp)) == os.path.abspath(TEX):
+            alt = os.path.join(texdir, os.path.basename(fp))
+            if os.path.exists(alt):
+                im.filepath = alt
+                im.reload()
+
+
 def shot(name, samples):
     remember()
+    if arg('--texdir'):
+        remap_textures(arg('--texdir'))
+    # interior_lite is the exterior GLB's stand-in for the flight deck: never rendered (the detailed interior is shown
+    # in cockpit shots; exterior shots keep the approved look with the dark cockpit glass)
+    hide_tree('interior_lite', True)
     scale = float(arg('--scale', 1.0))
     if name in ('hero', 'thumb'):
         # golden hour, low 3/4 front-left, on the runway
@@ -446,18 +540,21 @@ def shot(name, samples):
         c.rotation_euler = (0, 0, math.radians(90))      # nose to the left, fuselage along the image width
         return finish('planform', int(1920 * scale), int(1080 * scale), samples)
     if name == 'flightdeck':
-        pose(flaps=0.0, gear=1.0)
-        hide_interior(False)
-        glass_for_render(True)
-        screens()
-        skin_backfaces_transparent()
-        world_sky(float(arg('--sunel', 32)), float(arg('--az', 330)), float(arg('--sky', 0.45)))
-        add_ground(rot_deg=0)
+        fd_setup()
         e = ob('eye_pilot').matrix_world.translation
         eye = Vector((e.x + 0.05, e.y - 0.12, e.z + 0.02))
         c = cam(tuple(eye), (eye.x + 0.25, eye.y + 1.0, eye.z - 0.42), 17)
-        bpy.context.scene.view_settings.exposure = float(arg('--exposure', -0.6))
+        bpy.context.scene.view_settings.exposure = float(arg('--exposure', FD_EXPOSURE))
         return finish('flightdeck', int(1920 * scale), int(1080 * scale), samples)
+    if name in FD_CAMS:
+        # flight-deck detail cameras (ground frame: X aft of the nose tip, Y right, Z above ground)
+        fd_setup()
+        loc, tgt, lens = FD_CAMS[name]
+        cam(tuple(S.to_b(*loc)), tuple(S.to_b(*tgt)), lens)
+        bpy.context.scene.view_settings.exposure = float(arg('--exposure', FD_EXPOSURE))
+        if name == 'fd_wn':
+            return finish(name, int(1440 * scale), int(1080 * scale), samples)
+        return finish(name, int(1920 * scale), int(1080 * scale), samples)
     if name == 'cabin':
         pose()
         hide_interior(False)

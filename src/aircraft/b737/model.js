@@ -10,6 +10,8 @@ const repo = (p) => new URL(`../../../${p}`, import.meta.url).href;
 export const model = {
   url: repo('assets/aircraft/b737/b737.glb'),
   lodUrl: repo('assets/aircraft/b737/b737_lod.glb'),
+  // detailed flight deck (CONTRACTS-SF.md 6.2.1): streamed after the exterior, root node `interior`, same frame
+  cockpitUrl: repo('assets/aircraft/b737/b737_cockpit.glb'),
   displays: {
     screen_pfd_capt: 'b737.pfd',
     screen_nd_capt: 'b737.nd',
@@ -19,6 +21,9 @@ export const model = {
     screen_pfd_fo: 'b737.pfd',
     screen_cdu_capt: 'b737.cdu',
     screen_cdu_fo: 'b737.cdu',
+    // integrated standby flight display: no 'b737.isfd' type exists; the Airbus ISIS draws the same page
+    // (attitude, speed / altitude tapes, baro) and is visually a close match
+    screen_isfd: 'a320.isis',
   },
   thumbnail: repo('renders/aircraft/b737/thumb.jpg'),
 };
@@ -167,8 +172,10 @@ export function createRig(gltfScene) {
   });
 
   // ---------------------------------------------------------------- materials & view
-  const interior = get('interior');
-  const cabin = get('interior_cabin');
+  // the detailed interior arrives later (attachCockpit); the exterior GLB carries the light stand-in interior_lite
+  let interior = get('interior');
+  let cabin = get('interior_cabin');
+  const lite = get('interior_lite');
   let glassMat = null;
   const lensMats = {};
   root.traverse((o) => {
@@ -189,18 +196,23 @@ export function createRig(gltfScene) {
     glassMat.envMapIntensity = 1.6;
   }
   root.traverse((o) => { if (o.isMesh && o.material === glassMat) o.renderOrder = 5; });
-  // the enclosed flight deck gets far less sky light than the image-based environment implies
-  if (interior) {
+  // the enclosed flight deck gets far less sky light than the image-based environment implies (ambient occlusion and
+  // soft window light are baked into the cockpit textures; this only tones down the unoccluded environment map)
+  function tuneInteriorMaterials(node) {
+    if (!node) return;
     const seen = new Set();
-    interior.traverse((o) => {
+    node.traverse((o) => {
       if (!o.isMesh) return;
       for (const m of (Array.isArray(o.material) ? o.material : [o.material])) {
-        if (!m || seen.has(m) || (m.name || '').startsWith('screen')) continue;
+        if (!m || seen.has(m)) continue;
         seen.add(m);
-        m.envMapIntensity = 0.5;
+        if ((m.name || '').startsWith('screen')) { m.toneMapped = false; continue; }
+        m.envMapIntensity = 0.55;
       }
     });
   }
+  tuneInteriorMaterials(interior);
+  tuneInteriorMaterials(lite);
 
   const LENS_COL = { lens_red: 0xff2010, lens_green: 0x20ff60, lens_clear: 0xfff6e8, lens_beacon: 0xff1808 };
   for (const [n, m] of Object.entries(lensMats)) { if (LENS_COL[n] !== undefined) m.emissive = new THREE.Color(LENS_COL[n]); m.emissiveIntensity = 0; }
@@ -261,9 +273,15 @@ export function createRig(gltfScene) {
   const screens = {};
   root.traverse((o) => { if (o.isMesh && o.name.startsWith('screen_')) screens[o.name] = o; });
 
-  // yokes (optional nodes)
-  const yokes = ['L', 'R'].map((s) => ({ col: pivot(`yoke_col_${s}`), wheel: pivot(`yoke_${s}`) }));
-  const levers = { thr1: pivot('lever_thrust_1'), thr2: pivot('lever_thrust_2'), sb: pivot('lever_speedbrake'), flap: pivot('lever_flap') };
+  // yokes and levers live in the cockpit GLB: (re)bound in attachCockpit
+  const yokes = [];
+  const levers = {};
+  function bindControls() {
+    yokes.length = 0;
+    for (const s of ['L', 'R']) yokes.push({ col: pivot(`yoke_col_${s}`), wheel: pivot(`yoke_${s}`) });
+    Object.assign(levers, { thr1: pivot('lever_thrust_1'), thr2: pivot('lever_thrust_2'), sb: pivot('lever_speedbrake'), flap: pivot('lever_flap') });
+  }
+  bindControls();
 
   // ---------------------------------------------------------------- state
   const st = { flapDeg: 0, slat: 0, gear: 1, t: 0, view: null, flagsApplied: false };
@@ -381,10 +399,11 @@ export function createRig(gltfScene) {
       if (y.wheel) y.wheel.o.quaternion.copy(y.wheel.q0).multiply(tmpQ.setFromAxisAngle(Z_AXIS, -ail * 70 * D));
     }
     const e0 = eng[0] || IDLE_ENGINE, e1 = eng[1] || e0;
-    if (levers.thr1) setRot(levers.thr1, -clamp01(e0.throttle ?? e0.n1 ?? 0) * 55 * D);
-    if (levers.thr2) setRot(levers.thr2, -clamp01(e1.throttle ?? e1.n1 ?? 0) * 55 * D);
-    if (levers.sb) setRot(levers.sb, Math.max(sb, ground) * 45 * D);
-    if (levers.flap) setRot(levers.flap, (fdeg / 40) * 60 * D);
+    // travel matches the quadrant slots: thrust idle -> full 37 deg, speed brake DOWN -> UP 31 deg, flaps UP -> 40 over 40 deg
+    if (levers.thr1) setRot(levers.thr1, -clamp01(e0.throttle ?? e0.n1 ?? 0) * 37 * D);
+    if (levers.thr2) setRot(levers.thr2, -clamp01(e1.throttle ?? e1.n1 ?? 0) * 37 * D);
+    if (levers.sb) setRot(levers.sb, Math.max(sb, ground) * 31 * D);
+    if (levers.flap) setRot(levers.flap, (fdeg / 40) * 40 * D);
   }
 
   function setView(view) {
@@ -399,6 +418,8 @@ export function createRig(gltfScene) {
     st.view = view;
     const cockpit = view === 'cockpit';
     if (interior) interior.visible = cockpit;
+    // the stand-in shows from outside, and in the cockpit view until the detailed interior is attached
+    if (lite) lite.visible = !cockpit || !interior;
     if (cabin) cabin.visible = false;
     if (glassMat) {
       glassMat.opacity = cockpit ? 0.08 : 0.9;
@@ -406,6 +427,23 @@ export function createRig(gltfScene) {
       glassMat.envMapIntensity = cockpit ? 0.5 : 1.6;
       glassMat.needsUpdate = true;
     }
+  }
+
+  /** Detailed flight deck (second GLB, root node `interior`, exported from the same scene frame as the exterior). */
+  function attachCockpit(gltfScene) {
+    if (!gltfScene || rig.cockpitReady) return;
+    root.add(gltfScene);
+    gltfScene.updateMatrixWorld(true);
+    gltfScene.traverse((o) => { if (o.name && !byName.has(o.name)) byName.set(o.name, o); });
+    interior = byName.get('interior') || gltfScene;
+    cabin = byName.get('interior_cabin') || null;
+    gltfScene.traverse((o) => { if (o.isMesh && o.name.startsWith('screen_')) screens[o.name] = o; });
+    tuneInteriorMaterials(interior);
+    bindControls();
+    rig.cockpitReady = true;
+    const v = st.view || 'exterior';
+    st.view = null;
+    setView(v);
   }
 
   const rig = {
@@ -416,6 +454,8 @@ export function createRig(gltfScene) {
     bounds: { length: 39.47, span: 35.79, height: 12.55, radius: 21.5 },
     update,
     setView,
+    attachCockpit,
+    cockpitReady: !!interior,
   };
   update(0, { aileron: 0, elevator: 0, rudder: 0, flaps: 0, slats: 0, spoilers: 0, speedbrake: 0, gear: 1, gearCompression: [0.35, 0.35, 0.35], wheelSpeed: 0, engines: [{ n1: 0 }, { n1: 0 }], lights: {} });
   setView('exterior');
