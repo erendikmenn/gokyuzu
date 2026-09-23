@@ -1,0 +1,50 @@
+<!doctype html>
+<!-- Decode / upload micro-benchmark (tools/perf/decode-bench.mjs). Served from a (scratch) repo root, e.g.
+     http://localhost:5195/tools/perf/bench/decode-bench.html?files=exp-assets/f16.draco.glb,exp-assets/f16.ktx2.glb&reps=5
+     For each file: download once, then `reps` times: GLTFLoader.parseAsync (Draco / meshopt / KTX2 transcode / image
+     decode, workers included), GPU upload of every texture (renderer.initTexture) and program compile (renderer.compile). -->
+<html><head><meta charset="utf-8"><title>decode bench</title>
+<script type="importmap">{ "imports": { "three": "../../../node_modules/three/build/three.module.js", "three/addons/": "../../../node_modules/three/examples/jsm/" } }</script>
+</head><body>
+<canvas id="c" width="256" height="256"></canvas>
+<script type="module">
+import * as THREE from 'three';
+import { createAssetLoader } from '../../../src/core/assets.js';
+const q = new URLSearchParams(location.search);
+const files = (q.get('files') || '').split(',').filter(Boolean);
+const reps = Number(q.get('reps') || 5);
+const renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('c'), logarithmicDepthBuffer: true });
+const loader = createAssetLoader(renderer);
+const cam = new THREE.PerspectiveCamera(60, 1, 0.3, 80000);
+const med = (a) => { const s = [...a].sort((x, y) => x - y); return +s[Math.floor(s.length / 2)].toFixed(1); };
+const out = {};
+for (const f of files) {
+  const url = new URL('../../../' + f, location.href).href;
+  const t0 = performance.now();
+  const buf = await (await fetch(url)).arrayBuffer();
+  const r = { KB: Math.round(buf.byteLength / 1024), fetchMs: +(performance.now() - t0).toFixed(1), parse: [], upload: [], compile: [], textures: 0, gpuTexMB: 0 };
+  for (let i = 0; i < reps; i++) {
+    const tp = performance.now();
+    const gltf = await loader.gltf.parseAsync(buf.slice(0), url.slice(0, url.lastIndexOf('/') + 1));
+    r.parse.push(performance.now() - tp);
+    const scene = gltf.scene;
+    const texs = new Set();
+    scene.traverse((o) => { if (o.material) for (const m of [].concat(o.material)) for (const v of Object.values(m)) if (v && v.isTexture) texs.add(v); });
+    const before = window.__perf && window.__perf.gpuBytes ? window.__perf.gpuBytes().tex : 0;
+    const tu = performance.now();
+    for (const t of texs) renderer.initTexture(t);
+    renderer.getContext().finish();
+    r.upload.push(performance.now() - tu);
+    const after = window.__perf && window.__perf.gpuBytes ? window.__perf.gpuBytes().tex : 0;
+    r.textures = texs.size; r.gpuTexMB = +((after - before) / 1048576).toFixed(1);
+    const tc = performance.now();
+    renderer.compile(scene, cam);
+    renderer.getContext().finish();
+    r.compile.push(performance.now() - tc);
+    scene.traverse((o) => { if (o.geometry) o.geometry.dispose(); if (o.material) for (const m of [].concat(o.material)) { for (const v of Object.values(m)) if (v && v.isTexture) v.dispose(); m.dispose(); } });
+  }
+  out[f] = { KB: r.KB, fetchMs: r.fetchMs, parseFirstMs: +r.parse[0].toFixed(1), parseMedMs: med(r.parse.slice(1).length ? r.parse.slice(1) : r.parse), uploadMedMs: med(r.upload), compileFirstMs: +r.compile[0].toFixed(1), textures: r.textures, gpuTexMB: r.gpuTexMB };
+}
+window.__bench = out;
+document.title = 'done';
+</script></body></html>
