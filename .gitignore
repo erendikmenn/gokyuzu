@@ -18,3 +18,11 @@ blender/**/*.jpg
 blender/**/*.exr
 *.blend
 dist/
+# downloaded reference photos/drawings (reference only, never shipped or committed)
+blender/**/ref/**/*.webp
+blender/**/ref/**/*.jpeg
+blender/**/ref/**/*.gif
+blender/**/ref/**/*.pdf
+blender/**/ref/**/*.tif
+blender/**/ref/**/*.tiff
+blender/**/refimg/

@@ -96,13 +96,7 @@ async function loadAircraft(id) {
   const def = await loadAircraftDefinition(id);
   const gltf = def.model.url ? await loader.loadGLTF(def.model.url) : null;
   const rig = def.createRig(gltf ? gltf.scene : null);
-  rig.object.traverse((o) => {
-    if (!o.isMesh) return;
-    // glass, plumes and other see-through materials neither cast shadows nor darken the cockpit
-    const seeThrough = [].concat(o.material).some((m) => m && (m.transparent || m.transmission > 0 || m.blending === THREE.AdditiveBlending));
-    o.castShadow = !seeThrough || !!o.customDepthMaterial;   // rigs may give see-through parts (rotor disc) a custom shadow
-    o.receiveShadow = true;
-  });
+  setupShadows(rig.object);
   if (state.rig) scene.remove(state.rig.object);
   scene.add(rig.object);
   // dim flight-deck flood light (always present so the light count never changes; only lit in cockpit view)
@@ -112,20 +106,47 @@ async function loadAircraft(id) {
   const factory = def.spec.category === 'helicopter' ? createHelicopterModel : createFixedWingModel;
   const flight = factory(def.spec, { contacts: rig.contacts });
   bindFlightEvents(flight);
-  state.displays = Object.entries(def.model.displays || {}).flatMap(([meshName, type]) => {
-    const mesh = rig.screens[meshName];
-    if (!mesh) { console.warn(`[app] screen mesh ${meshName} missing`); return []; }
-    // mesh/eye/root let the avionics align HUD symbology with the real glass and skip redraws of off-screen displays
-    const display = createDisplay(type, { mesh, eye: rig.eye.pilot, root: rig.object });
-    mesh.material = bindScreenMaterial(display, type);
-    return [{ display, mesh }];
-  });
+  state.displays = [];
+  const lazyCockpit = !!(def.model.cockpitUrl && rig.attachCockpit);
+  if (!lazyCockpit) bindDisplays(def, rig);
   input.setAircraft(def.spec);
   hud.setAircraft(def);
   cameraRig.setAircraft(rig, def);
   // audio streams in the background: the game starts without waiting and sounds fade in when their buffers arrive
   audio.loadAircraft(id).catch((e) => console.warn('[audio]', e));
   Object.assign(state, { def, rig, flight });
+  if (lazyCockpit) {
+    // detailed cockpit (CONTRACTS-SF.md §6.2.1): streamed after the exterior; the game only waits for it when it starts in the cockpit
+    const ready = loader.loadGLTF(def.model.cockpitUrl).then((g) => {
+      if (state.rig !== rig) return;   // another aircraft was loaded meanwhile
+      rig.attachCockpit(g.scene);
+      setupShadows(g.scene);
+      bindDisplays(def, rig);
+    }).catch((e) => console.warn('[app] cockpit', e));
+    if (cameraRig.view === 'cockpit') await ready;
+  }
+}
+
+function setupShadows(root) {
+  root.traverse((o) => {
+    if (!o.isMesh) return;
+    // glass, plumes and other see-through materials neither cast shadows nor darken the cockpit
+    const seeThrough = [].concat(o.material).some((m) => m && (m.transparent || m.transmission > 0 || m.blending === THREE.AdditiveBlending));
+    o.castShadow = !seeThrough || !!o.customDepthMaterial;   // rigs may give see-through parts (rotor disc) a custom shadow
+    o.receiveShadow = true;
+  });
+}
+
+function bindDisplays(def, rig) {
+  for (const [meshName, type] of Object.entries(def.model.displays || {})) {
+    const mesh = rig.screens[meshName];
+    if (!mesh) { console.warn(`[app] screen mesh ${meshName} missing`); continue; }
+    if (state.displays.some((d) => d.mesh === mesh)) continue;
+    // mesh/eye/root let the avionics align HUD symbology with the real glass and skip redraws of off-screen displays
+    const display = createDisplay(type, { mesh, eye: rig.eye.pilot, root: rig.object });
+    mesh.material = bindScreenMaterial(display, type);
+    state.displays.push({ display, mesh });
+  }
 }
 
 /** Self-lit screen material: LCDs keep their exact colors (no tone mapping); HUD symbology is added onto the combiner glass. */
@@ -185,6 +206,10 @@ input.on('autopilot', () => { if (audio.acknowledge) audio.acknowledge(); });   
 input.on('camera', () => hud.showMessage(`Kamera: ${cameraRig.next()}`, 1000));
 input.on('cameraPrev', () => hud.showMessage(`Kamera: ${cameraRig.prev()}`, 1000));
 input.on('view', () => hud.showMessage(cameraRig.toggleView(), 1000));
+// the detailed cockpit may still be streaming when the player first switches to it
+for (const a of ['camera', 'cameraPrev', 'view']) input.on(a, () => {
+  if (cameraRig.view === 'cockpit' && state.rig && state.rig.cockpitReady === false) hud.showMessage('Kokpit yükleniyor…', 1500);
+});
 input.on('lookBack', () => cameraRig.lookBack(true));
 input.on('reset', () => { if (state.flight) { resetFlight(); hud.showMessage('Yeniden başlatıldı', 1000); } });
 input.on('pause', () => { state.paused = !state.paused; hud.setPaused(state.paused); audio.setPaused(state.paused); });

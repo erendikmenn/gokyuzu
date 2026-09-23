@@ -168,6 +168,33 @@ The rig creates runtime effects in code: afterburner flame (layered additive con
 `afterburner`), heat shimmer optional, rotor/prop blur discs, strobe/beacon flashes, landing light spot (one `SpotLight`
 max), wingtip vortex/condensation optional.
 
+#### 6.2.1 Detailed cockpit as a second GLB (wave 6)
+
+The game starts in the chase view, so the detailed interior is streamed after the exterior instead of delaying the start.
+
+```js
+// model.js (additions; both optional; without cockpitUrl everything behaves as before)
+export const model = { ..., cockpitUrl: 'assets/aircraft/<id>/<id>_cockpit.glb' };
+interface Rig {
+  ...
+  attachCockpit(gltfScene): void;   // add the detailed interior under rig.object, then fill rig.screens from its screen_* meshes
+  cockpitReady: boolean;            // false until attachCockpit ran
+}
+```
+- `<id>.glb` (exterior): full exterior, all §5.1 nodes (eye_*, contacts, controls, gear, lights), plus a light stand-in
+  `interior_lite` (≤ 15k triangles: seats, glareshield, panel shapes, pilot) so canopies and windows are not empty from outside.
+  No `screen_*` meshes in the exterior GLB when a cockpit GLB exists (the HUD combiner glass of fighters may stay; its `screen_hud`
+  goes into the cockpit GLB).
+- `<id>_cockpit.glb`: root node `interior` holding the whole detailed cockpit (and cabin), exported from the **same Blender
+  scene frame** as the exterior (origin = CG, nose −Z in Three), so it lines up with no runtime offset. Contains all `screen_*`
+  meshes listed in `model.displays`.
+- The rig: `setView('cockpit')` shows `interior` (when attached) and hides `interior_lite`; `setView('exterior')` does the
+  reverse. Before attach, the cockpit view shows `interior_lite`.
+- The host (main.js, dev/aircraft.html) loads the cockpit GLB right after the exterior, calls `rig.attachCockpit(scene)`, sets
+  shadows on the new meshes and binds the displays; it waits for it before the first frame only if the start view is cockpit.
+- Budgets: exterior GLB ≤ 10 MB, cockpit GLB ≤ 12 MB (Draco on; textures JPEG where no alpha, ≤ 4096², prefer 2048 atlases),
+  cockpit ≤ 400k triangles. Bake ambient occlusion / soft interior lighting into the cockpit's color textures (cheap realism).
+
 ### 6.3 Flight models (P1: `src/flight/fixedwing.js`, P2: `src/flight/helicopter.js`) and input (P1: `src/flight/input.js`)
 
 ```js
@@ -269,3 +296,28 @@ applies it live). The initial preset is auto-detected from the GPU (Intel/integr
   - W3 landmarks: `landmarkLodScale`, `shadows` (only the near LOD casts).  W4 airports: `airportLodScale`, `shadows`.
 - Target on **low**: a typical Intel Iris Xe / AMD integrated laptop at 1080p holds ≥ 40 fps and stays under
   ~1 GB of GPU+JS memory at SFO and downtown. Measure your part's cost with each preset on this Mac and report.
+
+## 9. Asset URLs and cache busting (wave 6)
+
+Players keep files in their browser cache, so every asset URL carries a content version once published.
+- `tools/deploy/build_dist.mjs` writes `dist/assets/versions.json`: `{ "<directory>": "<short hash>" }` for every directory
+  under `assets/` and `renders/` that holds files (hash over the names + contents of the files directly in it).
+- `src/core/assets.js` exports `assetUrl(path)`: appends `?v=<hash>` of the file's directory (unchanged when the file is not
+  listed, e.g. in local development where versions.json does not exist). The map is loaded once at startup
+  (`loadAssetVersions()`, `cache: 'no-cache'`), before any asset request.
+- Every request for something under `assets/` or `renders/` goes through `assetUrl` (Three.js loaders via the loading
+  manager's URL modifier; `fetch` via `assetFetch(path, init)` from `src/core/assets.js`, which also retries transient network
+  errors). Audio keeps its per-file hashes (§6.5).
+
+## 10. Wave 6 working rules (visual fidelity)
+
+- Match the real aircraft: gather references first (public-domain US government photos from Wikimedia Commons / DVIDS,
+  manufacturer drawings, cockpit photos), save them under `blender/aircraft/<id>/ref/` (never shipped), and compare your render
+  with a reference photo **from the same camera angle** before calling a part done.
+- Save the current look before changing it: `renders/aircraft/<id>/before/` (same cameras as the new renders) for the
+  before/after comparison.
+- Every Blender run is wrapped in a hard time limit, e.g. `perl -e 'alarm 1800; exec @ARGV' /Applications/Blender.app/Contents/MacOS/Blender -b ...`.
+  Several agents share one GPU: iterate with small renders (≤ 1280×720, ≤ 64 samples + denoise), keep the final 1920×1080 /
+  2560×1440 renders for the end, and never leave Blender processes running.
+- Keep §5.1 node names, pivots and contact points; keep real dimensions. The game must still load with 0 console errors
+  (`node tools/shot.mjs "index.html?aircraft=<id>&spawn=<spawn>" ...`, the dev server runs at http://localhost:5173/).

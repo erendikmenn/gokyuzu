@@ -45,6 +45,12 @@ const def = await loadAircraftDefinition(q.get('id') || 'f16');
 const gltf = def.model.url ? await loader.loadGLTF(def.model.url) : null;
 const rig = def.createRig(gltf ? gltf.scene : null);
 rig.object.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+// detailed cockpit (CONTRACTS-SF.md §6.2.1): a second GLB attached to the rig; ?cockpit=0 previews interior_lite only
+if (def.model.cockpitUrl && rig.attachCockpit && q.get('cockpit') !== '0') {
+  const cg = await loader.loadGLTF(def.model.cockpitUrl);
+  rig.attachCockpit(cg.scene);
+  cg.scene.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+}
 const gearDownY = -Math.min(...rig.contacts.map((c) => c.position.y));
 rig.object.position.y = gearDownY;
 scene.add(rig.object);
@@ -92,7 +98,7 @@ function visual(t) {
   };
 }
 const info = document.getElementById('info');
-info.textContent = `${def.name}  ·  ${def.model.url || 'STUB placeholder'}\nscreens: ${Object.keys(rig.screens).join(', ') || '-'}\ncontacts: ${rig.contacts.map((c) => c.name).join(', ')}`;
+info.textContent = `${def.name}  ·  ${def.model.url || 'STUB placeholder'}${rig.cockpitReady ? '  +  ' + def.model.cockpitUrl : ''}\nscreens: ${Object.keys(rig.screens).join(', ') || '-'}\ncontacts: ${rig.contacts.map((c) => c.name).join(', ')}`;
 let fpsAcc = 0, frames = 0, last = performance.now();
 renderer.setAnimationLoop(() => {
   const now = performance.now(), dt = Math.min((now - last) / 1000, 0.1); last = now;

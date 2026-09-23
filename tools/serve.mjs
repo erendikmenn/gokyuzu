@@ -28,6 +28,11 @@ http.createServer((req, res) => {
     let file = path.join(root, urlPath);
     if (!file.startsWith(root)) { res.writeHead(403).end(); return; }
     if (fs.existsSync(file) && fs.statSync(file).isDirectory()) file = path.join(file, 'index.html');
+    // the publish build writes build.json into dist/; the repo root answers with a local stamp instead of a console-visible 404
+    if (urlPath === '/build.json' && !fs.existsSync(file)) {
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }).end('{"version":"dev","target":"local"}');
+      return;
+    }
     if (!fs.existsSync(file)) { res.writeHead(404, { 'Content-Type': 'text/plain' }).end('not found'); return; }
     const stat = fs.statSync(file);
     const headers = {
