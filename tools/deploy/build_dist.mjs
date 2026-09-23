@@ -12,7 +12,7 @@ const dist = path.join(root, 'dist');
 const withGallery = process.argv.includes('--gallery');
 
 // directory names and file patterns that are build inputs / caches, never loaded by the game
-const SKIP_DIRS = new Set(['_bake', 'bake', 'build', 'render', 'cache', 'raw', 'src_img', '__pycache__', 'before', 'fidelity', 'ref']);
+const SKIP_DIRS = new Set(['_bake', 'bake', 'build', 'render', 'cache', 'raw', 'src_img', '__pycache__', 'before', 'fidelity', 'ref', 'candidates']);   // candidates: audio research material (dev/sesler.html), never shipped
 // aircraft textures are embedded in the GLBs (tex/ holds bake inputs); other layers (airports) load tex/ at runtime
 const SKIP_UNDER = [['assets/aircraft', 'tex']];
 const SKIP_FILE = /(\.(blend\d?|exr|tif|tiff|py|pyc|psd|kra|log)$)|(^\.)|(^compare)|(^cmp)/i;
