@@ -6,8 +6,8 @@ node_modules/
 __pycache__/
 *.pyc
 # generated / downloaded (reproducible from tools/ and blender/ scripts)
-assets/
-renders/
+/assets/
+/renders/
 data/sf/raw/
 data/sf/cache/
 *.blend1

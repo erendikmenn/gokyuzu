@@ -1,0 +1,10 @@
+{
+ "minX": -16467,
+ "maxX": 20799,
+ "minZ": -28016,
+ "maxZ": 7745,
+ "width": 1553,
+ "height": 1490,
+ "metersPerPixel": 24.0,
+ "source": "assets/sf/terrain (USGS 3DEP + NAIP via W1), baked by src/ui/tools/bake_bay_map.py"
+}
