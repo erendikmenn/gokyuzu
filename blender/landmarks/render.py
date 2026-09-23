@@ -40,7 +40,7 @@ SCENES = {
         city=dict(level='l2', radius=16000)),
     # Bay Bridge west span at dusk from Treasure Island / YBI north shore, looking SW to the city
     'bay_bridge_dusk': dict(
-        cam=(36.0, 14.0, -22139.0), look=(-900.0, 95.0, -19650.0), lens=32.0, size=(2560, 1440),
+        cam=(-260.0, 38.0, -22230.0), look=(-1150.0, 88.0, -19620.0), lens=30.0, size=(2560, 1440),
         sun_el=1.2, sun_az=262.0, exposure=-0.9, haze=6e-6, samples=256, night=0.6,
         near=('bb_near', -3200, -22800, 2400, -17600, 3.0, 2.0),
         far=('bay_far', -22000, -34000, 16000, 0, 32.0, 12.0),
@@ -57,7 +57,7 @@ SCENES = {
     # Alcatraz from the air (north-west), city behind
     'alcatraz': dict(
         cam=(-4950.0, 230.0, -23620.0), look=(-4380.0, 25.0, -23000.0), lens=35.0, size=(2560, 1440),
-        sun_el=24.0, sun_az=235.0, exposure=-2.4, haze=4e-6, samples=256,
+        sun_el=24.0, sun_az=235.0, exposure=-2.4, haze=4e-6, samples=256, grade=(0.78, 0.78, 0.76),
         near=('alc_near', -5400, -24000, -3400, -22200, 2.0, 0.5),
         far=('bay_far', -22000, -34000, 16000, 0, 32.0, 12.0),
         landmarks=['alcatraz', 'transamerica', 'salesforce', 'coit', 'bay_bridge_west', 'golden_gate', 'pier_39', 'ferry'],
@@ -505,7 +505,7 @@ def main():
     far = ensure_patch(S['far'])
     dem = DEM([near, far])
     nb = S['near'][1:5]
-    terrain_object(near)
+    terrain_object(near, grade=S.get('grade', (1.0, 1.0, 1.0)))
     terrain_object(far, hole=nb, drop=6.0)
     water_plane(S.get('night', 0.0))
     if S.get('clouds'):
