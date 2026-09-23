@@ -4,7 +4,7 @@
 # Usage: tools/deploy/staging_access.sh            → adds your current public IP and republishes the CloudFront Function
 #        tools/deploy/staging_access.sh --list     → shows the allow list
 set -euo pipefail
-export AWS_PROFILE=gokyuzu-admin
+export AWS_PROFILE="${AWS_PROFILE_DEPLOY:-gokyuzu-deploy}"   # least-privilege IAM user (not root)
 LIST=~/.config/gokyuzu/staging_ips
 FN=gokyuzu-staging-ip-allow
 mkdir -p "$(dirname "$LIST")"; touch "$LIST"; chmod 600 "$LIST"

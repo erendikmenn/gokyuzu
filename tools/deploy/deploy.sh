@@ -2,10 +2,10 @@
 # Publish the game (AWS S3 + CloudFront, account "gokyuzu-admin"; DNS on Cloudflare).
 #   tools/deploy/deploy.sh staging            → https://staging.fs.erenailab.com (IP allow-list, any branch)
 #   tools/deploy/deploy.sh production [--yes] → https://fs.erenailab.com (only from a clean `main`, asks for confirmation, tags the release)
-# Needs: aws login --profile gokyuzu-admin
+# Needs: the ~/.aws/credentials profile "gokyuzu-deploy" (IAM user gokyuzu-deployer, least privilege)
 set -euo pipefail
 cd "$(dirname "$0")/../.."
-export AWS_PROFILE=gokyuzu-admin
+export AWS_PROFILE="${AWS_PROFILE_DEPLOY:-gokyuzu-deploy}"   # least-privilege IAM user (not root)
 TARGET="${1:-}"; YES="${2:-}"
 case "$TARGET" in
   staging)

@@ -72,3 +72,18 @@ Savaş uçaklarında gaz kolu MIL'de durur. Afterburner için gaz artırma tuşu
 Testler: `node tests/fixedwing.test.mjs` (182), `node tests/helicopter.test.mjs` (46), `node tests/physics.test.mjs` (ada oyunu, 26).
 
 Veri kaynakları: USGS 3DEP ve NAIP (kamu malı), OpenStreetMap (© OpenStreetMap katkıcıları, ODbL), DataSF (açık veri).
+
+## Geliştirme ve yayın düzeni
+
+| | Yerel | Staging | Canlı |
+|---|---|---|---|
+| Adres | `node tools/serve.mjs` → localhost:5173 | https://staging.fs.erenailab.com (yalnızca izinli IP) | https://fs.erenailab.com |
+| Git dalı | `dev` | `dev` | `main` |
+| Yayın | – | `tools/deploy/deploy.sh staging` | `tools/deploy/deploy.sh production` |
+
+- Geliştirme `dev` dalında yapılır; staging'de denenir; onaylanınca `dev` → `main` birleştirilir ve canlıya çıkılır.
+- Canlıya çıkış yalnızca temiz bir `main` dalından olur, onay ister ve yayını `release-YYYYMMDD-HHMM` etiketiyle işaretler.
+- Staging'in ekranında turuncu "STAGING · sürüm" etiketi görünür. IP değişirse: `tools/deploy/staging_access.sh` (izinli IP listesi repo dışında: `~/.config/gokyuzu/staging_ips`).
+- Geri alma: kovalar sürümlüdür (eski sürümler 30 gün saklanır). `.venv/bin/python tools/deploy/rollback.py production --list` ile yayın anlarını gör, `--to 2026-09-23T14:05` ile önizle, `--apply` ile geri al.
+- Yayın script'leri AWS'ye root ile değil, yalnızca iki kovaya ve iki CloudFront dağıtımına yetkili `gokyuzu-deployer` IAM kullanıcısıyla (`~/.aws/credentials` → `[gokyuzu-deploy]`) bağlanır.
+- Altyapı: AWS S3 + CloudFront (hesap "gokyuzu-admin", eu-central-1), sertifikalar ACM (us-east-1), DNS Cloudflare (erenailab.com, "DNS only").
