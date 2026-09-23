@@ -5,8 +5,12 @@ Usage (repo root):
           [--shots hero,front34,rear_ab,top,cockpit,thumb] [--samples N] [--pct P] [--outdir DIR] [--preview DIR]
 Full pipeline (textures -> AO bake -> skin atlas -> GLB/LOD -> renders): sh blender/aircraft/f16/make_all.sh
 Modules: f16_geom (splines/loft), f16_fuselage (cross-section loft), f16_parts (wing/tails/canopy/nozzle/intake),
-f16_gear, f16_cockpit(+_layout), f16_pilot, f16_assemble (booleans, pivots), f16_render (Cycles scenes),
-textures.py / cockpit_textures.py (venv Python: numpy + PIL + scipy).
+f16_gear, f16_pilot, f16_assemble (booleans, pivots), f16_render (Cycles scenes) + f16_cams (cockpit cameras),
+textures.py (venv Python: numpy + PIL + scipy).
+Cockpit (wave 6, CONTRACTS-SF.md §6.2.1): f16_ck_layout (panel frames + items), f16_ck_geom (geometry), f16_ck_art.py
+(venv: paints build/art/<panel>.png). --export joins the cockpit, gives it unique UVs, bakes albedo x soft sky light into
+tex/cockpit_atlas.jpg and writes f16_cockpit.glb (root 'interior') next to f16.glb (exterior + 'interior_lite').
+f16_cockpit.py (wave 5) still provides the canopy mirrors of the exterior.
 """
 import os
 import sys
@@ -51,6 +55,10 @@ def args():
             opts['pct'] = int(a[i + 1]); i += 1
         elif k == '--outdir':
             opts['outdir'] = a[i + 1]; i += 1
+        elif k == '--glbdir':
+            opts['glbdir'] = a[i + 1]; i += 1
+        elif k == '--res':
+            opts['res'] = tuple(int(x) for x in a[i + 1].split('x')); i += 1
         elif k.startswith('--'):
             opts[k[2:]] = True
         i += 1
@@ -219,6 +227,8 @@ def make_materials():
     M['pl_strap'] = principled('pl_strap', (0.07, 0.075, 0.05), 0.8)
     M['pl_glove'] = principled('pl_glove', (0.04, 0.035, 0.03), 0.7)
     M['pl_boot'] = principled('pl_boot', (0.02, 0.02, 0.02), 0.5)
+    M['pl_board'] = principled('pl_board', (0.03, 0.03, 0.032), 0.6)
+    M['pl_paper'] = principled('pl_paper', (0.62, 0.62, 0.58), 0.8)
     M['hud_combiner'] = principled('hud_combiner', (0.55, 0.85, 0.65), 0.02, transmission=1.0, ior=1.5)
     cki = img('cockpit_color.png')
     if cki is not None:
@@ -346,24 +356,21 @@ def assemble(parts, mats):
     return root, out
 
 
-def build_interior(mats, root):
+def build_canopy_mirrors(mats):
+    """Rear-view mirrors on the canopy frame (exterior GLB, move with the canopy). Unchanged from wave 5."""
     import f16_cockpit as CP
-    import f16_cockpit_layout as CL
-    importlib.reload(CL); importlib.reload(CP)
-    interior = empty('interior', size=0.2)
-    interior.parent = root
+    import f16_cockpit_layout as CLo
+    importlib.reload(CLo); importlib.reload(CP)
     scr = {}
     parts = CP.build(scr)
-    keymat = {'panel': 'ck_panel', 'dark': 'ck_dark', 'black': 'ck_black', 'metal': 'ck_metal', 'seat': 'ck_seat',
-              'yellow': 'ck_yellow', 'glass2': 'hud_glass', 'mirror': 'ck_mirror', 'rubber': 'ck_rubber', 'red': 'ck_red',
-              'white': 'ck_white', 'strap': 'ck_strap', 'cmirror': 'ck_mirror', 'cmirror_frame': 'ck_black'}
-    objs = {}
     canopy = bpy.data.objects.get('canopy')
-    for key, md in parts.items():
-        if not md.faces:
+    objs = {}
+    for key, matk in (('cmirror', 'ck_mirror'), ('cmirror_frame', 'ck_black')):
+        md = parts.get(key)
+        if md is None or not md.faces:
             continue
-        o = mesh_object(md, 'cockpit_' + key, mats[keymat[key]], auto_angle=35)
-        if key in ('dark', 'black', 'seat', 'rubber', 'metal', 'cmirror_frame', 'white', 'yellow', 'strap'):
+        o = mesh_object(md, 'cockpit_' + key, mats[matk], auto_angle=35)
+        if key == 'cmirror_frame':
             bv = o.modifiers.new('bevel', 'BEVEL')
             bv.width = 0.0035
             bv.segments = 2
@@ -374,16 +381,357 @@ def build_interior(mats, root):
             except Exception:
                 pass
             apply_modifiers(o)
-        if key.startswith('cmirror') and canopy is not None:
+        if canopy is not None:
             parent_keep(o, canopy)
-        else:
-            o.parent = interior
         objs[key] = o
-    for name, md in scr.items():
-        o = mesh_object(md, name, mats['hud_combiner'] if name == 'screen_hud' else mats['screen'], smooth=False)
+    return objs
+
+
+# cockpit constant colours (sRGB 0..255), roughness, metallic (renders only; the bake uses metallic 0)
+CK_COLORS = {
+    'panel': ((44, 47, 50), 0.70, 0.0), 'black': ((20, 20, 21), 0.45, 0.0), 'rubber': ((30, 30, 31), 0.75, 0.0),
+    'metal': ((168, 170, 173), 0.30, 1.0), 'lgray': ((172, 172, 166), 0.45, 0.0), 'white': ((226, 226, 220), 0.45, 0.0),
+    'red': ((165, 30, 24), 0.40, 0.0), 'yellow': ((218, 168, 26), 0.45, 0.0), 'glare': ((38, 40, 43), 0.88, 0.0),
+    'wall': ((64, 68, 72), 0.72, 0.0), 'floor': ((36, 37, 39), 0.90, 0.0), 'rail': ((42, 44, 47), 0.55, 0.0),
+    'hudframe': ((52, 54, 57), 0.45, 0.0), 'lens_amber': ((70, 45, 10), 0.08, 0.0), 'lens_green': ((12, 55, 22), 0.08, 0.0),
+    'lens_red': ((70, 12, 10), 0.08, 0.0), 'lever_green': ((40, 125, 55), 0.40, 0.0), 'lever_red': ((170, 32, 26), 0.40, 0.0),
+    'stick': ((24, 24, 25), 0.55, 0.0), 'stickhat': ((44, 44, 46), 0.45, 0.0), 'cushion': ((82, 86, 78), 0.92, 0.0),
+    'seatframe': ((124, 130, 134), 0.55, 0.0), 'headbox': ((60, 64, 58), 0.80, 0.0), 'strap': ((92, 98, 82), 0.90, 0.0),
+    'fur': ((26, 26, 27), 1.0, 0.0), 'kit': ((52, 78, 60), 0.85, 0.0),
+}
+CK_BUILD = os.path.join(HERE, 'build')
+CK_TEX_OUT = os.path.join(ASSETS, 'tex')
+
+
+def _lin(c):
+    c = c / 255.0
+    return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+
+def ck_material(key):
+    name = 'ck2_' + key
+    m = bpy.data.materials.get(name)
+    if m is not None:
+        return m
+    if key.startswith('art_'):
+        path = os.path.join(CK_BUILD, 'art', key[4:] + '.png')
+        im = bpy.data.images.load(path, check_existing=True)
+        m = bpy.data.materials.new(name)
+        m.use_nodes = True
+        nt = m.node_tree
+        b = nt.nodes.get('Principled BSDF')
+        b.inputs['Roughness'].default_value = 0.62
+        t = nt.nodes.new('ShaderNodeTexImage'); t.image = im; t.name = 'art'
+        uvn = nt.nodes.new('ShaderNodeUVMap'); uvn.uv_map = 'UVMap'
+        nt.links.new(uvn.outputs['UV'], t.inputs['Vector'])
+        nt.links.new(t.outputs['Color'], b.inputs['Base Color'])
+        return m
+    col, rough, metal = CK_COLORS[key]
+    return principled(name, tuple(_lin(c) for c in col), rough, metal=metal)
+
+
+def build_interior(mats, root):
+    """Wave 6 cockpit: f16_ck_geom parts -> objects under 'interior' (art + constant materials), screens, glass."""
+    import f16_ck_layout as CKL
+    import f16_ck_geom as CKG
+    importlib.reload(CKL); importlib.reload(CKG)
+    interior = empty('interior', size=0.2)
+    interior.parent = root
+    md, screens, glass = CKG.build()
+    objs = {}
+    for key, m in md.items():
+        base, _, lite = key.partition('|')
+        kind, _, name = base.partition(':')
+        mat = ck_material(('art_' + name) if kind == 'art' else name)
+        o = mesh_object(m, 'ck_' + base.replace(':', '_') + ('_lite' if lite else ''), mat, auto_angle=40)
+        o['ck_lite'] = 1 if lite else 0
+        o['ck_art'] = 1 if kind == 'art' else 0
+        o.parent = interior
+        objs[o.name] = o
+    for name, m in screens.items():
+        o = mesh_object(m, name, mats['hud_combiner'] if name == 'screen_hud' else mats['screen'], smooth=False)
         o.parent = interior
         objs[name] = o
+    gmat = {'hud_glass': mats['hud_glass'], 'gauge_glass': principled('gauge_glass', (0.6, 0.62, 0.62), 0.04, alpha=0.10)}
+    for name, m in glass.items():
+        o = mesh_object(m, 'ck_' + name, gmat[name], smooth=False)
+        o.parent = interior
+        objs[o.name] = o
     return interior, objs
+
+
+def ck_join(interior):
+    """Join every baked cockpit part into one mesh 'ck_main' with face attributes art / lite."""
+    import bmesh
+    parts = [o for o in interior.children if o.type == 'MESH' and 'ck_art' in o]
+    for o in parts:
+        me = o.data
+        for nm, val in (('ck_art', o['ck_art']), ('ck_lite', o['ck_lite'])):
+            a = me.attributes.new(nm, 'INT', 'FACE')
+            a.data.foreach_set('value', [int(val)] * len(me.polygons))
+    with bpy.context.temp_override(active_object=parts[0], selected_editable_objects=parts, object=parts[0]):
+        bpy.ops.object.join()
+    main = parts[0]
+    main.name = 'ck_main'
+    main.data.name = 'ck_main'
+    return main
+
+
+def _face_attr(me, name):
+    a = me.attributes[name]
+    v = [0] * len(me.polygons)
+    a.data.foreach_get('value', v)
+    return v
+
+
+def ck_uv1(obj, art_density=4.2):
+    """Unique lightmap-style UVs (UV1) for the bake: art faces get art_density x the texel density of the rest."""
+    import bmesh
+    me = obj.data
+    art = _face_attr(me, 'ck_art')
+    uv1 = me.uv_layers.new(name='UV1')
+    me.uv_layers.active = uv1
+    bpy.ops.object.select_all(action='DESELECT')
+    obj.select_set(True)
+    bpy.context.view_layer.objects.active = obj
+    bpy.context.scene.tool_settings.use_uv_select_sync = True
+    for grp in (1, 0):
+        bpy.ops.object.mode_set(mode='EDIT')
+        bm = bmesh.from_edit_mesh(me)
+        bm.faces.ensure_lookup_table()
+        for f in bm.faces:
+            f.select_set(art[f.index] == grp)
+        bm.select_flush(True)
+        bmesh.update_edit_mesh(me)
+        bpy.ops.uv.smart_project(angle_limit=math.radians(55), island_margin=0.0, area_weight=0.0, correct_aspect=True,
+                                 scale_to_bounds=False)
+        bpy.ops.object.mode_set(mode='OBJECT')
+    # texel density per group -> rescale so art faces get art_density x
+    import numpy as np
+    me = obj.data
+    uv1 = me.uv_layers['UV1']
+    uv = np.zeros(len(me.loops) * 2); uv1.data.foreach_get('uv', uv); uv = uv.reshape(-1, 2)
+    area3 = np.zeros(len(me.polygons)); me.polygons.foreach_get('area', area3)
+    ls = np.zeros(len(me.polygons), int); me.polygons.foreach_get('loop_start', ls)
+    lt = np.zeros(len(me.polygons), int); me.polygons.foreach_get('loop_total', lt)
+    auv = np.zeros(len(me.polygons))
+    for i in range(len(me.polygons)):
+        P = uv[ls[i]:ls[i] + lt[i]]
+        x, y = P[:, 0], P[:, 1]
+        auv[i] = 0.5 * abs(np.dot(x, np.roll(y, -1)) - np.dot(y, np.roll(x, -1)))
+    artv = np.array(art)
+    scale = np.ones(len(me.polygons))
+    for grp, target in ((1, art_density), (0, 1.0)):
+        m = artv == grp
+        d = math.sqrt(auv[m].sum() / max(area3[m].sum(), 1e-9))
+        scale[m] = target / d
+    for i in range(len(me.polygons)):
+        uv[ls[i]:ls[i] + lt[i]] *= scale[i]
+    me.uv_layers['UV1'].data.foreach_set('uv', uv.ravel())
+    bpy.ops.object.mode_set(mode='EDIT')
+    bpy.ops.mesh.select_all(action='SELECT')
+    print("[f16] packing", flush=True)
+    bpy.ops.uv.pack_islands(margin=0.0012, rotate=True, scale=True)
+    bpy.ops.object.mode_set(mode='OBJECT')
+    me = obj.data
+    uv = np.zeros(len(me.loops) * 2); me.uv_layers['UV1'].data.foreach_get('uv', uv); uv = uv.reshape(-1, 2)
+    for grp, nm in ((1, 'art'), (0, 'other')):
+        a3 = auv_g = 0.0
+        for i in range(len(me.polygons)):
+            if art[i] != grp:
+                continue
+            P = uv[ls[i]:ls[i] + lt[i]]
+            auv_g += 0.5 * abs(np.dot(P[:, 0], np.roll(P[:, 1], -1)) - np.dot(P[:, 1], np.roll(P[:, 0], -1)))
+            a3 += area3[i]
+        print(f'[f16] UV1 {nm}: {a3:.2f} m2, {auv_g * 100:.1f}% of the atlas, {math.sqrt(auv_g / max(a3, 1e-9)) * 4096:.0f} px/m at 4096', flush=True)
+    print('[f16] UV1 packed', flush=True)
+
+
+def _box_blur(a, r):
+    import numpy as np
+    if r <= 0:
+        return a
+    k = 2 * r + 1
+    c = np.cumsum(np.pad(a, ((r + 1, r), (0, 0)), mode='edge'), axis=0)
+    a = (c[k:] - c[:-k]) / k
+    c = np.cumsum(np.pad(a, ((0, 0), (r + 1, r)), mode='edge'), axis=1)
+    return (c[:, k:] - c[:, :-k]) / k
+
+
+def ck_bake(obj, size=4096, samples=128, gpu=True):
+    """Bake albedo (DIFFUSE colour) and soft interior light (DIFFUSE direct+indirect, uniform sky entering through the
+    canopy) into UV1 and compose albedo x light -> tex/cockpit_atlas.jpg + tex/cockpit_atlas_lite.jpg (1024)."""
+    import numpy as np
+    sc = bpy.context.scene
+    util.setup_cycles(samples=samples, width=64, height=64, gpu=gpu)
+    sc.cycles.samples = samples
+    sc.cycles.use_denoising = False
+    sc.cycles.max_bounces = 4
+    sc.cycles.diffuse_bounces = 3
+    old_world = sc.world
+    w = bpy.data.worlds.new('ck_bake_sky'); w.use_nodes = True
+    w.node_tree.nodes['Background'].inputs[0].default_value = (1, 1, 1, 1)
+    w.node_tree.nodes['Background'].inputs[1].default_value = 1.0
+    sc.world = w
+    # the light enters through the canopy: glass fully transparent for the bake; pilot / glass parts / screens hidden
+    hidden = []
+    for o in sc.objects:
+        if o.type != 'MESH' or o.hide_render:
+            continue
+        if o.name.startswith(('pilot', 'ck_gauge_glass', 'ck_hud_glass', 'screen_')):
+            o.hide_render = True; hidden.append(o)
+    glass = bpy.data.materials.get('canopy_glass')
+    saved_glass = None
+    if glass is not None:
+        nt = glass.node_tree
+        out = next(n for n in nt.nodes if n.type == 'OUTPUT_MATERIAL')
+        saved_glass = out.inputs['Surface'].links[0].from_socket if out.inputs['Surface'].links else None
+        tr = nt.nodes.new('ShaderNodeBsdfTransparent'); tr.name = 'ck_bake_transparent'
+        nt.links.new(tr.outputs[0], out.inputs['Surface'])
+    # metallic off for the albedo bake
+    saved_metal = {}
+    for m in obj.data.materials:
+        b = m.node_tree.nodes.get('Principled BSDF')
+        if b is not None:
+            saved_metal[m.name] = b.inputs['Metallic'].default_value
+            b.inputs['Metallic'].default_value = 0.0
+
+    def target(name, is_float):
+        im = bpy.data.images.new(name, size, size, alpha=True, float_buffer=is_float)
+        im.colorspace_settings.name = 'Non-Color' if is_float else 'sRGB'
+        im.generated_color = (0, 0, 0, 0)
+        for m in obj.data.materials:
+            nt = m.node_tree
+            n = nt.nodes.get('ck_bake_target') or nt.nodes.new('ShaderNodeTexImage')
+            n.name = 'ck_bake_target'; n.image = im
+            for x in nt.nodes:
+                x.select = False
+            n.select = True
+            nt.nodes.active = n
+        return im
+
+    bpy.ops.object.select_all(action='DESELECT')
+    obj.select_set(True)
+    bpy.context.view_layer.objects.active = obj
+    sc.render.bake.margin = 6
+    sc.render.bake.use_selected_to_active = False
+    t0 = time.time()
+    alb = target('ck_albedo', False)
+    sc.cycles.samples = 16
+    bpy.ops.object.bake(type='DIFFUSE', pass_filter={'COLOR'}, uv_layer='UV1', margin=6, use_clear=True)
+    print(f'[f16] albedo baked {time.time() - t0:.1f}s', flush=True)
+    t0 = time.time()
+    lig = target('ck_light', True)
+    sc.cycles.samples = samples
+    bpy.ops.object.bake(type='DIFFUSE', pass_filter={'DIRECT', 'INDIRECT'}, uv_layer='UV1', margin=6, use_clear=True)
+    print(f'[f16] light baked {time.time() - t0:.1f}s', flush=True)
+    A = np.empty(size * size * 4, np.float32); alb.pixels.foreach_get(A); A = A.reshape(size, size, 4)
+    Lp = np.empty(size * size * 4, np.float32); lig.pixels.foreach_get(Lp); Lp = Lp.reshape(size, size, 4)
+    mask = (Lp[..., 3] > 0.5).astype(np.float32)
+    l = Lp[..., :3].mean(-1) * mask
+    lb = _box_blur(l, 2) / np.maximum(_box_blur(mask, 2), 1e-4)
+    ref = float(np.percentile(lb[mask > 0.5], 96))
+    f = np.clip(0.26 + 0.86 * np.power(np.clip(lb / ref, 0, 4), 0.72), 0.26, 1.10)
+    lin = np.where(A[..., :3] <= 0.04045, A[..., :3] / 12.92, ((A[..., :3] + 0.055) / 1.055) ** 2.4)
+    out = lin * f[..., None]
+    srgb = np.where(out <= 0.0031308, out * 12.92, 1.055 * np.power(np.clip(out, 0, None), 1 / 2.4) - 0.055)
+    srgb = np.clip(srgb, 0, 1)
+    fin = bpy.data.images.new('cockpit_atlas', size, size, alpha=False)
+    px = np.concatenate([srgb, np.ones((size, size, 1), np.float32)], -1).astype(np.float32)
+    fin.pixels.foreach_set(px.ravel())
+    path = os.path.join(CK_TEX_OUT, 'cockpit_atlas.jpg')
+    fin.filepath_raw = path; fin.file_format = 'JPEG'
+    sc.render.image_settings.quality = 90
+    try:
+        fin.save(filepath=path, quality=92)
+    except TypeError:
+        fin.save()
+    lite = fin.copy(); lite.scale(1024, 1024)
+    lpath = os.path.join(CK_TEX_OUT, 'cockpit_atlas_lite.jpg')
+    lite.filepath_raw = lpath; lite.file_format = 'JPEG'
+    lite.save()
+    # debug copies of the passes (bake inputs, not shipped)
+    os.makedirs(CK_BUILD, exist_ok=True)
+    dbg = bpy.data.images.new('ck_light_dbg', size, size, alpha=False)
+    g = np.clip(f / 1.1, 0, 1)
+    dbg.pixels.foreach_set(np.stack([g, g, g, np.ones_like(g)], -1).astype(np.float32).ravel())
+    dbg.filepath_raw = os.path.join(CK_BUILD, 'ck_light.png'); dbg.file_format = 'PNG'; dbg.save()
+    # restore
+    for o in hidden:
+        o.hide_render = False
+    if glass is not None:
+        nt = glass.node_tree
+        out = next(n for n in nt.nodes if n.type == 'OUTPUT_MATERIAL')
+        if saved_glass is not None:
+            nt.links.new(saved_glass, out.inputs['Surface'])
+        nt.nodes.remove(nt.nodes['ck_bake_transparent'])
+    for m in obj.data.materials:
+        b = m.node_tree.nodes.get('Principled BSDF')
+        if b is not None and m.name in saved_metal:
+            b.inputs['Metallic'].default_value = saved_metal[m.name]
+        n = m.node_tree.nodes.get('ck_bake_target')
+        if n is not None:
+            m.node_tree.nodes.remove(n)
+    sc.world = old_world
+    print('[f16] cockpit atlas ->', path, os.path.getsize(path) // 1024, 'KB', flush=True)
+    return path, lpath
+
+
+def ck_finalize(obj, atlas_path):
+    """One baked material on UV1 (renamed to the only UV map)."""
+    im = bpy.data.images.load(atlas_path, check_existing=False)
+    m = bpy.data.materials.new('ck_baked')
+    m.use_nodes = True
+    b = m.node_tree.nodes.get('Principled BSDF')
+    b.inputs['Roughness'].default_value = 0.62
+    t = m.node_tree.nodes.new('ShaderNodeTexImage'); t.image = im
+    m.node_tree.links.new(t.outputs['Color'], b.inputs['Base Color'])
+    me = obj.data
+    me.materials.clear()
+    me.materials.append(m)
+    me.polygons.foreach_set('material_index', [0] * len(me.polygons))
+    old = me.uv_layers.get('UVMap')
+    if old is not None:
+        me.uv_layers.remove(old)
+    me.uv_layers['UV1'].name = 'UVMap'
+    me.uv_layers.active = me.uv_layers['UVMap']
+    return m
+
+
+def ck_make_lite(obj, root, lite_path):
+    """interior_lite: copy of the lite-flagged faces of ck_main with a 1024 atlas + the HUD combiner plate."""
+    import bmesh
+    lite_empty = empty('interior_lite', size=0.2)
+    lite_empty.parent = root
+    o = obj.copy(); o.data = obj.data.copy()
+    o.name = 'interior_lite_mesh'; o.data.name = 'interior_lite_mesh'
+    bpy.context.scene.collection.objects.link(o)
+    lite = _face_attr(o.data, 'ck_lite')
+    bm = bmesh.new(); bm.from_mesh(o.data)
+    bm.faces.ensure_lookup_table()
+    bmesh.ops.delete(bm, geom=[f for f in bm.faces if not lite[f.index]], context='FACES')
+    bm.to_mesh(o.data); bm.free()
+    im = bpy.data.images.load(lite_path, check_existing=False)
+    m = bpy.data.materials.new('ck_baked_lite')
+    m.use_nodes = True
+    b = m.node_tree.nodes.get('Principled BSDF')
+    b.inputs['Roughness'].default_value = 0.65
+    t = m.node_tree.nodes.new('ShaderNodeTexImage'); t.image = im
+    m.node_tree.links.new(t.outputs['Color'], b.inputs['Base Color'])
+    o.data.materials.clear(); o.data.materials.append(m)
+    o.parent = lite_empty
+    o.matrix_parent_inverse.identity()
+    for nm in ('ck_art', 'ck_lite'):
+        if nm in o.data.attributes:
+            o.data.attributes.remove(o.data.attributes[nm])
+    hg = bpy.data.objects.get('ck_hud_glass')
+    if hg is not None:
+        g = hg.copy(); g.data = hg.data.copy(); g.name = 'interior_lite_hudglass'
+        bpy.context.scene.collection.objects.link(g)
+        g.parent = lite_empty
+    n = sum(len(p.vertices) - 2 for p in o.data.polygons)
+    print(f'[f16] interior_lite {n} tris', flush=True)
+    return lite_empty
 
 
 def build_pilot(mats, root):
@@ -403,7 +751,7 @@ def build_pilot(mats, root):
 
 def build_lod(path, target=38000):
     """Static LOD for parked copies: gear down, canopy closed & opaque, joined by material, decimated, 1K textures."""
-    skip_prefix = ('cockpit_', 'screen_', 'nozzle_cone', 'nozzle_fh', 'intake_duct', 'cockpit', 'pilot')
+    skip_prefix = ('cockpit_', 'screen_', 'nozzle_cone', 'nozzle_fh', 'intake_duct', 'cockpit', 'pilot', 'ck_', 'interior')
     bpy.context.view_layer.update()
     src = [o for o in bpy.context.scene.objects if o.type == 'MESH' and not o.hide_render and not o.name.startswith(skip_prefix)]
     # small 1K texture copies for the LOD skin
@@ -530,11 +878,27 @@ def merge_static(root):
     print(f'[f16] merged {n} static meshes', flush=True)
 
 
+def _under(ob, name):
+    p = ob
+    while p is not None:
+        if p.name == name:
+            return True
+        p = p.parent
+    return False
+
+
 def export(root, path):
     merge_static(root)
-    objs = [o for o in bpy.context.scene.objects if o.type in ('MESH', 'EMPTY') and not o.hide_render]
+    objs = [o for o in bpy.context.scene.objects if o.type in ('MESH', 'EMPTY') and not o.hide_render and not _under(o, 'interior')]
     util.export_glb(path, objects=objs, draco=True)
-    print('[f16] exported', path, os.path.getsize(path) // 1024, 'KB')
+    print('[f16] exported', path, os.path.getsize(path) // 1024, 'KB', flush=True)
+
+
+def export_cockpit(interior, path):
+    objs = [o for o in bpy.context.scene.objects if o.type in ('MESH', 'EMPTY') and _under(o, 'interior')]
+    util.export_glb(path, objects=objs, draco=True)
+    tris = sum(tri_count(o) for o in objs if o.type == 'MESH')
+    print(f'[f16] exported cockpit {path} {os.path.getsize(path) // 1024} KB, {tris} tris', flush=True)
 
 
 def main():
@@ -544,25 +908,31 @@ def main():
     t0 = time.time()
     parts = build_exterior(mats)
     root, out = assemble(parts, mats)
+    build_canopy_mirrors(mats)
     interior, iobjs = build_interior(mats, root)
     build_pilot(mats, root)
-    def under_interior(ob):
-        p = ob.parent
-        while p is not None:
-            if p.name == 'interior':
-                return True
-            p = p.parent
-        return False
     meshes = [ob for ob in bpy.context.scene.objects if ob.type == 'MESH']
-    t_int = sum(tri_count(ob) for ob in meshes if under_interior(ob))
-    t_ext = sum(tri_count(ob) for ob in meshes if not under_interior(ob))
+    t_int = sum(tri_count(ob) for ob in meshes if _under(ob, 'interior'))
+    t_ext = sum(tri_count(ob) for ob in meshes if not _under(ob, 'interior'))
     print(f'[f16] built in {time.time() - t0:.1f}s; tris exterior {t_ext}, interior {t_int}', flush=True)
     if o.get('bake'):
         bake_ao(samples=64, gpu=bool(o.get('gpu')))
+    out_dir = o.get('glbdir') or ASSETS
+    global CK_TEX_OUT
+    if o.get('glbdir'):
+        CK_TEX_OUT = o['glbdir']
+        os.makedirs(CK_TEX_OUT, exist_ok=True)
+    if o['export'] or o.get('ckbake'):
+        ck = ck_join(interior)
+        ck_uv1(ck)
+        atlas, lite_path = ck_bake(ck, size=int(o.get('set', {}).get('cksize', 4096)), samples=int(o.get('set', {}).get('cksamples', 128)))
+        ck_finalize(ck, atlas)
+        ck_make_lite(ck, root, lite_path)
     if o['export']:
-        export(root, os.path.join(ASSETS, 'f16.glb'))
+        export(root, os.path.join(out_dir, 'f16.glb'))
+        export_cockpit(interior, os.path.join(out_dir, 'f16_cockpit.glb'))
     if o['lod']:
-        build_lod(os.path.join(ASSETS, 'f16_lod.glb'))
+        build_lod(os.path.join(out_dir, 'f16_lod.glb'))
     if o['preview']:
         preview(o['preview'])
     if o['renders']:
@@ -570,6 +940,7 @@ def main():
         importlib.reload(f16_render)
         f16_render.PCT = o.get('pct', 100)
         f16_render.USE_CPU = bool(o.get('cpu'))
+        f16_render.RES = o.get('res')
         for kk, vv in o.get('set', {}).items():
             setattr(f16_render, kk, vv)
         f16_render.render_all(o.get('outdir') or RENDERS, o['shots'], samples=o['samples'], fast=o['fast'])

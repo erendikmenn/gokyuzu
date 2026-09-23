@@ -99,12 +99,63 @@ def build():
         add('body', 'suit', capsule(shoulder, elbow, 0.052, 0.045))
         add('body', 'suit', capsule(elbow, wrist, 0.043, 0.035))
         add('body', 'glove', ellipsoid(grip + np.array((0.01, 0, 0.01)), (0.05, 0.04, 0.045), nu=14, nv=8))
-    # ---- legs: thighs along the seat pan, shins to the rudder pedals, boots
+    # ---- legs (wave 6: below the canopy sill, seen only from the cockpit): G-suit thighs and calves with oval
+    # sections, knee bulge, flight-suit ankles, boots; kneeboard strapped to the right thigh
     for sg in (-1, 1):
         hipj = H + np.array((-0.05, sg * 0.10, -0.01))
-        knee = np.array((3.67, sg * 0.13, hz + 0.075))
-        ankle = np.array((3.27, sg * 0.12, 2.02))
-        add('body', 'gsuit', capsule(hipj, knee, 0.068, 0.05))
-        add('body', 'suit', capsule(knee, ankle, 0.047, 0.038))
-        add('body', 'boot', ellipsoid(ankle + np.array((-0.07, 0, -0.02)), (0.13, 0.055, 0.06), nu=14, nv=8))
+        knee = np.array((3.67, sg * 0.155, hz + 0.075))
+        ankle = np.array((3.27, sg * 0.14, 2.02))
+        add('body', 'gsuit', limb(hipj + np.array((0.04, 0, 0.0)), knee, [(0.0, 0.088, 0.068), (0.3, 0.084, 0.066), (0.65, 0.074, 0.060),
+                                                                         (0.9, 0.062, 0.056), (1.0, 0.056, 0.052)]))
+        add('body', 'gsuit', ellipsoid(knee + np.array((-0.004, 0, 0.004)), (0.052, 0.056, 0.056), nu=16, nv=10))
+        add('body', 'gsuit', limb(knee, ankle, [(0.0, 0.050, 0.052), (0.25, 0.052, 0.056), (0.55, 0.046, 0.048), (0.8, 0.040, 0.040),
+                                                (1.0, 0.036, 0.036)]))
+        add('body', 'suit', limb(ankle + (knee - ankle) * 0.22, ankle, [(0.0, 0.040, 0.040), (1.0, 0.037, 0.037)]))
+        foot = ankle + np.array((-0.02, 0.0, -0.035))
+        add('body', 'boot', limb(ankle + np.array((0.03, 0, 0.03)), foot + np.array((-0.20, 0, -0.005)),
+                                 [(0.0, 0.045, 0.042), (0.35, 0.052, 0.048), (0.7, 0.045, 0.040), (0.92, 0.038, 0.030), (1.0, 0.022, 0.018)],
+                                 up=(0, 0, 1.0)))
+        if sg > 0:
+            # kneeboard on the right thigh: board + paper card + strap
+            a = hipj + (knee - hipj) * 0.40
+            b = hipj + (knee - hipj) * 0.95
+            d = (b - a) / np.linalg.norm(b - a)
+            upn = np.array((0.0, 0.0, 1.0)) - d * d[2]; upn /= np.linalg.norm(upn)
+            c = (a + b) / 2 + upn * 0.066
+            add('body', 'board', box(c, (np.linalg.norm(b - a), 0.135, 0.010), (d, np.cross(upn, d), upn)))
+            add('body', 'paper', box(c + upn * 0.0055, (np.linalg.norm(b - a) * 0.86, 0.118, 0.002), (d, np.cross(upn, d), upn)))
+            add('body', 'strap', box(hipj + (knee - hipj) * 0.55 + upn * 0.005, (0.030, 0.19, 0.13), (d, np.cross(upn, d), upn)))
     return out
+
+
+def box(c, size, axes):
+    A = np.array([np.asarray(a, float) / np.linalg.norm(a) for a in axes])
+    h = np.array(size) / 2
+    V = np.array([[sx * h[0], sy * h[1], sz * h[2]] for sz in (-1, 1) for sy in (-1, 1) for sx in (-1, 1)]) @ A + np.asarray(c, float)
+    F = [(0, 2, 3, 1), (4, 5, 7, 6), (0, 1, 5, 4), (2, 6, 7, 3), (0, 4, 6, 2), (1, 3, 7, 5)]
+    return MeshData(to_blender(V[:, 0], V[:, 1], V[:, 2]), F, None, 'box')
+
+
+def limb(p0, p1, prof, n=16, up=(0.0, 0.0, 1.0)):
+    """Limb segment with oval sections: prof = [(t 0..1, half width, half height)], rounded caps."""
+    p0 = np.asarray(p0, float); p1 = np.asarray(p1, float)
+    ax = p1 - p0; L = np.linalg.norm(ax); ax /= L
+    upv = np.asarray(up, float) - ax * np.dot(up, ax); upv /= np.linalg.norm(upv)
+    side = np.cross(ax, upv)
+    rings = []
+    t0, w0, h0 = prof[0]
+    rings.append((p0 - ax * min(w0, h0) * 0.55, w0 * 0.55, h0 * 0.55))
+    for t, w, h in prof:
+        rings.append((p0 + ax * L * t, w, h))
+    t1, w1, h1 = prof[-1]
+    rings.append((p1 + ax * min(w1, h1) * 0.55, w1 * 0.55, h1 * 0.55))
+    V = []
+    for c, w, h in rings:
+        for k in range(n):
+            a = 2 * math.pi * k / n
+            V.append(c + w * math.cos(a) * side + h * math.sin(a) * upv)
+    V = np.array(V)
+    F = grid_faces(len(rings), n, wrap_c=True)
+    m = len(rings)
+    F = [tuple(f) for f in F] + [tuple(range(n))[::-1], tuple(range((m - 1) * n, m * n))]
+    return MeshData(to_blender(V[:, 0], V[:, 1], V[:, 2]), F, None, 'limb')

@@ -297,26 +297,89 @@ def cam(loc, target, lens, name='cam', dof=None):
     return c
 
 
+def _cams():
+    import sys, importlib
+    p = '/Users/<user>/flight-sim/blender/aircraft/f16'
+    if p not in sys.path:
+        sys.path.append(p)
+    import f16_cams
+    return f16_cams
+
+
+RES = None       # (w, h) override for quick renders
+PILOT_IN_COCKPIT = 1   # --set PILOT_IN_COCKPIT=0 renders the cockpit shots without the pilot's arms/legs
+
+
+def _interior_objs():
+    out = []
+    for o in bpy.data.objects:
+        p = o
+        while p is not None:
+            if p.name in ('interior', 'interior_lite', 'pilot') or p.name.startswith('cockpit_') or p.name.startswith('screen_'):
+                out.append(o); break
+            p = p.parent
+    return out
+
+
+_glass_state = {}
+
+
+def glass_shadow_transparent(on):
+    """Cockpit shots: let sunlight through the canopy for shadow rays (Cycles does no caustics through the refractive
+    glass, which leaves the cockpit unrealistically dark). Camera rays still see the same glass."""
+    m = bpy.data.materials.get('canopy_glass')
+    if m is None:
+        return
+    nt = m.node_tree
+    out = next(n for n in nt.nodes if n.type == 'OUTPUT_MATERIAL')
+    if on and 'mix' not in _glass_state:
+        src = out.inputs['Surface'].links[0].from_socket
+        lp = nt.nodes.new('ShaderNodeLightPath')
+        tr = nt.nodes.new('ShaderNodeBsdfTransparent')
+        mx = nt.nodes.new('ShaderNodeMixShader')
+        nt.links.new(lp.outputs['Is Shadow Ray'], mx.inputs['Fac'])
+        nt.links.new(src, mx.inputs[1])
+        nt.links.new(tr.outputs[0], mx.inputs[2])
+        nt.links.new(mx.outputs[0], out.inputs['Surface'])
+        _glass_state.update(mix=mx, src=src, nodes=(lp, tr, mx))
+    elif not on and 'mix' in _glass_state:
+        nt.links.new(_glass_state['src'], out.inputs['Surface'])
+        for n in _glass_state['nodes']:
+            nt.nodes.remove(n)
+        _glass_state.clear()
+
+
 def render_all(outdir, which=None, samples=256, fast=False):
     os.makedirs(outdir, exist_ok=True)
     solidify_glass()
     shots = which or ['hero', 'front34', 'rear_ab', 'top', 'cockpit', 'thumb']
     ground = flight_line()
     chocks_and_props()
-    if any(sh in ('hero', 'thumb', 'front34') for sh in shots):
+    if any(sh.replace('_ext', '') in ('hero', 'thumb', 'front34') for sh in shots):
         context_props()
     sc = bpy.context.scene
     res = {}
     if fast:
         samples = 32
     pilot_objs = [o for o in bpy.data.objects if o.name.startswith('pilot_')]
-    for shot in shots:
+    # renders use the detailed cockpit; the light stand-in (exported for the game's exterior view) stays hidden
+    lite = bpy.data.objects.get('interior_lite')
+    if lite is not None:
+        for o in [lite] + list(lite.children_recursive):
+            o.hide_render = True
+    ext_hidden = []
+    for shot_name in shots:
+        shot = shot_name[:-4] if shot_name.endswith('_ext') else shot_name
+        for o in ext_hidden:
+            o.hide_render = False
+        ext_hidden = []
         for o in pilot_objs:
-            o.hide_render = not (shot == 'cockpit' and o.name.startswith('pilot_body'))
+            o.hide_render = not ((shot == 'cockpit' or shot.startswith('ck_')) and PILOT_IN_COCKPIT and o.name.startswith('pilot_body'))
         # clear previous world/sun/cameras
         for o in list(bpy.data.objects):
             if o.type in ('CAMERA',) or o.name.startswith('Sun') or o.name.startswith('ab_'):
                 bpy.data.objects.remove(o)
+        sc.view_settings.exposure = 0.0
         pose_nozzle(0.35)
         sc.cycles.volume_step_rate = 0.5
         if shot == 'hero':
@@ -356,7 +419,33 @@ def render_all(outdir, which=None, samples=256, fast=False):
             sky(35, 200, 1.0, 4.0)
             # pilot's eye view (slightly behind the design eye) looking at the panel, canopy closed
             cam(bl((4.40, 0.05, 2.86)), bl((3.62, -0.02, 2.42)), 17)
-        path = os.path.join(outdir, f'{shot}.png')
+        elif shot in _cams().CAMS:
+            spec = _cams().CAMS[shot]
+            loc, tgt, lens, (rw, rh) = spec[:4]
+            opt = spec[4] if len(spec) > 4 else {}
+            setup(samples, rw, rh)
+            sky(opt.get('sun_elev', 35), opt.get('sun_az', 200), opt.get('sky', 1.0), opt.get('sun', 4.0))
+            cam(bl(loc), bl(tgt), lens)
+            if opt.get('pilot') is False:
+                for ob in pilot_objs:
+                    ob.hide_render = True
+            if opt.get('exposure'):
+                sc.view_settings.exposure = opt['exposure']
+            for nm in opt.get('hide', []):
+                ob = bpy.data.objects.get(nm)
+                if ob is not None and not ob.hide_render:
+                    ob.hide_render = True
+                    ext_hidden.append(ob)
+        glass_shadow_transparent(shot == 'cockpit' or shot.startswith('ck_'))
+        if shot_name.endswith('_ext'):
+            for o in _interior_objs():
+                if not o.hide_render:
+                    o.hide_render = True
+                    ext_hidden.append(o)
+        if RES is not None:
+            sc.render.resolution_x, sc.render.resolution_y = RES
+            sc.render.resolution_percentage = 100
+        path = os.path.join(outdir, f'{shot_name}.png')
         if shot == 'thumb':
             sc.render.image_settings.file_format = 'JPEG'
             sc.render.image_settings.quality = 90

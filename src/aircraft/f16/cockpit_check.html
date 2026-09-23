@@ -70,7 +70,16 @@ if (q.get('lod') === '1') {
 }
 const gltf = await loader.loadGLTF(model.url);
 const rig = createRig(gltf.scene);
-rig.object.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+// detailed cockpit (second GLB, CONTRACTS-SF.md §6.2.1); ?cockpit=0 shows the light stand-in only
+if (model.cockpitUrl && rig.attachCockpit && q.get('cockpit') !== '0') {
+  const cg = await loader.loadGLTF(model.cockpitUrl);
+  rig.attachCockpit(cg.scene);
+}
+rig.object.traverse((o) => {
+  if (!o.isMesh) return;
+  const seeThrough = [].concat(o.material).some((m) => m && (m.transparent || m.transmission > 0));
+  o.castShadow = !seeThrough; o.receiveShadow = true;
+});
 const gearY = -Math.min(...rig.contacts.map((c) => c.position.y));
 rig.object.position.y = gearY;
 scene.add(rig.object);

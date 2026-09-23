@@ -9,6 +9,8 @@ const ROOT = new URL('../../../', import.meta.url).href;
 export const model = {
   url: ROOT + 'assets/aircraft/f16/f16.glb',
   lodUrl: ROOT + 'assets/aircraft/f16/f16_lod.glb',
+  // detailed cockpit (CONTRACTS-SF.md §6.2.1): streamed after the exterior, attached with rig.attachCockpit()
+  cockpitUrl: ROOT + 'assets/aircraft/f16/f16_cockpit.glb',
   displays: {
     screen_hud: 'f16.hud',
     screen_mfd_L: 'f16.mfd.left',
@@ -266,12 +268,16 @@ export function createRig(gltfScene) {
     { name: 'contact_main_R', position: wpos('contact_main_R') || new THREE.Vector3(1.18, -1.9, 0.51), kind: 'main' },
   ];
   const screens = {};
-  gltfScene.traverse((o) => { if (o.isMesh && o.name.startsWith('screen_')) screens[o.name] = o; });
-  // multi-primitive nodes: the screen mesh may be a child of the named node
-  for (const n of Object.keys(nodes)) if (n.startsWith('screen_') && !screens[n]) {
-    const m = nodes[n].isMesh ? nodes[n] : nodes[n].children.find((c) => c.isMesh);
-    if (m) screens[n] = m;
-  }
+  const collectScreens = (root) => {
+    const named = {};
+    root.traverse((o) => { if (o.name) named[o.name] = o; if (o.isMesh && o.name.startsWith('screen_')) screens[o.name] = o; });
+    // multi-primitive nodes: the screen mesh may be a child of the named node
+    for (const n of Object.keys(named)) if (n.startsWith('screen_') && !screens[n]) {
+      const m = named[n].isMesh ? named[n] : named[n].children.find((c) => c.isMesh);
+      if (m) screens[n] = m;
+    }
+  };
+  collectScreens(gltfScene);
   const box = new THREE.Box3().setFromObject(gltfScene);
   const size = box.getSize(new THREE.Vector3());
   const bounds = { length: size.z, span: size.x, height: size.y, radius: size.length() / 2 };
@@ -439,17 +445,47 @@ export function createRig(gltfScene) {
   }
   const tmpV = new THREE.Vector3();
 
-  function setView(view) {
-    if (view === st.view) return;
-    st.view = view;
-    const cockpit = view === 'cockpit';
+  // ---- detailed cockpit (second GLB, root node 'interior', same frame as the exterior) + light stand-in
+  let interior = nodes.interior || null;            // wave-5 GLBs carried the interior inside the exterior file
+  const interiorLite = nodes.interior_lite || null;
+  let cockpitReady = !!interior && !interiorLite;
+  function applyView() {
+    const cockpit = st.view === 'cockpit';
     // the pilot's head and torso would enclose the camera: hide them in the cockpit view (hands/knees stay visible)
     if (nodes.pilot_helmet) nodes.pilot_helmet.visible = !cockpit;
     if (nodes.interior_lod) nodes.interior_lod.visible = false;
+    const detailed = cockpit && cockpitReady && !!interior;
+    if (interior) interior.visible = detailed;
+    if (interiorLite) interiorLite.visible = !detailed;
+  }
+  function setView(view) {
+    if (view === st.view) return;
+    st.view = view;
+    applyView();
+  }
+  function attachCockpit(cockpitScene) {
+    if (!cockpitScene) return;
+    const root = cockpitScene.getObjectByName('interior') || cockpitScene;
+    if (interior && interior !== root && interior.parent) interior.parent.remove(interior);
+    // the cockpit GLB is exported in the exterior's frame (origin = CG): no offset, just parent it next to the exterior
+    gltfScene.add(cockpitScene);
+    cockpitScene.updateMatrixWorld(true);
+    interior = root;
+    collectScreens(cockpitScene);
+    cockpitScene.traverse((o) => {
+      if (o.name && !nodes[o.name]) nodes[o.name] = o;
+      if (!o.isMesh) return;
+      for (const m of [].concat(o.material)) if (m && m.name === 'hud_glass') exteriorGlass.push(o);
+    });
+    cockpitReady = true;
+    rig.cockpitReady = true;
+    applyView();
   }
 
   // initial pose: gear down, everything neutral
   update(0, { gear: 1, engines: [{ n1: 0, afterburner: 0 }], lights: {} });
+  applyView();
 
-  return { object, eye, contacts, screens, bounds, update, setView, nodes };
+  const rig = { object, eye, contacts, screens, bounds, update, setView, attachCockpit, cockpitReady, nodes };
+  return rig;
 }
