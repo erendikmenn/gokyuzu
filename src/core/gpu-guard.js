@@ -173,10 +173,13 @@ export function createGpuGuard({ renderer, state, getQuality, onHalt = () => {},
   }, false);
 
   // flight snapshot lifecycle: normal unload / bfcache → not a crash; back from bfcache → alive again
-  addEventListener('pagehide', () => { if (!failing) markSnapshotClosed(); });
-  addEventListener('pageshow', (e) => { if (e.persisted) markSnapshotAlive(); });
+  // `closing`: once the page is being left, no later event may re-save the flight as alive. During a navigation
+  // (e.g. "Ana menü") browsers fire visibilitychange AFTER pagehide; re-saving there made the menu page resume the flight.
+  let closing = false;
+  addEventListener('pagehide', () => { closing = true; if (!failing) markSnapshotClosed(); });
+  addEventListener('pageshow', (e) => { if (e.persisted) { closing = false; markSnapshotAlive(); } });
   // a flight left in a background tab may be discarded by the browser: keep it resumable for longer
-  document.addEventListener('visibilitychange', () => { if (!failing && state.flight && state.readyAt) saveSnapshot(state, { hidden: document.hidden }); });
+  document.addEventListener('visibilitychange', () => { if (!failing && !closing && state.flight && state.readyAt) saveSnapshot(state, { hidden: document.hidden }); });
 
   return {
     meter, textures,
@@ -189,7 +192,7 @@ export function createGpuGuard({ renderer, state, getQuality, onHalt = () => {},
     tick(dt) {
       if (failing) return;
       acc += dt; snapAcc += dt;
-      if (snapAcc >= 5) { snapAcc = 0; if (state.flight && state.readyAt && !state.paused) saveSnapshot(state); }
+      if (snapAcc >= 5) { snapAcc = 0; if (!closing && state.flight && state.readyAt && !state.paused) saveSnapshot(state); }
       if (acc < 2) return;
       const span = acc;
       acc = 0;
