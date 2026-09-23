@@ -9,6 +9,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { KTX2Loader } from 'three/addons/loaders/KTX2Loader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
+import { detectDevice } from './gpu-device.js';
 
 const ROOT = new URL('../../', import.meta.url);   // repo root = site root of the publish build (dist/)
 const LIBS = new URL('node_modules/three/examples/jsm/libs/', ROOT).href;
@@ -257,16 +258,67 @@ export function reportLoadFailure(tag, what, err) {
 
 // ---------------------------------------------------------------- loader
 
+/**
+ * KTX2 files that GLBs reference by URI (assets/sf/airports/shared/*.ktx2: facade textures used by several airports,
+ * written by tools/assets/textures.mjs) load once per loader: every GLB gets the same texture object, so the file is
+ * downloaded, transcoded and uploaded once instead of once per airport. Embedded images (blob: URLs) pass through.
+ * The shared textures live as long as the page (airport buildings are never disposed; do not dispose them).
+ */
+function shareKTX2(ktx2) {
+  const files = new Map();
+  const load = ktx2.load.bind(ktx2);
+  ktx2.load = (url, onLoad, onProgress, onError) => {
+    if (typeof url !== 'string' || url.startsWith('blob:') || url.startsWith('data:')) return load(url, onLoad, onProgress, onError);
+    let p = files.get(url);
+    if (!p) {
+      // keepData: the texture policy (src/core/gpu-textures.js) keeps its CPU copy, so a later GLB can still use it
+      p = new Promise((resolve, reject) => load(url, (t) => { t.userData.keepData = true; resolve(t); }, onProgress, reject));
+      files.set(url, p);
+      p.catch(() => { if (files.get(url) === p) files.delete(url); });   // a failed download is tried again next time
+    }
+    p.then(onLoad, (e) => { if (onError) onError(e); });
+  };
+  return ktx2;
+}
+
+/**
+ * Phones load <name>.phone.glb where tools/assets/textures.mjs wrote one (listed in assets/phone-variants.json): the
+ * same GLB with its KTX2 textures cut to 1024², which is all a phone keeps anyway (src/core/gpu-textures.js), e.g. the
+ * F-16 exterior 5.1 → 1.7 MB. Other devices, and GLBs without a variant, load the URL as given. The list is always
+ * published with the assets; if it cannot be read, phones load the full files (the texture cap still applies).
+ */
+const PHONE_VARIANTS = 'assets/phone-variants.json';
+let phoneMapP = null;
+async function phoneVariant(url) {
+  let isPhone = false;
+  try { isPhone = detectDevice().kind === 'phone'; } catch { /* no DOM (tests) */ }
+  if (!isPhone || typeof url !== 'string') return url;
+  if (!phoneMapP) {
+    phoneMapP = assetData(new URL(PHONE_VARIANTS, ROOT).href, 'json').catch((e) => {
+      if (isNetworkError(e)) phoneMapP = null;   // connection problem: ask again next time
+      return {};
+    });
+  }
+  const map = await phoneMapP;
+  let rel;
+  try {
+    const abs = new URL(url, baseHref());
+    if (abs.origin !== ROOT.origin || !abs.pathname.startsWith(ROOT.pathname)) return url;
+    rel = decodeURIComponent(abs.pathname.slice(ROOT.pathname.length));
+  } catch { return url; }
+  return map && map[rel] ? new URL(map[rel], ROOT).href : url;
+}
+
 export function createAssetLoader(renderer, manager = THREE.DefaultLoadingManager) {
   applyAssetUrls(manager);
   const draco = new DRACOLoader(manager).setDecoderPath(LIBS + 'draco/gltf/');
-  const ktx2 = new KTX2Loader(manager).setTranscoderPath(LIBS + 'basis/');
+  const ktx2 = shareKTX2(new KTX2Loader(manager).setTranscoderPath(LIBS + 'basis/'));
   if (renderer) ktx2.detectSupport(renderer);
   const gltf = new GLTFLoader(manager).setDRACOLoader(draco).setKTX2Loader(ktx2).setMeshoptDecoder(MeshoptDecoder);
   const texture = new THREE.TextureLoader(manager);
   const file = new THREE.FileLoader(manager).setResponseType('arraybuffer');
   const cache = new Map();
-  const loadOnce = (url) => versionsSettled().then(() => withRetry(() => gltf.loadAsync(url), url));
+  const loadOnce = (url) => versionsSettled().then(() => phoneVariant(url)).then((u) => withRetry(() => gltf.loadAsync(u), u));
   return {
     gltf, ktx2, draco, texture, file, manager,
     /**

@@ -17,6 +17,15 @@ function fillBpp(gl) {
     ['R32UI', 4], ['RGBA32UI', 16], ['RGBA4', 2], ['RGB5_A1', 2], ['RGB565', 2], ['STENCIL_INDEX8', 1],
   ];
   for (const [k, v] of t) if (gl[k] !== undefined) BPP[gl[k]] = v;
+  // block-compressed formats of KTX2 textures (tools/assets/textures.mjs; KTX2Loader picks one per device), by value
+  // since their constants live on the extension objects: S3TC/BC, BPTC, RGTC, ETC1/ETC2/EAC, ASTC 4x4, PVRTC.
+  // Without them every KTX2 texture was counted at 4 bytes per texel (4–8× too much for the budget monitor).
+  Object.assign(BPP, {
+    0x83F0: 0.5, 0x83F1: 0.5, 0x83F2: 1, 0x83F3: 1, 0x8C4C: 0.5, 0x8C4D: 0.5, 0x8C4E: 1, 0x8C4F: 1,
+    0x8E8C: 1, 0x8E8D: 1, 0x8E8E: 1, 0x8E8F: 1, 0x8DBB: 0.5, 0x8DBC: 0.5, 0x8DBD: 1, 0x8DBE: 1, 0x8D64: 0.5,
+    0x9270: 0.5, 0x9271: 0.5, 0x9272: 1, 0x9273: 1, 0x9274: 0.5, 0x9275: 0.5, 0x9276: 0.5, 0x9277: 0.5, 0x9278: 1, 0x9279: 1,
+    0x93B0: 1, 0x93D0: 1, 0x8C00: 0.5, 0x8C01: 0.25, 0x8C02: 0.5, 0x8C03: 0.25,
+  });
 }
 
 export function attachGpuMeter(gl) {

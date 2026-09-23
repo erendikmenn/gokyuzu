@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>KTX2 check</title>
+  <style>html,body{margin:0;background:#222;color:#ddd;font:12px monospace} #log{position:fixed;left:6px;top:4px;white-space:pre;z-index:2}</style>
+  <script type="importmap">{ "imports": { "three": "../../node_modules/three/build/three.module.js", "three/addons/": "../../node_modules/three/examples/jsm/" } }</script>
+</head>
+<body>
+<div id="log"></div>
+<script type="module">
+// Loads converted GLBs through the game's loader (src/core/assets.js) with the transcoder forced to one target family
+// and renders each once, to prove every fallback path works on this browser / GPU (driven by tools/assets/check.mjs).
+//   ?target=auto|astc|bptc|etc2|etc1|dxt|pvrtc|rgba   &files=assets/aircraft/f16/f16.glb,…   &cap=512 (textureMaxSize)
+//   &class=phone|tablet|desktop (device class for the cap: phones / tablets get 2 × cap for compressed textures)
+import * as THREE from 'three';
+import { createAssetLoader } from '../../src/core/assets.js';
+import { createTexturePolicy } from '../../src/core/gpu-textures.js';
+
+const q = new URLSearchParams(location.search);
+const target = q.get('target') || 'auto';
+const files = (q.get('files') || '').split(',').filter(Boolean);
+const out = { target, results: [], errors: [], formats: {}, supported: {} };
+window.__check = out;
+const log = (s) => { document.getElementById('log').textContent += s + '\n'; };
+addEventListener('error', (e) => out.errors.push(String(e.message)));
+addEventListener('unhandledrejection', (e) => out.errors.push(String(e.reason && e.reason.message || e.reason)));
+
+const renderer = new THREE.WebGLRenderer({ antialias: false, logarithmicDepthBuffer: true });
+renderer.setSize(256, 256);
+document.body.appendChild(renderer.domElement);
+const gl = renderer.getContext();
+const loader = createAssetLoader(renderer);
+const detected = { ...loader.ktx2.workerConfig };
+out.supported = detected;
+const only = (k) => ({ astcSupported: false, astcHDRSupported: false, etc1Supported: false, etc2Supported: false, dxtSupported: false, bptcSupported: false, pvrtcSupported: false, ...(k ? { [k]: true } : {}) });
+const FORCE = { astc: 'astcSupported', bptc: 'bptcSupported', etc2: 'etc2Supported', etc1: 'etc1Supported', dxt: 'dxtSupported', pvrtc: 'pvrtcSupported', rgba: null };
+if (target !== 'auto' && FORCE[target] && !detected[FORCE[target]]) { out.skipped = `${target} not supported here`; log(out.skipped); out.done = true; }
+else run();
+
+async function run() {
+if (target !== 'auto') loader.ktx2.workerConfig = only(FORCE[target]);
+const cap = Number(q.get('cap') || 0);
+const policy = createTexturePolicy(renderer, () => ({ textureMaxSize: cap || 16384, releaseImages: true, deviceClass: q.get('class') || 'phone' }));
+loader.gltf.register(policy.plugin);
+
+const scene = new THREE.Scene();
+scene.add(new THREE.HemisphereLight(0xffffff, 0x333333, 2));
+const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 5000);
+for (const f of files) {
+  const r = { file: f, ok: false };
+  try {
+    while (gl.getError() !== gl.NO_ERROR) { /* clear */ }
+    const t0 = performance.now();
+    const gltf = await loader.loadGLTF(new URL(`../../${f}`, location.href).href, { cache: false });
+    r.loadMs = Math.round(performance.now() - t0);
+    scene.add(gltf.scene);
+    const box = new THREE.Box3().setFromObject(gltf.scene), c = box.getCenter(new THREE.Vector3()), s = box.getSize(new THREE.Vector3()).length() || 1;
+    camera.position.copy(c).add(new THREE.Vector3(s * 0.6, s * 0.3, s * 0.6)); camera.lookAt(c); camera.far = s * 10; camera.updateProjectionMatrix();
+    const tex = new Set();
+    gltf.scene.traverse((o) => { for (const m of [].concat(o.material || [])) if (m) for (const k in m) if (m[k] && m[k].isTexture) tex.add(m[k]); });
+    const t1 = performance.now();
+    renderer.render(scene, camera);
+    r.renderMs = Math.round(performance.now() - t1);
+    r.glError = gl.getError();
+    r.textures = tex.size;
+    r.compressed = [...tex].filter((t) => t.isCompressedTexture).length;
+    r.formats = [...new Set([...tex].filter((t) => t.isCompressedTexture).map((t) => t.format))];
+    r.maxSide = Math.max(0, ...[...tex].filter((t) => t.isCompressedTexture).map((t) => (t.image && t.image.width) || 0));
+    policy.sweep(scene);
+    for (const fm of r.formats) out.formats[fm] = (out.formats[fm] || 0) + 1;
+    r.ok = r.glError === 0 && r.compressed > 0;
+    scene.remove(gltf.scene);
+    gltf.scene.traverse((o) => { if (o.geometry) o.geometry.dispose(); for (const m of [].concat(o.material || [])) if (m) { for (const k in m) if (m[k] && m[k].isTexture && !m[k].userData.keepData) m[k].dispose(); m.dispose(); } });
+  } catch (e) { r.error = String(e && e.message || e); }
+  out.results.push(r);
+  log(`${r.ok ? 'ok ' : 'BAD'} ${f} ${r.error || `${r.compressed}/${r.textures} KTX2 fmt ${r.formats} max ${r.maxSide} gl ${r.glError} load ${r.loadMs} ms render ${r.renderMs} ms`}`);
+}
+out.releasedMB = Math.round(policy.stats.releasedMB);
+out.done = true;
+}
+</script>
+</body>
+</html>

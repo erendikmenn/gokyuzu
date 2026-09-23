@@ -1,0 +1,15 @@
+{
+  "name": "gokyuzu-asset-tools",
+  "private": true,
+  "type": "module",
+  "description": "Offline asset post-processing (KTX2 textures for exported GLBs). Not shipped. npm ci --prefix tools/assets",
+  "scripts": {
+    "textures": "node textures.mjs"
+  },
+  "devDependencies": {
+    "gltf-validator": "^2.0.0-dev.3.10",
+    "ktx-parse": "^1.1.0",
+    "ktx2-encoder": "^0.6.0",
+    "sharp": "^0.35.4"
+  }
+}

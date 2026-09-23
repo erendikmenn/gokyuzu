@@ -8,20 +8,27 @@
 // Rules for code with image textures in the scene: do not dispose() one and draw it again, and do not clone() it after
 // its first frame (a released texture has no image to upload from). needsUpdate on a released texture is ignored
 // unless a new image was assigned (e.g. an anisotropy change applies from the next load).
+// KTX2 textures (tools/assets/textures.mjs: aircraft, landmarks, airport buildings; full mip chain, ≤ 4096²) cannot be
+// resized, so the cap drops their top mip levels instead (no work, no quality loss beyond the smaller size). Block
+// compression takes 0.5–1 byte per texel instead of 4, so on phones and tablets (quality.deviceClass) the same memory
+// budget allows twice the side: their cap is 2 × textureMaxSize (phone cockpit 1024 instead of 512, tablet 4096
+// instead of 2048). Desktop classes keep textureMaxSize (same look as before, a quarter of the memory), and so does any
+// device whose transcoder fell back to RGBA. With releaseImages the transcoded CPU copy is dropped after upload too.
 
 const KEYS = ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap', 'aoMap', 'alphaMap', 'bumpMap',
   'displacementMap', 'lightMap', 'specularMap', 'clearcoatMap', 'clearcoatNormalMap', 'clearcoatRoughnessMap',
   'sheenColorMap', 'sheenRoughnessMap', 'transmissionMap', 'thicknessMap', 'specularIntensityMap', 'specularColorMap',
   'iridescenceMap', 'iridescenceThicknessMap', 'anisotropyMap'];
 
-function texturesOf(root) {
+function texturesOf(root, compressed = false) {
   const bySource = new Map();
   root.traverse((o) => {
     for (const m of [].concat(o.material || [])) {
       if (!m) continue;
       for (const k of KEYS) {
         const t = m[k];
-        if (!t || !t.isTexture || t.isCompressedTexture || t.isDataTexture || !t.source) continue;
+        if (!t || !t.isTexture || t.isDataTexture || !t.source) continue;
+        if (compressed ? !isPlainCompressed(t) : t.isCompressedTexture) continue;
         let set = bySource.get(t.source);
         if (!set) bySource.set(t.source, (set = new Set()));
         set.add(t);
@@ -29,6 +36,35 @@ function texturesOf(root) {
     }
   });
   return bySource;
+}
+/** A 2D block-compressed (or transcoded-to-RGBA) texture with its mip chain in `mipmaps` (KTX2Loader output). */
+const isPlainCompressed = (t) => !!t.isCompressedTexture && !t.isCompressedArrayTexture && !t.isCompressedCubeTexture && Array.isArray(t.mipmaps) && t.mipmaps.length > 0;
+const RGBA = 1023;   // THREE.RGBAFormat: KTX2Loader's fallback when no compressed format is supported (4 bytes per texel)
+
+/**
+ * Drop the top mip levels of KTX2 textures larger than the cap (see the header). Textures sharing a source (clones,
+ * the loader's shared KTX2 files) are handled once; a texture already at or below the cap is left alone.
+ */
+function capCompressed(root, limit, mobile, stats) {
+  for (const [source, set] of texturesOf(root, true)) {
+    const first = set.values().next().value;
+    const cap = first.format === RGBA || !mobile ? limit : 2 * limit;
+    const levels = first.mipmaps;
+    let k = 0;
+    while (k < levels.length - 1 && Math.max(levels[k].width, levels[k].height) > cap) k++;
+    if (!k) continue;
+    const w = levels[0].width, h = levels[0].height;
+    let bytes = 0;
+    for (let i = 0; i < k; i++) bytes += levels[i].data ? levels[i].data.byteLength : 0;
+    for (const t of set) {
+      t.mipmaps = t.mipmaps.slice(k);
+      t.userData.downscaledFrom = [w, h];
+      t.needsUpdate = true;
+    }
+    if (source.data && typeof source.data === 'object') { source.data.width = levels[k].width; source.data.height = levels[k].height; }
+    stats.downscaled++;
+    stats.savedMB += bytes / 1048576;
+  }
 }
 
 /** Downscaled copy of a decoded image (ImageBitmap / HTMLImageElement / canvas) or null when not needed / possible. */
@@ -61,10 +97,11 @@ export async function shrinkImage(img, maxSize) {
 
 function freeze(tex) {
   // a released texture keeps its GPU copy: ignore re-upload requests while it has no image (a newly assigned image
-  // uploads normally)
+  // uploads normally; for a compressed texture: newly assigned mipmaps)
+  const hasData = tex.isCompressedTexture ? () => tex.mipmaps && tex.mipmaps.length > 0 && !!tex.mipmaps[0].data : () => !!(tex.source && tex.source.data);
   Object.defineProperty(tex, 'needsUpdate', {
     configurable: true, get() { return false; },
-    set(v) { if (v === true && tex.source && tex.source.data) { tex.version++; tex.source.needsUpdate = true; } },
+    set(v) { if (v === true && hasData()) { tex.version++; tex.source.needsUpdate = true; } },
   });
 }
 const isImage = (d) => !!d && ((typeof ImageBitmap !== 'undefined' && d instanceof ImageBitmap) || (typeof HTMLImageElement !== 'undefined' && d instanceof HTMLImageElement));
@@ -81,6 +118,8 @@ export function createTexturePolicy(renderer, getQuality) {
 
   async function apply(root) {
     const limit = maxTex();
+    const cls = (getQuality() || {}).deviceClass;
+    capCompressed(root, limit, cls === 'phone' || cls === 'tablet', stats);
     const jobs = [];
     for (const [source, set] of texturesOf(root)) {
       const img = source.data;
@@ -107,9 +146,11 @@ export function createTexturePolicy(renderer, getQuality) {
     const props = renderer.properties;
     const bySource = new Map();
     const visit = (t) => {
-      if (!t || !t.isTexture || !t.source || t.isRenderTargetTexture) return;
+      if (!t || !t.isTexture || !t.source || t.isRenderTargetTexture || t.userData.keepData) return;
       const d = t.source.data;
-      if (!isImage(d) || (d.naturalWidth || d.width) * (d.naturalHeight || d.height) < MIN_PIXELS) return;
+      if (isPlainCompressed(t)) {
+        if (!t.mipmaps[0].data || t.mipmaps[0].width * t.mipmaps[0].height < MIN_PIXELS) return;
+      } else if (!isImage(d) || (d.naturalWidth || d.width) * (d.naturalHeight || d.height) < MIN_PIXELS) return;
       let set = bySource.get(t.source);
       if (!set) bySource.set(t.source, (set = new Set()));
       set.add(t);
@@ -129,6 +170,16 @@ export function createTexturePolicy(renderer, getQuality) {
         if (!p.__webglTexture || p.__version !== t.version) { ready = false; break; }
       }
       if (!ready) continue;
+      const first = set.values().next().value;
+      if (isPlainCompressed(first)) {
+        // KTX2: the transcoded levels (shared by clones) are not needed once on the GPU
+        let bytes = 0;
+        for (const m of first.mipmaps) bytes += m.data ? m.data.byteLength : 0;
+        for (const t of set) { t.mipmaps = []; freeze(t); }
+        stats.released++;
+        stats.releasedMB += bytes / 1048576;
+        continue;
+      }
       const img = source.data;
       const w = img.naturalWidth || img.width || 0, h = img.naturalHeight || img.height || 0;
       source.data = null;
