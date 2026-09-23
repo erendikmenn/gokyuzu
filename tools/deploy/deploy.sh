@@ -1,5 +1,5 @@
 #!/bin/bash
-# Publish the game (AWS S3 + CloudFront, account "gokyuzu-admin"; DNS on Cloudflare).
+# Publish the game (AWS S3 + CloudFront, account "gokyuzu-admin"; production behind the Cloudflare proxy, staging DNS only).
 #   tools/deploy/deploy.sh staging            → https://staging.fs.erenailab.com (IP allow-list, any branch)
 #   tools/deploy/deploy.sh production [--yes] → https://fs.erenailab.com (only from a clean `main`, asks for confirmation, tags the release)
 # Needs: the ~/.aws/credentials profile "gokyuzu-deploy" (IAM user gokyuzu-deployer, least privilege)
@@ -33,7 +33,22 @@ aws s3 sync dist/renders $BUCKET/renders --delete --only-show-errors --cache-con
 # short-lived like the other JSON, and the game revalidates it on every start (fetch cache: 'no-cache')
 aws s3 cp dist/assets/versions.json $BUCKET/assets/versions.json --only-show-errors --cache-control "public, max-age=300" --content-type "application/json"
 aws s3 sync dist $BUCKET --delete --only-show-errors --exclude "assets/*" --exclude "node_modules/*" --exclude "renders/*" --cache-control "public, max-age=300"
-aws cloudfront create-invalidation --distribution-id $DIST_ID --paths "/*" --query "Invalidation.Id" --output text >/dev/null
+INV_ID=$(aws cloudfront create-invalidation --distribution-id $DIST_ID --paths "/*" --query "Invalidation.Id" --output text)
+if [ "$TARGET" = "production" ]; then
+  # fs.erenailab.com sits behind the Cloudflare proxy: once CloudFront serves the new files, drop Cloudflare's copies
+  # too (purging earlier would let Cloudflare re-fetch old files from CloudFront edges that are still invalidating)
+  echo "CloudFront tazeleniyor, ardından Cloudflare önbelleği temizlenecek…"
+  aws cloudfront wait invalidation-completed --distribution-id $DIST_ID --id "$INV_ID"
+  if [ -f "$HOME/.config/cloudflare.env" ]; then
+    set -a; source "$HOME/.config/cloudflare.env"; set +a
+    curl -sf -X POST "https://api.cloudflare.com/client/v4/zones/<cloudflare-zone-id>/purge_cache" \
+      -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H "Content-Type: application/json" \
+      --data '{"hosts":["fs.erenailab.com"]}' >/dev/null && echo "Cloudflare önbelleği temizlendi." \
+      || echo "UYARI: Cloudflare önbelleği temizlenemedi (dosyalar en geç 5 dk–1 gün içinde kendiliğinden yenilenir)."
+  else
+    echo "UYARI: ~/.config/cloudflare.env yok, Cloudflare önbelleği temizlenmedi."
+  fi
+fi
 if [ "$TARGET" = "production" ]; then
   TAG="release-$(date +%Y%m%d-%H%M)"; git tag -a "$TAG" -m "Canlı yayın: $URL"; echo "Etiket: $TAG"
 fi
