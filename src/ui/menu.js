@@ -7,9 +7,6 @@ import { AIRCRAFT_INFO, CATEGORY_LABEL, AIRPORTS, AIRPORT_ORDER, MENU_CONTROLS }
 import { shared } from './shared.js';
 import { createSpawnMap, SPAWN_MAP_CSS } from './baymap.js';
 import { openSettings, openCredits, deviceNotice, showQualityHint, CREDITS_LINE } from './panels.js';
-// time & weather hook: start conditions for the world (src/world-sf/weather-presets.js, environment-astro.js)
-import { WEATHER_PRESETS, WEATHER_ORDER, DEFAULT_WEATHER, resolveWeather, setStartConditions } from '../world-sf/weather-presets.js';
-import { TIME_PRESETS, DEFAULT_TIME, parseTime, formatTime } from '../world-sf/environment-astro.js';
 
 const STORE_KEY = 'gokyuzu-sf.menu';
 
@@ -346,97 +343,6 @@ const CARD_GRADIENTS = {
   helicopter: 'radial-gradient(ellipse at 30% 20%, #7b8f6c 0%, #3d4f41 45%, #151f1c 100%)',
 };
 
-// time & weather hook: weather preset icons (stroke SVG, currentColor)
-const WX_ICON = {
-  'açık': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M5.3 18.7l1.6-1.6M17.1 6.9l1.6-1.6"/></svg>',
-  'parçalı bulutlu': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="8.5" cy="8.5" r="3.2"/><path d="M8.5 2.5v1.4M2.5 8.5h1.4M4.3 4.3l1 1M12.7 4.3l-1 1"/><path d="M9 19.5h9a3.5 3.5 0 0 0 0-7h-.3A5 5 0 0 0 8.2 14 2.8 2.8 0 0 0 9 19.5z"/></svg>',
-  'kapalı': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18.5h10.5a4 4 0 0 0 .4-8 6 6 0 0 0-11.6 1.3A3.4 3.4 0 0 0 7 18.5z"/></svg>',
-  'sis': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 8h13M7 12h13M4 16h11M8 20h9"/></svg>',
-  'yağmur': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 14.5h10.5a3.8 3.8 0 0 0 .4-7.6 5.8 5.8 0 0 0-11.2 1.3A3.2 3.2 0 0 0 7 14.5z"/><path d="M8.5 17.5l-1 2.5M12.5 17.5l-1 2.5M16.5 17.5l-1 2.5"/></svg>',
-};
-const WX_SHORT = { 'açık': 'Açık', 'parçalı bulutlu': 'Parçalı', 'kapalı': 'Kapalı', 'sis': 'Sis', 'yağmur': 'Yağmur' };
-
-// ---------- time & weather hook: picker shared by the main menu and the pause screen ----------
-const TW_CSS = `
-.gkm-tw { padding: calc(10 * var(--u1)) calc(20 * var(--u1)) calc(8 * var(--u1)); border-top: 1px solid rgba(255, 255, 255, .07); }
-.gkm-tw-h { display: flex; justify-content: space-between; align-items: baseline; }
-.gkm-tw-now { font: 700 calc(12.5 * var(--u1)) var(--gk-mono); color: #ffe2d2; letter-spacing: .02em; }
-.gkm-tw-row { display: flex; gap: calc(4 * var(--u1)); margin-top: calc(7 * var(--u1)); }
-.gkm-tw-chip { flex: 1 1 0; min-width: 0; padding: calc(5 * var(--u1)) calc(2 * var(--u1)); border-radius: calc(8 * var(--u1)); cursor: pointer;
-  border: 1px solid rgba(255, 255, 255, .1); background: rgba(255, 255, 255, .04); outline: none;
-  font: 650 calc(10.5 * var(--u1)) var(--gk-sans) !important; color: rgba(226, 236, 250, .8) !important;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: background .15s, border-color .15s; }
-.gkm-tw-chip small { display: block; font: 600 calc(9.5 * var(--u1)) var(--gk-mono); color: var(--gk-faint); margin-top: 1px; }
-.gkm-tw-chip:hover { background: rgba(255, 255, 255, .09); }
-.gkm-tw-chip:focus-visible { border-color: rgba(255, 255, 255, .6); }
-.gkm-tw-chip[aria-checked="true"] { background: rgba(255, 107, 61, .2); border-color: rgba(255, 140, 90, .55); color: #fff !important; }
-.gkm-tw-chip[aria-checked="true"] small { color: #ffcfae; }
-.gkm-tw-chip svg { display: block; width: calc(17 * var(--u1)); height: calc(17 * var(--u1)); margin: 0 auto calc(2 * var(--u1)); }
-.gkm-tw-range { width: 100%; margin: calc(8 * var(--u1)) 0 0; accent-color: var(--gk-orange); height: calc(16 * var(--u1)); cursor: pointer;
-  background: transparent; }
-.gkm-tw.gkm-tw-pause { width: min(560px, 92vw); margin-top: 4px; padding: 14px 18px 12px; border-radius: 14px; border: 1px solid rgba(255, 255, 255, .14);
-  background: rgba(8, 14, 26, .6); --u1: 1.12px; pointer-events: auto; font-family: var(--gk-sans); color: var(--gk-fg); }
-.gkm-tw-pause .gkm-h { font-size: 11.5px; font-weight: 700; letter-spacing: .2em; text-transform: uppercase; color: var(--gk-dim); }
-`;
-
-/**
- * Time-of-day + weather picker (quick picks, a 15-minute slider, five weather presets).
- * onChange({ time, weather }) fires on every user change. Returns { el, set(time, weather), get() }.
- */
-export function createTimeWeatherControl(parent, { time = DEFAULT_TIME, weather = DEFAULT_WEATHER, onChange = () => {}, className = '' } = {}) {
-  injectCSS('timeweather', TW_CSS);
-  let timeH = parseTime(time) ?? DEFAULT_TIME;
-  let weatherId = resolveWeather(weather) || DEFAULT_WEATHER;
-  const tw = el('div', `gkm-tw ${className}`.trim(), parent);
-  const twh = el('div', 'gkm-tw-h', tw);
-  el('div', 'gkm-h', twh, 'Saat ve hava');
-  const twNow = el('div', 'gkm-tw-now', twh, '');
-  const timeRow = el('div', 'gkm-tw-row', tw);
-  timeRow.setAttribute('role', 'radiogroup');
-  timeRow.setAttribute('aria-label', 'Günün saati');
-  const timeChips = TIME_PRESETS.map((p) => {
-    const b = el('button', 'gkm-tw-chip', timeRow);
-    b.type = 'button';
-    b.setAttribute('role', 'radio');
-    b.append(p.label);
-    el('small', null, b, formatTime(p.hours));
-    b.addEventListener('click', () => setTime(p.hours));
-    return { b, p };
-  });
-  const range = el('input', 'gkm-tw-range', tw);
-  range.type = 'range'; range.min = '0'; range.max = '23.75'; range.step = '0.25';
-  range.setAttribute('aria-label', 'Saat');
-  range.addEventListener('input', () => setTime(Number(range.value)));
-  const wxRow = el('div', 'gkm-tw-row', tw);
-  wxRow.setAttribute('role', 'radiogroup');
-  wxRow.setAttribute('aria-label', 'Hava durumu');
-  const wxChips = WEATHER_ORDER.map((id) => {
-    const b = el('button', 'gkm-tw-chip', wxRow);
-    b.type = 'button';
-    b.setAttribute('role', 'radio');
-    b.title = WEATHER_PRESETS[id].label;
-    b.insertAdjacentHTML('beforeend', WX_ICON[id] || '');
-    b.append(WX_SHORT[id] || WEATHER_PRESETS[id].label);
-    b.addEventListener('click', () => setWeather(id));
-    return { b, id };
-  });
-  function render() {
-    twNow.textContent = `${formatTime(timeH)} · ${WEATHER_PRESETS[weatherId].label}`;
-    for (const { b, p } of timeChips) b.setAttribute('aria-checked', String(Math.abs(p.hours - timeH) < 0.01));
-    for (const { b, id } of wxChips) b.setAttribute('aria-checked', String(id === weatherId));
-    if (document.activeElement !== range) range.value = String(Math.min(timeH, 23.75));
-  }
-  function setTime(h) { timeH = ((h % 24) + 24) % 24; render(); onChange({ time: timeH, weather: weatherId }); }
-  function setWeather(id) { weatherId = id; render(); onChange({ time: timeH, weather: weatherId }); }
-  render();
-  return {
-    el: tw,
-    get() { return { time: timeH, weather: weatherId }; },
-    /** Update the shown values without firing onChange. */
-    set(t, w) { const v = parseTime(t); if (v != null) timeH = v; const id = resolveWeather(w); if (id) weatherId = id; render(); },
-  };
-}
-
 const PLANE_ICON = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M21 16v-2l-8-5V3.5A1.5 1.5 0 0 0 11.5 2 1.5 1.5 0 0 0 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5z"/></svg>';
 const ARROW_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>';
 
@@ -452,10 +358,6 @@ export function createMenu(container, { aircraft = [], spawns = [] } = {}) {
     let spawnId = spawnManual ? stored.spawnId : (list[acIndex] && list[acIndex].defaultSpawn) || (spawns[0] && spawns[0].id);
     if (!spawns.some((s) => s.id === spawnId)) spawnId = spawns[0] ? spawns[0].id : null;
     let closed = false, hintBox = null;
-    // time & weather hook: ?time= / ?weather= preselect, else the last choice, else the defaults
-    const urlq = new URLSearchParams(location.search);
-    let timeH = parseTime(urlq.get('time')) ?? parseTime(stored.time) ?? DEFAULT_TIME;
-    let weatherId = resolveWeather(urlq.get('weather')) || resolveWeather(stored.weather) || DEFAULT_WEATHER;
 
     const root = el('div', 'gkm', container);
     root.setAttribute('lang', 'tr');
@@ -589,12 +491,6 @@ export function createMenu(container, { aircraft = [], spawns = [] } = {}) {
       }
     }
 
-    // time & weather hook: time of day (quick picks + slider) and weather preset
-    createTimeWeatherControl(side, {
-      time: timeH, weather: weatherId,
-      onChange: (v) => { timeH = v.time; weatherId = v.weather; refresh(); persist(); },
-    });
-
     // controls
     const ctrl = el('div', 'gkm-ctrl', side);
     el('div', 'gkm-h', ctrl, 'Temel kontroller');
@@ -680,7 +576,7 @@ export function createMenu(container, { aircraft = [], spawns = [] } = {}) {
       selLabel.textContent = s ? `${apt ? `${apt.short} · ` : ''}${lab.title}` : '—';
       spawnMap.setSelected(spawnId);
       const info = a ? AIRCRAFT_INFO[a.id] : null;
-      flySub.textContent = a ? `${(info && info.short) || a.name} · ${apt ? `${apt.short} ` : ''}${lab.title} · ${formatTime(timeH)}` : '';
+      flySub.textContent = a ? `${(info && info.short) || a.name} · ${apt ? `${apt.short} ` : ''}${lab.title}` : '';
     }
 
     function selectAircraft(i, user) {
@@ -705,7 +601,7 @@ export function createMenu(container, { aircraft = [], spawns = [] } = {}) {
       if (sb) sb.b.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
       persist();
     }
-    function persist() { storageSet(STORE_KEY, { aircraftId: currentAircraft() && currentAircraft().id, spawnId, spawnManual, time: timeH, weather: weatherId }); }
+    function persist() { storageSet(STORE_KEY, { aircraftId: currentAircraft() && currentAircraft().id, spawnId, spawnManual }); }
 
     function fly() {
       if (closed) return;
@@ -714,8 +610,7 @@ export function createMenu(container, { aircraft = [], spawns = [] } = {}) {
       closed = true;
       persist();
       const s = currentSpawn();
-      const result = { aircraftId: a.id, spawnId: spawnId || a.defaultSpawn, time: timeH, weather: weatherId };
-      setStartConditions({ time: timeH, weather: weatherId });   // time & weather hook: read by createSFWorld
+      const result = { aircraftId: a.id, spawnId: spawnId || a.defaultSpawn };
       shared.choice = { ...result, aircraftName: a.name, spawnName: s ? s.name : '', category: a.category };
       cleanup();
       if (hintBox && hintBox.el.isConnected) hintBox.el.remove();

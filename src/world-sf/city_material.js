@@ -74,13 +74,7 @@ export async function createCityMaterial(renderer, base, anisotropy = null) {
     tCityNrm: { value: tNrm },
     uCityNight: { value: 0 },            // 0 = day, 1 = night (window lights)
     uCityNormalScale: { value: 1.0 },
-    // time & weather: share of lit windows (evening ~0.5 … small hours ~0.12), window brightness, floors per atlas
-    // layer (negative = ground floor: shops/lobbies, brighter and mostly lit; 0 = no windows)
-    uCityOcc: { value: 0.45 },
-    uCityWin: { value: 0.32 },
-    uCityFloors: { value: new Float32Array(64) },
   };
-  meta.layers.forEach((l, i) => { if (i < 64) uniforms.uCityFloors.value[i] = l.kind === 'ground' ? -Math.max(1, l.floors) : l.kind === 'roof' ? 0 : l.floors; });
   const make = (far) => {
   const material = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.85, metalness: 0.0, envMapIntensity: 1.0 });
   material.name = far ? 'city_atlas_far' : 'city_atlas';
@@ -111,9 +105,6 @@ uniform sampler2DArray tCityMat;
 uniform sampler2DArray tCityNrm;
 uniform float uCityNight;
 uniform float uCityNormalScale;
-uniform float uCityOcc;
-uniform float uCityWin;
-uniform float uCityFloors[64];
 varying vec2 vFacade;
 varying float vLayer;
 varying float vSeed;
@@ -148,36 +139,12 @@ diffuseColor.rgb *= cityAlb.rgb * cityTint;`)
 }`)
       .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
 if (uCityNight > 0.0 && cityMat.b > 0.05) {
-  // time & weather: one light cell per window bay and floor; warm / neutral / cool interiors; the share of lit
-  // windows follows the clock and varies per building; sub-pixel cells blend to their average (no sparkle far away)
-  float li = floor(vLayer + 0.5);
-  float fl = uCityFloors[int(clamp(li, 0.0, 63.0))];
-  float ground = fl < 0.0 ? 1.0 : 0.0;
-  float office = li < 5.5 ? 1.0 : 0.0;   // glass / office facades: zones of a floor light up together
-  vec2 cells = vec2(fl < 0.0 ? 1.0 : 2.0, max(abs(fl), 1.0));
-  vec2 cid = floor(vFacade * cells);
-  vec2 key = office > 0.5 ? vec2(floor(cid.x / 5.0), cid.y) : cid;
-  float h1 = cityHash(key + vSeed * 91.7);
-  float h2 = cityHash(cid * 1.37 + vSeed * 17.3 + 5.1);
-  // three detail levels by on-screen size: single windows, whole floors (bands), building average
-  vec2 dc = fwidth(vFacade * cells);
-  float sub = smoothstep(0.35, 0.9, max(dc.x, dc.y));
-  float subF = smoothstep(0.45, 1.1, dc.y);
-  float occ = mix(uCityOcc * (0.4 + 1.2 * fract(vSeed * 7.13)), 0.75, ground);
-  float hF = cityHash(vec2(cid.y, floor(cid.x / 9.0)) + vSeed * 53.1);
-  float floorOn = step(hF, occ) * 0.75 + 0.1;
-  // far away: blocks of 4 floors x 8 bays, lit or dark (a distant skyline is a patchwork, not a flat grey)
-  float hB = cityHash(vec2(floor(cid.y / 4.0), floor(cid.x / 8.0)) + vSeed * 29.3);
-  float blockOn = (step(hB, occ) * 0.8 + 0.08) * (0.5 + 0.7 * fract(vSeed * 3.71));
-  float on = mix(step(h1, occ), mix(floorOn * (0.7 + 0.6 * h2), blockOn * 0.6, subF), sub);
-  vec3 wc = office > 0.5 ? (h2 < 0.7 ? vec3(0.86, 0.93, 1.0) : vec3(1.0, 0.86, 0.66))
-          : (h2 < 0.55 ? vec3(1.0, 0.64, 0.34) : h2 < 0.85 ? vec3(1.0, 0.8, 0.55) : vec3(0.75, 0.85, 1.0));
-  wc = mix(wc, vec3(1.0, 0.8, 0.58), sub);
-  float lum = mix(0.45 + 0.8 * h2, 0.8, sub) * (1.0 + 1.2 * ground) * (office > 0.5 ? 0.8 : 1.0);
-  totalEmissiveRadiance += on * uCityNight * uCityWin * cityMat.b * wc * lum;
+  float cell = cityHash(floor(vFacade * vec2(2.0, 4.0)) + vSeed * 91.7);
+  float on = step(cell, cityMat.b * 0.7) * uCityNight;
+  totalEmissiveRadiance += on * vec3(1.0, 0.78, 0.5) * 1.6 * cityAlb.rgb * 4.0;
 }`);
   };
-  material.customProgramCacheKey = () => (far ? 'city_atlas_far_v2' : 'city_atlas_v2');
+  material.customProgramCacheKey = () => (far ? 'city_atlas_far_v1' : 'city_atlas_v1');
   return material;
   };
   // near (L0): full shading incl. the atlas normal map; far (L1-L3, > 1.3 km): no normal-map TBN work

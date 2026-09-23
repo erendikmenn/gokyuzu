@@ -1,6 +1,6 @@
 // "Continue the same flight" after a graphics failure (robustness, src/core/gpu-guard.js):
 // a compact snapshot of the flight (aircraft, position, heading, speed, attitude, gear/flaps, autopilot targets, route,
-// camera, time & weather) is kept in sessionStorage while flying; after a WebGL context loss the page reloads with
+// camera) is kept in sessionStorage while flying; after a WebGL context loss the page reloads with
 // ?resume=1 and main.js restores it. If the tab itself was killed (iOS reloads a crashed tab: no `pagehide` was seen)
 // the next load of this tab resumes too.
 import { findRunwayEnd } from '../nav/route.js';
@@ -33,12 +33,9 @@ export function flightSnapshot(state) {
   const f = state.flight, choice = state.choice;
   if (!f || !choice || f.crashed || !Number.isFinite(f.position.x) || !Number.isFinite(f.position.y)) return null;
   const ap = f.autopilot || {};
-  const w = state.world;
   return {
     v: 1, t: Date.now(), alive: true,
     aircraft: choice.aircraftId, spawn: choice.spawnId,
-    time: w && Number.isFinite(w.time) ? r1(w.time) : choice.time ?? null,
-    weather: (w && w.weather && w.weather.preset) || choice.weather || null,
     x: r1(f.position.x), y: r1(f.position.y), z: r1(f.position.z),
     heading: r1(fin(f.heading)),                          // deg
     speed: r1(fin(f.airspeed)),                           // TAS m/s

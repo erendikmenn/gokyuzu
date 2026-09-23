@@ -6,24 +6,14 @@ import { createCity } from './city.js';
 import { createLandmarks } from './landmarks.js';
 import { createAirports } from './airports.js';
 import { isNetworkError } from '../core/assets.js';
-// time & weather hook: live time of day, weather presets, night lights
-import { createWeather, resolveWeather, START_CONDITIONS, DEFAULT_WEATHER } from './weather.js';
-import { parseTime } from './environment-astro.js';
-import { createNightLights } from './lights.js';
 
-export async function createSFWorld({ scene, renderer, camera, loader, quality = null, focus = { x: 0, z: 0 }, onProgress = () => {}, time = null, weather: weatherName = null }) {
+export async function createSFWorld({ scene, renderer, camera, loader, quality = null, focus = { x: 0, z: 0 }, onProgress = () => {} }) {
   const [runways, landmarks, region] = await Promise.all([
     loader.loadJSON('data/sf/runways.json'), loader.loadJSON('data/sf/landmarks.json'), loader.loadJSON('data/sf/region.json'),
   ]);
-  // time & weather hook: options → menu choice (START_CONDITIONS) → ?time= / ?weather= → defaults
-  const urlq = new URLSearchParams(location.search);
-  const startTime = parseTime(time) ?? parseTime(START_CONDITIONS.time) ?? parseTime(urlq.get('time'));
-  const startWeather = resolveWeather(weatherName) || resolveWeather(START_CONDITIONS.weather) || resolveWeather(urlq.get('weather')) || DEFAULT_WEATHER;
-  const ctx = { scene, renderer, camera, loader, runways, landmarks, region, focus, quality, time: startTime };   // quality: src/core/quality.js preset (factories may read it at creation)
+  const ctx = { scene, renderer, camera, loader, runways, landmarks, region, focus, quality };   // quality: src/core/quality.js preset (factories may read it at creation)
   onProgress(0.05, 'Gökyüzü ve ışık');
   const environment = await createEnvironment(ctx);
-  const weather = createWeather(environment, { scene });   // time & weather hook
-  weather.set(startWeather);
   onProgress(0.15, 'Arazi ve hava fotoğrafları');
   const terrain = await createTerrain(ctx);
   scene.add(terrain.object);
@@ -43,18 +33,10 @@ export async function createSFWorld({ scene, renderer, camera, loader, quality =
       console.error(`[world] ${label} failed to load`, e);
     }
   }
-  // time & weather hook: street lights, ground light map, water reflections (streams only when it gets dark)
-  let nightLights = null;
-  try {
-    nightLights = createNightLights(ctx, { layers });
-    scene.add(nightLights.object);
-    nightLights.onMap((tex, xf) => environment.setGlowMap(tex, xf));   // orange city glow under fog/clouds
-  } catch (e) { console.error('[world] night lights', e); }
   onProgress(0.85, 'Detaylar yükleniyor');
   await Promise.all([terrain.ready, ...layers.map((l) => l.ready)].map((p) => Promise.resolve(p).catch((e) => { if (isNetworkError(e)) throw e; console.error(e); })));
   onProgress(1, 'Hazır');
-  if (quality) for (const part of [environment, terrain, ...layers, weather, nightLights]) if (part && part.setQuality) { try { part.setQuality(quality); } catch (e) { console.error('[world] setQuality', e); } }
-  if (terrain.setSunDirection) terrain.setSunDirection(environment.sunDirection);   // time & weather hook
+  if (quality) for (const part of [environment, terrain, ...layers]) if (part && part.setQuality) { try { part.setQuality(quality); } catch (e) { console.error('[world] setQuality', e); } }
 
   // runway rectangles for isOnRunway
   const rects = [];
@@ -72,22 +54,8 @@ export async function createSFWorld({ scene, renderer, camera, loader, quality =
     /** Apply a src/core/quality.js preset to every part that supports it (CONTRACTS-SF.md §8). */
     setQuality(q) {
       ctx.quality = q;
-      for (const part of [environment, terrain, ...layers, weather, nightLights]) if (part && part.setQuality) { try { part.setQuality(q); } catch (e) { console.error('[world] setQuality', e); } }
+      for (const part of [environment, terrain, ...layers]) if (part && part.setQuality) { try { part.setQuality(q); } catch (e) { console.error('[world] setQuality', e); } }
     },
-    // ---- time & weather hook (src/world-sf/environment.js, weather.js, lights.js) ----
-    /** Local time of day in hours (0..24), San Francisco (PDT), fixed summer date. */
-    get time() { return environment.time; },
-    /** Set the local time: hours (21.5) or 'HH:MM'; live, no reload. Returns the applied hours. */
-    setTime(h) {
-      const v = environment.setTime(h);
-      if (terrain.setSunDirection) terrain.setSunDirection(environment.sunDirection);
-      return v;
-    },
-    /** Physics-facing weather: visibility, cloudBase/Top, ceiling, fogTop, precipitation, wind (data only), … */
-    get weather() { return weather.state; },
-    /** Weather preset: 'açık' | 'parçalı bulutlu' | 'kapalı' | 'sis' | 'yağmur' (ASCII/English aliases accepted); live. */
-    setWeather(name) { return weather.set(name); },
-    nightLights,
     getGroundHeight: (x, z) => terrain.getHeight(x, z),
     isWater: (x, z) => terrain.isWater(x, z),
     runwayAt(x, z) {
@@ -133,8 +101,6 @@ export async function createSFWorld({ scene, renderer, camera, loader, quality =
       environment.update(dt, cam);
       terrain.update(dt, cam);
       for (const l of layers) l.update(dt, cam);
-      weather.update(dt, cam, renderer);            // time & weather hook
-      if (nightLights) nightLights.update(dt, cam);
     },
   };
 }

@@ -2,8 +2,6 @@
 // One instanced camera-facing quad per light, custom shader (log depth, tone mapping), additive blending.
 // Directional lights fade outside their beam; PAPI units switch red/white with the viewer's elevation angle.
 import * as THREE from 'three';
-import { SKY_STATE } from './environment.js';
-import { WATER_STREAK_GLSL, STREAK_FS } from './lights.js';
 
 // type table (index = light type id from tools/geo/airports_build.py)
 // [r, g, b (linear HDR), glow size m, day intensity, beam half-angle deg (0 = omni), kind]
@@ -41,27 +39,16 @@ attribute vec3 iPos;
 attribute vec4 iCol;      // rgb, size
 attribute vec4 iDir;      // dir xyz (unit, horizontal-ish), cos(beam)  (w <= -1: omni)
 attribute vec4 iPar;      // kind, phase, papi angle (deg), day intensity
-uniform float uTime, uDay, uPxScale, uMinPx, uGain, uFogDensity, uFarFade, uWet, uPlaneY;
+uniform float uTime, uDay, uPxScale, uMinPx, uGain, uFogDensity, uFarFade;
 uniform vec2 uViewport;
-varying vec3 vCol; varying vec2 vQ; varying float vSeed;
-${WATER_STREAK_GLSL}
+varying vec3 vCol; varying vec2 vQ;
 void main() {
   vec3 wp = (modelMatrix * vec4(iPos, 1.0)).xyz;
-  vSeed = fract(iPos.x * 0.137 + iPos.z * 0.311);
   vec3 toCam = normalize(cameraPosition - wp);
   float dist0 = max(length(cameraPosition - wp), 0.1);
   // pull the sprite toward the camera by ~its world radius so the quad does not cut into the pavement
   float rw = max(iCol.w, uMinPx * 3.0 * dist0 / uPxScale);
-#ifdef SF_MIRROR
-  // time & weather: reflection streak on the bay (approach lights on piers, shoreline lights), lying on the water
-  // (lights.js WATER_STREAK_GLSL); land in front hides it through the depth test
-  float sDist, graze, sNat;
-  // wet pavement (rain): the lights reflect in the runway itself; dry: only on the bay
-  vec3 sp = sfWaterStreakAt(wp, position.xy, iCol.w, uPxScale, uMinPx * 1.6, uWet > 0.5 ? uPlaneY : 0.0, sDist, graze, sNat);
-  vec4 mv = viewMatrix * vec4(sp, 1.0);
-#else
   vec4 mv = viewMatrix * vec4(wp + toCam * min(rw + 0.08 * dist0, dist0 * 0.5), 1.0);
-#endif
   float dist = max(-mv.z, 0.1);
   float I = mix(1.0, iPar.w * 0.55, uDay);
   vec3 col = iCol.rgb;
@@ -98,19 +85,10 @@ void main() {
   vCol = col * I * uGain;
   vec2 corner = position.xy;
   vQ = corner;
-#ifdef SF_MIRROR
-  if (kind > 1.5 && kind < 2.5) I = 0.0;   // no PAPI reflections
-  vCol *= (0.03 + 0.35 * (0.02 + 0.98 * pow(1.0 - graze, 5.0))) * (1.0 - uDay * 0.85);
-  // dry: from the ground the reflection points fall on the pavement / shore, so only from the approach or higher;
-  // wet: the runway mirrors its lights at every height (strong at grazing angles)
-  vCol *= uWet > 0.5 ? 1.4 : smoothstep(25.0, 60.0, cameraPosition.y);
-  gl_Position = projectionMatrix * mv;
-#else
   // lower half of the glow squashed (light sits on / spills onto the pavement instead of being cut by it)
   if (corner.y < 0.0) corner.y *= 0.35;
   gl_Position = projectionMatrix * mv;
   gl_Position.xy += corner * px / uViewport * 2.0 * gl_Position.w;
-#endif
   if (I < 0.002) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
   #include <logdepthbuf_vertex>
 }`;
@@ -118,20 +96,14 @@ void main() {
 const FS = /* glsl */`
 #include <common>
 #include <logdepthbuf_pars_fragment>
-uniform float uTime;
-varying vec3 vCol; varying vec2 vQ; varying float vSeed;
+varying vec3 vCol; varying vec2 vQ;
 void main() {
-#ifdef SF_MIRROR
-  ${STREAK_FS}
-  vec3 outc = vCol * c;
-#else
   float r2 = dot(vQ, vQ);
   if (r2 > 1.0) discard;
   float core = exp(-r2 * 18.0);
   float halo = exp(-r2 * 4.5) * 0.16;
-  vec3 outc = vCol * (core * 2.0 + halo);
-#endif
-  gl_FragColor = vec4(outc, 1.0);
+  vec3 c = vCol * (core * 2.0 + halo);
+  gl_FragColor = vec4(c, 1.0);
   #include <logdepthbuf_fragment>
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
@@ -153,10 +125,7 @@ export function buildLights(meta, A, ctx) {
     const y = mode === 0 ? g + h : mode === 1 ? h : Math.max(h, (water ? 0 : g) + 0.1);
     iPos[3 * i] = x; iPos[3 * i + 1] = y; iPos[3 * i + 2] = zz;
     const t = LIGHT_TYPES[T[i]] || LIGHT_TYPES[0];
-    // time & weather: taxiway edge/centreline lights are far weaker than runway lights (a few cd vs hundreds);
-    // at night full strength they washed the field cyan
-    const tw = T[i] === 11 || T[i] === 12 ? 0.45 : 1;
-    iCol.set([t[0] * tw, t[1] * tw, t[2] * tw, t[3]], 4 * i);
+    iCol.set([t[0], t[1], t[2], t[3]], 4 * i);
     const hd = H[i];
     if (hd >= 0 && t[5] > 0) {
       const r = hd * Math.PI / 180;
@@ -179,29 +148,17 @@ export function buildLights(meta, A, ctx) {
     uniforms: {
       uTime: { value: 0 }, uDay: { value: 1 }, uPxScale: { value: 800 }, uMinPx: { value: 1.6 }, uGain: { value: 1 },
       uViewport: { value: new THREE.Vector2(1440, 900) }, uFogDensity: { value: 0 }, uFarFade: { value: 30000 },
-      uWet: { value: 0 }, uPlaneY: { value: (meta.elevation != null ? +meta.elevation : 3) + 0.05 },
     },
     transparent: true, depthWrite: false, depthTest: true, blending: THREE.AdditiveBlending, toneMapped: true,
   });
   const mesh = new THREE.Mesh(geo, mat);
   mesh.name = `apt-lights-${meta.icao}`;
-  // time & weather: water reflections of the lights (same geometry and uniforms, SF_MIRROR variant)
-  const mirror = new THREE.Mesh(geo, new THREE.ShaderMaterial({
-    name: 'apt-lights-mirror', defines: { SF_MIRROR: 1 }, vertexShader: VS, fragmentShader: FS, uniforms: mat.uniforms,
-    transparent: true, depthWrite: false, depthTest: true, blending: THREE.AdditiveBlending, toneMapped: true, side: THREE.DoubleSide,
-  }));
-  mirror.name = `apt-lights-mirror-${meta.icao}`;
-  mirror.frustumCulled = false;
-  mirror.renderOrder = 9;
-  mirror.visible = false;
-  mesh.add(mirror);
-  mesh.userData.mirror = mirror;
   const hs = new Float32Array(n), ms = new Uint8Array(n);
   for (let i = 0; i < n; i++) { hs[i] = P[3 * i + 2]; ms[i] = M[i]; }
   mesh.userData.heights = hs;
   mesh.userData.modes = ms;
   mesh.position.set(ox, 0, oz);
-  mesh.renderOrder = 9;   // time & weather: before the fog bank top (10), so fog hides lights below it
+  mesh.renderOrder = 10;
   mesh.frustumCulled = true;
   return mesh;
 }
@@ -212,9 +169,8 @@ export function updateLights(meshes, { time, day, camera, renderer, scene }) {
   if (!meshes.length) return;
   renderer.getDrawingBufferSize(_v2);
   const pxScale = _v2.y * (camera.zoom || 1) / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2));
-  // extinction from the weather visibility (time & weather, environment.js SKY_STATE); ~70 km on a clear day
-  // bright point lights stay visible well beyond the visibility of unlit objects (Allard's law): ~0.55x the extinction
-  const dens = SKY_STATE.live ? SKY_STATE.extinction * 0.55 : 4.5e-5;
+  // fixed extinction (~70 km visibility); scene.fog semantics differ between environments, so do not rely on it
+  const dens = 4.5e-5;
   void scene;
   for (const m of meshes) {
     const u = m.material.uniforms;
@@ -224,9 +180,5 @@ export function updateLights(meshes, { time, day, camera, renderer, scene }) {
     u.uMinPx.value = 1.5 * _v2.y / 900;
     u.uViewport.value.copy(_v2);
     u.uFogDensity.value = dens;
-    // night exposure is raised (eye adaptation, environment.js): keep the lights at their designed brightness
-    u.uGain.value = SKY_STATE.live ? Math.pow(SKY_STATE.exposureComp, 0.85) : 1;
-    u.uWet.value = SKY_STATE.wet;
-    if (m.userData.mirror) m.userData.mirror.visible = (day < 0.95 || SKY_STATE.wet > 0.5) && m.visible;
   }
 }

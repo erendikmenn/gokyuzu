@@ -165,16 +165,11 @@ export async function createTerrain(ctx) {
   const maxAniso = renderer.capabilities.getMaxAnisotropy();
   const detailTex = flat(128, 128, 128);
   const shared = createTerrainShared({ depthTex, waveTex, detailTex, rootMinX: RX, rootMinZ: RZ });
-  // baked terrain shadows are valid only for the sun they were computed for (re-checked when the time changes)
-  let bakedDir = null;
-  const checkBakedSun = (dir) => {
-    if (!bakedDir || !dir) return;
-    shared.uSunVisOn.value = bakedDir.angleTo(dir) < 0.035 && q.get('terrainShadows') !== '0' ? 1 : 0;
-  };
-  if (index.bakedSun) {
+  // baked terrain shadows are valid only for the sun they were computed for
+  if (index.bakedSun && ctx.sunDirection) {
     const el = index.bakedSun.elevationDeg * Math.PI / 180, az = index.bakedSun.azimuthDeg * Math.PI / 180;
-    bakedDir = new THREE.Vector3(Math.sin(az) * Math.cos(el), Math.sin(el), -Math.cos(az) * Math.cos(el));
-    checkBakedSun(ctx.sunDirection);
+    const b = new THREE.Vector3(Math.sin(az) * Math.cos(el), Math.sin(el), -Math.cos(az) * Math.cos(el));
+    shared.uSunVisOn.value = b.angleTo(ctx.sunDirection) < 0.035 && q.get('terrainShadows') !== '0' ? 1 : 0;
   }
   if (q.has('landSpec')) shared.uLandSpec.value = +q.get('landSpec');
   if (q.has('landGain')) { const g = +q.get('landGain'); shared.uLand.value.set(g, g, g, shared.uLand.value.w); }
@@ -723,8 +718,6 @@ export async function createTerrain(ctx) {
       waveTex.anisotropy = shared.uDetailTex.value.anisotropy = Math.min(qual.aniso, maxAniso);
     },
     get quality() { return { ...qual }; },
-    /** Time & weather: the sun moved → baked terrain shadows only while it matches the baked sun. */
-    setSunDirection(dir) { checkBakedSun(dir); },
     dispose() {
       disposed = true;
       for (const n of nodes.values()) if (n.state === READY) unloadNode(n);

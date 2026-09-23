@@ -204,31 +204,15 @@ vec3 sampleSkyLUT(sampler2D lut, vec3 dir, vec3 sunDir, float camH) {
 
 // ---------------------------------------------------------------- aerial perspective chunk patch
 /**
- * Shared atmosphere state for every material with fog:true (time & weather change it live, no recompiles).
- * Uploaded as `uniform vec4 sfAtm[6]` (one Float32Array shared by reference by all materials):
- *   [0] key light direction (sun by day, moon at night) xyz, night factor (0 day … 1 night)
- *   [1] key light irradiance at the ground (rgb) — scatters in the haze
- *   [2] ambient (sky) irradiance (rgb) — isotropic in-scatter
- *   [3] in-layer fog/cloud colour (rgb), extinction inside the layer (1/m)
- *   [4] camera inside a fog/cloud layer (0..1), layer top above the camera (m), layer bottom below the camera (m), -
- *   [5] rain/wetness (0..1), -, -, -
- */
-export const SF_ATM = new Float32Array(24);
-
-/**
  * Replace three's fog chunks so every material with fog:true gets physically based aerial perspective, applied in
  * linear HDR right before tone mapping. scene.fog is a THREE.Fog used as a parameter block: fog.near = marine haze
- * multiplier (1 = default), fog.far = animation time (s). Everything else comes from SF_ATM (see above), which is
- * registered as a uniform of every built-in material and of THREE.UniformsLib.fog (custom ShaderMaterials that merge it).
- * Call once, before any material is compiled.
+ * multiplier (1 = default), fog.far = animation time (s), fog.color = (camera-inside-fog-bank amount 0..1,
+ * fog-bank top above the camera in km, unused).
+ * @param {{sunDir: THREE.Vector3, sunColor: number[], ambient: number[]}} p
  */
-export function patchAerialPerspective() {
-  if (THREE.UniformsLib.fog.sfAtm) return;
-  THREE.UniformsLib.fog.sfAtm = { value: SF_ATM };
-  for (const k of Object.keys(THREE.ShaderLib)) {
-    const u = THREE.ShaderLib[k].uniforms;
-    if (u && u.fogColor && !u.sfAtm) u.sfAtm = { value: SF_ATM };   // cloned per material; the Float32Array stays shared
-  }
+export function patchAerialPerspective(p) {
+  const S = p.sunDir, C = p.sunColor, Am = p.ambient;
+  const v3 = (a) => `vec3(${a.map((x) => x.toFixed(6)).join(',')})`;
   const C_ = THREE.ShaderChunk;
   C_.fog_pars_vertex = /* glsl */`
 #ifdef USE_FOG
@@ -246,7 +230,6 @@ export function patchAerialPerspective() {
 #ifdef USE_FOG
   #define SF_AERIAL 1
   uniform vec3 fogColor;
-  uniform vec4 sfAtm[6];
   varying float vFogDepth;
   varying vec3 vFogView;
   #ifdef FOG_EXP2
@@ -261,13 +244,9 @@ export function patchAerialPerspective() {
   #else
     #define SF_TIME fogFar
   #endif
-  #define SF_SUN_DIR sfAtm[0].xyz
-  #define SF_NIGHT sfAtm[0].w
-  #define SF_SUN_E sfAtm[1].rgb
-  #define SF_AMB sfAtm[2].rgb
-  #define SF_FOG_COL sfAtm[3].rgb
-  #define SF_FOG_K sfAtm[3].w
-  #define SF_WET sfAtm[5].x
+  const vec3 SF_SUN_DIR = ${v3([S.x, S.y, S.z])};
+  const vec3 SF_SUN_E = ${v3(C)};
+  const vec3 SF_AMB = ${v3(Am)};
   float sfOD(float h0, float h1, float D, float dy, float H) {
     float x = D * dy;
     if (abs(x) < 1e-3 * H) return D * exp(-0.5 * (h0 + h1) / H);
@@ -289,22 +268,18 @@ export function patchAerialPerspective() {
     float odR = sfOD(h0, h1, D, dy, ATM_HR);
     float odM = sfOD(h0, h1, D, dy, ATM_HM);
     float odH = sfOD(h0, h1, D, dy, ATM_HH) * haze;
-    // inside a fog bank / cloud layer: the ray leaves it through the layer top (up) or bottom (down); the part of the
-    // path inside the layer is covered by the layer's own scattering, so the haze only acts on the rest
-    vec4 lay = sfAtm[4];
-    if (lay.x > 0.001) {
-      float tExit = dy > 1e-3 ? lay.y / dy : (dy < -1e-3 ? lay.z / -dy : 1e9);
-      float a = (1.0 - exp(-SF_FOG_K * min(D, tExit))) * lay.x;
-      col = mix(col, SF_FOG_COL, a);
-      float keep = 1.0 - a;
-      odR *= keep; odM *= keep; odH *= keep;
-    }
     vec3 tau = ATM_BR * odR + vec3(ATM_BME * odM + ATM_BHE * odH);
     float mu = dot(dir, SF_SUN_DIR);
     vec3 sR = ATM_BR * odR;
     float sM = ATM_BMS * odM + ATM_BHS * odH;
     vec3 inscat = (sR * atmPhaseR(mu) + sM * atmPhaseM(mu)) * SF_SUN_E + (sR + sM) * SF_AMB;
     vec3 T = exp(-tau);
+    // inside the Golden Gate fog bank (fogColor.r = amount, fogColor.g = fog top above the camera in km)
+    if (fogColor.r > 0.001) {
+      float tExit = dir.y > 1e-3 ? fogColor.g * 1000.0 / dir.y : 1e9;
+      float a = (1.0 - exp(-0.022 * min(D, tExit))) * fogColor.r;
+      col = mix(col, SF_SUN_E * 0.06 + SF_AMB * 1.5, a);
+    }
     return col * T + (1.0 - T) * inscat / max(tau, vec3(1e-9));
   }
 #endif

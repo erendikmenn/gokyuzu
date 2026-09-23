@@ -1486,8 +1486,6 @@ export function createHUD(container) {
     get element() { return root; },
     /** Add an overlay layer (onboarding cards) above the instruments but below toasts, help and pause. */
     mountLayer(node) { root.insertBefore(node, toast); },
-    /** Time & weather hook: a control shown on the pause screen, between the buttons and the key list. */
-    mountPauseControl(node) { pause.insertBefore(node, credLink); },
     /** Navigation hook (src/ui/map.js): the minimap opens the map (click) and draws the planned route. */
     setNavMap(hooks) {
       navHooks = hooks || null;

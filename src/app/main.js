@@ -9,7 +9,6 @@ import { createInput } from '../flight/input.js';
 import { createDisplay } from '../avionics/index.js';
 import { createAudioSystem } from '../audio/index.js';
 import { createMenu, createLoadingScreen, createHUD, createCameraRig, createOnboarding } from '../ui/index.js';
-import { createTimeWeatherControl } from '../ui/menu.js';   // time & weather hook: picker on the pause screen
 import { buildSpawns } from './spawns.js';
 import { loadSettings } from '../core/settings.js';
 import { QUALITY, resolveQuality, lowerQuality, setQualityCap } from '../core/quality.js';
@@ -103,7 +102,7 @@ async function start() {
   let choice;
   const direct = AIRCRAFT.find((a) => a.id === params.get('aircraft'));   // ?aircraft=<id>&spawn=<id> skips the menu
   const resumed = resume && AIRCRAFT.some((a) => a.id === resume.aircraft) ? resume : null;   // robustness hook: same flight
-  if (resumed) choice = { aircraftId: resumed.aircraft, spawnId: spawns.some((s) => s.id === resumed.spawn) ? resumed.spawn : spawns[0].id, time: resumed.time ?? undefined, weather: resumed.weather || undefined };
+  if (resumed) choice = { aircraftId: resumed.aircraft, spawnId: spawns.some((s) => s.id === resumed.spawn) ? resumed.spawn : spawns[0].id };
   else if (direct) choice = { aircraftId: direct.id, spawnId: spawns.some((s) => s.id === params.get('spawn')) ? params.get('spawn') : direct.defaultSpawn };
   else choice = await createMenu(uiRoot, { aircraft: AIRCRAFT, spawns });
   audio.start();
@@ -117,9 +116,7 @@ async function start() {
   loadAircraftDefinition(choice.aircraftId).then((d) => d.model.url && loader.loadGLTF(d.model.url)).catch(() => {});
   if (!state.world) {
     const focus = resumed ? { x: resumed.x, z: resumed.z } : { x: spawn.x, z: spawn.z };   // robustness hook: load around the resumed aircraft
-    state.world = await createSFWorld({ scene, renderer, camera, loader, quality, focus, onProgress: (p, t) => loading.setProgress(p * 0.8, t),
-      time: choice.time, weather: choice.weather });   // time & weather hook (menu choice; ?time= / ?weather= otherwise)
-    mountTimeWeather();
+    state.world = await createSFWorld({ scene, renderer, camera, loader, quality, focus, onProgress: (p, t) => loading.setProgress(p * 0.8, t) });
   }
   loading.setProgress(0.85, 'Uçak yükleniyor');
   await loadAircraft(choice.aircraftId);
@@ -282,16 +279,6 @@ for (const a of ['camera', 'cameraPrev', 'view', 'cameraSelect']) input.on(a, ()
 input.on('lookBack', () => cameraRig.lookBack(true));
 input.on('reset', () => { if (state.flight) { resetFlight(); hud.showMessage('Yeniden başlatıldı', 1000); } });
 input.on('pause', () => { state.paused = !state.paused; hud.setPaused(state.paused); audio.setPaused(state.paused); });
-input.on('pause', () => { if (state.twControl && state.world) state.twControl.set(state.world.time, state.world.weather.preset); });   // time & weather hook
-// time & weather hook: live time of day + weather from the pause screen (src/ui/menu.js control, world.setTime / setWeather)
-function mountTimeWeather() {
-  if (state.twControl || !hud.mountPauseControl || !state.world.setTime) return;
-  state.twControl = createTimeWeatherControl(null, {
-    time: state.world.time, weather: state.world.weather.preset, className: 'gkm-tw-pause',
-    onChange: (v) => { state.world.setTime(v.time); if (v.weather !== state.world.weather.preset) state.world.setWeather(v.weather); if (state.choice) Object.assign(state.choice, v); },
-  });
-  hud.mountPauseControl(state.twControl.el);
-}
 input.on('hud', () => { if (hud.cycleMode) hud.cycleMode(); else { state.hudVisible = !state.hudVisible; hud.setVisible(state.hudVisible); } });   // full → compact → off
 input.on('mute', () => { state.userMuted = !state.userMuted; audio.setMuted(state.userMuted); hud.showMessage(state.userMuted ? 'Ses kapalı' : 'Ses açık', 900); });
 input.on('help', () => { state.helpVisible = !state.helpVisible; hud.showHelp(input.bindings, state.helpVisible); });
@@ -434,7 +421,6 @@ function startFailed(e) {
   if (!loading) loading = createLoadingScreen(uiRoot);   // failed before the loading screen (version map, runways)
   const q = new URLSearchParams(location.search);
   if (state.choice) { q.set('aircraft', state.choice.aircraftId); q.set('spawn', state.choice.spawnId); }
-  if (state.choice && state.choice.time != null) { q.set('time', String(state.choice.time)); if (state.choice.weather) q.set('weather', state.choice.weather); }   // time & weather hook
   const url = q.toString() ? `${location.pathname}?${q}` : location.pathname;
   loading.showError(net ? undefined : `Oyun yüklenemedi: ${e.message}`, () => location.replace(url));
 }

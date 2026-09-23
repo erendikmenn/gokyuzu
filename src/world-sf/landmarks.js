@@ -3,8 +3,6 @@
 // (placements, LOD distances, collision primitives, light positions). See CONTRACTS-SF.md §6.1 (Layer).
 import * as THREE from 'three';
 import { createTraffic } from './landmarks_traffic.js';
-import { SKY_STATE } from './environment.js';   // time & weather: night factor from the sky (the key light may be the moon)
-import { WATER_STREAK_GLSL, SPRITE_FS } from './lights.js';
 import { isNetworkError, reportLoadFailure, retryDelay } from '../core/assets.js';
 
 const BASE = 'assets/sf/landmarks/';
@@ -14,62 +12,6 @@ const _m = new THREE.Matrix4();
 
 // ---------------------------------------------------------------------------------------------- glow lights
 // Additive point sprites with a minimum on-screen size so aviation lights stay visible from far away.
-// Time & weather: extinction by the weather visibility, the Bay Lights LED sculpture animated on the west span,
-// and a mirrored copy that draws each light's shimmering reflection streak on the bay (SF_MIRROR).
-const GLOW_VS = /* glsl */`
-  attribute vec3 aColor; attribute float aSize;
-  uniform float uScale; uniform float uMinPx; uniform float uExt;
-  varying vec3 vColor; varying float vFade; varying float vSeed;
-  #include <common>
-  #include <logdepthbuf_pars_vertex>
-  void main() {
-    vec3 wp = (modelMatrix * vec4(position, 1.0)).xyz;
-    float I = 1.0;
-    vec4 mv = viewMatrix * vec4(wp, 1.0);
-    gl_Position = projectionMatrix * mv;
-    float dist = max(-mv.z, 0.1);
-    float px = aSize * uScale / dist;
-    vFade = clamp(px / uMinPx, 0.35, 1.0) * exp(-uExt * dist) * I;
-    gl_PointSize = clamp(px, uMinPx, 256.0);
-    vColor = aColor;
-    vSeed = fract(position.x * 0.071 + position.z * 0.113);
-    if (vFade * max(aColor.r, max(aColor.g, aColor.b)) < 0.002) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
-    #include <logdepthbuf_vertex>
-  }`;
-const GLOW_FS = /* glsl */`
-  uniform float uTime;
-  varying vec3 vColor; varying float vFade; varying float vSeed;
-  #include <common>
-  #include <logdepthbuf_pars_fragment>
-  void main() {
-    #include <logdepthbuf_fragment>
-    vec2 d = gl_PointCoord - 0.5;
-    float r = length(d) * 2.0;
-    if (r > 1.0) discard;
-    float halo = exp(-r * r * 5.0);
-    float core = smoothstep(0.32, 0.0, r);
-    gl_FragColor = vec4(vColor * (halo * 0.9 + core * 1.6) * vFade, 1.0);
-  }`;
-// time & weather: the lights' reflection streaks on the bay, as quads lying on the water (lights.js)
-const MIRROR_VS = /* glsl */`
-  #include <common>
-  #include <logdepthbuf_pars_vertex>
-  attribute vec3 iPos; attribute vec3 iColor; attribute float iSize;
-  uniform float uScale; uniform float uMinPx; uniform float uExt;
-  varying vec3 vCol; varying vec2 vQ; varying float vSeed;
-  ${WATER_STREAK_GLSL}
-  void main() {
-    float dist, graze, natural;
-    vec3 sp = sfWaterStreak(iPos, position.xy, iSize, uScale, uMinPx, dist, graze, natural);
-    float I = 0.03 + 0.35 * (0.02 + 0.98 * pow(1.0 - graze, 5.0));
-    I *= mix(0.3, 1.0, clamp(natural / uMinPx, 0.0, 1.0)) * exp(-uExt * dist);
-    vCol = iColor * I * (iSize > 2.2 && iSize < 2.7 ? 0.35 : 1.0);   // the Bay Lights: many small LEDs, a fainter sheen
-    vQ = position.xy;
-    vSeed = fract(iPos.x * 0.137 + iPos.z * 0.311);
-    gl_Position = projectionMatrix * viewMatrix * vec4(sp, 1.0);
-    if (max(vCol.r, max(vCol.g, vCol.b)) < 0.002) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
-    #include <logdepthbuf_vertex>
-  }`;
 function createGlow(maxCount) {
   const geo = new THREE.BufferGeometry();
   const pos = new Float32Array(maxCount * 3);
@@ -79,86 +21,74 @@ function createGlow(maxCount) {
   geo.setAttribute('aColor', new THREE.BufferAttribute(col, 3).setUsage(THREE.DynamicDrawUsage));
   geo.setAttribute('aSize', new THREE.BufferAttribute(size, 1));
   geo.setDrawRange(0, 0);
-  const uniforms = { uScale: { value: 800 }, uMinPx: { value: 2.2 }, uExt: { value: 0 }, uTime: { value: 0 } };
   const mat = new THREE.ShaderMaterial({
-    uniforms, vertexShader: GLOW_VS, fragmentShader: GLOW_FS,
+    uniforms: { uScale: { value: 800 }, uMinPx: { value: 2.2 } },
+    vertexShader: /* glsl */`
+      attribute vec3 aColor; attribute float aSize;
+      uniform float uScale; uniform float uMinPx;
+      varying vec3 vColor; varying float vFade;
+      #include <common>
+      #include <logdepthbuf_pars_vertex>
+      void main() {
+        vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        gl_Position = projectionMatrix * mv;
+        float px = aSize * uScale / max(-mv.z, 0.1);
+        vFade = clamp(px / uMinPx, 0.35, 1.0);
+        gl_PointSize = clamp(px, uMinPx, 256.0);
+        vColor = aColor;
+        #include <logdepthbuf_vertex>
+      }`,
+    fragmentShader: /* glsl */`
+      varying vec3 vColor; varying float vFade;
+      #include <common>
+      #include <logdepthbuf_pars_fragment>
+      void main() {
+        #include <logdepthbuf_fragment>
+        vec2 d = gl_PointCoord - 0.5;
+        float r = length(d) * 2.0;
+        if (r > 1.0) discard;
+        float halo = exp(-r * r * 5.0);
+        float core = smoothstep(0.32, 0.0, r);
+        gl_FragColor = vec4(vColor * (halo * 0.9 + core * 1.6) * vFade, 1.0);
+      }`,
     transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false,
   });
   const points = new THREE.Points(geo, mat);
   points.frustumCulled = false;
-  points.renderOrder = 9;   // before the fog bank top (10): fog hides the lights below it
+  points.renderOrder = 10;
   points.name = 'landmark_lights';
-  // reflections: instanced quads sharing the light arrays
-  const mgeo = new THREE.InstancedBufferGeometry();
-  mgeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array([-1, -1, 0, 1, -1, 0, 1, 1, 0, -1, 1, 0]), 3));
-  mgeo.setIndex([0, 1, 2, 0, 2, 3]);
-  const mPos = new THREE.InstancedBufferAttribute(pos, 3), mCol = new THREE.InstancedBufferAttribute(col, 3).setUsage(THREE.DynamicDrawUsage);
-  mgeo.setAttribute('iPos', mPos);
-  mgeo.setAttribute('iColor', mCol);
-  mgeo.setAttribute('iSize', new THREE.InstancedBufferAttribute(size, 1));
-  mgeo.instanceCount = 0;
-  const mirror = new THREE.Mesh(mgeo, new THREE.ShaderMaterial({
-    uniforms, defines: { SF_MIRROR: 1 }, vertexShader: MIRROR_VS, fragmentShader: SPRITE_FS,
-    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
-  }));
-  mirror.frustumCulled = false;
-  mirror.renderOrder = 9;
-  mirror.name = 'landmark_lights_mirror';
   const lights = [];
   let lastT = -1, lastNight = -1, lastCount = -1;
-  const smooth = (e0, e1, x) => { const t = Math.min(Math.max((x - e0) / (e1 - e0), 0), 1); return t * t * (3 - 2 * t); };
   return {
-    points, mirror, lights,
-    clear() { lights.length = 0; geo.setDrawRange(0, 0); mgeo.instanceCount = 0; },
-    add(worldPos, color, sizeM, period, duty, phase, intensity, kind, local) {
+    points, lights,
+    clear() { lights.length = 0; geo.setDrawRange(0, 0); },
+    add(worldPos, color, sizeM, period, duty, phase, intensity, kind) {
       if (lights.length >= maxCount) return;
       const i = lights.length;
       pos.set([worldPos.x, worldPos.y, worldPos.z], i * 3);
       size[i] = sizeM;
       const c = new THREE.Color(color);
-      // the Bay Lights (west span vertical cables): position along the span and up the cable drive the animation
-      const bay = kind === 'bay';
-      lights.push({ r: c.r, g: c.g, b: c.b, period, duty, phase, intensity, kind, u: local ? local[2] : 0, v: local ? local[1] : 0,
-        cable: bay ? Math.round(local[2] / 15.24) : 0, rnd: Math.random() });
+      lights.push({ r: c.r, g: c.g, b: c.b, period, duty, phase, intensity, kind });
       geo.setDrawRange(0, lights.length);
       geo.attributes.position.needsUpdate = true;
       geo.attributes.aSize.needsUpdate = true;
       geo.computeBoundingSphere();
-      mgeo.instanceCount = lights.length;
-      mPos.needsUpdate = true;
-      mgeo.attributes.iSize.needsUpdate = true;
     },
-    update(t, camera, renderer, night, ext) {
+    update(t, camera, renderer, night) {
       const h = renderer ? renderer.domElement.height : 900;
-      uniforms.uScale.value = h / 2 / Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2);
-      uniforms.uExt.value = ext || 0;
-      uniforms.uTime.value = t;
-      mirror.visible = night > 0.05;
-      // colors only change with blinking (>= 0.75 s periods), the Bay Lights and the day/night factor: ~20 Hz
+      mat.uniforms.uScale.value = h / 2 / Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2);
+      // colors only change with blinking (>= 0.75 s periods) and the day/night factor: refresh at ~20 Hz
       if (t - lastT < 0.05 && Math.abs(night - lastNight) < 0.01 && lights.length === lastCount) return;
       lastT = t; lastNight = night; lastCount = lights.length;
-      // Bay Lights: three slowly alternating LED patterns (travelling waves, drops falling down the cables, sparkle)
-      const cyc = (t / 24) % 3, wA = smooth(0.1, 0.4, 1 - Math.abs(cyc - 0.5) * 2), wB = smooth(0.1, 0.4, 1 - Math.abs(cyc - 1.5) * 2), wC = smooth(0.1, 0.4, 1 - Math.min(Math.abs(cyc - 2.5), Math.abs(cyc + 0.5)) * 2);
       for (let i = 0; i < lights.length; i++) {
         const L = lights[i];
         let on = 1;
         if (L.period > 0) on = ((t / L.period + L.phase) % 1) < L.duty ? 1 : 0.04;
-        let k;
-        if (L.kind === 'bay') {
-          const wave = 0.5 + 0.5 * Math.sin(L.u / 55 - t * 0.9) * Math.sin(L.u / 310 + t * 0.21);
-          const top = 150, fall = (t * 0.35 + ((L.cable * 0.6180339) % 1)) % 1;
-          const drop = Math.exp(-(((L.v - (top - fall * 100)) / 7) ** 2));
-          const sp = ((Math.floor(t * 5) * 0.37 + L.rnd * 13.7) % 1) > 0.82 ? 1 : 0.12;
-          const pat = (wA * wave + wB * (0.1 + drop) + wC * sp) / Math.max(wA + wB + wC, 1e-3);
-          k = night * 3.2 * L.intensity * (0.08 + 0.92 * pat);   // each point stands for ~17 of the 25,000 LEDs
-        } else {
-          // aviation lights are dimmer by day; navigation/street lights only at night
-          k = (L.kind === 'warn' ? 0.7 + 1.3 * night : L.kind === 'lamp' ? night * 1.2 : 0.25 + 0.9 * night) * L.intensity * on;
-        }
+        // aviation lights are dimmer by day; navigation/street lights only at night
+        const k = (L.kind === 'warn' ? 0.7 + 1.3 * night : L.kind === 'lamp' ? night * 1.2 : 0.25 + 0.9 * night) * L.intensity * on;
         col[i * 3] = L.r * k; col[i * 3 + 1] = L.g * k; col[i * 3 + 2] = L.b * k;
       }
       geo.attributes.aColor.needsUpdate = true;
-      mCol.needsUpdate = true;
     },
   };
 }
@@ -575,7 +505,7 @@ export async function createLandmarks(ctx) {
   const groundAt = (x, z) => (ctx.terrain ? ctx.terrain.getHeight(x, z) : 0);
   let collision = createCollision(groundAt);
   const glow = createGlow(8192);
-  root.add(glow.points, glow.mirror);
+  root.add(glow.points);
 
   // world-space collision primitives and lights (rebuilt when the terrain placement changes)
   function buildWorldData() {
@@ -608,9 +538,7 @@ export async function createLandmarks(ctx) {
         }
         for (const L of def.lights || []) {
           q.set(L.p[0], L.p[1] + dy(L), L.p[2]).applyMatrix4(world);
-          // time & weather: the white LEDs on the west span's vertical cables are the Bay Lights
-          const bay = def.id === 'bay_bridge_west' && L.c === '#f4f6ff';
-          glow.add(q, L.c, bay ? L.s * 1.6 : L.s, L.per, L.duty, L.ph, L.i ?? 1, bay ? 'bay' : (L.k || 'warn'), L.p);
+          glow.add(q, L.c, L.s, L.per, L.duty, L.ph, L.i ?? 1, L.k || 'warn');
         }
       }
     }
@@ -661,19 +589,17 @@ export async function createLandmarks(ctx) {
       camera.getWorldPosition(camPos);
       for (const it of items) it.update(camPos);
       if (traffic) traffic.update(dt, camPos);
-      if (SKY_STATE.live) night = SKY_STATE.lights;   // time & weather (environment.js)
-      else if (!sunLight || !sunLight.parent) sunLight = findSun();
-      if (!SKY_STATE.live && sunLight) {
+      if (!sunLight || !sunLight.parent) sunLight = findSun();
+      if (sunLight) {
         _v.copy(sunLight.position);
         if (sunLight.target) _v.sub(sunLight.target.position);
         const el = _v.normalize().y;
         night = THREE.MathUtils.clamp((0.12 - el) / 0.2, 0, 1);
       }
-      // time & weather: floodlights / lit facades scaled for the night exposure (eye adapted to the dark)
-      for (const m of sink.lamp) m.emissiveIntensity = m.userData.baseEmissive * (0.02 + night * 0.45);
+      for (const m of sink.lamp) m.emissiveIntensity = m.userData.baseEmissive * (0.02 + night);
       const blinkOn = ((t / 1.5) % 1) < 0.5;
       for (const m of sink.warn) m.emissiveIntensity = m.userData.baseEmissive * (blinkOn ? 1 : 0.05);
-      glow.update(t, camera, ctx.renderer, night, SKY_STATE.extinction * 0.6);
+      glow.update(t, camera, ctx.renderer, night);
       const hpx = ctx.renderer ? ctx.renderer.domElement.height : 900;
       ROPE.uLmPixel.value = 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) / Math.max(1, hpx);
     },

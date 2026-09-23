@@ -5,12 +5,11 @@
 // (CPU evaluates the layer at the camera once per frame).
 import * as THREE from 'three';
 import { assetData, isNetworkError, reportLoadFailure, retryDelay } from '../core/assets.js';
-import { NOISE_GLSL, GLOW_GLSL } from './environment-clouds.js';
+import { NOISE_GLSL } from './environment-clouds.js';
 
 export const BANK_GLSL = /* glsl */`
-uniform vec2 uBankWx;    // weather: extra coverage everywhere (0..1), mean top height of the widespread fog (m)
 // cheap analytic footprint (no noise): offshore marine layer west of the coast + tongue through the Golden Gate
-float sfBankFootBase(vec2 p) {
+float sfBankFoot(vec2 p) {
   float edge = p.y > -22800.0 ? -12300.0 : -12300.0 + (p.y + 22800.0) * 1.55;
   edge += 2600.0 * (sfVNoise(vec2(p.y / 6500.0, p.x / 9000.0) + 21.7) - 0.5);
   float off = smoothstep(edge + 900.0, edge - 2600.0, p.x);
@@ -21,12 +20,6 @@ float sfBankFootBase(vec2 p) {
   float tongue = smoothstep(w + 700.0, w * 0.3, d) * (1.0 - smoothstep(0.35, 1.0, t));
   float m = max(off, tongue);
   return m * smoothstep(-62000.0, -46000.0, p.x) * smoothstep(-54000.0, -40000.0, p.y) * smoothstep(18000.0, 5000.0, p.y);
-}
-float sfBankFoot(vec2 p) {
-  float f = sfBankFootBase(p);
-  // widespread fog (weather 'sis'): the marine layer covers the bay; thins out over the far East Bay
-  if (uBankWx.x > 0.001) f = max(f, uBankWx.x * (1.0 - 0.5 * smoothstep(16000.0, 30000.0, p.x)));
-  return f;
 }
 float sfBankMask(vec2 p, float f) {
   if (f <= 0.001) return 0.0;
@@ -48,12 +41,6 @@ vec3 sfBankTopD(vec2 p, float f, float t, float detail) {
   float k = 0.25 + 0.75 * thick;
   float h = (40.0 + 230.0 * (big.x - 0.2) + 55.0 * bil.x * bil.x) * k - 30.0 * (1.0 - thick);
   vec2 g = (230.0 * big.yz + 110.0 * bil.x * bil.yz) * k;
-  // widespread fog (weather): a flatter marine layer around a mean top height (uBankWx.y)
-  if (uBankWx.x > 0.001) {
-    float w = uBankWx.x * thick;
-    h = mix(h, uBankWx.y + 0.35 * (h - 110.0), w);
-    g *= mix(1.0, 0.6, w);
-  }
   return vec3(h, g);
 }
 `;
@@ -74,14 +61,7 @@ function vnoise(x, y) {
 }
 const smooth = (e0, e1, x) => { const t = Math.min(Math.max((x - e0) / (e1 - e0), 0), 1); return t * t * (3 - 2 * t); };
 function fbm3(x, y) { return 0.5 * vnoise(x, y) + 0.25 * vnoise(x * 2.07 + 5.3, y * 2.07 + 5.3) + 0.125 * vnoise(x * 4.13 + 9.1, y * 4.13 + 9.1); }
-/** Weather parameters shared by the shader (uBankWx) and the CPU port: extra coverage 0..1, mean fog top (m). */
-export const BANK_WX = { cover: 0, top: 0 };
 export function bankFoot(x, z) {
-  const f = bankFootBase(x, z);
-  if (BANK_WX.cover > 0.001) return Math.max(f, BANK_WX.cover * (1 - 0.5 * smooth(16000, 30000, x)));
-  return f;
-}
-function bankFootBase(x, z) {
   let edge = z > -22800 ? -12300 : -12300 + (z + 22800) * 1.55;
   edge += 2600 * (vnoise(z / 6500 + 21.7, x / 9000 + 21.7) - 0.5);
   const off = smooth(edge + 900, edge - 2600, x);
@@ -100,8 +80,7 @@ export function bankTop(x, z, time) {
   const big = 0.62 * vnoise(qx / 2100 + 11, qz / 2100 + 11) + 0.38 * vnoise(qx / 980 + 16.3, qz / 980 + 16.3);
   const bil = 0.6 * vnoise(qx / 260, qz / 260) + 0.4 * vnoise(qx / 95 + 3.1, qz / 95 + 3.1);
   const thick = smooth(0, 0.85, f);
-  let h = (40 + 230 * (big - 0.2) + 55 * bil * bil) * (0.25 + 0.75 * thick) - 30 * (1 - thick);
-  if (BANK_WX.cover > 0.001) { const w = BANK_WX.cover * thick; h = h + (BANK_WX.top + 0.35 * (h - 110) - h) * w; }
+  const h = (40 + 230 * (big - 0.2) + 55 * bil * bil) * (0.25 + 0.75 * thick) - 30 * (1 - thick);
   let m = 1;
   if (f < 0.97) m = smooth(0.3, 0.75, f + (fbm3(x / 3900 + 3, z / 3900 + 3) + 0.3 * vnoise(x / 700, z / 700) - 0.6) * 0.9);
   return { f, h, m };
@@ -157,10 +136,7 @@ export function createFogBank({ sunDir, sunE, amb, ground }) {
     uCamPos: { value: new THREE.Vector3() }, uTime: { value: 0 },
     uSunDir: { value: sunDir.clone() }, uSunE: { value: new THREE.Vector3(...sunE) }, uAmb: { value: new THREE.Vector3(...amb) },
     uGround: { value: ground ? ground.tex : null }, uGroundXf: { value: ground ? ground.xform : new THREE.Vector4() },
-    uBankWx: { value: new THREE.Vector2() }, uGlow: { value: new THREE.Vector3() }, uFogCol: { value: new THREE.Vector3(0.5, 0.5, 0.5) },
-    uGlowXf: { value: new THREE.Vector4(0, 0, -10, -10) },
   }]);
-  uniforms.uGlowMap = { value: null };
   const mat = new THREE.ShaderMaterial({
     name: 'sf-fogbank',
     defines: ground ? { SF_GROUND: 1, SF_BANK_DETAIL: '1.0' } : { SF_BANK_DETAIL: '1.0' },
@@ -195,8 +171,7 @@ export function createFogBank({ sunDir, sunE, amb, ground }) {
       #include <fog_pars_fragment>
       #include <logdepthbuf_pars_fragment>
       uniform vec3 uCamPos; uniform float uTime; uniform vec3 uSunDir; uniform vec3 uSunE; uniform vec3 uAmb;
-      uniform sampler2D uGround; uniform vec4 uGroundXf; uniform vec3 uGlow; uniform vec3 uFogCol;
-      ${GLOW_GLSL}
+      uniform sampler2D uGround; uniform vec4 uGroundXf;
       varying vec3 vWorld;
       varying float vEdge;
       ${NOISE_GLSL}
@@ -212,8 +187,7 @@ export function createFogBank({ sunDir, sunE, amb, ground }) {
         float sunL = clamp(dot(n, uSunDir) * 0.75 + 0.3, 0.05, 1.0);   // wrapped: light scatters through the fog top
         float trough = clamp((tg.x - 40.0) / 240.0, 0.0, 1.0);
         vec3 col = uSunE * (0.27 * sunL * (0.6 + 0.4 * trough)) + uAmb * (1.6 + 0.4 * trough);
-        if (uGlow.r > 0.0005) col += uGlow * sfCityGlow(vWorld.xz) * (0.6 + 0.8 * trough) * 2.2;   // night: the city lights the fog from below
-        if (!gl_FrontFacing) col = uFogCol;   // seen from inside/below: the same grey as the in-fog visibility
+        if (!gl_FrontFacing) col = uSunE * 0.05 + uAmb * 1.3;   // seen from inside/below: grey ceiling
         float alpha = smoothstep(0.01, 0.45, m) * smoothstep(-1.0, 10.0, vWorld.y) * vEdge;
         #ifdef SF_GROUND
           // thin and wispy where the fog top is close to rising ground (headlands, hills)
@@ -238,11 +212,6 @@ export function createFogBank({ sunDir, sunE, amb, ground }) {
       if (!g) return;
       uniforms.uGround.value = g.tex; uniforms.uGroundXf.value.copy(g.xform);
       if (!mat.defines.SF_GROUND) { mat.defines.SF_GROUND = 1; mat.needsUpdate = true; }
-    },
-    /** Weather: extra coverage 0..1 everywhere, mean top height (m) of the widespread fog. */
-    setWeather(cover, top) {
-      BANK_WX.cover = cover; BANK_WX.top = top;
-      uniforms.uBankWx.value.set(cover, top);
     },
     /** clouds quality 'low' drops the finest billow octave */
     setQuality(c) {

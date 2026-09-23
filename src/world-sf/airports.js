@@ -10,7 +10,6 @@ import { loadBuildings, updateBuildingLights } from './airports_buildings.js';
 import { buildProps, updateProps, setPropsDensity, addAgentLods } from './airports_props.js';
 import { buildFence, buildCables, buildFloodPools } from './airports_extras.js';
 import { Draper, meshJob, lightsJob, instancedJob, rigidJob } from './airports_drape.js';
-import { SKY_STATE } from './environment.js';   // time & weather: day factor from the sky (the key light may be the moon)
 
 const BASE = 'assets/sf/airports/';
 const ICAOS = ['ksfo', 'kngz', 'koak'];
@@ -226,7 +225,6 @@ export async function createAirports(ctx) {
       if (state.sunCheck <= 0) { state.sun = findSun(); state.sunCheck = state.sun ? 20 : 2; }
       let day = 1;
       if (state.dayOverride != null) day = state.dayOverride;
-      else if (SKY_STATE.live) day = Math.min(1 - SKY_STATE.lights, 1 - 0.85 * SKY_STATE.lowVis);   // time & weather (environment.js): night or low visibility → full intensity
       else if (state.sun) {
         // DirectionalLight: position - target; SunLight (r186 addon): direction = position (shines toward the origin)
         const d = _cam.copy(state.sun.position);
