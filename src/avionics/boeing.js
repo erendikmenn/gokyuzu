@@ -1,6 +1,6 @@
 // Boeing 737-800 (NG) displays: PFD, ND (MAP mode), upper EICAS (primary engine display) and a CDU page.
 import { font, text, line, poly, circle, stripes, rrect, clamp, lerp, wrap360, wrap180, pad, num, DEG, NM, FT, smoothK } from './core.js';
-import { MapView, drawRunways, terrainGrid, TerrainAlertImage, pickDestination, bearingTo, distTo, traffic, clockSeconds, ilsFor, drawCenterline } from './nav.js';
+import { MapView, drawRunways, terrainGrid, TerrainAlertImage, pickDestination, bearingTo, distTo, traffic, clockSeconds, ilsFor, drawCenterline, drawRouteND, routeIdent } from './nav.js';
 import { localToLonLat } from '../geo.js';
 
 export const BC = {
@@ -299,6 +299,8 @@ function b737Pfd(env) {
 }
 
 // ---------------------------------------------------------------- ND (MAP)
+// planned route (map + LNAV): Boeing draws the active route magenta, waypoints white stars, the active one magenta
+const B_ROUTE = { active: BC.magenta, legs: BC.magenta, sym: BC.white, toSym: BC.magenta, label: BC.white, toLabel: BC.magenta };
 function b737Nd(env) {
   const ACX = 500, ACY = 810, R = 600;
   const view = new MapView();
@@ -336,7 +338,8 @@ function b737Nd(env) {
     g.save(); circle(g, ACX, ACY, R); g.clip();
     drawRunways(g, nav, view, BC.white, 4);
     { const il = ilsFor(nav, S); if (il.valid && !S.onGround && il.dme < 25 && (S.gearHandleDown || S.ap.lat === 'LOC' || S.ap.appArmed)) drawCenterline(g, il, view, BC.white); }
-    const dest = pickDestination(nav, S.x, S.z, S.track);
+    const to = S.route ? drawRouteND(g, S, view, B_ROUTE, 'star') : null;   // planned route, else the airport ahead
+    const dest = to ? null : pickDestination(nav, S.x, S.z, S.track);
     if (dest) { view.project(dest.x, dest.z); g.strokeStyle = BC.magenta; g.lineWidth = 4; line(g, ACX, ACY, view.px, view.py); }
     for (const a of nav.airports) {
       view.project(a.x, a.z); const x = view.px, y = view.py;
@@ -405,9 +408,10 @@ function b737Nd(env) {
         g.strokeStyle = BC.white; g.lineWidth = 4; line(g, 0, -28, 0, 28); line(g, 0, 28, -10, 14); line(g, 0, 28, 10, 14); g.restore();
       }
     }
-    if (dest) {
-      const dnm = distTo(S.x, S.z, dest.x, dest.z) / NM;
-      text(g, dest.icao, 984, 50, BC.magenta, 'right', font(36));
+    const tgt = to || dest;
+    if (tgt) {
+      const dnm = distTo(S.x, S.z, tgt.x, tgt.z) / NM;
+      text(g, to ? routeIdent(S.route, to) : dest.icao, 984, 50, BC.magenta, 'right', font(36));
       const eta = new Date(Date.now() + (S.gs > 30 ? dnm / S.gs * 3600e3 : 0));
       text(g, pad(eta.getUTCHours(), 2) + pad(eta.getUTCMinutes(), 2) + '.' + Math.floor(eta.getUTCSeconds() / 6) + 'z', 984, 96, BC.white, 'right', font(32));
       text(g, (dnm < 100 ? dnm.toFixed(1) : Math.round(dnm)) + ' NM', 984, 140, BC.white, 'right', font(32));

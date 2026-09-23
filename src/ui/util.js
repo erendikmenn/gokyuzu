@@ -49,7 +49,8 @@ export function fmtDist(m) {
 export function keyGroups(keys) {
   const str = String(keys ?? '').trim();
   if (!str) return [];
-  return str.split(/\s*·\s*|\s*,\s*|\s+veya\s+/i).filter(Boolean).map((g) => {
+  // "A, B" separates groups; a lone "," is the comma key itself (the camera keys "C  ·  , / .")
+  return str.split(/\s*·\s*|(?<=\S)\s*,\s+|\s+veya\s+/i).filter(Boolean).map((g) => {
     let parts = g.split(/\s+\/\s+/);
     if (parts.length === 1 && g.length > 1 && g.length <= 5 && g.includes('/')) {
       const p = g.split('/');

@@ -4,6 +4,9 @@ export const shared = {
   cameraMode: 'chase',   // current camera mode id
   cameraSub: null,       // 'spotter' when the tower camera is replaced by a ground spotter
   lookingBack: false,
+  birdseyeBearing: 0,    // bird's-eye camera: bearing of screen-up (rad, 0 = north, clockwise)
+  birdseyeTrackUp: false,   // bird's-eye camera: track-up (true) or north-up
+  hudVisible: true,      // HUD not "Kapalı" (set by the HUD camera selector; the bird's-eye ring hides with it)
   choice: null,          // last menu choice { aircraftId, spawnId, aircraftName, spawnName }
   runways: null,         // runways.json (fetched lazily when the world proxy has none)
 };

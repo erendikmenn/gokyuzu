@@ -10,10 +10,12 @@ import { createMinimap } from './minimap.js';
 import { AIRPORTS, LANDMARK_NAMES, CATEGORY_LABEL, AIRCRAFT_INFO } from './data.js';
 import { shared } from './shared.js';
 import { CAMERA_NAMES } from './camera.js';
+import { createCameraBar } from './camera-bar.js';   // camera selector hook (src/ui/camera-bar.js)
 import { openSettings, openCredits, qualityHintSeen, markQualityHintSeen, qualityHintText } from './panels.js';
 import { explainCrash } from './hints.js';
 import { loadSettings, saveSettings } from '../core/settings.js';
 import { goToMenu } from '../core/leave.js';
+import { mountPauseMusic } from '../music/ui.js';   // music hook (src/music)
 
 const MONO = 'ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace';
 const SANS = '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif';
@@ -189,6 +191,19 @@ const CSS = `
 .gkh-pinfo span { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
 `;
 
+// navigation hook (src/ui/map.js): clickable minimap, route leg in the FMA, ROTA cell in the cockpit strip
+const NAV_CSS = `
+.gkh-map.gkh-map-nav { pointer-events: auto; cursor: pointer; transition: border-color .15s, box-shadow .15s; }
+.gkh-map.gkh-map-nav:hover { border-color: rgba(92, 242, 200, .55); box-shadow: 0 10px 30px rgba(0, 0, 0, .22), 0 0 0 1px rgba(92, 242, 200, .25); }
+.gkh-map-open { position: absolute; right: calc(7px * var(--ps)); top: calc(7px * var(--ps)); width: calc(24px * var(--ps)); height: calc(24px * var(--ps));
+  display: grid; place-items: center; border-radius: calc(7px * var(--ps)); background: rgba(6, 12, 22, .72); border: 1px solid rgba(255, 255, 255, .14); color: var(--gk-fg); }
+.gkh-map-open svg { width: 62%; height: 62%; }
+.gkh-map-open b { position: absolute; right: calc(-3px * var(--ps)); bottom: calc(-5px * var(--ps)); font: 800 calc(8.5px * var(--ps)) var(--gk-sans); padding: 0 3px; border-radius: 3px; background: rgba(255, 255, 255, .88); color: #06101c; }
+.gkh-fma span.nav { color: #ff6ee7; background: rgba(255, 110, 231, .09); }
+.gkh-st.gkh-hide { display: none; }
+.gkh-st.nav b { color: #ff9cf0; font-size: calc(13px * var(--ps)); }
+`;
+
 // ---------- helpers ----------
 const _q = new THREE.Quaternion(), _qc = new THREE.Quaternion();
 const _v = new THREE.Vector3(), _f = new THREE.Vector3(), _r = new THREE.Vector3(), _u = new THREE.Vector3(), _d = new THREE.Vector3();
@@ -245,6 +260,7 @@ export function createHUD(container) {
   const fma = el('div', 'gkh-panel gkh-fma', center);
   const mapPanel = el('div', 'gkh-panel gkh-map', ext);
   const mapCv = el('canvas', null, mapPanel);
+  let navHooks = null;                                  // navigation hook: { open(src), overlay(ctx, X, Y, sc) } (src/ui/map.js)
   const mctx = mapCv.getContext('2d');
   const minimap = createMinimap();
   const sysPanel = el('div', 'gkh-panel gkh-sys', ext);
@@ -280,6 +296,8 @@ export function createHUD(container) {
   }
 
   // ---------- messages & overlays (not affected by setVisible) ----------
+  // camera selector hook: clickable camera icons, top right under the F1 chip (src/ui/camera-bar.js)
+  const camBar = createCameraBar(root);
   const toast = el('div', 'gkh-toast', root);
   const chip = el('div', 'gkh-chip', root);
   const help = el('div', 'gkh-help', root);
@@ -304,6 +322,7 @@ export function createHUD(container) {
   const menuBtn = el('button', 'gkh-pbtn', pbtns);
   menuBtn.append('Ana menü');
   const credLink = el('button', 'gkh-plink', pause, 'Künye');
+  mountPauseMusic(pause, credLink);   // music hook: on/off, current track, next (src/music/ui.js)
   const pinfo = el('div', 'gkh-pinfo', pause);
   let pauseCode = 'KeyP', helpCode = 'F1';
   resumeBtn.addEventListener('click', () => pressKey(pauseCode));
@@ -795,6 +814,13 @@ export function createHUD(container) {
       ctx.font = `700 10.5px ${SANS}`; ctx.textAlign = 'center';
       text(ctx, apt.code, bx, yb + 20, C.accent);
     }
+    // navigation hook: bearing to the active route waypoint (magenta diamond)
+    const nv = f.nav;
+    if (nv && nv.valid) {
+      const bx = clamp(wrap180(nv.brg - hdg) * ppd, -lim, lim);
+      ctx.beginPath(); ctx.moveTo(bx, yb + 1); ctx.lineTo(bx + 5.5, yb + 7.5); ctx.lineTo(bx, yb + 14); ctx.lineTo(bx - 5.5, yb + 7.5); ctx.closePath();
+      fill(ctx, C.magenta);
+    }
     // AP heading bug
     const ap = f.autopilot;
     if (ap && ap.on && Number.isFinite(ap.heading)) {
@@ -1091,15 +1117,27 @@ export function createHUD(container) {
   function safeVal(fn) { try { return fn(); } catch { return null; } }
 
   // ---------- FMA ----------
+  /** Navigation hook: active route leg, e.g. "LNAV → 2/4 · 3,2 NM · 287°" ('' without an active leg). */
+  function navLine(f) {
+    const n = f.nav;
+    if (!n || !n.valid) return '';
+    const ap = f.autopilot, lnav = ap && ap.on && ap.lnav;
+    const d = n.dist / 1852;
+    const name = n.kind && n.kind !== 'wpt' ? `${n.name} ` : '';
+    // on a route approach the localizer flies the final: "ILS 28R → …"
+    const ils = lnav && n.rw && /^(LOC|LAND|FLARE|ROLLOUT)/.test(String(ap.mode || ''));
+    return `${ils ? `ILS ${n.rw.ident}` : lnav ? 'LNAV' : 'ROTA'} → ${name}${n.index + 1}/${n.count} · ${d < 10 ? d.toFixed(1).replace('.', ',') : Math.round(d)} NM · ${String(Math.round(n.brg) % 360).padStart(3, '0')}°`;
+  }
   function updateFMA(f) {
     const ap = f.autopilot;
     const on = !!(ap && ap.on);
-    setCls(fma, 'on', on);
-    if (!on) return;
+    const nav = navLine(f);
+    setCls(fma, 'on', on || !!nav);
+    if (!on && !nav) return;
     const parts = [];
-    if (category === 'helicopter') {
+    if (!on) { /* route guidance only */ } else if (category === 'helicopter') {
       const mode = String(ap.mode || '').toLowerCase();
-      parts.push(['v', mode === 'hover' ? 'HOVER' : 'CRUISE']);
+      parts.push(['v', mode === 'hover' ? 'HOVER' : mode === 'nav' ? 'NAV' : 'CRUISE']);
       if (mode !== 'hover' && Number.isFinite(ap.speed)) parts.push(['v', `SPD ${Math.round(ap.speed * KT)}`]);
       parts.push(['v', `HDG ${String(Math.round(wrap360(num(ap.heading)))).padStart(3, '0')}`]);
       if (Number.isFinite(ap.altitude)) parts.push(['v', ap.radar ? `RALT ${Math.round(ap.altitude * FT)}` : `ALT ${Math.round(ap.altitude * FT / 10) * 10}`]);
@@ -1115,6 +1153,7 @@ export function createHUD(container) {
       if (modes.includes('APP')) parts.push(['v', 'APP']);
       parts.push(['ap', category === 'airliner' ? 'AP1' : 'AP']);
     }
+    if (nav) parts.push(['nav', nav]);
     const key = parts.map((p) => p[1]).join('|');
     if (cache.get(fma) !== key) {
       cache.set(fma, key);
@@ -1135,8 +1174,16 @@ export function createHUD(container) {
     stripCell('hdg', 'BAŞ');
     if (category === 'helicopter') stripCell('trq', 'TRQ');
     else stripCell('thr', 'GAZ');
+    stripCell('nav', 'ROTA');                            // navigation hook: active route leg (hidden without a route)
+    stripCells.get('nav').c.classList.add('nav', 'gkh-hide');
   }
   function updateStrip(f, kt, ft) {
+    const nc = stripCells.get('nav');
+    if (nc) {                                            // navigation hook
+      const n = f.nav, on = !!(n && n.valid);
+      setCls(nc.c, 'gkh-hide', !on);
+      if (on) { const d = n.dist / 1852; setText(nc.b, `${n.index + 1}/${n.count} · ${d < 10 ? d.toFixed(1).replace('.', ',') : Math.round(d)} NM · ${String(Math.round(n.brg) % 360).padStart(3, '0')}°`); }
+    }
     const set = (k, v, cls) => { const s2 = stripCells.get(k); if (!s2) return; setText(s2.b, v); setCls(s2.c, 'warn', cls === 'warn'); setCls(s2.c, 'hot', cls === 'hot'); };
     set('ias', String(Math.round(kt)));
     set('alt', fmtInt(Math.round(ft / 10) * 10));
@@ -1344,6 +1391,7 @@ export function createHUD(container) {
       if (!f.onGround) maxG = Math.max(maxG, num(f.gForce, 1));
       detectChanges(f);
       updateG(f, dt);
+      camBar.update(visible);   // camera selector hook: active camera, hidden with the HUD
       if (!visible) return;
       updateWarnings(f);
       if (view === 'cockpit') { updateStrip(f, kt, ft); return; }
@@ -1355,7 +1403,7 @@ export function createHUD(container) {
         infoTimer -= dt;
         if (infoTimer <= 0) { infoTimer = 0.25; updateInfo(f, infoArg.world); }
         mctx.setTransform(dpr * pscale, 0, 0, dpr * pscale, 0, 0);
-        minimap.draw(mctx, MAP_DU, f, infoArg.world, att.hdg, pulse);
+        minimap.draw(mctx, MAP_DU, f, infoArg.world, att.hdg, pulse, navHooks && navHooks.overlay);
         return;
       }
       const prep = (c, canvas, k, ox, oy) => {
@@ -1394,7 +1442,7 @@ export function createHUD(container) {
       infoTimer -= dt;
       if (infoTimer <= 0) { infoTimer = 0.25; updateInfo(f, infoArg.world); }
       mctx.setTransform(dpr * pscale, 0, 0, dpr * pscale, 0, 0);
-      minimap.draw(mctx, MAP_DU, f, infoArg.world, att.hdg, pulse);
+      minimap.draw(mctx, MAP_DU, f, infoArg.world, att.hdg, pulse, navHooks && navHooks.overlay);
     },
     showMessage(textStr, ms = 1500) {
       const str = String(textStr ?? '');
@@ -1437,6 +1485,20 @@ export function createHUD(container) {
     get element() { return root; },
     /** Add an overlay layer (onboarding cards) above the instruments but below toasts, help and pause. */
     mountLayer(node) { root.insertBefore(node, toast); },
+    /** Navigation hook (src/ui/map.js): the minimap opens the map (click) and draws the planned route. */
+    setNavMap(hooks) {
+      navHooks = hooks || null;
+      injectCSS('hud-nav', NAV_CSS);
+      mapPanel.classList.toggle('gkh-map-nav', !!navHooks);
+      if (!mapPanel.dataset.nav) {
+        mapPanel.dataset.nav = '1';
+        mapPanel.title = 'Haritayı aç (J)';
+        const ic = el('div', 'gkh-map-open', mapPanel);
+        ic.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7"/></svg>';
+        el('b', null, ic, 'J');
+        mapPanel.addEventListener('click', () => { if (navHooks && navHooks.open) navHooks.open('mini'); });
+      }
+    },
     /** Show "Eğitimi yeniden başlat" in the help overlay; fn restarts the flight tutorial. */
     setTutorialRestart(fn) { tutorialRestart = typeof fn === 'function' ? fn : null; helpBindings = null; },
   };

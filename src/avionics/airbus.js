@@ -1,7 +1,7 @@
 // Airbus A320neo displays: PFD, ND (ARC), E/WD, SD (WHEEL / DOOR / CRUISE auto-paging) and ISIS standby.
 // Virtual coordinates 1000×1000 for every unit (square DUs).
 import { font, text, line, poly, circle, stripes, clamp, lerp, wrap360, wrap180, pad, num, DEG, NM, FT, smoothK } from './core.js';
-import { MapView, drawRunways, terrainGrid, TerrainAlertImage, pickDestination, bearingTo, distTo, traffic, clockSeconds, ilsFor, drawCenterline } from './nav.js';
+import { MapView, drawRunways, terrainGrid, TerrainAlertImage, pickDestination, bearingTo, distTo, traffic, clockSeconds, ilsFor, drawCenterline, drawRouteND, routeIdent } from './nav.js';
 
 export const AC = {
   green: '#00ff00', cyan: '#00e8ff', amber: '#ff9a00', magenta: '#ff6cff', white: '#ffffff', yellow: '#ffff00',
@@ -419,6 +419,8 @@ function a320Pfd(env) {
 }
 
 // ---------------------------------------------------------------- ND (ARC mode)
+// planned route (map + LNAV): Airbus draws the active flight plan green, the TO waypoint white
+const A_ROUTE = { active: AC.green, legs: AC.green, sym: AC.green, toSym: AC.white, label: AC.green, toLabel: AC.white };
 function a320Nd(env) {
   const ACX = 500, ACY = 792, R = 612;
   const view = new MapView();
@@ -473,8 +475,9 @@ function a320Nd(env) {
     g.save(); circle(g, ACX, ACY, R + 2); g.clip();
     drawRunways(g, nav, view, AC.white, 4);
     { const il = ilsFor(nav, S); if (il.valid && !S.onGround && il.dme < 25 && (S.gearHandleDown || S.ap.lat === 'LOC' || S.ap.appArmed)) drawCenterline(g, il, view, AC.white); }
-    const dest = pickDestination(nav, S.x, S.z, S.track);
-    // flight plan leg
+    // flight plan: the planned route when there is one, else a leg to the airport ahead
+    const to = S.route ? drawRouteND(g, S, view, A_ROUTE, 'diamond') : null;
+    const dest = to ? null : pickDestination(nav, S.x, S.z, S.track);
     if (dest) {
       view.project(dest.x, dest.z);
       g.strokeStyle = AC.green; g.lineWidth = 4; line(g, ACX, ACY, view.px, view.py);
@@ -548,10 +551,11 @@ function a320Nd(env) {
         line(g, 0, -28, 0, 28); line(g, 0, 28, -10, 14); line(g, 0, 28, 10, 14); g.restore();
       }
     } else text(g, '---/---', 18, 92, AC.green, 'left', font(34));
-    if (dest) {
-      const brg = wrap360(bearingTo(S.x, S.z, dest.x, dest.z) - S.decl);
-      const dnm = distTo(S.x, S.z, dest.x, dest.z) / NM;
-      text(g, dest.icao, 760, 48, AC.white, 'left', font(34));
+    const tgt = to || dest;
+    if (tgt) {
+      const brg = wrap360(bearingTo(S.x, S.z, tgt.x, tgt.z) - S.decl);
+      const dnm = distTo(S.x, S.z, tgt.x, tgt.z) / NM;
+      text(g, to ? routeIdent(S.route, to) : dest.icao, 760, 48, AC.white, 'left', font(34));
       text(g, pad(brg, 3) + '°', 985, 48, AC.green, 'right', font(34));
       text(g, dnm < 20 ? dnm.toFixed(1) : String(Math.round(dnm)), 900, 92, AC.green, 'right', font(36));
       text(g, 'NM', 985, 92, AC.cyan, 'right', font(28));

@@ -70,6 +70,7 @@ export function createFlightState() {
     rotorRPM: 0, collective: 0, torque: 0, isHeli: false,
     iasTrend: 0, turnRate: 0, windDir: 0, windSpd: 0, maxG: 1,
     spec: null, category: '',
+    route: null,          // src/nav/route.js Route with an active leg (flight.nav), for the NDs; null otherwise
     _prevIas: NaN, _prevHdg: NaN, _windX: 0, _windZ: 0,
   };
 }
@@ -177,6 +178,7 @@ export function readFlight(S, f, world, dt) {
   const tq = num(f.torque);
   S.torque = tq <= 1.5 ? tq * 100 : tq;
   S.spec = f.spec || null;
+  S.route = f.nav && f.nav.valid && f.nav.route ? f.nav.route : null;   // planned route (src/nav), ND display
   S.category = (S.spec && S.spec.category) || '';
   S.isHeli = S.category === 'helicopter' || (rpm > 0 && !S.engines[0].n1);
   // derived trends

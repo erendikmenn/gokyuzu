@@ -9,7 +9,8 @@
 //     ground effect, sideslip, stability & damping derivatives (fixedwing-aero.js)
 //   - turbofans with spool dynamics, thrust lapse tables, afterburner, reversers, fuel flow (fixedwing-engine.js)
 //   - flight control laws: F-16 / F-22 FBW, A320 normal law, 737 conventional + assist (fixedwing-fcs.js)
-//   - autopilot / autothrust / ILS approach & autoland (fixedwing-autopilot.js)
+//   - autopilot / autothrust / ILS approach & autoland (fixedwing-autopilot.js); route following (LNAV, src/nav/lnav.js):
+//     setRoute(route) attaches a src/nav/route.js Route, `nav` is the guidance (active leg, distance, bearing…)
 //   - systems here: gear, flaps (real detents), slats, spoilers (flight + auto ground spoilers), speedbrake, brakes,
 //     parking brake, autobrake (landing + RTO), reversers, nose-wheel steering, canopy, lights
 //   - ground contact: per-contact spring-damper struts (from the rig contacts), tire friction, static friction hold,
@@ -25,6 +26,7 @@ import { createAero, flapConfig } from './fixedwing-aero.js';
 import { createPowerplant } from './fixedwing-engine.js';
 import { createFCS } from './fixedwing-fcs.js';
 import { createAutopilot, findApproach, approachGeometry, runwayEnds } from './fixedwing-autopilot.js';
+import { createLnav } from '../nav/lnav.js';
 
 const MAX_FRAME_DT = 0.25;
 
@@ -103,6 +105,13 @@ export class FixedWingModel {
     this._buildGeometry(contacts);
     this.fcs = createFCS(this);
     this.ap = createAutopilot(this);
+    // route following (src/nav): the host attaches a Route with setRoute(); `nav` = LNAV guidance (null without a route)
+    this.route = null;
+    this.nav = null;
+    this._lnav = createLnav();
+    this._navIn = { x: 0, z: 0, vx: 0, vz: 0, alt: 0, hdg: 0, category: spec.category, bankMax: (spec.autopilot?.bankMax ?? (this.fighter ? 45 : 25)) * DEG, onGround: true,
+      rollTime: (spec.autopilot?.bankMax ?? (this.fighter ? 45 : 25)) / (spec.autopilot?.rollRate ?? (this.fighter ? 30 : 5)),
+      headingGain: this.fighter ? 3.5 : (spec.autopilot?.Khdg ?? 2.0) };
     this._visual = {
       time: 0, airspeed: 0, mach: 0, onGround: true, aoa: 0, aileron: 0, elevator: 0, rudder: 0, flaps: 0, slats: 0,
       spoilers: 0, speedbrake: 0, gear: 1, gearCompression: this._wheels.map(() => 0), wheelSpeed: 0,
@@ -195,6 +204,7 @@ export class FixedWingModel {
     const act = this.act; act.elevator = 0; act.aileron = 0; act.rudder = 0; act.trim = 0; act.tvc = 0;
     this.ap.reset && this.ap.reset();
     this.autopilot.on = false; this.autopilot.mode = '';
+    if (this._lnav) this._lnav.reset();
   }
 
   /**
@@ -225,6 +235,8 @@ export class FixedWingModel {
     this.pendingThrottle = this._leverTarget;
     // airborne: keep the trimmed lever until the input lever is synced / moved (see _frameInput)
     this._leverLatched = airborne; this._leverRef = null;
+    // an attached route is flown again from the new position
+    if (this.route) { this.route.restart(this._pos.x, this._pos.z, heading); this._updateNav(0); }
   }
 
   _resetGround(start, world, heading, opts) {
@@ -412,6 +424,7 @@ export class FixedWingModel {
       }
       case 'lights': sys.lightsOn = !sys.lightsOn; break;
       case 'autopilot': this.ap.toggle(); break;
+      case 'nav': this.engageNav(); break;
       default: break;
     }
     // readouts that change immediately with the lever / switch
@@ -421,6 +434,28 @@ export class FixedWingModel {
     this.flapsLabel = det[Math.min(this.flapsIndex, det.length - 1)].label;
   }
 
+  // ------------------------------------------------------------------------------------------ route (LNAV)
+  /** Attach a src/nav/route.js Route (or null). The autopilot flies it in NAV; `nav` carries the guidance. */
+  setRoute(route) {
+    this.route = route || null;
+    this._lnav.reset();
+    this.nav = null;
+    if (!route) { this.autopilot.approachRunway = null; if (this.autopilot.lnav) this.autopilot.lnav = false; }
+    else this._updateNav(0);
+  }
+
+  /** Fly the route: engage the autopilot in NAV (or switch HDG → NAV). false when there is nothing to fly / on the ground. */
+  engageNav() { return this.crashed ? false : this.ap.engageNav(); }
+
+  _updateNav(dt) {
+    if (!this.route) return;
+    const S = this._navIn;
+    S.x = this._pos.x; S.z = this._pos.z; S.vx = this.velocity.x; S.vz = this.velocity.z; S.alt = this._pos.y;
+    S.hdg = this.ad.psi; S.onGround = this.wow;
+    this.nav = this._lnav.update(this.route, S, dt);
+    this.autopilot.approachRunway = this.route.approach ? this.route.approach.name : null;
+  }
+
   // ------------------------------------------------------------------------------------------ step
   step(dt, input, world) {
     if (this.crashed) return;
@@ -428,6 +463,7 @@ export class FixedWingModel {
     this._acc += clamp(Number.isFinite(dt) ? dt : 0, 0, MAX_FRAME_DT);
     this._loadAcc = 0; this._loadN = 0;
     this._frameInput(inp);
+    this._updateNav(dt);
     const h = this.H;
     while (this._acc >= h) {
       this._prevPos.copy(this._pos); this._prevQuat.copy(this._quat);
@@ -441,6 +477,7 @@ export class FixedWingModel {
       this._gSmooth += (g - this._gSmooth) * clamp(dt / 0.1, 0, 1);
     }
     this._frameSystems(dt, inp, world);
+    if (this.route) this.ap.frame(dt);
     this._updateReadouts(world, this.crashed ? 1 : this._acc / h);
   }
 

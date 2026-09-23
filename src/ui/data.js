@@ -1,6 +1,7 @@
 // Player-facing reference data (Turkish): aircraft facts for the menu cards, loading tips, airport and
 // landmark labels. Published figures (manufacturer / USAF / US Army fact sheets), rounded.
 import { IS_MAC, THROTTLE_KEYS } from '../core/platform.js';
+import { CAMERA_KEY_MOD } from './camera-modes.js';   // direct camera keys (loading tip)
 
 export const AIRCRAFT_INFO = {
   f16: {
@@ -101,7 +102,9 @@ export const LANDMARK_NAMES = {
 // Rotating loading-screen tips (controls + a little local colour).
 export const TIPS = [
   'Kalkış: gazı tam aç (Shift veya X), kalkış hızına ulaşınca burnu yavaşça kaldır (S).',
-  'C tuşu kamera açıları arasında geçiş yapar: Takip, Kanat, Serbest, Geçiş, Kule ve Kokpit.',
+  'C tuşu kamera açıları arasında geçiş yapar: Takip, Kanat, Serbest, Geçiş, Kule, Kuşbakışı ve Kokpit.',
+  `Kameralara doğrudan geçmek için ${CAMERA_KEY_MOD} + 1 … 7 kullan; ${CAMERA_KEY_MOD} + 7 kuşbakışı görünümdür, tekrar basınca kuzey ya da uçuş yönü yukarı gelir.`,
+  'Kuşbakışı görünümde tekerlekle yüksekliği değiştir, sürükleyerek görüntüyü kaydır; sağ üstteki kamera düğmeleriyle de geçebilirsin.',
   'T tuşu doğrudan kokpit ile dış görünüm arasında geçiş yapar.',
   'Kokpitte fareyle sürükleyerek etrafına bak, tekerlekle yakınlaştır. Çift tıklama bakışı ortalar.',
   'F-16 ve F-22’de gaz kolu MIL kademesinde durur; gaz tuşunu bırakıp yeniden basınca art yakıcı devreye girer.',

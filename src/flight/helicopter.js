@@ -23,6 +23,7 @@ import {
   G, DEG, KT, SHP, clamp, smoothstep, lerp, moveToward, wrapPi, isa, inducedRatio, groundEffect, surfaceCoefficients, solveLinear,
 } from './helicopter-aero.js';
 import { AFCS } from './helicopter-afcs.js';
+import { createLnav } from '../nav/lnav.js';
 
 const H = 1 / 120;             // internal fixed step (s)
 const MAX_FRAME_DT = 0.25;
@@ -147,6 +148,11 @@ export class HelicopterModel {
     this.lights = { nav: true, strobe: true, beacon: true, landing: false, taxi: false };
     this.doors = 0;               // cabin doors (VisualState.canopy)
     this.afcs = new AFCS();
+    // route following (src/nav): setRoute(route) attaches a Route, `nav` = LNAV guidance; the AFCS flies it in 'nav'
+    this.route = null;
+    this.nav = null;
+    this._lnav = createLnav();
+    this._navIn = { x: 0, z: 0, vx: 0, vz: 0, alt: 0, hdg: 0, category: 'helicopter', bankMax: 20 * DEG, rollTime: 1, onGround: true };
     this.mass = spec.mass.typical;
     this._payload = spec.mass.typical - spec.mass.empty - spec.mass.fuel;
 
@@ -754,6 +760,8 @@ export class HelicopterModel {
     this.power = need; this.torque = need / P.Pxmsn;
     this._prevPos.copy(this._pos); this._prevQuat.copy(this._quat);
     this._updateReadouts(world, 1, 0);
+    // an attached route is flown again from the new position
+    if (this.route) { this.route.restart(this._pos.x, this._pos.z, heading); this._lnav.reset(); this._updateNav(0); }
   }
 
   _initEnvAt(world) {
@@ -789,6 +797,7 @@ export class HelicopterModel {
   command(action) {
     if (this.crashed) return;
     switch (action) {
+      case 'nav': this.engageNav(); break;
       case 'autopilot': {
         if (this.afcs.ap.on) { this.afcs.disengage(); this._leverMode = 'pickup'; this._leverHeld = this._col; this.pendingThrottle = this._col; }
         else if (!this.afcs.engage(this._sens)) { this._emit('autopilot', { on: false, mode: null, refused: true }); return; }
@@ -810,9 +819,51 @@ export class HelicopterModel {
     }
   }
 
+  // ------------------------------------------------------------------------------------------------
+  // route (LNAV)
+  // ------------------------------------------------------------------------------------------------
+  /** Attach a src/nav/route.js Route (or null); the AFCS flies it in 'nav' mode and hovers at its last point. */
+  setRoute(route) {
+    this.route = route || null;
+    this._lnav.reset();
+    this.nav = null;
+    this.afcs.nav = null;
+    if (this.route) this._updateNav(0);
+  }
+
+  /** Fly the route ("Rotayı uç" on the map): engage the AFCS in nav, or switch the engaged hold to nav. */
+  engageNav() {
+    if (this.crashed || !this.route) return false;
+    this._updateNav(0);
+    const was = this.afcs.ap.on;
+    if (this.route.active === 0) this.route.restartLeg();
+    if (!this.afcs.engageNav(this._sens)) return false;
+    this._syncAutopilot();
+    if (!was) this._emit('autopilot', { on: true, mode: this.autopilot.mode });
+    return true;
+  }
+
+  _updateNav(dt) {
+    if (!this.route) return;
+    const S = this._navIn;
+    S.x = this._pos.x; S.z = this._pos.z; S.vx = this.velocity.x; S.vz = this.velocity.z; S.alt = this._pos.y;
+    S.hdg = this.heading * DEG; S.onGround = this.onGround;
+    this.nav = this._lnav.update(this.route, S, dt);
+    this.afcs.nav = this.nav;
+    // guided hover reached the route's last point: the route is complete, the hover hold stays
+    const A = this.afcs;
+    if (A.navHover && this.nav.valid && this.nav.hover && this.nav.dist < 3 && Math.hypot(S.vx, S.vz) < 1) {
+      A.navHover = false;                  // plain hover hold on the point from here (xRef / zRef stay on it)
+      this.route.sequence();
+      this.nav = this._lnav.update(this.route, S, 0);
+      this.afcs.nav = this.nav;
+    }
+  }
+
   _syncAutopilot() {
     const ap = this.afcs.ap, a = this.autopilot;
     a.on = ap.on; a.mode = ap.mode; a.altitude = ap.altitude; a.speed = ap.speed; a.radar = !!(ap.on && ap.radar);
+    a.lnav = !!(ap.on && (ap.mode === 'nav' || this.afcs.navHover));
     a.heading = ((ap.heading / DEG) % 360 + 360) % 360;
   }
 
@@ -826,6 +877,7 @@ export class HelicopterModel {
     this._loadAcc = 0; this._loadN = 0;
     const inp = input || {};
     this._handleLever(inp);
+    this._updateNav(dt);
     const apWasOn = this.afcs.ap.on;
     while (this._acc >= H) {
       this._prevPos.copy(this._pos); this._prevQuat.copy(this._quat);

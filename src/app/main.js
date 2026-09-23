@@ -8,6 +8,7 @@ import { createHelicopterModel } from '../flight/helicopter.js';
 import { createInput } from '../flight/input.js';
 import { createDisplay } from '../avionics/index.js';
 import { createAudioSystem } from '../audio/index.js';
+import { createMusicPlayer } from '../music/index.js';   // music hook (src/music)
 import { createMenu, createLoadingScreen, createHUD, createCameraRig, createOnboarding } from '../ui/index.js';
 import { buildSpawns } from './spawns.js';
 import { loadSettings } from '../core/settings.js';
@@ -15,6 +16,8 @@ import { QUALITY } from '../core/quality.js';
 import { IS_MAC } from '../core/platform.js';
 import { goToMenu, guardUnload } from '../core/leave.js';
 import { startTelemetry, trackFlight } from '../core/telemetry.js';
+import { createRoute } from '../nav/route.js';     // navigation hook: route planning + LNAV (src/nav)
+import { createNavMap } from '../ui/map.js';       // navigation hook: big map (J / minimap click)
 
 const params = new URLSearchParams(location.search);
 const app = document.getElementById('app');
@@ -58,7 +61,9 @@ window.addEventListener('resize', () => {
 const loader = createAssetLoader(renderer);
 const input = createInput(window);
 const audio = createAudioSystem({ camera });
+const music = createMusicPlayer({ audio });   // music hook: menu / flight soundtrack, own "Müzik" volume, ducks under warnings (window.__music)
 const hud = createHUD(hudRoot, null);
+music.setAnnouncer((title) => { if (!state.flight) return false; hud.showMessage(`♪ Müzik · ${title}`, 2600); return true; });   // music hook: now playing (flight: HUD message)
 // onboarding hook (src/ui/tutorial.js): first-flight tutorial / key card / hints; "Eğitimi yeniden başlat" resets the flight
 const onboarding = createOnboarding(hudRoot, { input, hud, restart: () => { if (state.flight) resetFlight(); } });
 
@@ -66,6 +71,12 @@ const state = { world: null, def: null, rig: null, flight: null, displays: [], p
 state.input = input;
 state.onboarding = onboarding;   // test hook
 window.__game = state;
+// navigation hook: one route for the session (kept across resets and aircraft changes; the flight model flies it with
+// its autopilot), the big map over the running game (J or a click on the minimap), the route on the minimap
+const navRoute = createRoute();
+const navMap = createNavMap({ hud, route: navRoute });
+hud.setNavMap({ open: (src) => navMap.open(src), overlay: navMap.drawMinimapOverlay });
+Object.assign(state, { navRoute, navMap });   // test hooks
 
 let loading = null;   // loading screen (also used by startFailed)
 async function start() {
@@ -74,6 +85,7 @@ async function start() {
   const spawns = buildSpawns(runways);
   let choice;
   const direct = AIRCRAFT.find((a) => a.id === params.get('aircraft'));   // ?aircraft=<id>&spawn=<id> skips the menu
+  if (!direct) music.setContext('menu');   // music hook: menu playlist (starts on the first click, plays through loading)
   if (direct) choice = { aircraftId: direct.id, spawnId: spawns.some((s) => s.id === params.get('spawn')) ? params.get('spawn') : direct.defaultSpawn };
   else choice = await createMenu(uiRoot, { aircraft: AIRCRAFT, spawns });
   audio.start();
@@ -93,6 +105,7 @@ async function start() {
   resetFlight();
   loading.setProgress(1, 'Hazır');
   loading.hide();
+  music.setContext('flight', { category: state.def && state.def.spec.category });   // music hook: in-flight playlist (off unless turned on)
   state.readyAt = performance.now();   // dynamic resolution ignores the first seconds (shader compiles, tile bursts)
   console.log(`[app] ready in ${((performance.now() - t0) / 1000).toFixed(1)} s`);
   state.aircraftId = choice.aircraftId;
@@ -115,6 +128,8 @@ async function loadAircraft(id) {
   const factory = def.spec.category === 'helicopter' ? createHelicopterModel : createFixedWingModel;
   const flight = factory(def.spec, { contacts: rig.contacts });
   bindFlightEvents(flight);
+  flight.setRoute(navRoute);         // navigation hook: LNAV guidance (flight.nav) + autopilot NAV mode
+  navMap.setFlight(flight, def);
   state.displays = [];
   const lazyCockpit = !!(def.model.cockpitUrl && rig.attachCockpit);
   if (!lazyCockpit) bindDisplays(def, rig);
@@ -216,17 +231,22 @@ input.on('autopilot', () => { if (audio.acknowledge) audio.acknowledge(); });   
 input.on('camera', () => hud.showMessage(`Kamera: ${cameraRig.next()}`, 1000));
 input.on('cameraPrev', () => hud.showMessage(`Kamera: ${cameraRig.prev()}`, 1000));
 input.on('view', () => hud.showMessage(cameraRig.toggleView(), 1000));
+// camera hook: direct cameras (Alt / Option + 1 … 7 and the HUD camera selector); again on bird's-eye flips north/track-up
+input.on('cameraSelect', (id) => hud.showMessage(cameraRig.select(id), 1200));
 // the detailed cockpit may still be streaming when the player first switches to it
-for (const a of ['camera', 'cameraPrev', 'view']) input.on(a, () => {
+for (const a of ['camera', 'cameraPrev', 'view', 'cameraSelect']) input.on(a, () => {
   if (cameraRig.view === 'cockpit' && state.rig && state.rig.cockpitReady === false) hud.showMessage('Kokpit yükleniyor…', 1500);
 });
 input.on('lookBack', () => cameraRig.lookBack(true));
 input.on('reset', () => { if (state.flight) { resetFlight(); hud.showMessage('Yeniden başlatıldı', 1000); } });
 input.on('pause', () => { state.paused = !state.paused; hud.setPaused(state.paused); audio.setPaused(state.paused); });
+input.on('pause', () => music.setPaused(state.paused));   // music hook (runs after the handler above)
 input.on('hud', () => { if (hud.cycleMode) hud.cycleMode(); else { state.hudVisible = !state.hudVisible; hud.setVisible(state.hudVisible); } });   // full → compact → off
 input.on('mute', () => { state.userMuted = !state.userMuted; audio.setMuted(state.userMuted); hud.showMessage(state.userMuted ? 'Ses kapalı' : 'Ses açık', 900); });
+input.on('mute', () => music.setMuted(state.userMuted));   // music hook (runs after the handler above)
 input.on('help', () => { state.helpVisible = !state.helpVisible; hud.showHelp(input.bindings, state.helpVisible); });
 input.on('menu', goToMenu);
+input.on('map', () => navMap.toggle('key'));   // navigation hook: J opens / closes the map (Esc closes it too)
 // an accidental tab close / reload mid-flight (Ctrl+W on Windows, Cmd+W, F5) asks first instead of losing the flight
 guardUnload(() => !!state.flight);
 
@@ -261,8 +281,10 @@ function frame(ts) {
     displayAcc += dt;
     if (displayAcc > 1 / 30) { for (const d of state.displays) d.display.update(displayAcc, flight, world); displayAcc = 0; }
     hud.update(flight, { world, spawn: state.spawn, view: cameraRig.view });
+    navMap.update(dt, flight, world);   // navigation hook: track trail, map redraw while open
     onboarding.update(dt, flight, { view: cameraRig.view, paused: state.paused });   // onboarding hook
     audio.update(dt, flight, { view: cameraRig.view, aircraftObject: rig.object, camera });
+    music.update(dt, flight);   // music hook: ducks the music while a warning / callout plays
   }
   renderer.render(scene, camera);
   fpsAcc += dt; fpsFrames++;

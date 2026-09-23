@@ -42,7 +42,9 @@ Menüyü atlamak için doğrudan bağlantı da kullanılabilir: `index.html?airc
 | O | Otopilot (yolcu uçaklarında ILS yaklaşma; helikopterde askıda tutma) |
 | B / Boşluk | Fren |
 | L | Işıklar |
-| C  ·  , / . | Kamera değiştir (Kokpit, Takip, Kanat, Serbest, Geçiş, Kule) |
+| C  ·  , / . | Kamera değiştir (Kokpit, Takip, Kanat, Serbest, Geçiş, Kule, Kuşbakışı) |
+| Alt + 1 … 7 (Mac: ⌥ Option + 1 … 7) | Kameraya doğrudan geç: 1 Kokpit · 2 Takip · 3 Kanat · 4 Serbest · 5 Geçiş · 6 Kule · 7 Kuşbakışı. Sağ üstteki kamera düğmeleri de aynı işi yapar |
+| Alt + 7 (kuşbakışındayken) | Kuzey yukarı ↔ uçuş yönü yukarı. Kuşbakışında tekerlek yüksekliği (150 m … 5 km) değiştirir, sürükleme görüntüyü kaydırır, çift tık ortalar |
 | T | Kokpit / dış görünüm |
 | Y | Arkaya bak |
 | R | Yeniden başla |
@@ -52,7 +54,7 @@ Menüyü atlamak için doğrudan bağlantı da kullanılabilir: `index.html?airc
 | F1 / ? | Yardım |
 | Tab | Ana menü |
 
-Savaş uçaklarında gaz kolu MIL'de durur. Afterburner için gaz artırma tuşuna bir kez daha bas. Uçuş sırasında sekme yanlışlıkla kapatılır veya yenilenirse tarayıcı önce onay ister (oyunun kendi "Ana menü" dönüşü sormaz). Kokpitte fareyle sürükleyerek etrafa bakılır, tekerlekle yakınlaştırılır, çift tıklamayla bakış ortalanır. Oyun kolu da desteklenir (standart eşleme).
+Savaş uçaklarında gaz kolu MIL'de durur. Afterburner için gaz artırma tuşuna bir kez daha bas. Uçuş sırasında sekme yanlışlıkla kapatılır veya yenilenirse tarayıcı önce onay ister (oyunun kendi "Ana menü" dönüşü sormaz). Kokpitte fareyle sürükleyerek etrafa bakılır, tekerlekle yakınlaştırılır, çift tıklamayla bakış ortalanır. Doğrudan kamera tuşları için Alt / Option seçildi: F tuşları Mac dizüstülerinde fn ister, rakamlar gaz ön ayarı, Shift gaz artırma, Ctrl ise Mac'te gaz azaltma ve Windows/Linux'ta tarayıcı sekme kısayoludur; Alt + rakamın Mac ve Windows'ta tarayıcı karşılığı yoktur. Oyun kolu da desteklenir (standart eşleme).
 
 ## Proje yapısı
 

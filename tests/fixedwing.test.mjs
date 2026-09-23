@@ -254,7 +254,7 @@ function idleDescent(id, alt, kts, speedbrake) {
   const key = (type, code, extra = {}) => { for (const cb of listeners[type] || []) cb({ code, key: '', repeat: false, preventDefault() {}, target: null, ...extra }); };
   const inp = createInput(target);
   const acts = [];
-  for (const a of ['gear', 'flapsDown', 'flapsUp', 'speedbrake', 'reverser', 'canopy', 'lights', 'autopilot', 'camera', 'cameraPrev', 'view', 'lookBack', 'reset', 'pause', 'hud', 'mute', 'help', 'menu']) inp.on(a, () => acts.push(a));
+  for (const a of ['gear', 'flapsDown', 'flapsUp', 'speedbrake', 'reverser', 'canopy', 'lights', 'autopilot', 'camera', 'cameraPrev', 'view', 'lookBack', 'reset', 'pause', 'hud', 'mute', 'help', 'menu', 'map']) inp.on(a, () => acts.push(a));
   inp.setAircraft(SPECS.a320neo);
   // pitch ramps: a short tap is a small input, a long hold reaches full deflection, release returns to 0
   key('keydown', 'KeyS'); inp.update(0.05); const tap = inp.state.pitch;
@@ -282,9 +282,9 @@ function idleDescent(id, alt, kts, speedbrake) {
     `MIL ${atDet}, AB ${inAB.toFixed(3)}, back ${backDet}`);
   // actions + momentary speedbrake + model throttle sync
   acts.length = 0;
-  for (const c of ['KeyG', 'KeyF', 'KeyV', 'KeyN', 'KeyU', 'KeyL', 'KeyO', 'KeyC', 'Comma', 'KeyT', 'KeyY', 'KeyR', 'KeyP', 'KeyH', 'KeyM', 'F1', 'Tab']) { key('keydown', c); key('keyup', c); }
+  for (const c of ['KeyG', 'KeyF', 'KeyV', 'KeyN', 'KeyU', 'KeyL', 'KeyO', 'KeyC', 'Comma', 'KeyT', 'KeyY', 'KeyR', 'KeyP', 'KeyH', 'KeyM', 'F1', 'Tab', 'KeyJ']) { key('keydown', c); key('keyup', c); }
   key('keydown', 'KeyK'); for (let i = 0; i < 40; i++) inp.update(1 / 60); key('keyup', 'KeyK');
-  const all = ['gear', 'flapsDown', 'flapsUp', 'reverser', 'canopy', 'lights', 'autopilot', 'camera', 'cameraPrev', 'view', 'lookBack', 'reset', 'pause', 'hud', 'mute', 'help', 'menu'];
+  const all = ['gear', 'flapsDown', 'flapsUp', 'reverser', 'canopy', 'lights', 'autopilot', 'camera', 'cameraPrev', 'view', 'lookBack', 'reset', 'pause', 'hud', 'mute', 'help', 'menu', 'map'];
   const sbCount = acts.filter((a) => a === 'speedbrake').length;
   globalThis.__game = { flight: { pendingThrottle: 0.37 } };
   inp.update(0.016);

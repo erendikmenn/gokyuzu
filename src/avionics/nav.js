@@ -1,7 +1,7 @@
 // Navigation data for the displays: airports/runways, a shared terrain height grid sampled progressively from
 // world.getGroundHeight (EGPWS terrain + relief maps), map projection, synthetic air traffic (TCAS/radar) and a
 // fighter steerpoint route. Everything is cached and budgeted so that no display update spends > ~0.4 ms here.
-import { DEG, NM, FT, clamp, wrap360, makeCanvas } from './core.js';
+import { DEG, NM, FT, clamp, wrap360, makeCanvas, font } from './core.js';
 
 // ---------------------------------------------------------------- airports & runways
 const RUNWAYS_URL = new URL('../../data/sf/runways.json', import.meta.url).href;
@@ -411,6 +411,53 @@ export function drawCenterline(g, ils, view, color) {
   g.strokeStyle = color; g.lineWidth = 2.5; g.setLineDash([18, 14]); line2(g, x0, y0, view.px, view.py); g.setLineDash([]);
 }
 function line2(g, a, b, c, d) { g.beginPath(); g.moveTo(a, b); g.lineTo(c, d); g.stroke(); }
+
+// ---------------------------------------------------------------- planned route (src/nav/route.js, map + LNAV)
+/** FMS-style identifier of a route waypoint: WPT01…, BS28R (base), IF28R, FF28R (FAF), RW28R, HV28R (hover). */
+const ID_PREFIX = { base: 'BS', if: 'IF', faf: 'FF', thr: 'RW', hov: 'HV' };
+export function routeIdent(route, w) {
+  if (w._ndIdV === route.version) return w._ndId;            // cached until the route is edited
+  const rw = route.approach ? route.approach.rw.ident : '';
+  w._ndId = w.kind === 'wpt' ? `WPT${String(route.user.indexOf(w) + 1).padStart(2, '0')}` : (ID_PREFIX[w.kind] || 'WP') + rw;
+  w._ndIdV = route.version;
+  return w._ndId;
+}
+
+/**
+ * Route on an ND: the active leg from the aircraft to the TO waypoint, then the remaining legs, with waypoint
+ * symbols ('star' Boeing / 'diamond' Airbus) and identifiers. c: { active, legs, sym, toSym, label, toLabel }.
+ * Returns the TO waypoint (or null). The caller has clipped the canvas to the map area.
+ */
+export function drawRouteND(g, S, view, c, symbol = 'star') {
+  const route = S.route;
+  if (!route || !route.hasActive) return null;
+  const W = route.waypoints, a = route.active;
+  view.project(S.x, S.z);
+  let px = view.px, py = view.py;
+  g.lineWidth = 4;
+  for (let i = a; i < W.length; i++) {
+    view.project(W[i].x, W[i].z);
+    g.strokeStyle = i === a ? c.active : c.legs;
+    line2(g, px, py, view.px, view.py);
+    px = view.px; py = view.py;
+  }
+  g.font = font(28); g.textAlign = 'left';
+  for (let i = W.length - 1; i >= a; i--) {
+    const w = W[i];
+    view.project(w.x, w.z);
+    const x = view.px, y = view.py;
+    if (x < -40 || x > 1040 || y < -40 || y > 1040) continue;
+    const to = i === a;
+    g.strokeStyle = to ? c.toSym : c.sym; g.lineWidth = 3.5;
+    g.beginPath();
+    if (symbol === 'diamond') { g.moveTo(x, y - 13); g.lineTo(x + 13, y); g.lineTo(x, y + 13); g.lineTo(x - 13, y); g.closePath(); }
+    else { g.moveTo(x, y - 20); g.lineTo(x + 5, y - 5); g.lineTo(x + 20, y); g.lineTo(x + 5, y + 5); g.lineTo(x, y + 20); g.lineTo(x - 5, y + 5); g.lineTo(x - 20, y); g.lineTo(x - 5, y - 5); g.closePath(); }
+    g.stroke();
+    g.fillStyle = to ? c.toLabel : c.label;
+    g.fillText(routeIdent(route, w), x + 22, y + 30);
+  }
+  return W[a];
+}
 
 // ---------------------------------------------------------------- local high-resolution relief (helicopter map)
 /**

@@ -9,10 +9,14 @@
 // afterburner detent at spec.abDetent: the lever stops at MIL and a fresh press of the throttle-up key goes into
 // afterburner (and a fresh press of throttle-down leaves it). Digit keys are lever presets.
 // Brakes are analog: B / Space ramp the pressure up while held.
+// Map: J opens / closes the navigation map (src/ui/map.js; M = mute, H = HUD are taken; J sits between them on the
+// home row and has the same label on the US and Turkish Q layouts). Esc closes the map before it can pause.
+// Direct cameras: Alt / Option + 1 … 7 fire on('cameraSelect', (id) => …) with the camera id (src/ui/camera-modes.js).
 // Throttle sync: when the flight model publishes `pendingThrottle` (after a reset or an autopilot disconnect) the lever
 // adopts it (window.__game.flight, or call setThrottle()).
 // No DOM access beyond addEventListener on `target`: safe to construct in Node with target = null.
 import { IS_MAC } from '../core/platform.js';
+import { CAMERA_ORDER, CAMERA_NAMES, CAMERA_KEY_MOD, cameraForDigit } from '../ui/camera-modes.js';   // direct camera keys
 
 // keyboard ramp rates (full deflection per second) per aircraft category: fighters ramp roll slower (their roll-rate
 // command reaches 240-310°/s), helicopters get a gentler cyclic
@@ -45,7 +49,7 @@ const AXES = {
 
 const ACTION_KEYS = {
   KeyG: 'gear', KeyF: 'flapsDown', KeyV: 'flapsUp', KeyK: 'speedbrake', KeyN: 'reverser', KeyU: 'canopy',
-  KeyL: 'lights', KeyO: 'autopilot',
+  KeyL: 'lights', KeyO: 'autopilot', KeyJ: 'map',
   KeyC: 'camera', Period: 'camera', Comma: 'cameraPrev', KeyT: 'view', KeyY: 'lookBack',
   KeyR: 'reset', KeyP: 'pause', Escape: 'pause', KeyH: 'hud', KeyM: 'mute', F1: 'help', Slash: 'help', IntlRo: 'help',
   Tab: 'menu',
@@ -97,7 +101,7 @@ export function createInput(target = globalThis.window) {
   let speedbrakeDownAt = -1, clock = 0;
   let gpTriggerIdle = true;
 
-  const fire = (action) => { for (const cb of handlers[action] || []) { try { cb(); } catch (e) { console.error(e); } } };
+  const fire = (action, arg) => { for (const cb of handlers[action] || []) { try { cb(arg); } catch (e) { console.error(e); } } };
   const any = (codes) => codes.some((c) => down.has(c));
 
   function setLever(v) {
@@ -132,6 +136,13 @@ export function createInput(target = globalThis.window) {
       if (AXES.throttleDown.includes(code)) milArmed = true;
     }
     if (isHelpKey && code !== 'Slash' && code !== 'IntlRo') fire('help');
+    // direct camera keys: Alt / Option + 1 … 7 → 'cameraSelect' with the camera id (src/ui/camera-modes.js); with Alt
+    // the digit is not a throttle preset
+    if (e.altKey && code in DIGITS) {
+      const cam = cameraForDigit(DIGITS[code]);
+      if (cam) fire('cameraSelect', cam);
+      return;
+    }
     const action = ACTION_KEYS[code];
     if (action) {
       if (action === 'speedbrake') speedbrakeDownAt = clock;
@@ -250,7 +261,7 @@ export function createInput(target = globalThis.window) {
         add('Shift', 'Kolektif artır');
       }
       add('1 … 9  ·  0', 'Kolektif %10 … %90  ·  %100');
-      add('O', 'Otomatik havada asılı kalma (hover hold) aç / kapat');
+      add('O', 'Otomatik havada asılı kalma (hover hold) aç / kapat · rota varsa rotayı uçar');
     } else {
       add('W / S  ·  ↑ / ↓', ftr ? 'Burun aşağı / yukarı (g komutu)' : 'Burun aşağı / yukarı');
       add('A / D  ·  ← / →', 'Sola / sağa yatış');
@@ -273,15 +284,19 @@ export function createInput(target = globalThis.window) {
       if (ftr) add('U', 'Kanopi aç / kapa (yerde)');
       add('O', ftr ? 'Otopilot (irtifa / yön) aç / kapa' : 'Otopilot + otomatik gaz aç / kapa (iniş takımı inikken ILS yaklaşma)');
       add('Otopilot açıkken', 'W/S irtifa hedefi, A/D yön hedefi, gaz tuşları hız hedefi; yaklaşmada çubuk otopilotu kapatır');
+      add('Rota varken', 'O otopilotu rotada (LNAV) açar; A/D ile dönmek yön moduna (HDG) geçirir, rota haritada kalır');
     }
     add('B / Boşluk', heli ? 'Tekerlek freni' : 'Fren (basılı tut)');
     add('L', 'Işıklar');
     add('C  ·  , / .', 'Kamera değiştir (önceki / sonraki)');
+    add(`${CAMERA_KEY_MOD} + 1 … ${CAMERA_ORDER.length}`, `Kameraya doğrudan geç: ${CAMERA_ORDER.map((id, i) => `${i + 1} ${CAMERA_NAMES[id]}`).join(' · ')}`);
+    add(`${CAMERA_KEY_MOD} + ${CAMERA_ORDER.indexOf('birdseye') + 1}`, 'Kuşbakışında tekrar bas: kuzey / uçuş yönü yukarıda · tekerlek: yükseklik · sürükle: kaydır · çift tık: ortala');
     add('T', 'Kokpit / dış görünüm');
     add('Y', 'Arkaya bak');
     add('R', 'Yeniden başla');
     add('P / Esc', 'Duraklat');
     add('H', 'Göstergeleri gizle / göster');
+    add('J', 'Harita: rota çiz, direkt git, piste yaklaş (Esc kapatır)');
     add('M', 'Sesi kapat / aç');
     add('F1 / ?', 'Yardım');
     add('Tab', 'Ana menü');

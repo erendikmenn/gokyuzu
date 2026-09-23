@@ -176,8 +176,9 @@ export function createMinimap() {
   /**
    * Draw into ctx (already scaled to CSS px) a M×M map centred on the aircraft.
    * f: flight state (position, heading deg, velocity); hdg: heading in degrees.
+   * overlay(ctx, X, Y, scale): optional, drawn under the aircraft arrow (navigation hook: the route, src/ui/map.js).
    */
-  function draw(ctx, M, f, world, hdg, pulse) {
+  function draw(ctx, M, f, world, hdg, pulse, overlay) {
     maybeRebuild(world, f);
     const now = performance.now();
     const dt = clamp((now - lastT) / 1000, 0, 0.2);
@@ -267,6 +268,8 @@ export function createMinimap() {
       if (span < 12500) label(LANDMARK_NAMES[l.id] || l.name, x, y, 'side', 'rgba(255,214,190,0.8)', 'rgba(6,12,22,0.7)');
     }
 
+    // navigation hook: the planned route (src/ui/map.js drawMinimapOverlay)
+    if (overlay) overlay(ctx, X, Y, sc);
     // track line (where the velocity vector points)
     if (f.velocity && gs > 3) {
       const vx = f.velocity.x / gs, vz = f.velocity.z / gs;

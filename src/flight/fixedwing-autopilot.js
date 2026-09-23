@@ -8,10 +8,19 @@
 // threshold) capture, LAND below 400 ft, FLARE at 50 ft with thrust RETARD, ROLLOUT on the centerline after touchdown
 // (autobrake + ground spoilers do the rest), then the autopilot disconnects below 10 m/s.
 // In the approach modes a firm stick input disconnects the autopilot (pilot takes over).
-import { DEG, G0, FT, clamp, wrap360, wrap180, moveToward } from './fixedwing-util.js';
+//
+// LNAV (NAV lateral mode, src/nav/lnav.js): with a route set on the model (m.route, guidance in m.nav) the autopilot
+// engages in NAV and follows the legs (bank-limited turns with anticipation); each sequenced waypoint sets the altitude
+// target; a roll input reverts to HDG (heading select). A route approach ("Bu piste yaklaş") decelerates on the approach
+// legs, lets the pilot-monitoring assist extend flaps / gear when the pilot has not (airliners; fighters: gear), and
+// arms the ILS logic for **that** runway on the final legs. A.approachRunway ('KSFO 28R') restricts the gear-down
+// approach arming to the selected runway end.
+import { DEG, G0, FT, KT, clamp, wrap360, wrap180, moveToward } from './fixedwing-util.js';
 
 const GS_ANGLE = 3 * DEG;
 const AIM_DIST = 300;           // m past the threshold (glide path origin, TCH ~ 50 ft)
+const NM = 1852;
+const NAV_KHDG_FIGHTER = 3.5;
 
 /** Runway ends of world.runways (airports → runways → ends) as approach candidates (cached per data object). */
 const _cache = new WeakMap();
@@ -50,11 +59,12 @@ export function approachGeometry(rw, x, z, out = {}) {
   return out;
 }
 
-/** Best runway end whose final approach the aircraft is on (or can intercept), or null. */
-export function findApproach(runways, x, z, headingRad, maxDist = 35000) {
+/** Best runway end whose final approach the aircraft is on (or can intercept), or null. only: runway end name. */
+export function findApproach(runways, x, z, headingRad, maxDist = 35000, only = null) {
   let best = null, bestScore = Infinity;
   const g = {};
   for (const rw of runwayEnds(runways)) {
+    if (only && rw.name !== only) continue;
     approachGeometry(rw, x, z, g);
     if (g.along < 1500 || g.along > maxDist) continue;
     const ang = Math.atan2(Math.abs(g.lateral), g.along);
@@ -71,14 +81,17 @@ export function createAutopilot(m) {
   const spec = m.spec;
   const P = spec.autopilot || {};
   const fighter = spec.category === 'fighter';
-  const A = m.autopilot;            // public { on, altitude, heading, speed, mode, ... }
+  const A = m.autopilot;            // public { on, altitude, heading, speed, mode, athr, lnav, approachRunway }
   const out = m.apOut;              // demands for the FCS / engines
+  A.lnav = false;                   // lateral NAV (route) engaged
+  if (A.approachRunway === undefined) A.approachRunway = null;
   const st = {
     athrI: 0, iasPrev: 0, iasRate: 0, lastLever: null,
     app: null, phase: '', geo: {}, searchT: 0, vsCmd: 0, retard: false, rolloutT: 0,
+    routeApp: false, navSeq: -1, navVer: -1, navSpeed: NaN, cfgT: 0, cfgGeo: {},
   };
 
-  function lateralModeName() { return st.phase ? 'LOC' : 'HDG'; }
+  function lateralModeName() { return st.phase || (st.app && st.routeApp) ? 'LOC' : A.lnav ? 'NAV' : 'HDG'; }
 
   function setMode() {
     if (!A.on) { A.mode = ''; return; }
@@ -89,8 +102,10 @@ export function createAutopilot(m) {
       const err = A.altitude - m.altitude;
       vert = Math.abs(err) < 60 ? 'ALT' : err > 0 ? 'CLB' : 'DES';
     }
-    A.mode = `${lateralModeName()} ${vert}${st.app && !st.phase ? ' APP' : ''}${A.athr ? '' : ''}`;
+    A.mode = `${lateralModeName()} ${vert}${st.app && !st.phase ? ' APP' : ''}`;
   }
+
+  function resetNav() { st.routeApp = false; st.navSeq = -1; st.navVer = -1; st.navSpeed = NaN; st.cfgT = 0; }
 
   function engage() {
     if (m.crashed || m.wow || m.agl < 30) return false;
@@ -102,17 +117,34 @@ export function createAutopilot(m) {
     st.iasPrev = m.ias; st.iasRate = 0;
     st.lastLever = null;
     st.app = null; st.phase = ''; st.retard = false; st.searchT = 0;
+    resetNav();
+    // a route with a leg to fly: NAV, the first leg from the present position
+    A.lnav = !!(m.route && m.route.hasActive);
+    if (A.lnav) m.route.restartLeg();
     m.fcs.st.holding = false;
     setMode();
     m._emit('autopilot', { on: true, mode: A.mode });
     return true;
   }
 
+  /** Map "Rotayı uç": engage in NAV, or switch an engaged autopilot from HDG to NAV. */
+  function engageNav() {
+    if (!(m.route && m.route.hasActive)) return false;
+    if (!A.on) return engage();
+    if (st.phase) return false;       // LOC / G/S captured: the approach stays
+    A.lnav = true;
+    resetNav();
+    if (st.app) st.app = null;
+    m.route.restartLeg();
+    setMode();
+    return true;
+  }
+
   function disengage(reason = '') {
     if (!A.on) return;
-    A.on = false; A.athr = false;
+    A.on = false; A.athr = false; A.lnav = false;
     out.active = false;
-    st.phase = ''; st.app = null;
+    st.phase = ''; st.app = null; st.routeApp = false;
     // hand the thrust back without a jump: the input lever is synced to the current autothrust setting
     m.pendingThrottle = m._effectiveLever();
     m._leverTarget = m.pendingThrottle;
@@ -149,14 +181,47 @@ export function createAutopilot(m) {
     }
     st.lastLever = lever;
 
+    // ---- LNAV (route): altitude / speed targets per leg, approach arming for the selected runway
+    const nav = m.nav;
+    let navOk = A.lnav && !!nav && nav.valid;
+    if (A.lnav && !navOk && !st.phase && !st.routeApp) {
+      // route flown to its end (or cleared): hold the present heading
+      A.lnav = false; A.heading = wrap360(ad.psi / DEG);
+      m._emit('nav', { type: 'end' });
+    }
+    if (A.lnav && !captured && Math.abs(inp.roll ?? 0) > 0.3) {
+      // the pilot turns: heading select (HDG); the route stays for later ("Rotayı uç" on the map)
+      A.lnav = false; navOk = false; A.heading = wrap360(ad.psi / DEG);
+      if (st.routeApp && !st.phase) { st.routeApp = false; st.app = null; }
+      m._emit('nav', { type: 'hdg' });
+    }
+    if (navOk) {
+      if (nav.seq !== st.navSeq || m.route.version !== st.navVer) {
+        st.navSeq = nav.seq; st.navVer = m.route.version;
+        if (Number.isFinite(nav.alt) && !st.phase) A.altitude = clamp(nav.alt, 0, spec.serviceCeiling ?? 12500);
+      }
+      if (Number.isFinite(nav.speed) && nav.speed !== st.navSpeed) {
+        st.navSpeed = nav.speed;
+        if (!st.phase) A.speed = Math.min(A.speed, nav.speed);
+      }
+      if (nav.appArm && nav.rw && !st.phase && st.app !== nav.rw) { st.app = nav.rw; st.routeApp = true; }
+    }
+
     // ---- approach arming / guidance
-    const wantApp = m.sys.gearHandleDown || m.flapIndexTarget >= (P.appFlap ?? 99);
+    const wantApp = st.routeApp || m.sys.gearHandleDown || m.flapIndexTarget >= (P.appFlap ?? 99);
     if (wantApp && !st.app && world && world.runways) {
       st.searchT -= h;
-      if (st.searchT <= 0) { st.searchT = 0.5; st.app = findApproach(world.runways, m._pos.x, m._pos.z, ad.psi); }
+      if (st.searchT <= 0) { st.searchT = 0.5; st.app = findApproach(world.runways, m._pos.x, m._pos.z, ad.psi, 35000, A.approachRunway); }
     }
     if (!wantApp && st.app && !st.phase) st.app = null;
     let hdgCmd = A.heading * DEG;
+    if (navOk && !st.app) {
+      // commanded track → heading (drift correction: heading − track)
+      const vx = m.velocity.x, vz = m.velocity.z;
+      const drift = Math.hypot(vx, vz) > 20 ? wrap180((ad.psi - Math.atan2(vx, -vz)) / DEG) * DEG : 0;
+      hdgCmd = nav.trackCmd + clamp(drift, -0.3, 0.3);
+      A.heading = wrap360(hdgCmd / DEG);
+    }
     let vsCmd;
     const V = Math.max(ad.V, 30);
     if (st.app) {
@@ -206,7 +271,9 @@ export function createAutopilot(m) {
     // ---- lateral: heading → bank → roll rate
     const bankMax = (P.bankMax ?? (fighter ? 45 : 25)) * DEG;
     const hdgErr = wrap180((hdgCmd - ad.psi) / DEG) * DEG;
-    let bankCmd = clamp(hdgErr * (P.Khdg ?? 2.0), -bankMax, bankMax);
+    // NAV: fighters (30°/s roll rate) tighten the heading law so turns roll out on the new leg
+    const Khdg = fighter && ((navOk && !st.app) || (st.routeApp && !st.phase)) ? NAV_KHDG_FIGHTER : (P.Khdg ?? 2.0);
+    let bankCmd = clamp(hdgErr * Khdg, -bankMax, bankMax);
     if (st.phase === 'FLARE' || st.phase === 'LAND') bankCmd = clamp(bankCmd, -8 * DEG, 8 * DEG);
     const pMax = (P.rollRate ?? (fighter ? 30 : 5)) * DEG;
     out.pCmd = clamp((bankCmd - ad.phi) * 0.8, -pMax, pMax);
@@ -229,7 +296,7 @@ export function createAutopilot(m) {
       if (m.groundSpeed < 10) { disengage('rollout'); return; }
     }
 
-    // ---- autothrust
+    // ---- autothrust (on a route never below VLS of the present configuration)
     const ias = m.ias;
     const rate = (ias - st.iasPrev) / Math.max(h, 1e-4);
     st.iasPrev = ias;
@@ -237,14 +304,44 @@ export function createAutopilot(m) {
     const pMaxT = P.athrMax ?? 1;
     if (st.retard) { out.power = 0; st.athrI = 0; }
     else {
-      const e = A.speed - ias;
+      const spd = A.lnav ? Math.max(A.speed, (m.vSpeeds.vls || 0) + 3 * KT) : A.speed;
+      const e = spd - ias;
       st.athrI = clamp(st.athrI + (P.athrKi ?? 0.012) * e * h, 0, pMaxT);
       out.power = clamp(st.athrI + (P.athrKp ?? 0.05) * e - (P.athrKd ?? 0.25) * st.iasRate, 0, pMaxT);
     }
     setMode();
   }
 
-  function reset() { A.on = false; A.athr = false; A.mode = ''; out.active = false; st.phase = ''; st.app = null; st.retard = false; }
+  /**
+   * Once per frame (FixedWingModel.step): on a route approach flown by the autopilot the pilot-monitoring assist
+   * configures the aircraft when the pilot has not: gear down at the glide-slope capture (or inside 7.5 NM on the final
+   * legs); airliners also extend the flaps one detent at a time while the target speed is below what the present
+   * configuration flies comfortably, slowing to the next detent's VFE on the glide slope.
+   */
+  function frame(dt) {
+    if (!A.on || !A.lnav || m.wow || !m.route || !m.route.approach) return;
+    if (!(m.route.onApproach || st.phase)) return;
+    const sys = m.sys, V = m.vSpeeds, ias = m.ias;
+    const onGs = st.phase === 'GS' || st.phase === 'LAND';
+    const dThr = st.app ? approachGeometry(st.app, m._pos.x, m._pos.z, st.cfgGeo).distThreshold : Infinity;
+    if (!sys.gearHandleDown && (onGs || (st.routeApp && dThr < 7.5 * NM)) && ias < (V.vle || Infinity) - 5 * KT) m.command('gear');
+    st.cfgT -= dt;
+    if (fighter || st.cfgT > 0 || st.phase === 'FLARE') return;
+    const det = spec.flapDetents, k = sys.flapIndex, kL = spec.landingFlapIndex ?? det.length - 1;
+    if (k >= kL) return;
+    const vfeNext = det[k + 1].vfe || Infinity;
+    let want;
+    if (onGs) {
+      want = true;
+      if (A.speed > vfeNext - 8 * KT) A.speed = Math.max(vfeNext - 8 * KT, (V.vls || 0) + 5 * KT);
+    } else want = A.speed < (V.vls || 0) + 12 * KT;
+    if (want && ias < vfeNext - 4 * KT) { m.command('flapsDown'); st.cfgT = 4; }
+  }
 
-  return { st, engage, disengage, toggle, update, reset };
+  function reset() {
+    A.on = false; A.athr = false; A.mode = ''; A.lnav = false; out.active = false;
+    st.phase = ''; st.app = null; st.retard = false; resetNav();
+  }
+
+  return { st, engage, engageNav, disengage, toggle, update, frame, reset };
 }

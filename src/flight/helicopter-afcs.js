@@ -7,6 +7,10 @@
 //      'hover'  – hover hold: translational-rate command (stick → ground speed), position hold when hands-off,
 //                 radar/baro altitude hold on the collective (lever = altitude beeper).
 //      'cruise' – altitude + airspeed + heading hold (stick moves the references).
+//      'nav'    – route following (src/nav/lnav.js guidance in this.nav): airspeed from the route's speed profile,
+//                 banked turns (≤ 20°) onto the commanded track, altitude per waypoint on the collective; near the last
+//                 point it becomes a guided hover hold that flies to the point and holds it (this.navHover).
+//                 A firm cyclic input reverts to the cruise / hover hold (pilot takes over).
 // On the ground (weight on wheels) the loops are frozen and re-initialised to the hover trim for a clean lift-off.
 //
 // Inputs are normalised control positions: cLon (+ forward), cLat (+ right), cPed (+ right pedal), collective 0..1.
@@ -26,6 +30,8 @@ const GAINS = {
   // lateral drift / sideslip nulling below ≈ 40 kt (roll channel, cyclic centred)
   KvL: 0.45, KviL: 0.03, latLow: 16, latHigh: 22, latMaxDev: 12 * DEG, latSlew: 10 * DEG, latDelay: 0.15,
   hoverEngage: 40 * 0.514444,                                     // O selects hover hold below ≈ 40 kt ground speed
+  // route following (nav): heading → bank gain and limit, guided hover approach speed (m/s per m, max accel)
+  navBank: 1.6, navBankMax: 20 * DEG, navHoverK: 0.35, navHoverAcc: 0.55,
   // airspeed hold (FPS in forward flight with the cyclic released, and the cruise hold)
   KV: 0.25, KA: 0.8, KVi: 0.015, speedSlew: 8 * DEG, speedLow: 8, speedHigh: 14, settleRate: 5 * DEG,
   // altitude hold (collective)
@@ -38,6 +44,8 @@ export class AFCS {
     this.ap = { on: false, mode: null, altitude: 0, heading: 0, speed: 0, radar: false };
     this.hoverTrim = { cLon: 0, cLat: 0, cPed: 0, theta: 3 * DEG, phi: 0, collective: 0.6 };
     this.trimPitch = null;      // Float64Array: trim pitch attitude every 5 m/s of airspeed (from the trim solver)
+    this.nav = null;            // LNAV guidance (src/nav/lnav.js out), set by the model every frame
+    this.navHover = false;      // hover hold flying to the route's last point (xRef, zRef)
     this.reset(null, 0);
   }
 
@@ -59,13 +67,17 @@ export class AFCS {
     this.bankByPilot = false;   // bank reference set by the pilot (held in turns) or by the SAS (levelled)
     this.ap.on = false; this.ap.mode = null;
     this.frozenLon = h.cLon; this.frozenLat = h.cLat; this.frozenPed = h.cPed;
+    this.navHover = false;
   }
 
   engage(s) {
     if (s.wow > 0.3) return false;
     const ap = this.ap;
     ap.on = true;
-    ap.mode = Math.hypot(s.gsF, s.gsR) < GAINS.hoverEngage ? 'hover' : 'cruise';
+    this.navHover = false;
+    this.colI = s.collective;
+    ap.mode = this.nav && this.nav.valid ? 'nav' : Math.hypot(s.gsF, s.gsR) < GAINS.hoverEngage ? 'hover' : 'cruise';
+    if (ap.mode === 'nav' && this.nav.hover) { this.engage2Hover(s); return true; }
     ap.radar = ap.mode === 'hover' && s.agl < 120;
     ap.altitude = ap.radar ? s.agl : s.alt;
     ap.heading = s.psi;
@@ -82,7 +94,34 @@ export class AFCS {
     return true;
   }
 
-  disengage() { this.ap.on = false; this.ap.mode = null; }
+  disengage() { this.ap.on = false; this.ap.mode = null; this.navHover = false; }
+
+  /** Map "Rotayı uç": engage in nav, or switch the engaged hold to nav. */
+  engageNav(s) {
+    if (!(this.nav && this.nav.valid)) return false;
+    if (!this.ap.on) return this.engage(s);
+    const ap = this.ap;
+    this.navHover = false;
+    if (this.nav.hover) { this.engage2Hover(s); return true; }
+    ap.mode = 'nav'; ap.radar = false; ap.altitude = s.alt;
+    this.thBase = s.theta; this.phBase = s.phi; this.Iu = 0; this.Iv = 0; this.IV = 0; this.posCaptured = false;
+    this.settling = false; this.vHold = Math.max(0, s.gsF);
+    return true;
+  }
+
+  /** Guided hover hold: fly to the route's last point and hold it there (radar height below 100 m). */
+  engage2Hover(s) {
+    const ap = this.ap, nav = this.nav;
+    ap.mode = 'hover';
+    this.navHover = true;
+    const ground = s.alt - s.agl;
+    const target = Number.isFinite(nav.hAlt) ? nav.hAlt : s.alt;
+    ap.radar = target - ground < 100;
+    ap.altitude = ap.radar ? Math.max(target - ground, 1) : target;
+    this.thBase = this.hoverTrim.theta; this.phBase = this.hoverTrim.phi; this.Iu = 0; this.Iv = 0;
+    this.posCaptured = true; this.xRef = nav.hx; this.zRef = nav.hz;
+    this.hdgRef = s.psi; this.hdgCaptured = true; this.psiRef = s.psi; this.yawCaptured = true;
+  }
 
   /** Hover hold beeped below the ground: coupled descent to touchdown (height hold released on the wheels). */
   isLanding() { const ap = this.ap; return ap.on && ap.mode === 'hover' && ap.radar && ap.altitude < 0.5; }
@@ -121,6 +160,22 @@ export class AFCS {
     if (ap.on && s.wow > 0.5 && !(this.isLanding() && s.collective > 0.02)) this.disengage();
     // hover hold engaged high up (baro): switch to the radar height reference below 100 m AGL
     if (ap.on && ap.mode === 'hover' && !ap.radar && s.agl < 100) { ap.altitude -= s.alt - s.agl; ap.radar = true; }
+    if (ap.on && ap.mode === 'nav') {
+      const nav = this.nav;
+      if (sp || sr) {                                       // pilot takes over: cruise / hover hold from here
+        ap.mode = s.V < 9 ? 'hover' : 'cruise'; ap.radar = ap.mode === 'hover' && s.agl < 120; ap.altitude = ap.radar ? s.agl : s.alt;
+        ap.speed = Math.max(0, s.gsF); this.vHold = ap.speed; this.hdgCaptured = false; this.posCaptured = false;
+        if (ap.mode === 'hover') { this.thBase = this.hoverTrim.theta; this.phBase = this.hoverTrim.phi; this.Iu = 0; this.Iv = 0; }
+      } else if (!nav || !nav.valid) {                      // route flown / cleared: hold what we have
+        ap.mode = s.V < 9 ? 'hover' : 'cruise'; ap.radar = ap.mode === 'hover' && s.agl < 120; ap.altitude = ap.radar ? s.agl : s.alt;
+        ap.speed = Math.max(0, s.gsF); this.vHold = ap.speed; this.hdgCaptured = false;
+      } else if (nav.hover) this.engage2Hover(s);
+      else {
+        ap.speed = nav.speed;
+        if (Number.isFinite(nav.alt)) ap.altitude = nav.alt;
+      }
+    }
+    if (this.navHover && (sp || sr || !ap.on || ap.mode !== 'hover')) this.navHover = false;
     if (ap.on && ap.mode === 'cruise' && s.V < 9) {        // slowed down: cruise hold becomes hover hold
       ap.mode = 'hover'; ap.radar = s.agl < 120; ap.altitude = ap.radar ? s.agl : s.alt;
       this.thBase = this.hoverTrim.theta; this.phBase = this.hoverTrim.phi; this.Iu = 0; this.Iv = 0; this.posCaptured = false;
@@ -160,13 +215,22 @@ export class AFCS {
       let uc = -sp * K.hoverSpeed, vc = sr * K.hoverSpeedLat;
       if (!sp && !sr) {
         if (!this.posCaptured && Math.hypot(s.gsF, s.gsR) < 1.0) { this.posCaptured = true; this.xRef = s.x; this.zRef = s.z; }
-        if (this.posCaptured) {
+        if (this.posCaptured && this.navHover) {
+          // route's last point: ground velocity toward it on a braking profile, then the plain position hold
+          const dx = this.xRef - s.x, dz = this.zRef - s.z, d = Math.hypot(dx, dz);
+          const v = Math.min(K.hoverSpeed, Math.sqrt(2 * K.navHoverAcc * d), K.navHoverK * d);
+          const ex = d > 0.01 ? (dx / d) * v : 0, ez = d > 0.01 ? (dz / d) * v : 0;
+          const sps = Math.sin(s.psi), cps = Math.cos(s.psi);
+          uc += ex * sps - ez * cps;
+          vc += ex * cps + ez * sps;
+        } else if (this.posCaptured) {
           const dx = this.xRef - s.x, dz = this.zRef - s.z;
           const sps = Math.sin(s.psi), cps = Math.cos(s.psi);
           uc += clamp(K.Kx * (dx * sps - dz * cps), -2, 2);
           vc += clamp(K.Kx * (dx * cps + dz * sps), -2, 2);
         }
       } else this.posCaptured = false;
+      if (this.navHover) { uc = clamp(uc, -K.hoverSpeed, K.hoverSpeed); vc = clamp(vc, -K.hoverSpeedLat, K.hoverSpeedLat); }
       const eu = uc - s.gsF, ev = vc - s.gsR;
       if (Math.abs(eu) < 2) this.Iu = clamp(this.Iu + K.Kui * eu * h, -2, 2);   // integrate near the target only (no overshoot)
       if (Math.abs(ev) < 2) this.Iv = clamp(this.Iv + K.Kui * ev * h, -2, 2);
@@ -202,14 +266,16 @@ export class AFCS {
           const w = augP * (1 - wS);
           this.thRef = moveToward(this.thRef, lerp(this.thRef, target, w), K.augSlew * w * h);
         }
-        if (wS > 0 && (!ap.on || ap.mode === 'cruise')) {
+        // route (nav): full authority at any speed, so a route engaged in the hover accelerates away
+        const wSp = ap.on && ap.mode === 'nav' ? 1 : wS;
+        if (wSp > 0 && (!ap.on || ap.mode === 'cruise' || ap.mode === 'nav')) {
           // airspeed hold: the attitude that holds the airspeed captured when the cyclic was released
           const vRef = ap.on ? ap.speed : this.vHold;
           const eV = uh - vRef;
           if (Math.abs(eV) < 3) this.IV = clamp(this.IV + K.KVi * eV * h, -0.12, 0.12);
-          const aDes = clamp(-K.KV * eV - K.KA * this.uDot, -2.5, 2.5);
+          const aDes = clamp(-K.KV * eV - K.KA * this.uDot, ap.mode === 'nav' ? -1.5 : -2.5, ap.mode === 'nav' ? 1.5 : 2.5);
           const target = clamp(this.thetaTrim(uh) - aDes / G + this.IV, -25 * DEG, 20 * DEG);
-          this.thRef = moveToward(this.thRef, lerp(this.thRef, target, wS), K.speedSlew * wS * h);
+          this.thRef = moveToward(this.thRef, lerp(this.thRef, target, wSp), K.speedSlew * wSp * h);
         }
       }
       // roll: rate command / attitude hold; forward flight: wings level + heading hold through bank
@@ -227,6 +293,15 @@ export class AFCS {
         const target = clamp(hp + aR / G, hp - K.latMaxDev, hp + K.latMaxDev);
         this.phRef = moveToward(this.phRef, lerp(this.phRef, target, wLat), K.latSlew * wLat * h);
         if (wLat > 0.5) this.bankByPilot = false;
+      } else if (ap.on && ap.mode === 'nav' && this.nav && this.nav.valid) {
+        // route: bank toward the commanded track (drift corrected with the heading − track difference)
+        const gsH = Math.hypot(s.gsF, s.gsR);
+        const drift = gsH > 8 ? Math.atan2(s.gsR, s.gsF) : 0;
+        const eh = wrapPi(this.nav.trackCmd - drift - s.psi);
+        const target = this.phTrimF * wF + clamp(K.navBank * eh, -K.navBankMax, K.navBankMax) * Math.max(wF, 0.3);
+        this.phRef = moveToward(this.phRef, target, 10 * DEG * h);
+        this.hdgRef = s.psi; this.hdgCaptured = true; this.bankByPilot = false;
+        ap.heading = this.nav.trackCmd;
       } else if (wF > 0.5 && (Math.abs(this.phRef - this.phTrimF) < 5 * DEG || !this.bankByPilot || ap.on)) {
         const psiDot = Math.abs(s.r);
         if (!this.hdgCaptured && psiDot < 2 * DEG && Math.abs(s.phi - this.phTrimF) < 6 * DEG) { this.hdgCaptured = true; this.hdgRef = s.psi; if (ap.on) ap.heading = s.psi; }
@@ -318,7 +393,7 @@ export class AFCS {
       if ((s.torque > 1.0 || s.nr < 0.97) && col > s.collective) { col = s.collective; if (dI > 0) dI = 0; }
       this.colI = clamp(this.colI + dI, 0, 1);
       out.collective = clamp(col, 0, 1);
-      ap.heading = this.hdgCaptured && wF > 0.5 ? this.hdgRef : this.psiRef;
+      if (ap.mode !== 'nav') ap.heading = this.hdgCaptured && wF > 0.5 ? this.hdgRef : this.psiRef;
     }
     return out;
   }

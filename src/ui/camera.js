@@ -1,16 +1,24 @@
 // Camera rig: cockpit (head look, g-force head motion, runway rumble), chase (spring follow), orbit (free),
-// flyby, tower (nearest airport) and wing (rigid wingtip camera). All smoothing is exponential and
-// frame-rate independent; nothing allocates per frame.
+// flyby, tower (nearest airport), wing (rigid wingtip camera) and bird's-eye (straight down, north-up or track-up).
+// All smoothing is exponential and frame-rate independent; nothing allocates per frame.
 import * as THREE from 'three';
 import { shared, loadRunways } from './shared.js';
-import { clamp, damp, smoothstep, DEG } from './util.js';
+import { clamp, damp, smoothstep, DEG, storageGet, storageSet } from './util.js';
+import { CAMERA_ORDER, CAMERA_NAMES, BIRDSEYE_ORIENT } from './camera-modes.js';
+import { CLOUD_H } from '../world-sf/environment-clouds.js';
 
-const ORDER = ['cockpit', 'chase', 'wing', 'orbit', 'flyby', 'tower'];
-export const CAMERA_NAMES = { cockpit: 'Kokpit', chase: 'Takip', wing: 'Kanat', orbit: 'Serbest', flyby: 'Geçiş', tower: 'Kule' };
+export { CAMERA_NAMES, CAMERA_ORDER } from './camera-modes.js';
+const ORDER = CAMERA_ORDER;
 const UP = new THREE.Vector3(0, 1, 0);
 const MIN_CLEARANCE = 1.5;
 const NEAR_IN = 0.05, NEAR_OUT = 0.5;
 const HEAD_YAW_MAX = 150 * DEG, HEAD_PITCH_MAX = 80 * DEG;
+// bird's-eye: height above the aircraft (m). Measured on low and ultra over downtown and SFO: every height up to 5 km
+// costs less GPU time and fewer draw calls than the chase view at the same place (a high camera only coarsens the
+// terrain / city LODs), with a few dozen tile requests per zoom step. Higher, the 6.2 km cloud deck would cover the view.
+const BIRD_MIN = 150, BIRD_MAX = 5000, BIRD_FOV = 45;
+const BIRD_PAN = 0.8;              // the aircraft stays within 80 % of the half screen when the view is dragged
+const BIRD_KEY = 'gokyuzu.birdseye';   // localStorage: { trackUp }
 
 // Approximate control-tower cab positions (local meters) and eye heights above ground.
 // KSFO: the 2016 tower between terminals 1 and 2 (landmarks.json sfo_tower); KOAK: south-field tower;
@@ -66,6 +74,11 @@ export function createCameraRig(camera, dom, world) {
   const towerLook = new THREE.Vector3();
   let towerLookInit = false;
 
+  // bird's-eye: height bH (target bHT), screen-up bearing bRot (rad, 0 = north, clockwise), pan offset in fractions of
+  // the half screen height (bPanX right, bPanY up; the aircraft appears at −offset)
+  let bH = 0, bHT = 0, bRot = 0, bPanX = 0, bPanY = 0, bPanXT = 0, bPanYT = 0, bY = 0;
+  let bTrackUp = !!(storageGet(BIRD_KEY) || {}).trackUp;
+
   // scratch
   const P = new THREE.Vector3(), Q = new THREE.Quaternion(), Qi = new THREE.Quaternion();
   const fwd = new THREE.Vector3(), up = new THREE.Vector3(), right = new THREE.Vector3();
@@ -82,7 +95,7 @@ export function createCameraRig(camera, dom, world) {
 
   // ---------- pointer input on the canvas ----------
   let dragging = false, pid = null, lx = 0, ly = 0;
-  const lookModes = new Set(['cockpit', 'wing', 'chase', 'orbit']);
+  const lookModes = new Set(['cockpit', 'wing', 'chase', 'orbit', 'birdseye']);
   if (dom && dom.addEventListener) {
     dom.addEventListener('pointerdown', (e) => {
       if (!lookModes.has(mode) || (e.button !== 0 && e.button !== 2)) return;
@@ -107,6 +120,11 @@ export function createCameraRig(camera, dom, world) {
       } else if (mode === 'orbit') {
         oYawT -= dx * k * 1.8;
         oPitchT = clamp(oPitchT + dy * k * 1.4, -0.6, 1.5);
+      } else if (mode === 'birdseye') {
+        // the ground follows the pointer (1 px = 2/h of the half screen height at the aircraft's depth)
+        const ax = BIRD_PAN * (camera.aspect || 1.6);
+        bPanXT = clamp(bPanXT - dx * 2 / h, -ax, ax);
+        bPanYT = clamp(bPanYT + dy * 2 / h, -BIRD_PAN, BIRD_PAN);
       }
     });
     const end = (e) => {
@@ -124,6 +142,7 @@ export function createCameraRig(camera, dom, world) {
       else if (mode === 'chase') chaseZoom = clamp(chaseZoom * z, 0.55, 4);
       else if (mode === 'flyby') flyFovMul = clamp(flyFovMul * z, 0.35, 3);
       else if (mode === 'tower') towerFovMul = clamp(towerFovMul * z, 0.25, 4);
+      else if (mode === 'birdseye') bHT = clamp(bHT * z * z, BIRD_MIN, BIRD_MAX);   // ≈ 25 % per wheel notch
       else return;
       e.preventDefault();
     }, { passive: false });
@@ -140,6 +159,7 @@ export function createCameraRig(camera, dom, world) {
       else if (mode === 'chase') chaseZoom = clamp(chaseZoom * z, 0.55, 4);
       else if (mode === 'flyby') flyFovMul = clamp(flyFovMul * z, 0.35, 3);
       else if (mode === 'tower') towerFovMul = clamp(towerFovMul * z, 0.25, 4);
+      else if (mode === 'birdseye') bHT = clamp(bHT * z * z, BIRD_MIN, BIRD_MAX);
     });
     dom.addEventListener('gestureend', (e) => e.preventDefault());
     dom.addEventListener('dblclick', () => {
@@ -148,6 +168,7 @@ export function createCameraRig(camera, dom, world) {
       else if (mode === 'orbit') orbitInit = true;
       else if (mode === 'tower') towerFovMul = 1;
       else if (mode === 'flyby') { flyFovMul = 1; flyValid = false; }
+      else if (mode === 'birdseye') { bPanXT = bPanYT = 0; bHT = birdDefault(); }
     });
     dom.addEventListener('contextmenu', (e) => { if (lookModes.has(mode)) e.preventDefault(); });
   }
@@ -619,6 +640,102 @@ export function createCameraRig(camera, dom, world) {
     setLens(NEAR_OUT, fov);
   }
 
+  // ---------- bird's-eye ----------
+  // Straight down on the aircraft, north-up (default) or track-up. Wheel / pinch = height above the aircraft (log-space
+  // smoothing), drag = pan offset kept in screen fractions (zooming keeps the aircraft where it is on screen),
+  // double-click = centre + default height. The world streams from this camera like from any other: terrain by
+  // screen-space error, city / landmarks / airports by distance, so a high camera only lowers their detail.
+  function birdDefault() {
+    return clamp(bounds.length * 6.7, BIRD_MIN, 400);   // the aircraft ≈ 18 % of the screen height (fighters: more)
+  }
+  const wrapPi = (a) => a - Math.PI * 2 * Math.floor((a + Math.PI) / (Math.PI * 2));
+  function birdGoal() {
+    if (!bTrackUp) return 0;
+    if (Math.hypot(vel.x, vel.z) > 6) return Math.atan2(vel.x, -vel.z);   // ground track
+    return Math.hypot(fwd.x, fwd.z) > 0.05 ? Math.atan2(fwd.x, -fwd.z) : bRot;   // slow: nose heading
+  }
+  function updateBirdseye(dt) {
+    if (!(bHT > 0)) bHT = birdDefault();
+    if (snap || !(bH > 0)) bH = bHT;
+    else bH *= Math.exp(Math.log(bHT / bH) * damp(6, dt));
+    bRot = wrapPi(bRot + wrapPi(birdGoal() - bRot) * (snap ? 1 : damp(2.2, dt)));
+    const kp = snap ? 1 : damp(12, dt);
+    bPanX += (bPanXT - bPanX) * kp;
+    bPanY += (bPanYT - bPanY) * kp;
+    fov += (BIRD_FOV - fov) * (snap ? 1 : damp(6, dt));
+    const t = Math.tan(fov * DEG / 2);
+    // aircraft height with velocity feed-forward: no lag in a steady climb, gear bounces are smoothed
+    if (snap) bY = P.y;
+    else { if (moveSpeed > 0.5) bY += vel.y * dt; bY += (P.y - bY) * damp(6, dt); }   // (no feed-forward while paused)
+    // screen axes on the ground: up = bearing bRot, right = bRot + 90°
+    const ux = Math.sin(bRot), uz = -Math.cos(bRot);
+    const half = bH * t;                                   // half screen height in meters at the aircraft
+    pos.set(P.x + (bPanX * -uz + bPanY * ux) * half, bY + bH, P.z + (bPanX * ux + bPanY * uz) * half);
+    const floor = groundAt(pos.x, pos.z) + 20;
+    if (pos.y < floor) pos.y = floor;
+    // stay under the 6.2 km cloud deck while the aircraft is below it (the layer would hide it)
+    if (P.y < CLOUD_H - 400 && pos.y > CLOUD_H - 250) pos.y = Math.max(CLOUD_H - 250, P.y + BIRD_MIN * 0.5);
+    tmp.set(pos.x, pos.y - 1, pos.z);
+    hUp.set(ux, 0, uz);
+    lookFrom(pos, tmp, hUp);
+    setLens(NEAR_OUT, fov);
+    updateMark(Math.max(1, pos.y - P.y), t, ux, uz);
+  }
+
+  // Bird's-eye marker: a thin ring around the aircraft with a heading pointer, as an SVG overlay above the canvas (crisp,
+  // constant stroke width at any size, under the HUD). Clearly visible while the aircraft is small, faint when it is big
+  // (a grey fighter over grey roofs still stands out); hidden with the HUD ("Kapalı").
+  const SVGNS = 'http://www.w3.org/2000/svg';
+  let mark = null, markRing = null, markHalo = null, markPtr = null, markOn = false, markKey = '';
+  function ensureMark() {
+    if (mark || !dom || !dom.parentElement || typeof document === 'undefined' || !document.createElementNS) return mark;
+    const svg = (tag, attrs, parent) => {
+      const e = document.createElementNS(SVGNS, tag);
+      for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+      if (parent) parent.appendChild(e);
+      return e;
+    };
+    mark = svg('svg', { class: 'gk-birdmark', width: '1', height: '1', 'aria-hidden': 'true' });
+    mark.style.cssText = 'position:absolute;left:0;top:0;overflow:visible;pointer-events:none;display:none;will-change:transform';
+    markHalo = svg('circle', { r: '22', fill: 'none', stroke: 'rgba(2,8,16,0.45)', 'stroke-width': '4' }, mark);
+    markRing = svg('circle', { r: '22', fill: 'none', stroke: '#5cf2c8', 'stroke-width': '1.8' }, mark);
+    markPtr = svg('path', { d: 'M0 -9L6 0H-6Z', fill: '#5cf2c8', stroke: 'rgba(2,8,16,0.5)', 'stroke-width': '1.5', 'stroke-linejoin': 'round' }, mark);
+    dom.parentElement.appendChild(mark);
+    return mark;
+  }
+  function showMark(on) {
+    if (on === markOn) return;
+    markOn = on;
+    if (mark) mark.style.display = on ? '' : 'none';
+  }
+  function updateMark(depth, t, ux, uz) {
+    if (shared.hudVisible === false || !ensureMark()) { showMark(false); return; }
+    const w = dom.clientWidth || 1440, hPx = dom.clientHeight || 900;
+    const px = Math.max(bounds.length, bounds.span) / (2 * depth * t) * hPx;   // aircraft size on screen
+    camera.updateMatrixWorld();
+    tmp.copy(P).project(camera);
+    const x = (tmp.x + 1) * 0.5 * w, y = (1 - tmp.y) * 0.5 * hPx;
+    const r = clamp(px * 0.62 + 7, 20, 170);
+    const a = 0.95 - 0.65 * smoothstep(40, 130, px);
+    // nose direction on screen: clockwise angle from screen-up (SVG rotate is clockwise)
+    const deg = Math.atan2(fwd.x * -uz + fwd.z * ux, fwd.x * ux + fwd.z * uz) / DEG;
+    mark.style.transform = `translate(${x.toFixed(1)}px,${y.toFixed(1)}px)`;
+    const key = `${Math.round(r * 2)}|${Math.round(deg * 2)}|${Math.round(a * 50)}`;
+    if (key !== markKey) {
+      markKey = key;
+      markHalo.setAttribute('r', r.toFixed(1));
+      markRing.setAttribute('r', r.toFixed(1));
+      markPtr.setAttribute('transform', `rotate(${deg.toFixed(1)}) translate(0 ${(-r - 2).toFixed(1)})`);
+      mark.style.opacity = a.toFixed(2);
+    }
+    showMark(true);
+  }
+  function setTrackUp(on) {
+    bTrackUp = !!on;
+    storageSet(BIRD_KEY, { trackUp: bTrackUp });
+    return `${CAMERA_NAMES.birdseye}: ${bTrackUp ? BIRDSEYE_ORIENT.track : BIRDSEYE_ORIENT.north}`;
+  }
+
   // ---------- mode switching ----------
   function setMode(m) {
     if (!ORDER.includes(m)) return CAMERA_NAMES[mode];
@@ -660,10 +777,26 @@ export function createCameraRig(camera, dom, world) {
       cockpitFov = cockpitFovT = defaultCockpitFov();
       layoutWing();
       orbitInit = true; flyValid = false; towerKey = null;
+      bHT = 0; bPanXT = bPanYT = 0;                        // bird's-eye: default height for this aircraft
       snap = true; havePrev = false;
     },
     next() { const i = ORDER.indexOf(mode); return setMode(ORDER[(i + 1) % ORDER.length]); },
     prev() { const i = ORDER.indexOf(mode); return setMode(ORDER[(i - 1 + ORDER.length) % ORDER.length]); },
+    /**
+     * Direct camera selection (Alt / Option + 1 … 7, HUD camera selector). Selecting the active bird's-eye view again
+     * flips north-up / track-up. Returns the message for the HUD ("Kamera: Kule", "Kuşbakışı: Kuzey yukarıda").
+     */
+    select(m) {
+      if (m === 'birdseye' && mode === 'birdseye') return setTrackUp(!bTrackUp);
+      return `Kamera: ${setMode(m)}`;
+    },
+    /** Bird's-eye orientation: false = north-up (default), true = track-up. Persisted. */
+    get trackUp() { return bTrackUp; },
+    set trackUp(v) { setTrackUp(v); },
+    /** Bird's-eye state for tests / the HUD: height above the aircraft (target and current), limits, pan offset. */
+    get birdseye() { return { height: bHT, current: bH, min: BIRD_MIN, max: BIRD_MAX, trackUp: bTrackUp, pan: [bPanXT, bPanYT], bearing: bRot }; },
+    /** Set the bird's-eye height above the aircraft (m, clamped); `now` skips the smoothing. */
+    setBirdseyeHeight(h, now = false) { bHT = clamp(Number(h) || birdDefault(), BIRD_MIN, BIRD_MAX); if (now) bH = bHT; return bHT; },
     toggleView() { return setMode(mode === 'cockpit' ? (lastExterior && lastExterior !== 'cockpit' ? lastExterior : 'chase') : 'cockpit'); },
     /** lookBack(true) on press, lookBack(false) on release; repeated presses without a release toggle. */
     lookBack(on) {
@@ -690,8 +823,12 @@ export function createCameraRig(camera, dom, world) {
         case 'orbit': updateOrbit(dt); break;
         case 'flyby': updateFlyby(dt, f); break;
         case 'tower': updateTower(dt, f); break;
+        case 'birdseye': updateBirdseye(dt); break;
         default: updateChase(dt, f);
       }
+      if (mode !== 'birdseye') showMark(false);
+      shared.birdseyeBearing = bRot;
+      shared.birdseyeTrackUp = bTrackUp;
       snap = false;
       shared.cameraMode = mode;
     },

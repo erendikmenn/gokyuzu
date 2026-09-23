@@ -6,7 +6,9 @@ import { detectQuality } from './quality.js';
 const KEY = 'gokyuzu.settings';
 export const DEFAULT_SETTINGS = {
   quality: null,            // 'low' | 'medium' | 'high' | 'ultra'; null = auto-detect from the GPU
-  volumes: { master: 0.9, engine: 1, voice: 1, atc: 0.8, ambient: 0.8 },
+  volumes: { master: 0.9, engine: 1, voice: 1, atc: 0.8, ambient: 0.8, music: 0.6 },   // music: src/music (MUSIC_DEFAULTS)
+  musicMenu: true,          // soundtrack in the menu (starts on the first click: browser autoplay rules)
+  musicFlight: false,       // soundtrack in flight (off until the player turns it on)
   invertPitch: false,
   hudMode: null,            // owned by the HUD (full/compact/off); null = HUD default
   atc: true,                // automatic ATC radio in solo mode
