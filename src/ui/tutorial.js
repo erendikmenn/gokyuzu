@@ -12,7 +12,8 @@
 // Everything sits in a bottom-centre stack (hint pill above the tutorial card or the key card) that never covers the
 // attitude / speed area of the HUD; the HUD's status chip moves above the stack (--gk-bottom on the HUD root).
 // Key labels follow the platform (Shift / Ctrl on macOS, X / Z elsewhere) and switch to gamepad controls when a
-// standard gamepad is connected (src/ui/tutorial-keys.js). Completion is remembered per category in localStorage.
+// standard gamepad is connected, to the on-screen controls in touch mode (src/ui/tutorial-keys.js; the named controls
+// pulse through shared.tutorialChips, src/ui/touch.js). Completion is remembered per category in localStorage.
 import { injectCSS, BASE_CSS } from './styles.js';
 import { el, keyChips, richText, pressKey, storageGet, storageSet, clamp, wrap180, KT } from './util.js';
 import { keySet, essentialKeys } from './tutorial-keys.js';
@@ -150,6 +151,9 @@ const CSS = `
 .gkt.gkt-cockpit .gkt-hint { max-width: calc(380px * var(--ts)); border-radius: calc(14px * var(--ts)); font-size: calc(13px * var(--ts)); }
 `;
 
+/** Sentences may start with a phrase ("sol çubuğu geri çek…", gamepad / touch labels): upper-case the first letter. */
+const capitalize = (t) => String(t ?? '').replace(/^(\s*)(\p{Ll})/u, (m, sp, ch) => sp + ch.toLocaleUpperCase('tr'));
+
 const CHECK_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
 
 export function createOnboarding(container, { input = null, hud = null, restart = null } = {}) {
@@ -220,8 +224,12 @@ export function createOnboarding(container, { input = null, hud = null, restart 
   const hudRoot = hud && hud.element;
   function syncBottom() {
     if (!hudRoot) return;
-    const h = cockpitOn ? 0 : stack.getBoundingClientRect().height;
-    hudRoot.style.setProperty('--gk-bottom', `${Math.round(h > 1 ? h + 18 * ts : 0)}px`);
+    // touch hook (src/ui/touch.js): on phones the stack sits at the top centre (the thumbs' controls fill the bottom and
+    // the chase view shows the aircraft there); the HUD's toasts / warnings then move below it (--gk-top-stack)
+    const top = document.documentElement.classList.contains('gkx-phone');
+    const h = cockpitOn && !top ? 0 : stack.getBoundingClientRect().height;
+    hudRoot.style.setProperty('--gk-bottom', `${top ? 0 : Math.round(h > 1 ? h + 18 * ts : 0)}px`);
+    if (top || hudRoot.style.getPropertyValue('--gk-top-stack')) hudRoot.style.setProperty('--gk-top-stack', `${top && h > 1 ? Math.round(h + 8) : 0}px`);
   }
   if (hudRoot && typeof ResizeObserver !== 'undefined') new ResizeObserver(syncBottom).observe(stack);
 
@@ -233,6 +241,8 @@ export function createOnboarding(container, { input = null, hud = null, restart 
   const key = { active: false, t: 0, shrinking: false };
   let f1On = false, hideOn = false, crashOn = false;
   const toggle = (node, cls, on) => node.classList.toggle(cls, on);
+  // labels: gamepad when one is connected, the on-screen controls in touch mode (src/ui/touch.js), else the keyboard
+  const deviceKind = () => (input && input.gamepadConnected ? 'pad' : input && input.touchMode ? 'touch' : 'kb');
 
   function layout() {
     const vw = window.innerWidth || 1280, vh = window.innerHeight || 720;
@@ -286,9 +296,11 @@ export function createOnboarding(container, { input = null, hud = null, restart 
     }
     if (chipKeys) chipKeys.remove();
     chipKeys = keyChips(chipBox, st.keys(k, c));
+    // touch hook (src/ui/touch.js): the on-screen controls named on the card pulse
+    shared.tutorialChips = [...chipKeys.querySelectorAll('kbd')].map((x) => x.textContent).join('|');
     titleEl.textContent = st.title(k, c, tut.phase);
     const explicit = tut.nudged && st.explicit ? st.explicit(k, c, tut.phase) : null;
-    richText(textEl, explicit || st.text(k, c, tut.phase));
+    richText(textEl, capitalize(explicit || st.text(k, c, tut.phase)));
     toggle(card, 'nudge', !!explicit);
     toggle(meterEl, 'on', !!st.meter);
     meterT = 0;
@@ -330,7 +342,7 @@ export function createOnboarding(container, { input = null, hud = null, restart 
   }
 
   function completeStep(st) {
-    trackEvent('tut', { ac: def && def.id, sc: scenario.id, st: st.id, i: tut.i + 1, s: c.stepT.toFixed(1) });
+    trackEvent('tut', { ac: def && def.id, sc: scenario.id, st: st.id, i: tut.i + 1, sec: c.stepT.toFixed(1) });
     if (st.final) { finishTutorial(true); return; }
     card.classList.remove('nudge');
     card.classList.add('ok');
@@ -339,12 +351,13 @@ export function createOnboarding(container, { input = null, hud = null, restart 
     // all real steps done: remember it now (the last card only lists free-flight tips)
     if (tut.i + 1 < tut.steps.length && tut.steps[tut.i + 1].final) {
       markTutorial(c.cat, 'done');
-      trackEvent('tut', { ac: def && def.id, sc: scenario.id, st: 'done', s: tut.total.toFixed(0) });
+      trackEvent('tut', { ac: def && def.id, sc: scenario.id, st: 'done', sec: tut.total.toFixed(0) });
     }
   }
 
   function finishTutorial() {
     tut.active = false;
+    shared.tutorialChips = '';
     card.classList.add('gkt-out');
     setTimeout(() => { if (!tut.active) card.classList.remove('on', 'gkt-out', 'ok', 'nudge', 'fin'); }, 330);
     setF1(true);
@@ -352,7 +365,7 @@ export function createOnboarding(container, { input = null, hud = null, restart 
 
   function skipTutorial() {
     const st = tut.steps[tut.i];
-    trackEvent('tut', { ac: def && def.id, sc: scenario.id, st: st.id, i: tut.i + 1, s: c.stepT.toFixed(1), x: 'skip' });
+    trackEvent('tut', { ac: def && def.id, sc: scenario.id, st: st.id, i: tut.i + 1, sec: c.stepT.toFixed(1), x: 'skip' });
     markTutorial(c.cat, tutorialStatus(c.cat) === 'done' ? 'done' : 'skipped');
     finishTutorial(false);
     if (hud) hud.showMessage('Eğitim kapatıldı. F1 ekranından istediğin zaman yeniden başlatabilirsin.', 3200);
@@ -362,6 +375,7 @@ export function createOnboarding(container, { input = null, hud = null, restart 
   function buildKeyCard() {
     const nm = def ? ((AIRCRAFT_INFO[def.id] && AIRCRAFT_INFO[def.id].short) || def.name || '') : '';
     kcTitle.textContent = nm ? `${nm} · temel kontroller` : 'Temel kontroller';
+    richText(kcF1, `${c.k.chip('help')} tüm kontroller`);
     kcGrid.textContent = '';
     for (const [keys, label] of essentialKeys(c.cat, device)) {
       const cell = el('div', 'gkt-kc-cell', kcGrid);
@@ -494,14 +508,14 @@ export function createOnboarding(container, { input = null, hud = null, restart 
       started = true;
       hints.begin(c.cat);
       hints.setEnabled(enabled);
-      device = input && input.gamepadConnected ? 'pad' : 'kb';
-      c.k = keySet(device);
+      device = deviceKind();
+      c.k = keySet(device, c.cat);
       shared.keyDevice = device;       // crash tips on the HUD use the same labels
       c.f = flight || null;
       const onFinal = !!(sp && sp.altitude != null && c.cat === 'airliner' && flight && flight.gearHandleDown);
       if (enabled && !tutorialStatus(c.cat)) { startTutorial(false); return true; }
       if (enabled) showKeyCard(); else setF1(true);
-      if (hud) hud.showMessage(onFinal ? 'Takım ve flaplar iniş konumunda · O: otomatik ILS inişi' : 'İyi uçuşlar!', onFinal ? 4000 : 2000);
+      if (hud) hud.showMessage(onFinal ? `Takım ve flaplar iniş konumunda · ${c.k.label('autopilot')}: otomatik ILS inişi` : 'İyi uçuşlar!', onFinal ? 4000 : 2000);
       return false;
     },
 
@@ -513,9 +527,9 @@ export function createOnboarding(container, { input = null, hud = null, restart 
       fillContext(f, info);
       if ((devT -= dt) <= 0) {
         devT = 0.5;
-        const d = input && input.gamepadConnected ? 'pad' : 'kb';
+        const d = deviceKind();
         if (d !== device) {
-          device = d; c.k = keySet(d); shared.keyDevice = d;
+          device = d; c.k = keySet(d, c.cat); shared.keyDevice = d;
           if (tut.active && !tut.okT) renderStep(false);
           if (key.active) buildKeyCard();
         }

@@ -6,7 +6,11 @@ import { goldenGateSceneSVG, planformSVG, SCENE_VB } from './art.js';
 import { AIRCRAFT_INFO, CATEGORY_LABEL, AIRPORTS, AIRPORT_ORDER, MENU_CONTROLS } from './data.js';
 import { shared } from './shared.js';
 import { createSpawnMap, SPAWN_MAP_CSS } from './baymap.js';
-import { openSettings, openCredits, deviceNotice, showQualityHint, CREDITS_LINE } from './panels.js';
+import { openSettings, openCredits, showQualityHint, CREDITS_LINE } from './panels.js';
+import { touchMode } from './touch-env.js';             // touch hook: phones / tablets (src/ui/touch*.js)
+import { MENU_TOUCH_CSS } from './touch-menu.js';
+import { showInAppHint } from './touch-gate.js';
+import { enterFullscreen } from './touch.js';
 
 const STORE_KEY = 'gokyuzu-sf.menu';
 
@@ -350,6 +354,8 @@ export function createMenu(container, { aircraft = [], spawns = [] } = {}) {
   injectCSS('base', BASE_CSS);
   injectCSS('menu', CSS);
   injectCSS('spawnmap', SPAWN_MAP_CSS);
+  const touch = touchMode();
+  if (touch) injectCSS('menu-touch', MENU_TOUCH_CSS);
   return new Promise((resolve) => {
     const list = aircraft.filter(Boolean);
     const stored = storageGet(STORE_KEY) || {};
@@ -359,7 +365,7 @@ export function createMenu(container, { aircraft = [], spawns = [] } = {}) {
     if (!spawns.some((s) => s.id === spawnId)) spawnId = spawns[0] ? spawns[0].id : null;
     let closed = false, hintBox = null;
 
-    const root = el('div', 'gkm', container);
+    const root = el('div', touch ? 'gkm gkm-touch' : 'gkm', container);
     root.setAttribute('lang', 'tr');
     root.setAttribute('role', 'dialog');
     root.setAttribute('aria-label', 'Gökyüzü ana menü');
@@ -507,6 +513,7 @@ export function createMenu(container, { aircraft = [], spawns = [] } = {}) {
     el('kbd', null, fk, 'Enter');
     fk.insertAdjacentHTML('beforeend', ARROW_ICON);
     flyBtn.addEventListener('click', fly);
+    if (touch) el('div', 'gkm-touch-note', side, 'Uçuş yatay ekranda: telefonu yan çevir');
 
     // ---------- behaviour ----------
     function currentAircraft() { return list[acIndex] || null; }
@@ -609,6 +616,7 @@ export function createMenu(container, { aircraft = [], spawns = [] } = {}) {
       if (!a) return;
       closed = true;
       persist();
+      if (touch) enterFullscreen();   // touch hook: Android Chrome goes fullscreen + landscape inside this tap
       const s = currentSpawn();
       const result = { aircraftId: a.id, spawnId: spawnId || a.defaultSpawn };
       shared.choice = { ...result, aircraftName: a.name, spawnName: s ? s.name : '', category: a.category };
@@ -671,10 +679,13 @@ export function createMenu(container, { aircraft = [], spawns = [] } = {}) {
     renderHero(false);
     renderControls();
     refresh();
-    deviceNotice(container).then(() => {
-      if (closed) return;
-      setTimeout(() => { if (!closed && !shared.modalOpen) hintBox = showQualityHint(root, () => openSettings(container), 'gkm-hint'); }, 1600);
-    });
-    requestAnimationFrame(() => { if (!closed) flyBtn.focus({ preventScroll: true }); });
+    // touch: the chosen start point in view (scrolls the list only: scrollIntoView would also shift the menu itself)
+    if (touch) {
+      const sb = spawnButtons.get(spawnId);
+      if (sb) requestAnimationFrame(() => { const r = sb.b.getBoundingClientRect(), w = spWrap.getBoundingClientRect(); spWrap.scrollTop += (r.top + r.height / 2) - (w.top + w.height / 2); });
+    }
+    if (touch) showInAppHint(root);   // social-app webviews: "Tarayıcıda aç"
+    else setTimeout(() => { if (!closed && !shared.modalOpen) hintBox = showQualityHint(root, () => openSettings(container), 'gkm-hint'); }, 1600);
+    if (!touch) requestAnimationFrame(() => { if (!closed) flyBtn.focus({ preventScroll: true }); });
   });
 }

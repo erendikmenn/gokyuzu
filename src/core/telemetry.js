@@ -16,10 +16,14 @@ let seq = 0, version = '', errors = 0, active = 0, getState = null;
 
 const minutes = () => ((performance.now() - t0) / 60000).toFixed(1);
 
+// envelope keys: a data field with one of these names would overwrite the session id / sequence (it did: the
+// tutorial's step seconds were sent as `s`), so data keys never replace them
+const RESERVED = new Set(['t', 's', 'n', 'm', 'v']);
+
 function send(type, data = {}) {
   if (!enabled) return;
   const q = new URLSearchParams({ t: type, s: sid, n: String(seq++), m: minutes(), v: version });
-  for (const [k, val] of Object.entries(data)) if (val !== undefined && val !== null && val !== '') q.set(k, String(val).slice(0, 120));
+  for (const [k, val] of Object.entries(data)) if (!RESERVED.has(k) && val !== undefined && val !== null && val !== '') q.set(k, String(val).slice(0, 120));
   // keepalive lets the last beacon leave while the page unloads; failures are irrelevant to the player
   try { fetch(`_e?${q}`, { keepalive: true, cache: 'no-store', credentials: 'omit' }).catch(() => {}); } catch { /* ignore */ }
 }
@@ -39,12 +43,13 @@ function gpuName(renderer) {
  * Page opened (menu or direct link). `state()` is polled once a minute and returns
  * { flying, paused, aircraft, fps, pixelRatio, view } for the heartbeat.
  */
-export function startTelemetry({ build, renderer, quality, state }) {
+export function startTelemetry({ build, renderer, quality, state, extra = {} }) {
   version = (build && build.version) || '';
   getState = state;
   send('open', {
     w: innerWidth, h: innerHeight, dpr: devicePixelRatio.toFixed(2), q: quality, lang: navigator.language,
     gpu: gpuName(renderer), ref: document.referrer ? new URL(document.referrer).hostname : '',
+    ...extra,   // e.g. { in: 'touch' | 'kb', touch: 1, iab: 'x' } (input kind, touch device, social-app webview)
   });
   // one heartbeat per minute of active flight (tab visible, not paused)
   setInterval(() => {
@@ -54,14 +59,44 @@ export function startTelemetry({ build, renderer, quality, state }) {
     send('hb', { a: active, ac: s.aircraft, fps: Math.round(s.fps || 0), pr: s.pixelRatio && s.pixelRatio.toFixed(2), vw: s.view === 'cockpit' ? 'c' : 'e' });
   }, 60000);
   addEventListener('pagehide', () => send('end', { a: active }));
-  addEventListener('error', (e) => reportError(e.message, e.filename, e.lineno));
-  addEventListener('unhandledrejection', (e) => reportError(e.reason && (e.reason.message || e.reason), '', 0));
 }
 
-/** A flight started: aircraft, spawn, seconds from the menu click to the first playable frame. */
-export function trackFlight(aircraft, spawn, loadSeconds, quality) {
-  send('fly', { ac: aircraft, sp: spawn, lt: loadSeconds.toFixed(1), q: quality });
+// Errors are caught from the moment this module loads (not only after startTelemetry): failures while loading used to
+// leave no trace. Errors from other origins / browser extensions / in-app browsers' injected scripts are tagged `x=foreign`.
+addEventListener('error', (e) => reportError(e.message, e.filename, e.lineno));
+addEventListener('unhandledrejection', (e) => {
+  const r = e.reason;
+  const frame = r && r.stack ? (String(r.stack).split('\n').find((l) => /:\d+:\d+/.test(l)) || '') : '';
+  const m = /([^/\s(]+):(\d+):\d+\)?\s*$/.exec(frame);
+  reportError(r && (r.message || r), m ? m[1] : '', m ? m[2] : 0);
+});
+
+/** A flight started: aircraft, spawn, seconds from the menu click to the first playable frame (+ extra, e.g. { in: 'touch', tilt: 1 }). */
+export function trackFlight(aircraft, spawn, loadSeconds, quality, extra = {}) {
+  send('fly', { ac: aircraft, sp: spawn, lt: loadSeconds.toFixed(1), q: quality, ...extra });
+  markLive();
 }
+
+/** Loading failed before the flight could start (the error screen is shown): phase, short message, network or not. */
+export function trackFail(phase, message, net) {
+  send('fail', { ph: phase, e: String(message || '').slice(0, 100), net: net ? 1 : 0 });
+}
+
+// Dead-page marker: a page that dies while flying (e.g. iOS kills it for memory) sends nothing. The marker lives in
+// sessionStorage from `fly` until a normal `pagehide`; if the next page of this tab still finds it, the previous one died.
+const LIVE_KEY = 'gokyuzu.live';
+function markLive() {
+  try { sessionStorage.setItem(LIVE_KEY, JSON.stringify({ sid, t: Date.now() })); } catch { /* ignore */ }
+}
+addEventListener('pagehide', () => { try { sessionStorage.removeItem(LIVE_KEY); } catch { /* ignore */ } });
+try {
+  const prev = JSON.parse(sessionStorage.getItem(LIVE_KEY) || 'null');
+  if (prev && prev.sid && prev.sid !== sid) {
+    sessionStorage.removeItem(LIVE_KEY);
+    const nav = (performance.getEntriesByType && performance.getEntriesByType('navigation')[0] || {}).type || '';
+    send('dead', { prev: prev.sid, after: Math.round((Date.now() - prev.t) / 1000), nav });
+  }
+} catch { /* ignore */ }
 
 // Gameplay events (takeoff, land, crash, tutorial steps): same anonymous beacon, capped per type and page so a crash
 // loop or a bouncing landing cannot flood the log. Values are short codes and numbers, never anything personal.
@@ -78,5 +113,7 @@ export function trackEvent(type, data = {}) {
 
 function reportError(message, file, line) {
   if (errors++ >= 5) return;   // a broken frame loop must not flood the log
-  send('err', { e: String(message || 'unknown'), f: file ? `${String(file).split('/').pop()}:${line}` : '' });
+  const msg = String(message || 'unknown');
+  const foreign = msg === 'Script error.' || (file && /^https?:/.test(file) && !String(file).startsWith(location.origin));
+  send('err', { e: msg, f: file ? `${String(file).split('/').pop()}:${line}` : '', x: foreign ? 'foreign' : '' });
 }

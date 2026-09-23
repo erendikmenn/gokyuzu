@@ -128,6 +128,26 @@ export const TIPS = [
   'Yumuşak iniş için pist başında gazı kes ve burnu hafifçe kaldırarak alçalma hızını azalt.',
 ];
 
+// Loading-screen tips on phones / tablets (touch controls, src/ui/touch.js).
+export const TOUCH_TIPS = [
+  'Kalkış: sağ başparmakla gaz sürgüsünü %90’a it, kalkış hızında sol çubuğu yavaşça geri çek.',
+  'Sol çubuk parmağını koyduğun yerde belirir; bırakınca ortalanır. Küçük hareketler yeter.',
+  'F-16 ve F-22’de gaz sürgüsü MIL çizgisinde durur; biraz daha yukarı itince art yakıcı yanar.',
+  'Yolcu uçaklarında yerdeyken gaz sürgüsünü IDLE çizgisinin altına çekmek ters itkiyi açar.',
+  'Black Hawk’ta sağdaki sürgü kolektiftir: yukarı it, helikopter yükselir. HOVER onu olduğu yerde tutar.',
+  'AP düğmesi otopilotu açar; iniş takımı inikken yolcu uçakları ILS yaklaşmasını kendisi uçar.',
+  'KAMERA düğmesi kamera açılarını değiştirir; ekranın ortasında parmağını sürükleyerek etrafa bak.',
+  'İki parmakla ekranın ortasında kıstırarak yakınlaştırabilirsin.',
+  'Ayarlar’dan «Eğimle kumanda»yı açarsan telefonu direksiyon gibi çevirerek uçarsın.',
+  'HARİTA düğmesiyle rota çiz: uçak otopilotla rotayı uçar.',
+  'İnişe geçmeden önce TAKIM düğmesiyle iniş takımlarını indir ve FLAP ▼ ile flapleri kademe kademe aç.',
+  '❚❚ duraklatır: oradan Ayarlar, tüm kontroller, yeniden başlama ve ana menü.',
+  'Golden Gate Köprüsü’nün kuleleri deniz seviyesinden 227 metre yükselir.',
+  'SFO’nun 28L ve 28R pistleri körfeze doğru uzanır; sık sık paralel iniş yapılır.',
+  'Alcatraz Adası, Golden Gate ile Bay Bridge’in tam arasında yer alır.',
+  'San Francisco’nun ünlü sisi (Karl) yazın öğleden sonra Golden Gate’ten içeri süzülür.',
+];
+
 // Controls summary for the menu (keys as shown on a Turkish-Q / US keyboard; the in-game help lists the live bindings)
 export const MENU_CONTROLS = {
   common: [

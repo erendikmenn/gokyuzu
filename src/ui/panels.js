@@ -1,5 +1,6 @@
-// Modal panels shared by the menu and the pause overlay: Ayarlar (settings), Künye (credits / disclaimer),
-// the touch-device notice and the one-time "quality can be changed" hint.
+// Modal panels shared by the menu and the pause overlay: Ayarlar (settings), Künye (credits / disclaimer) and the
+// one-time "quality can be changed" hint. (Phones and tablets: the start gate src/ui/touch-gate.js replaced the old
+// touch-only notice; Ayarlar shows the tilt-steering switch in touch mode.)
 // Settings are read / written through src/core/settings.js (saveSettings broadcasts 'gokyuzu:settings';
 // main.js applies quality + volumes live, the HUD picks up hudMode).
 import { injectCSS, BASE_CSS } from './styles.js';
@@ -8,6 +9,10 @@ import { shared } from './shared.js';
 import { loadSettings, saveSettings, DEFAULT_SETTINGS } from '../core/settings.js';
 import { QUALITY, QUALITY_ORDER, detectQuality } from '../core/quality.js';
 import { resetTutorials } from './tutorial.js';
+import { isTouchOnly, touchMode, inAppBrowser } from './touch-env.js';
+import { requestTiltSetting } from './touch.js';
+
+export { isTouchOnly };
 
 export const CREDITS_LINE = 'Harita verisi © OpenStreetMap katkıcıları (ODbL) · Arazi ve hava fotoğrafları: USGS 3DEP, USDA NAIP · Batimetri: NOAA · Bina verisi: DataSF · Three.js (MIT) · B612 font (OFL)';
 export const DISCLAIMER = 'Bu ücretsiz, ticari olmayan bir hayran projesidir. Turkish Airlines, Airbus, Boeing, Lockheed Martin, General Dynamics ve Sikorsky ile hiçbir bağlantısı yoktur; isimler ve boyalar yalnızca tanımlayıcı amaçla kullanılmıştır.';
@@ -36,7 +41,8 @@ const CSS = `
 @keyframes gkp-in { from { opacity: 0; } to { opacity: 1; } }
 .gkp.gkp-out { animation: gkp-out .16s ease forwards; }
 @keyframes gkp-out { to { opacity: 0; } }
-.gkp-card { position: relative; width: min(100%, 600px); max-height: calc(100vh - 48px); overflow: auto; border-radius: 20px;
+.gkp-card { position: relative; width: min(100%, 600px); max-height: calc(100vh - 48px); max-height: calc(100dvh - 48px); overflow: auto; border-radius: 20px;
+  -webkit-overflow-scrolling: touch; overscroll-behavior: contain; touch-action: pan-y;
   padding: 24px 26px 20px; background: linear-gradient(180deg, rgba(16, 26, 42, .94), rgba(6, 11, 20, .95));
   border: 1px solid rgba(255, 255, 255, .12); box-shadow: 0 30px 80px rgba(0, 0, 0, .5), inset 0 1px 0 rgba(255, 255, 255, .06);
   animation: gkp-card .28s cubic-bezier(.2, .9, .3, 1.1) both; scrollbar-width: thin; }
@@ -84,18 +90,19 @@ const CSS = `
 .gkp-credits li { display: grid; grid-template-columns: 150px 1fr; gap: 12px; font-size: 13.5px; line-height: 1.4; }
 .gkp-credits li b { color: var(--gk-dim); font-weight: 650; }
 .gkp-disc { margin-top: 16px !important; padding: 12px 14px; border-radius: 12px; background: rgba(255, 176, 32, .08); border: 1px solid rgba(255, 176, 32, .22); font-size: 13px !important; color: rgba(255, 232, 200, .92) !important; }
-/* device notice */
-.gkp-dev { position: fixed; inset: 0; z-index: 70; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; padding: 32px 24px;
-  text-align: center; font-family: var(--gk-sans); color: var(--gk-fg); pointer-events: auto;
-  background: radial-gradient(ellipse 80% 60% at 50% 40%, #16233d, #070d18 70%, #04070d); }
-.gkp-dev svg { width: 86px; height: 86px; opacity: .9; }
-.gkp-dev h1 { margin: 0; font-family: var(--gk-display); font-size: 30px; font-weight: 800; letter-spacing: -.02em;
-  background: linear-gradient(180deg, #fff 30%, #ffd9bf); -webkit-background-clip: text; background-clip: text; color: transparent; }
-.gkp-dev h2 { margin: 0; font-size: 19px; font-weight: 700; }
-.gkp-dev p { margin: 0; max-width: 440px; font-size: 15px; line-height: 1.55; color: rgba(226, 236, 250, .82); }
-.gkp-dev button { margin-top: 8px; padding: 11px 18px; border-radius: 12px; border: 1px solid rgba(255, 255, 255, .2); background: rgba(255, 255, 255, .06);
-  color: rgba(236, 244, 255, .8); font: 600 14px var(--gk-sans); }
-.gkp-dev small { max-width: 440px; font-size: 11px; line-height: 1.5; color: rgba(208, 222, 240, .45); }
+/* touch devices (phones: small screens, finger-sized targets) */
+@media (max-height: 520px), (max-width: 560px) {
+  .gkp { padding: max(8px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left)); }
+  .gkp-card { max-height: calc(100vh - 16px); max-height: calc(100dvh - 16px); padding: 16px 16px 14px; border-radius: 16px; }
+  .gkp-card h2 { font-size: 19px; }
+  .gkp-sec { margin-top: 14px; }
+}
+html.gk-touch .gkp-x { width: 42px; height: 42px; top: 10px; right: 10px; }
+html.gk-touch .gkp-seg button { min-height: 44px; }
+html.gk-touch .gkp-row input[type="range"] { height: 32px; }
+html.gk-touch .gkp-row { grid-template-columns: 110px 1fr 44px; }
+html.gk-touch .gkp-tog { min-height: 48px; }
+html.gk-touch .gkp-btn { min-height: 44px; padding: 10px 16px; }
 /* one-time hint */
 .gkp-hint { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); z-index: 55; display: flex; align-items: center; gap: 14px;
   max-width: min(92vw, 640px); padding: 12px 14px 12px 18px; border-radius: 14px; font-family: var(--gk-sans); color: var(--gk-fg); font-size: 14px; line-height: 1.4;
@@ -200,7 +207,7 @@ export function openSettings(container) {
   const updateNote = () => {
     const now = QUALITY[s.quality], start = QUALITY[STARTUP_QUALITY];
     const aaChange = now && start && !!now.antialias !== !!start.antialias;
-    note.textContent = `Bu bilgisayar için önerilen: ${QUALITY[auto] ? QUALITY[auto].label : auto}. Kenar yumuşatma değişikliği yeniden başlatınca geçerli.`;
+    note.textContent = `Bu ${touchMode() ? 'cihaz' : 'bilgisayar'} için önerilen: ${QUALITY[auto] ? QUALITY[auto].label : auto}. Kenar yumuşatma değişikliği yeniden başlatınca geçerli.`;
     note.classList.toggle('hot', aaChange);
   };
   const qs = segmented(g, items, s.quality, (id) => { s.quality = id; commit(); updateNote(); }, 'Grafik kalitesi');
@@ -230,10 +237,28 @@ export function openSettings(container) {
   // controls
   const c = el('div', 'gkp-sec', m.card);
   el('div', 'gkp-h', c, 'Kontroller');
-  const inv = toggle(c, 'Burun kontrolünü ters çevir', 'Yukarı ok / W burnu kaldırır', s.invertPitch, (v) => { s.invertPitch = v; commit(); });
+  const inv = toggle(c, 'Burun kontrolünü ters çevir', touchMode() ? 'Çubuğu ileri itmek burnu kaldırır' : 'Yukarı ok / W burnu kaldırır', s.invertPitch, (v) => { s.invertPitch = v; commit(); });
   const atc = 'atc' in s ? toggle(c, 'Otomatik ATC telsizi', 'Kule ve yaklaşma anonsları', s.atc, (v) => { s.atc = v; commit(); }) : null;
   // onboarding (src/ui/tutorial.js): first-flight tutorial per aircraft category, opening key card, contextual hints
   const tut = toggle(c, 'Eğitim ve ipuçları', 'İlk uçuşta adım adım eğitim, tuş kartı ve durumsal ipuçları', s.tutorial !== false, (v) => { s.tutorial = v; commit(); });
+  // touch hook (src/ui/touch.js, touch-tilt.js): tilt steering; iOS asks for the motion-sensor permission inside this tap
+  let tiltSw = null;
+  if (touchMode()) {
+    const tiltNote = el('div', 'gkp-note', null, '');
+    tiltSw = toggle(c, 'Eğimle kumanda', 'Telefonu direksiyon gibi çevir: yatış; üst kenarı öne / arkaya eğ: burun. Çubuk da çalışmaya devam eder.', !!s.tilt, (v) => {
+      if (!v) { s.tilt = false; commit(); requestTiltSetting(false); tiltNote.textContent = ''; return; }
+      requestTiltSetting(true).then((r) => {
+        if (r === 'granted') { s.tilt = true; commit(); tiltNote.classList.remove('hot'); tiltNote.textContent = 'Açık: telefonu rahat tuttuğun açı ortadır. Ekrandaki «ORTALA» düğmesi yeniden ayarlar.'; return; }
+        tiltSw.set(false); s.tilt = false; commit();
+        tiltNote.classList.add('hot');
+        const iab = inAppBrowser();
+        tiltNote.textContent = r === 'unsupported' ? 'Bu cihazda hareket sensörü yok.'
+          : iab ? `${iab.name} içindeki tarayıcı hareket sensörüne izin vermiyor: menüden «Tarayıcıda aç» ile ${iab.os === 'ios' ? 'Safari' : 'Chrome'}’de dene.`
+            : 'Hareket sensörü izni verilmedi. İzin için sayfayı yenileyip tekrar dene.';
+      });
+    });
+    c.appendChild(tiltNote);
+  }
   const tutNote = el('div', 'gkp-note', c);
   const tutReset = el('button', 'gkp-link', tutNote, 'Tamamlanan eğitimleri sıfırla');
   tutReset.type = 'button';
@@ -243,7 +268,7 @@ export function openSettings(container) {
   const h = el('div', 'gkp-sec', m.card);
   el('div', 'gkp-h', h, 'Göstergeler');
   const hud = segmented(h, HUD_MODES, s.hudMode || 'compact', (id) => { s.hudMode = id; commit(); }, 'Göstergeler');
-  el('div', 'gkp-note', h, 'Oyunda H tuşu Tam → Sade → Kapalı arasında geçiş yapar.');
+  el('div', 'gkp-note', h, touchMode() ? 'Telefonda «Sade» önerilir: göstergeler kumandaların arasına sığar.' : 'Oyunda H tuşu Tam → Sade → Kapalı arasında geçiş yapar.');
 
   // footer
   const f = el('div', 'gkp-foot', m.card);
@@ -258,6 +283,7 @@ export function openSettings(container) {
     qs.set(s.quality); updateNote();
     for (const [key, { r, show }] of Object.entries(sliders)) { r.value = String(Math.round((s.volumes[key] ?? 1) * 100)); show(); }
     inv.set(s.invertPitch); if (atc) atc.set(s.atc); tut.set(s.tutorial !== false); hud.set('compact');
+    if (tiltSw && s.tilt) { s.tilt = false; commit(); tiltSw.set(false); }
   });
   return m.done;
 }
@@ -290,39 +316,10 @@ export function openCredits(container) {
   return m.done;
 }
 
-// ---------- device notice (touch-only / phone) ----------
-export function isTouchOnly() {
-  try {
-    const mm = (q) => window.matchMedia && window.matchMedia(q).matches;
-    const coarse = mm('(pointer: coarse)');
-    const anyFine = mm('(any-pointer: fine)');
-    const touch = (navigator.maxTouchPoints || 0) > 0 || 'ontouchstart' in window;
-    return touch && coarse && !anyFine;
-  } catch { return false; }
-}
-
-/** Full-screen friendly note on touch-only devices (once per session). Resolves when dismissed (or immediately). */
-export function deviceNotice(container) {
-  if (!isTouchOnly() || safe(() => sessionStorage.getItem('gokyuzu.deviceOk'), null)) return Promise.resolve();
-  inject();
-  return new Promise((resolve) => {
-    const root = el('div', 'gkp-dev', container || document.body);
-    root.setAttribute('lang', 'tr');
-    root.setAttribute('role', 'dialog');
-    root.insertAdjacentHTML('beforeend', '<svg viewBox="0 0 24 24" fill="none" stroke="#ff9a6a" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="1.5"/><path d="M8 20h8M12 16v4"/><path d="M7 8h2M11 8h2M15 8h2M7 11h10" stroke="#5cf2c8"/></svg>');
-    el('h1', null, root, 'Gökyüzü');
-    el('h2', null, root, 'Bu oyun bir bilgisayar gerektirir');
-    el('p', null, root, 'San Francisco Körfezi uçuş simülatörü klavye (veya oyun kolu) ile oynanır ve güçlü bir ekran kartı ister. Lütfen bir masaüstü ya da dizüstü bilgisayardan aç — seni orada bekliyoruz!');
-    const b = el('button', null, root, 'Yine de devam et');
-    b.type = 'button';
-    el('small', null, root, DISCLAIMER);
-    b.addEventListener('click', () => {
-      safe(() => sessionStorage.setItem('gokyuzu.deviceOk', '1'), null);
-      root.remove();
-      resolve();
-    });
-  });
-}
+// ---------- device notice (replaced) ----------
+/** Former full-screen "bu oyun bir bilgisayar gerektirir" notice: phones now play with touch controls, and devices that
+ * cannot run the game are stopped earlier by the start gate (src/ui/touch-gate.js). Kept as a no-op for old callers. */
+export function deviceNotice() { return Promise.resolve(); }
 
 // ---------- one-time hint: quality can be changed ----------
 const HINT_KEY = 'gokyuzu.qualityHintSeen';

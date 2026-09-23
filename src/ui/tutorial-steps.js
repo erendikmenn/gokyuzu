@@ -23,14 +23,14 @@ function throttleStep(fighter) {
   return {
     id: fighter ? 'mil' : 'thr',
     topics: ['idle'],
-    keys: (k) => (k.pad ? k.label('thrUp') : `${k.label('thrUp')} · ${k.label('preset')}`),
+    keys: (k) => (k.kb ? `${k.label('thrUp')} · ${k.label('preset')}` : k.touch ? k.label('thr') : k.label('thrUp')),
     title: () => (fighter ? 'Gazı MIL’e getir' : 'Gazı kalkış gücüne getir'),
     text: (k) => (fighter
-      ? `${k.hold('thrUp')}: gaz kolu %90’da (MIL) durur.${k.pad ? '' : ' Kısayol: {9}.'}`
-      : `${k.hold('thrUp')}${k.pad ? '' : ' ya da {9} tuşuna bas'}. Frenler kendiliğinden bırakılır.`),
+      ? `${k.hold('thrUp')}: gaz kolu %90’da (MIL) durur.${k.kb ? ' Kısayol: {9}.' : ''}`
+      : `${k.hold('thrUp')}${k.kb ? ' ya da {9} tuşuna bas' : k.touch ? ', %90 çizgisine kadar' : ''}. Frenler kendiliğinden bırakılır.`),
     explicit: (k) => (fighter
-      ? `${k.hold('thrUp')}, gaz göstergesi MIL (%90) olana kadar.${k.pad ? '' : ' Ya da {9} tuşuna bir kez bas.'}`
-      : `${k.hold('thrUp')}, gaz göstergesi %90’a çıkana kadar.${k.pad ? '' : ' Kısayol: {9} tuşu gazı tek seferde %90 yapar.'}`),
+      ? `${k.hold('thrUp')}, gaz göstergesi MIL (%90) olana kadar.${k.kb ? ' Ya da {9} tuşuna bir kez bas.' : ''}`
+      : `${k.hold('thrUp')}, gaz göstergesi %90’a çıkana kadar.${k.kb ? ' Kısayol: {9} tuşu gazı tek seferde %90 yapar.' : ''}`),
     meter(c, m) { m.label = 'Gaz'; m.value = pct(c.lever); m.frac = clamp01(c.lever / c.detent); },
     // also done when the player rolls off with a little less power (8 → 80 %) or is already flying
     done: (c) => c.lever >= c.detent - 0.02 || c.kt > 60 || c.airborne,
@@ -43,12 +43,16 @@ const afterburnerStep = {
   optional: true,
   keys: (k) => k.label('thrUp'),
   title: () => 'Art yakıcı',
-  text: (k) => (k.pad
-    ? 'Tetiği bırak, sonra {RT} tetiğini yeniden çek: kol MIL’i geçer, art yakıcı yanar.'
-    : `Tuşu bırak, sonra ${k.chip('thrUp')} tuşuna yeniden basıp basılı tut: kol MIL’i geçer, art yakıcı yanar.`),
-  explicit: (k) => (k.pad
-    ? 'Tetiği bırak ve {RT} tetiğini yeniden çek. İstemezsen bekle: hızlanınca bu adım kendiliğinden geçer.'
-    : `${k.chip('thrUp')} tuşunu bırak ve yeniden bas. İstemezsen bekle: hızlanınca bu adım kendiliğinden geçer.`),
+  text: (k) => (k.touch
+    ? 'Gaz sürgüsünü MIL çizgisinden biraz daha yukarı it: kısa bir dirençten sonra art yakıcı yanar.'
+    : k.pad
+      ? 'Tetiği bırak, sonra {RT} tetiğini yeniden çek: kol MIL’i geçer, art yakıcı yanar.'
+      : `Tuşu bırak, sonra ${k.chip('thrUp')} tuşuna yeniden basıp basılı tut: kol MIL’i geçer, art yakıcı yanar.`),
+  explicit: (k) => (k.touch
+    ? 'Sürgüyü MIL’de tutarken parmağını yukarı kaydırmaya devam et. İstemezsen bekle: hızlanınca bu adım kendiliğinden geçer.'
+    : k.pad
+      ? 'Tetiği bırak ve {RT} tetiğini yeniden çek. İstemezsen bekle: hızlanınca bu adım kendiliğinden geçer.'
+      : `${k.chip('thrUp')} tuşunu bırak ve yeniden bas. İstemezsen bekle: hızlanınca bu adım kendiliğinden geçer.`),
   meter(c, m) { m.label = 'Gaz'; m.value = `${pct(c.lever)}${c.lever > c.detent + 0.005 ? ' AB' : ''}`; m.frac = clamp01(c.lever); },
   done: (c) => c.lever > c.detent + 0.01 || c.ab || c.kt > 100,
 };
@@ -103,12 +107,12 @@ function freeStep(cat) {
     topics: [],
     final: true,
     hold: 10,
-    keys: (k) => (cat === 'fighter' ? `${k.label('speedbrake')} · ${k.label('autopilot')} · ${k.label('camera')} · F1`
-      : cat === 'helicopter' ? `${k.label('autopilot')} · ${k.label('thrDown')} · F1` : `${k.label('autopilot')} · ${k.label('camera')} · F1`),
+    keys: (k) => (cat === 'fighter' ? `${k.label('speedbrake')} · ${k.label('autopilot')} · ${k.label('camera')} · ${k.label('help')}`
+      : cat === 'helicopter' ? `${k.label('autopilot')} · ${k.label('thrDown')} · ${k.label('help')}` : `${k.label('autopilot')} · ${k.label('camera')} · ${k.label('help')}`),
     title: () => 'Serbestsin, iyi uçuşlar!',
-    text: (k) => (cat === 'fighter' ? `${k.chip('speedbrake')} hava freni, ${k.chip('autopilot')} otopilot, ${k.chip('camera')} kameralar, {F1} tüm kontroller.`
-      : cat === 'helicopter' ? `İnmek için ${k.chip('autopilot')} ile askıda kal, sonra ${k.chip('thrDown')} ile kolektifi azalt. {F1} tüm kontroller.`
-        : `${k.chip('autopilot')} otopilot, ${k.chip('camera')} kameralar, {F1} tüm kontroller.`),
+    text: (k) => (cat === 'fighter' ? `${k.chip('speedbrake')} hava freni, ${k.chip('autopilot')} otopilot, ${k.chip('camera')} kameralar, ${k.chip('help')} tüm kontroller.`
+      : cat === 'helicopter' ? `İnmek için ${k.chip('autopilot')} ile askıda kal, sonra ${k.chip('thrDown')} ile kolektifi azalt. ${k.chip('help')} tüm kontroller.`
+        : `${k.chip('autopilot')} otopilot, ${k.chip('camera')} kameralar, ${k.chip('help')} tüm kontroller.`),
     explicit: null,
     done: (c) => c.stepT >= 10,
   };
@@ -137,10 +141,10 @@ function airborneSteps(cat) {
       phase: (c) => (c.base.banked ? 1 : 0),
       title: (k, c, p) => (p ? 'Şimdi kanatları düzelt' : 'Yatır ve dön'),
       text: (k, c, p) => (p
-        ? `Ters yöne kısa bas: yatış 0° olsun. ${heli ? 'Helikopter' : 'Uçak'} düz uçar.`
+        ? `${k.touch ? 'Çubuğu ters yöne kısa it' : 'Ters yöne kısa bas'}: yatış 0° olsun. ${heli ? 'Helikopter' : 'Uçak'} düz uçar.`
         : `${k.chip('rollLeft')} / ${k.chip('rollRight')} yana yatırır, ${heli ? 'helikopter' : 'uçak'} o yöne döner. Yatış 20° olsun.`),
       explicit: (k, c, p) => (p
-        ? `Sağa yatıksan ${k.chip('rollLeft')}, sola yatıksan ${k.chip('rollRight')} tuşuna kısa bas; yatış 0° olana kadar.`
+        ? `Sağa yatıksan ${k.chip('rollLeft')}, sola yatıksan ${k.chip('rollRight')} ${k.touch ? 'yönüne kısa it' : k.pad ? 'yönüne kısa it' : 'tuşuna kısa bas'}; yatış 0° olana kadar.`
         : `${k.hold('rollRight')}, yatış 20° olana kadar; sonra ${k.chip('rollLeft')} ile kanatları düzelt.`),
       meter(c, m) {
         const r = Math.round(c.f.roll);
@@ -169,8 +173,8 @@ function airborneSteps(cat) {
     },
     heli ? {
       ...freeStep('helicopter'),
-      text: (k) => `${k.chip('autopilot')} hızı, irtifayı ve yönü tutar; yavaşken askıda tutar. ${k.chip('camera')} kameralar, {F1} tüm kontroller.`,
-      keys: (k) => `${k.label('autopilot')} · ${k.label('camera')} · F1`,
+      text: (k) => `${k.chip('autopilot')} hızı, irtifayı ve yönü tutar; yavaşken askıda tutar. ${k.chip('camera')} kameralar, ${k.chip('help')} tüm kontroller.`,
+      keys: (k) => `${k.label('autopilot')} · ${k.label('camera')} · ${k.label('help')}`,
     } : freeStep(cat),
   ];
 }
@@ -229,9 +233,10 @@ function landingSteps(cat) {
       topics: [],
       final: true,
       hold: 10,
-      keys: (k) => `${k.label('reset')} · ${k.label('menu')} · F1`,
+      keys: (k) => (k.touch ? `${k.label('pause')}` : `${k.label('reset')} · ${k.label('menu')} · F1`),
       title: () => 'Tebrikler, indin!',
-      text: (k) => `${k.chip('reset')} ile yeniden dene, ${k.chip('menu')} ana menü, {F1} tüm kontroller.`,
+      text: (k) => (k.touch ? `${k.chip('pause')} menüsünden yeniden dene, ana menüye dön ya da tüm kontrolleri gör.`
+        : `${k.chip('reset')} ile yeniden dene, ${k.chip('menu')} ana menü, {F1} tüm kontroller.`),
       explicit: null,
       done: (c) => c.stepT >= 10,
     },

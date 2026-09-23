@@ -12,18 +12,25 @@ import { createMenu, createLoadingScreen, createHUD, createCameraRig, createOnbo
 import { buildSpawns } from './spawns.js';
 import { loadSettings } from '../core/settings.js';
 import { QUALITY, resolveQuality, lowerQuality, setQualityCap } from '../core/quality.js';
+import { detectDevice } from '../core/gpu-device.js';
 import { createGpuGuard, noteGpuFailure } from '../core/gpu-guard.js';          // robustness: context loss, GPU budget
 import { readResume, applyResume, clearResume } from '../core/gpu-resume.js';
 import { IS_MAC } from '../core/platform.js';
 import { goToMenu, guardUnload } from '../core/leave.js';
-import { startTelemetry, trackFlight } from '../core/telemetry.js';
+import { startTelemetry, trackFlight, trackFail } from '../core/telemetry.js';
 import { createRoute } from '../nav/route.js';     // navigation hook: route planning + LNAV (src/nav)
 import { createNavMap } from '../ui/map.js';       // navigation hook: big map (J / minimap click)
+import { runDeviceGate, showInAppFailure } from '../ui/touch-gate.js';   // mobile hook: weak / unsupported device gate
+import { inAppBrowser } from '../ui/touch-env.js';
+import { createTouchControls } from '../ui/touch.js';          // mobile hook: on-screen controls (phones / tablets)
 
 const params = new URLSearchParams(location.search);
 const app = document.getElementById('app');
 const uiRoot = document.getElementById('ui');
 const hudRoot = document.getElementById('hud');
+// mobile hook (src/ui/touch-gate.js): a device that cannot run the game gets the "bilgisayardan gir" screen before the
+// renderer and the world exist (no WebGL 2 never continues; weak phones may choose "Yine de dene")
+await runDeviceGate(uiRoot);
 
 // ---- settings / quality ----
 let settings = loadSettings();
@@ -32,7 +39,10 @@ if (params.has('quality') && QUALITY[params.get('quality')]) settings.quality = 
 let resume = readResume(params);
 if (resume && resume.crash) {   // the previous page of this tab died without unloading: treat it as a GPU failure too
   if (noteGpuFailure() >= 3) resume = null;   // it keeps dying: start normally (menu / direct link) instead
-  else { const lower = lowerQuality(settings.quality) || 'low'; settings.quality = lower; setQualityCap(lower); }
+  else {
+    const lower = lowerQuality(settings.quality) || 'low'; settings.quality = lower;
+    if (detectDevice().kind !== 'desktop') setQualityCap(lower);   // a lasting cap only where memory kills are real (phones/tablets)
+  }
 }
 let quality = resolveQuality(QUALITY[settings.quality] ? settings.quality : 'high');   // preset + device caps (src/core/quality.js)
 
@@ -93,6 +103,9 @@ const navRoute = createRoute();
 const navMap = createNavMap({ hud, route: navRoute });
 hud.setNavMap({ open: (src) => navMap.open(src), overlay: navMap.drawMinimapOverlay });
 Object.assign(state, { navRoute, navMap });   // test hooks
+// mobile hook (src/ui/touch.js): stick, throttle slider and buttons on touch devices (nothing is built on desktops)
+const touchUI = createTouchControls(hud.element, { input, hud, getState: () => ({ flying: !!(state.flight && state.readyAt), paused: state.paused, mapOpen: navMap.isOpen }) });
+state.touch = touchUI;   // test hook
 
 let loading = null;   // loading screen (also used by startFailed)
 async function start() {
@@ -128,7 +141,8 @@ async function start() {
   state.readyAt = performance.now();   // dynamic resolution ignores the first seconds (shader compiles, tile bursts)
   console.log(`[app] ready in ${((performance.now() - t0) / 1000).toFixed(1)} s`);
   state.aircraftId = choice.aircraftId;
-  trackFlight(choice.aircraftId, spawn.id, (performance.now() - t0) / 1000, settings.quality);
+  if (state.halted) return;   // robustness: the graphics guard gave up while loading (notice shown): no flight to report
+  trackFlight(choice.aircraftId, spawn.id, (performance.now() - t0) / 1000, settings.quality, { in: touchUI.active ? 'touch' : input.kind, tilt: touchUI.active && settings.tilt ? 1 : undefined });
   if (resumed) {   // robustness hook: back in the same flight after a graphics failure (no tutorial / key card)
     gpu.report('resume', { why: resumed.crash ? 'crash' : resumed.reason || 'gpu', ac: choice.aircraftId });
     hud.showMessage(`Uçuşa kaldığın yerden devam ediliyor · Grafik: ${quality.label}${resumeNote ? ' · ' + resumeNote : ''}`, 4500);
@@ -262,6 +276,7 @@ gpu = createGpuGuard({
   renderer, state, getQuality: () => quality,
   onHalt: () => { state.halted = true; audio.setPaused(true); },
   onStepDown: (id) => { setQualityLive(resolveQuality(id), `Grafik belleği sınırda: kalite ${QUALITY[id].label} yapıldı`); return true; },
+  onInAppFailure: (retry) => showInAppFailure(retry),   // mobile hook: X / Instagram webview → "Safari'de aç" instead of a reload
 });
 state.gpu = gpu;
 const SYSTEM_ACTIONS = ['gear', 'flapsDown', 'flapsUp', 'speedbrake', 'reverser', 'canopy', 'lights', 'autopilot'];
@@ -323,6 +338,7 @@ function frame(ts) {
     hud.update(flight, { world, spawn: state.spawn, view: cameraRig.view });
     navMap.update(dt, flight, world);   // navigation hook: track trail, map redraw while open
     onboarding.update(dt, flight, { view: cameraRig.view, paused: state.paused });   // onboarding hook
+    touchUI.update(dt, flight, { view: cameraRig.view });   // mobile hook
     audio.update(dt, flight, { view: cameraRig.view, aircraftObject: rig.object, camera });
   }
   // robustness hook: a render that throws every frame draws nothing (the canvas shows the page background) → the guard
@@ -407,6 +423,7 @@ fetch('build.json', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null))
     document.body.append(tag);
   }
 }).catch(() => {}).finally(() => startTelemetry({
+  extra: { in: touchUI.active ? 'touch' : input.kind, touch: touchUI.active ? 1 : undefined, iab: (inAppBrowser() || {}).id },   // mobile hook
   build: state.build, renderer, quality: settings.quality,
   state: () => ({ flying: !!(state.flight && state.readyAt), paused: state.paused, aircraft: state.aircraftId, fps: window.__fps, pixelRatio: renderer.getPixelRatio(), view: cameraRig.view }),
 }));
@@ -418,6 +435,7 @@ start().catch(startFailed);
 function startFailed(e) {
   const net = isNetworkError(e);
   (net ? console.warn : console.error)('[app] start failed', e);
+  trackFail(state.world ? 'aircraft' : state.choice ? 'world' : 'menu', e && e.message, net);   // load failures were invisible in the analytics
   if (!loading) loading = createLoadingScreen(uiRoot);   // failed before the loading screen (version map, runways)
   const q = new URLSearchParams(location.search);
   if (state.choice) { q.set('aircraft', state.choice.aircraftId); q.set('spawn', state.choice.spawnId); }

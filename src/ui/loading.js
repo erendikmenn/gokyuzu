@@ -3,11 +3,11 @@
 import { injectCSS, BASE_CSS } from './styles.js';
 import { el, clamp } from './util.js';
 import { goldenGateLineSVG } from './art.js';
-import { TIPS, AIRCRAFT_INFO, AIRPORTS } from './data.js';
+import { TIPS as KEY_TIPS, TOUCH_TIPS, AIRCRAFT_INFO, AIRPORTS } from './data.js';
 import { shared } from './shared.js';
 import { spawnLabel } from './menu.js';
 import { AIRCRAFT } from '../aircraft/registry.js';
-import { deviceNotice } from './panels.js';
+import { touchMode } from './touch-env.js';
 
 const CSS = `
 .gkl { position: fixed; inset: 0; z-index: 40; overflow: hidden; color: var(--gk-fg); font-family: var(--gk-sans);
@@ -90,6 +90,22 @@ const CSS = `
 .gkl-retry:active { transform: translateY(1px) scale(.99); }
 .gkl-retry:focus-visible { box-shadow: 0 0 0 2px #fff, 0 0 0 6px rgba(255, 107, 61, .55); }
 @media (prefers-reduced-motion: reduce) { .gkl *, .gkl { animation-duration: .001s !important; } }
+/* touch devices */
+.gkl-rot { display: none; margin-top: 18px; padding: 8px 14px; border-radius: 12px; font-size: 14px; font-weight: 650; color: var(--gk-teal);
+  background: rgba(92, 242, 200, .08); border: 1px solid rgba(92, 242, 200, .3); }
+@media (orientation: portrait) and (max-width: 700px) { .gkl.gkl-touch .gkl-rot { display: block; } }
+@media (max-height: 500px) {
+  .gkl-main { padding: 12px max(16px, env(safe-area-inset-right)) 12px max(16px, env(safe-area-inset-left)); justify-content: flex-start; padding-top: 6vh; }
+  .gkl-art { width: min(70vw, 560px); }
+  .gkl-title { margin-top: 10px; }
+  .gkl-title h1 { font-size: 30px; }
+  .gkl-flight { margin-top: 8px; }
+  .gkl-prog { margin-top: 16px; }
+  .gkl-tip { bottom: max(10px, env(safe-area-inset-bottom)); padding: 9px 14px; }
+  .gkl-tip-t { font-size: 13px; }
+  .gkl-dots { display: none; }
+}
+@media (max-width: 560px) { .gkl-tip { bottom: max(24px, env(safe-area-inset-bottom)); } .gkl-tip-t { font-size: 13.5px; } }
 `;
 
 /** Default text of showError(): the connection failed while downloading game files. */
@@ -119,6 +135,7 @@ function spawnText(name) {
 }
 
 export function createLoadingScreen(container) {
+  const TIPS = touchMode() ? TOUCH_TIPS : KEY_TIPS;   // touch hook: tips about the on-screen controls on phones
   injectCSS('base', BASE_CSS);
   injectCSS('loading', CSS);
   const root = el('div', 'gkl', container);
@@ -215,7 +232,8 @@ export function createLoadingScreen(container) {
   }
   layout();
   window.addEventListener('resize', layout);
-  if (!new URLSearchParams(location.search).has('nomobile')) deviceNotice(container);   // direct links skip the menu
+  // touch hook: phones held upright are asked to turn to landscape while the world loads
+  if (touchMode()) { root.classList.add('gkl-touch'); el('div', 'gkl-rot', main, 'Uçuş yatay ekranda: telefonu yan çevir'); }
 
   return {
     /**

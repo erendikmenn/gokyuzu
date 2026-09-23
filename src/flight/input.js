@@ -14,6 +14,10 @@
 // Direct cameras: Alt / Option + 1 … 7 fire on('cameraSelect', (id) => …) with the camera id (src/ui/camera-modes.js).
 // Throttle sync: when the flight model publishes `pendingThrottle` (after a reset or an autopilot disconnect) the lever
 // adopts it (window.__game.flight, or call setThrottle()).
+// Touch source (phones / tablets, src/ui/touch.js): the on-screen stick, pedals and tilt write absolute axes into
+// `input.touch` (added to the keyboard / gamepad axes), the throttle slider sets the lever with setTouchLever() (the
+// slider handles the AB detent and the reverse range itself) and the buttons call trigger(action). setTouchMode(true)
+// switches `bindings` (F1 help) to the touch controls. `kind` is the input device used last: 'kb' | 'pad' | 'touch'.
 // No DOM access beyond addEventListener on `target`: safe to construct in Node with target = null.
 import { IS_MAC } from '../core/platform.js';
 import { CAMERA_ORDER, CAMERA_NAMES, CAMERA_KEY_MOD, cameraForDigit } from '../ui/camera-modes.js';   // direct camera keys
@@ -100,6 +104,9 @@ export function createInput(target = globalThis.window) {
   let milArmed = false;             // fresh throttle-down press at the detent → allowed out of AB
   let speedbrakeDownAt = -1, clock = 0;
   let gpTriggerIdle = true;
+  const touch = { pitch: 0, roll: 0, yaw: 0, brake: 0 };   // touch source: absolute axes (src/ui/touch.js)
+  let touchMode = false;
+  let lastKind = 'kb';
 
   const fire = (action, arg) => { for (const cb of handlers[action] || []) { try { cb(arg); } catch (e) { console.error(e); } } };
   const any = (codes) => codes.some((c) => down.has(c));
@@ -130,6 +137,7 @@ export function createInput(target = globalThis.window) {
     const fresh = !down.has(code);
     down.add(code);
     if (e.repeat || !fresh) return;
+    if (e.isTrusted !== false) lastKind = 'kb';   // (synthetic presses from on-screen buttons do not count)
     // afterburner detent: a new press at the detent passes through it
     if (detent != null && Math.abs(state.throttle - detent) < 1e-6) {
       if (AXES.throttleUp.includes(code)) abArmed = true;
@@ -202,8 +210,9 @@ export function createInput(target = globalThis.window) {
     gpTriggerIdle = rt < 0.1 && lt < 0.1 && Math.abs(ax(3)) < 0.1;
     if (Math.abs(thr) > 0.05) moveLever(thr * (mode === 'helicopter' ? COLLECTIVE_RATE : THROTTLE_RATE) * 1.5 * dt);
 
-    for (const [b, action] of Object.entries(GP_ACTIONS)) if (edge(Number(b))) fire(action);
+    for (const [b, action] of Object.entries(GP_ACTIONS)) if (edge(Number(b))) { fire(action); lastKind = 'pad'; }
     gpPrev = pad.buttons.map((b) => b.pressed);
+    if (Math.abs(ax(0)) + Math.abs(ax(1)) + rt + lt > 0.3) lastKind = 'pad';
     return {
       pitch: ax(1),                       // stick back (+) = nose up
       roll: ax(0),
@@ -238,17 +247,47 @@ export function createInput(target = globalThis.window) {
     kb.brake = b ? Math.min(1, kb.brake + BRAKE_RATE * dt) : Math.max(0, kb.brake - BRAKE_RELEASE * dt);
 
     const gp = readGamepad(dt);
-    state.pitch = clamp(kb.pitch + (gp ? gp.pitch : 0), -1, 1);
-    state.roll = clamp(kb.roll + (gp ? gp.roll : 0), -1, 1);
-    state.yaw = clamp(kb.yaw + (gp ? gp.yaw : 0), -1, 1);
-    state.brake = clamp(Math.max(kb.brake, gp ? gp.brake : 0), 0, 1);
+    if (touch.pitch || touch.roll || touch.yaw || touch.brake) lastKind = 'touch';
+    state.pitch = clamp(kb.pitch + (gp ? gp.pitch : 0) + touch.pitch, -1, 1);
+    state.roll = clamp(kb.roll + (gp ? gp.roll : 0) + touch.roll, -1, 1);
+    state.yaw = clamp(kb.yaw + (gp ? gp.yaw : 0) + touch.yaw, -1, 1);
+    state.brake = clamp(Math.max(kb.brake, gp ? gp.brake : 0, touch.brake), 0, 1);
   }
 
   const bindings = [];
+  /** F1 help rows for the on-screen controls (labels match the buttons of src/ui/touch.js). */
+  function buildTouchBindings(add, heli, ftr) {
+    if (heli) {
+      add('Sol çubuk', 'Cyclic: ileri / geri, sola / sağa (bırakınca ortalanır)');
+      add('Kolektif sürgüsü', 'Kolektif: yukarı it = yüksel, aşağı çek = alçal · bıraktığın yerde kalır');
+      add('PEDAL', 'Kuyruk rotoru: şeridi sola / sağa kaydır, bırakınca ortalanır');
+      add('HOVER', 'Otomatik havada asılı kalma (hover hold) aç / kapat · rota varsa rotayı uçar');
+      add('FREN', 'Tekerlek freni (basılı tut)');
+    } else {
+      add('Sol çubuk', ftr ? 'Burun (g komutu) ve yatış · geri çek = burun yukarı' : 'Burun ve yatış · geri çek = burun yukarı');
+      add('Sol çubuk ↔', 'Yerde burun tekerleğini de çevirir; havada dümeni uçak kendisi koordine eder');
+      add('Gaz sürgüsü', 'Gaz: yukarı it / aşağı çek · bıraktığın yerde kalır');
+      if (ftr) add('MIL', 'Sürgü MIL çizgisinde durur; biraz daha yukarı it: art yakıcı');
+      else add('REV', 'Yerde, rölantide sürgüyü IDLE çizgisinin altına çek: ters itki');
+      add('TAKIM', 'İniş takımı indir / topla');
+      add('FLAP ▲ / FLAP ▼', ftr ? 'Flap: otomatik / iniş konumu' : 'Flap bir kademe topla / indir');
+      add('H.FREN', ftr ? 'Hava freni aç / kapat' : 'Spoiler / hava freni aç / kapat');
+      add('AP', ftr ? 'Otopilot (irtifa / yön) aç / kapat' : 'Otopilot + otomatik gaz aç / kapat (iniş takımı inikken ILS yaklaşma)');
+      add('AP açıkken', 'Çubuk irtifa ve yön hedefini, gaz sürgüsü hız hedefini değiştirir');
+      add('FREN', 'Tekerlek freni (basılı tut)');
+    }
+    add('KAMERA', 'Kamera değiştir');
+    add('KOKPİT', 'Kokpit / dış görünüm');
+    add('HARİTA', 'Harita: rota çiz, direkt git, piste yaklaş');
+    add('❚❚', 'Duraklat · Ayarlar · Yeniden başla · Ana menü');
+    add('Ekranın ortası', 'Sürükle: etrafa bak / kamerayı döndür · Çift dokun: ortala');
+    add('Eğim', 'Ayarlar → Kontroller → Eğimle kumanda: telefonu yatırarak uç');
+  }
   function buildBindings() {
     bindings.length = 0;
     const heli = mode === 'helicopter', ftr = mode === 'fighter';
     const add = (keys, label) => bindings.push({ keys, label });
+    if (touchMode) { buildTouchBindings(add, heli, ftr); return; }
     if (heli) {
       add('W / S  ·  ↑ / ↓', 'Cyclic ileri / geri (burun aşağı / yukarı)');
       add('A / D  ·  ← / →', 'Cyclic sola / sağa');
@@ -323,5 +362,16 @@ export function createInput(target = globalThis.window) {
     setThrottle(v) { setLever(v); },
     get gamepadConnected() { return gamepadConnected; },
     get afterburnerDetent() { return detent; },
+    /** Touch source (src/ui/touch.js): absolute axes −1..1 (brake 0..1), added to the keyboard / gamepad axes. */
+    touch,
+    /** Lever from the touch slider (0..1); the slider applies the AB detent / reverse range itself. */
+    setTouchLever(v) { state.throttle = clamp(Number.isFinite(v) ? v : 0, 0, 1); abArmed = false; milArmed = false; lastKind = 'touch'; },
+    /** Fire an action as if its key had been pressed (on-screen buttons). */
+    trigger(action, arg) { lastKind = 'touch'; fire(action, arg); },
+    /** Touch controls on / off: the F1 help lists the on-screen controls instead of the keys. */
+    setTouchMode(on) { touchMode = !!on; if (touchMode) lastKind = 'touch'; buildBindings(); },
+    get touchMode() { return touchMode; },
+    /** Input device used last: 'kb' | 'pad' | 'touch'. */
+    get kind() { return lastKind; },
   };
 }

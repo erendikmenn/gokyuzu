@@ -671,7 +671,7 @@ export function createNavMap({ hud, route }) {
   mapEl.addEventListener('pointerdown', (e) => {
     if (e.target !== cv) return;
     if (e.button !== 0 && e.pointerType === 'mouse') return;
-    cv.setPointerCapture(e.pointerId);
+    try { cv.setPointerCapture(e.pointerId); } catch { /* pointer already gone (iOS cancel) or synthetic: keep going without capture */ }
     const [px, py] = localXY(e);
     pointers.set(e.pointerId, { x: px, y: py });
     if (pointers.size === 2) {

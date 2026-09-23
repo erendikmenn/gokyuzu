@@ -82,6 +82,7 @@ export function hideGpuNotice() { if (noticeEl) noticeEl.style.display = 'none';
  *   getQuality   → the running (resolved) preset
  *   onHalt()     freeze the simulation + audio (the page is about to reload)
  *   onStepDown(id, reason)  apply the lower preset live (budget monitor); returns true when applied
+ *   onInAppFailure(retry)   optional: a social-app webview lost the context — show its own screen and return true
  */
 export function createGpuGuard({ renderer, state, getQuality, onHalt = () => {}, onStepDown = () => false, onInAppFailure = null }) {
   const canvas = renderer.domElement;

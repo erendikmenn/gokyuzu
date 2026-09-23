@@ -62,7 +62,7 @@ function apDisconnectAlert() {
   } catch { return false; }
 }
 /** "{Shift} / {9}" (thrust up, and the 90 % / MIL preset on a keyboard). */
-const thrUp9 = (k) => `${k.chip('thrUp')}${k.pad ? '' : ' / {9}'}`;
+const thrUp9 = (k) => `${k.chip('thrUp')}${k.kb ? ' / {9}' : ''}`;
 
 // id, topic, tone, after (s the condition must hold), cooldown (s), cap (per session), once (per browser), cond(c), text(k, c)
 const RULES = [
@@ -70,7 +70,7 @@ const RULES = [
     // A320 FAC low-energy warning ("SPEED SPEED SPEED"): thrust is needed now
     id: 'lowEnergy', topic: 'stall', tone: 'warn', after: 0.3, cooldown: 20, cap: 4,
     cond: (c) => fixedWing(c) && !!warn(c).lowEnergy,
-    text: (k) => `Enerji düşük (SPEED SPEED SPEED): gazı artır ${k.chip('thrUp')}${k.pad ? '' : ', gerekirse tam gaz {0}'}.`,
+    text: (k) => `Enerji düşük (SPEED SPEED SPEED): gazı artır ${k.chip('thrUp')}${k.kb ? ', gerekirse tam gaz {0}' : ''}.`,
   },
   {
     // A320 alpha floor: the A/THR has set TOGA thrust by itself
@@ -100,7 +100,7 @@ const RULES = [
     // A320 TOGA LK after alpha floor: thrust stays at TOGA until the lever is moved into CL…TOGA (or pulled back)
     id: 'togaLock', topic: 'throttle', tone: 'caution', after: 4, cooldown: 60, cap: 2,
     cond: (c) => fixedWing(c) && !!warn(c).togaLock && c.lever < 0.85,
-    text: (k) => (k.pad
+    text: (k) => (!k.kb
       ? `TOGA LK: motorlar tam güçte kilitli. Gazı geri almak için ${k.chip('thrUp')} ile kolu sonuna kadar ileri al, sonra ${k.chip('thrDown')} ile ayarla.`
       : `TOGA LK: motorlar tam güçte kilitli. Gazı geri almak için {9} tuşuna bas, sonra ${k.chip('thrDown')} ile ayarla.`),
   },
@@ -145,7 +145,7 @@ const RULES = [
     id: 'idle', topic: 'idle', tone: 'info', after: 20, cooldown: 60, cap: 2,
     cond: (c) => c.f.onGround && c.gsKt < 1 && c.lever < 0.08,
     text: (k, c) => (fixedWing(c)
-      ? `Kalkış için gaz ver: ${k.hold('thrUp')}${k.pad ? '' : ' ya da {9} tuşuna bas'}.`
+      ? `Kalkış için gaz ver: ${k.hold('thrUp')}${k.kb ? ' ya da {9} tuşuna bas' : ''}.`
       : `Havalanmak için kolektifi artır: ${k.hold('thrUp')}.`),
   },
   {
@@ -161,13 +161,13 @@ const RULES = [
   {
     // Windows / Linux: Ctrl does nothing there (and Ctrl+W closes the tab)
     id: 'ctrl', topic: 'ctrl', tone: 'info', after: 0, cooldown: 60, cap: 2,
-    cond: (c, s) => s.ctrl && !c.k.pad,
+    cond: (c, s) => s.ctrl && c.k.kb,
     text: () => 'Gazı azaltmak için {Z} ya da {−} (Ctrl+W sekmeyi kapatır).',
   },
   {
     id: 'cockpit', topic: 'cockpit', tone: 'info', after: 1, cooldown: 0, cap: 1, once: true, show: 8,
     cond: (c) => c.view === 'cockpit',
-    text: () => 'Etrafa bakmak için fareyle sürükle; çift tık bakışı ortalar.',
+    text: (k) => (k.touch ? 'Etrafa bakmak için ekranın ortasında parmağını sürükle; çift dokunuş bakışı ortalar.' : 'Etrafa bakmak için fareyle sürükle; çift tık bakışı ortalar.'),
   },
 ];
 
@@ -198,7 +198,7 @@ export function createHints(parent, { busy = () => false } = {}) {
   function show(s, c) {
     const r = s.r;
     clearTimeout(outTimer);
-    richText(txt, r.text(c.k, c));
+    richText(txt, String(r.text(c.k, c)).replace(/^(\s*)(\p{Ll})/u, (m, sp, ch) => sp + ch.toLocaleUpperCase('tr')));
     icon.innerHTML = r.tone === 'info' ? ICON_INFO : ICON_CAUTION;
     pill.className = `gkt-hint gkt-glass ${r.tone}`;
     void pill.offsetWidth;          // restart the entry animation when a hint replaces another
@@ -316,7 +316,7 @@ function lostSpeedEnd(r, ground) {
 }
 
 /** Crash reason → { code (telemetry), text (plain Turkish), tip ({Key} chips) }. */
-export function explainCrash(reason, category, keys = keySet(shared.keyDevice)) {
+export function explainCrash(reason, category, keys = keySet(shared.keyDevice, category)) {
   const r = String(reason || '').trim();
   const heli = category === 'helicopter';
   for (const x of CRASHES) if (x.re.test(r)) return { code: x.code, text: x.text(heli, r), tip: x.tip(keys, heli) };

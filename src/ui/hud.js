@@ -148,7 +148,7 @@ const CSS = `
 
 .gkh-help { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(3, 8, 14, 0.42);
   opacity: 0; visibility: hidden; transition: opacity .2s ease, visibility 0s linear .2s; }
-.gkh-help.show { opacity: 1; visibility: visible; transition: opacity .2s ease; pointer-events: auto; }
+.gkh-help.show { opacity: 1; visibility: visible; transition: opacity .2s ease; pointer-events: auto; z-index: 2; }   /* above the pause screen ("Kontroller") */
 .gkh-help-card { position: relative; width: min(94vw, 900px); max-height: 90vh; overflow: auto; padding: 26px 30px 20px; border-radius: 18px;
   background: linear-gradient(180deg, rgba(16, 26, 42, 0.86), rgba(6, 11, 20, 0.86)); }
 .gkh-help h2 { margin: 0; font-size: 22px; font-weight: 750; letter-spacing: -.01em; }
@@ -320,6 +320,9 @@ export function createHUD(container) {
   setBtn.append('Ayarlar');
   const menuBtn = el('button', 'gkh-pbtn', pbtns);
   menuBtn.append('Ana menü');
+  // touch hook: no R key on a phone — restart from the pause screen (reset, then resume)
+  const restartBtn = el('button', 'gkh-pbtn', null, 'Yeniden başla');
+  restartBtn.addEventListener('click', () => { pressKey('KeyR'); setTimeout(() => pressKey(pauseCode), 80); });
   const credLink = el('button', 'gkh-plink', pause, 'Künye');
   const pinfo = el('div', 'gkh-pinfo', pause);
   let pauseCode = 'KeyP', helpCode = 'F1';
@@ -352,6 +355,7 @@ export function createHUD(container) {
 
   // ---------- layout ----------
   let s = 1, pscale = 1, dpr = 1, vw = 0, vh = 0, mapPx = MAP_DU, sysW = 0, sysH = 0;
+  let touchInsets = null;                               // touch hook: { left, right, top, bottom } px kept free for the controls
   const CS = 0.7;                                       // compact instrument scale (relative to s)
   const colBox = { L: null, R: null, T: null };         // compact column boxes in design units
   function colDu() {
@@ -392,11 +396,17 @@ export function createHUD(container) {
       root.style.removeProperty('--fma-top');
     } else {
       // compact: smaller columns pinned to the left / right screen edges, heading tape at the top centre
-      const k = s * CS, m = 16 * pscale;
+      let k = s * CS;
+      const m = 16 * pscale;
+      // touch hook (src/ui/touch.js): the columns fit between the on-screen controls (top buttons, stick, lever)
+      const ti = touchInsets;
+      const colH = Math.max(du.L.h, du.R.h);
+      if (ti && colH * k > vh - ti.top - ti.bottom) k = Math.max(k * 0.72, (vh - ti.top - ti.bottom) / colH);
       const lh = du.L.h * k, rh = du.R.h * k;
-      const top = vh / 2 - (SPD.h / 2 + 28) * k - 24 * s;           // both tapes centred at the same height
-      const L = { l: m, t: top, w: du.L.w * k, h: lh };
-      const Rr = { l: vw - m - du.R.w * k, t: top, w: du.R.w * k, h: rh };
+      const top = ti ? ti.top + Math.max(0, (vh - ti.top - ti.bottom - Math.max(lh, rh)) * 0.3)
+        : vh / 2 - (SPD.h / 2 + 28) * k - 24 * s;                     // both tapes centred at the same height
+      const L = { l: ti ? ti.left : m, t: top, w: du.L.w * k, h: lh };
+      const Rr = { l: vw - (ti ? ti.right : m) - du.R.w * k, t: top, w: du.R.w * k, h: rh };
       const T = { l: vw / 2 - (du.T.w * k) / 2, t: 12 * pscale, w: du.T.w * k, h: du.T.h * k };
       colBox.L = { ...du.L, k, ...L }; colBox.R = { ...du.R, k, ...Rr }; colBox.T = { ...du.T, k, ...T };
       px(tapes[0], L.l, L.t, L.w, L.h);
@@ -1296,9 +1306,10 @@ export function createHUD(container) {
     const cams = el('div', 'gkh-cams', helpCard);
     for (const [id, name] of Object.entries(CAMERA_NAMES)) el('span', id === shared.cameraMode ? 'on' : '', cams, name);
     const mouse = el('div', 'gkh-hrow gkh-hrow-wide', helpCard);
-    keyChips(mouse, 'Fare');
-    el('span', 'gkh-hl', mouse, 'Sürükle: kokpitte etrafa bak, dış kamerada döndür · Tekerlek: yakınlaştır · Çift tık: ortala');
-    el('div', 'gkh-foot', helpCard, 'Kapatmak için F1 veya ?');
+    keyChips(mouse, touchInsets ? 'Dokunmatik' : 'Fare');
+    el('span', 'gkh-hl', mouse, touchInsets ? 'Ekranın ortasında sürükle: etrafa bak / döndür · İki parmak: yakınlaştır · Çift dokun: ortala'
+      : 'Sürükle: kokpitte etrafa bak, dış kamerada döndür · Tekerlek: yakınlaştır · Çift tık: ortala');
+    el('div', 'gkh-foot', helpCard, touchInsets ? 'Kapatmak için boş bir yere dokun' : 'Kapatmak için F1 veya ?');
     // mirror keys for the pause buttons
     const find = (re) => list.find((b) => re.test(String(b.label || '')));
     const pb = find(/duraklat/i), hb = find(/yardım|kontrol/i);
@@ -1357,8 +1368,8 @@ export function createHUD(container) {
 
   const hud = {
     setAircraft(d) {
-      if (!def && !qualityHintSeen()) {
-        setTimeout(() => { if (!qualityHintSeen()) { markQualityHintSeen(); hud.showMessage(`${qualityHintText()} (P → Ayarlar)`, 6500); } }, 7000);
+      if (!def && !qualityHintSeen() && !touchInsets) {   // (phones already start on the lowest preset)
+        setTimeout(() => { if (!qualityHintSeen()) { markQualityHintSeen(); hud.showMessage(`${qualityHintText()} (${touchInsets ? '❚❚' : 'P'} → Ayarlar)`, 6500); } }, 7000);
       }
       def = d || null;
       spec = (d && d.spec) || {};
@@ -1499,6 +1510,21 @@ export function createHUD(container) {
         el('b', null, ic, 'J');
         mapPanel.addEventListener('click', () => { if (navHooks && navHooks.open) navHooks.open('mini'); });
       }
+    },
+    /**
+     * Touch hook (src/ui/touch.js): px to keep free for the on-screen controls { left, right, top, bottom } — the compact
+     * columns fit between them; minimap, systems panel, info panel and the camera bar give way (CSS in touch.js).
+     */
+    setTouchLayout(insets) {
+      const first = !touchInsets;
+      touchInsets = insets ? { left: insets.left || 0, right: insets.right || 0, top: insets.top || 0, bottom: insets.bottom || 0 } : null;
+      root.classList.toggle('gkh-touch', !!touchInsets);
+      if (first && touchInsets) {
+        pbtns.insertBefore(restartBtn, menuBtn);
+        help.addEventListener('click', (e) => { if (e.target === help && help.classList.contains('show')) pressKey(helpCode); });
+        helpBindings = null;
+      }
+      layout();
     },
     /** Show "Eğitimi yeniden başlat" in the help overlay; fn restarts the flight tutorial. */
     setTutorialRestart(fn) { tutorialRestart = typeof fn === 'function' ? fn : null; helpBindings = null; },

@@ -333,6 +333,11 @@ export async function createCity(ctx, options = {}) {
     // with the other layers / the aircraft for bandwidth before the first playable frame
   })();
   let started = false;
+  // mobile hook (docs/errors/audit.md #1): on phones / tablets the post-ready burst is staggered — tile uploads at most
+  // one per two frames and no trees for the first STAGGER_S seconds of flight (iOS kills the page for memory otherwise)
+  const STAGGER_S = 10;
+  const mobile = !!(q0 && (q0.deviceClass === 'phone' || q0.deviceClass === 'tablet'));
+  let flightT = 0, frameN = 0, treesStarted = false;
 
   return {
     object: group,
@@ -362,7 +367,9 @@ export async function createCity(ctx, options = {}) {
       if (trees) trees.setQuality(q);
     },
     update(dt, camera) {
-      if (!started) { started = true; preloadRadius = Infinity; startTrees(); }
+      if (!started) { started = true; preloadRadius = Infinity; }
+      flightT += dt; frameN++;
+      if (!treesStarted && (!mobile || flightT >= STAGGER_S)) { treesStarted = true; startTrees(); }
       clock += dt;
       camera.getWorldPosition(camPos);
       const moved = camPos.distanceToSquared(lastCam) > 15 * 15;
@@ -372,7 +379,7 @@ export async function createCity(ctx, options = {}) {
         lastCam.copy(camPos);
       }
       pump();
-      processJobs(opt.frameBudgetMs);
+      processJobs(opt.frameBudgetMs, mobile && flightT < STAGGER_S ? frameN & 1 : opt.uploadsPerFrame);
       if (trees) trees.update(dt, camera);
     },
     // buildings only: trees are not obstacles for physics/GPWS (a helicopter must not land on treetops)

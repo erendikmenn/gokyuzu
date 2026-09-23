@@ -12,6 +12,9 @@
 import * as THREE from 'three';
 import { band, clamp, db, sstep } from './util.js';
 import { approachGeometry, findApproach } from '../flight/fixedwing-autopilot.js';
+import { detectDevice } from '../core/gpu-device.js';   // mobile hook: staged decoding on phones / tablets
+
+const isMobile = () => { try { const d = detectDevice(); return d.kind === 'phone' || d.kind === 'tablet'; } catch { return false; } };
 
 const ASSET_BASE = new URL('../../assets/audio/', import.meta.url).href;
 const C_SOUND = 343;
@@ -248,7 +251,21 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
     const mf = loadManifest();
     if (profile.alerts?.systems?.length) loadRunways();
     const files = collectFiles(profile);
-    const loads = files.map(getBuffer);
+    // mobile hook (docs/errors/audit.md #1): phones / tablets decode the aircraft's own engine / rotor loops first, the
+    // shared layers (wind, gear, brakes…) 5 s later and alerts / callouts / one-shots from 10 s on, one at a time
+    // (they are also fetched on demand when played), so the decoded PCM does not land in the post-ready memory peak
+    let loads;
+    if (!isMobile()) loads = files.map(getBuffer);
+    else {
+      const layerFiles = new Set((profile.layers || []).map((l) => l.file));
+      const own = files.filter((f) => layerFiles.has(f) && !/^common\//.test(f));
+      const shared = files.filter((f) => layerFiles.has(f) && /^common\//.test(f));
+      const rest = files.filter((f) => !layerFiles.has(f));
+      loads = own.map(getBuffer);
+      const later = (list, ms) => setTimeout(async () => { for (const f of list) { if (seq !== loadSeq) return; await getBuffer(f); } }, ms);
+      later(shared, 5000);
+      later(rest, 10000);
+    }
     await mf;
     if (seq !== loadSeq) return;
     if (ctx) inst = buildInstance(id, profile);
@@ -352,6 +369,12 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
   }
 
   function attachLoop(I, L) {
+    // mobile hook (see loadAircraft): shared layers join after 5 s, alert / warning loops after 10 s
+    const wait = !isMobile() ? 0 : String(L.id || '').startsWith('alert:') ? 10000 : /^common\//.test(L.def.file || '') ? 5000 : 0;
+    if (wait) { setTimeout(() => { if (inst === I && !I.dead) attachLoopNow(I, L); }, wait); return; }
+    attachLoopNow(I, L);
+  }
+  function attachLoopNow(I, L) {
     getBuffer(L.def.file).then((buf) => {
       if (!buf || inst !== I || I.dead) return;
       const src = ctx.createBufferSource();
