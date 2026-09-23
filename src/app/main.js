@@ -68,7 +68,9 @@ async function start() {
   loading.hide();
   console.log(`[app] ready in ${((performance.now() - t0) / 1000).toFixed(1)} s`);
   const heli = state.def.spec.category === 'helicopter';
-  hud.showMessage(spawn.altitude ? 'İyi uçuşlar!' : heli ? 'Kolektifi artır (Shift / X), havalanınca O ile askıda kal' : 'Gaz ver (Shift / X), kalkış hızında burnu kaldır (S)', 4000);
+  // airborne on final with gear + flaps already out: pressing G (as for a normal approach) would retract the gear
+  const onFinal = spawn.altitude && state.def.spec.category === 'airliner' && state.flight.gearHandleDown;
+  hud.showMessage(onFinal ? 'Takım ve flaplar iniş konumunda · O: otomatik ILS inişi' : spawn.altitude ? 'İyi uçuşlar!' : heli ? 'Kolektifi artır (Shift / X), havalanınca O ile askıda kal' : 'Gaz ver (Shift / X), kalkış hızında burnu kaldır (S)', 4000);
 }
 
 async function loadAircraft(id) {
@@ -123,6 +125,12 @@ function bindFlightEvents(flight) {
     if (!flight.crashed) hud.showMessage((vs < 1 ? 'Tereyağı gibi iniş!' : vs < 2.5 ? 'Güzel iniş.' : 'Sert iniş.') + (i.onRunway ? '' : ' (pist dışı)'), 2500);
   });
   flight.on('takeoff', () => hud.showMessage('Kalkış!', 1500));
+  // refused commands used to be silent (N with the lever above idle, e.g. after an autoland; G on the ground)
+  flight.on('warning', (w) => {
+    if (!w || !w.on) return;
+    if (w.type === 'reverserInhibit') hud.showMessage('Ters itki yalnızca yerde ve gaz rölantideyken (Ctrl / Z)', 2000);
+    else if (w.type === 'gearLocked') hud.showMessage('Yerdeyken iniş takımı toplanamaz', 1500);
+  });
 }
 
 function resetFlight() {

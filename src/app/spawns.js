@@ -20,7 +20,8 @@ export function buildSpawns(runways) {
   runway('KNGZ', '06', 'Alameda Hava Üssü · Pist 06');
   runway('KOAK', '30', 'Oakland · Pist 30');
   // airborne starts
-  list.push({ id: 'AIR-GGB', name: 'Havada · Golden Gate yaklaşımı (450 m)', x: -14500, z: -23500, heading: rad(75), altitude: 450, airborne: true });
+  // heading 100°: through the strait, crossing the bridge mid-span (075° pointed at the Marin Headlands, bridge off-screen)
+  list.push({ id: 'AIR-GGB', name: 'Havada · Golden Gate yaklaşımı (450 m)', x: -14500, z: -23500, heading: rad(100), altitude: 450, airborne: true });
   list.push({ id: 'AIR-SFO-FINAL', name: 'Havada · SFO 28L son yaklaşma', x: 1464 + Math.sin(rad(117.4)) * 9000, z: 796 - Math.cos(rad(117.4)) * 9000, heading: rad(297.4), altitude: 480, airborne: true });
   list.push({ id: 'AIR-CITY', name: 'Havada · Şehir merkezi üstü (600 m)', x: -1500, z: -14500, heading: rad(340), altitude: 600, airborne: true });
   return list;
