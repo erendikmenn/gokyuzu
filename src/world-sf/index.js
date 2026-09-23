@@ -45,6 +45,7 @@ export async function createSFWorld({ scene, renderer, camera, loader, focus = {
 
   return {
     runways, landmarks, region, environment, terrain, layers,
+    towers: layers.flatMap((l) => l.towers || []),   // control-tower cab eye points (airports layer) for the tower camera
     sunDirection: environment.sunDirection,
     getGroundHeight: (x, z) => terrain.getHeight(x, z),
     isWater: (x, z) => terrain.isWater(x, z),

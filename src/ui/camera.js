@@ -526,7 +526,10 @@ export function createCameraRig(camera, dom, world) {
     const list = airports();
     let best = null, bestD = Infinity, curD = Infinity;
     const cand = [];
-    for (const a of list) {
+    // exact cab eye points from the airports layer when available (absolute y → height above ground)
+    const wt = Array.isArray(world.towers) ? world.towers : [];
+    for (const t of wt) cand.push({ key: `${t.icao}:${t.name}`, icao: t.icao, x: t.x, z: t.z, h: t.y - groundAt(t.x, t.z) });
+    if (!cand.length) for (const a of list) {
       const t = TOWERS[a.icao];
       let x, z, h = 40;
       if (t) { x = t.x; z = t.z; h = t.h; }
@@ -544,7 +547,7 @@ export function createCameraRig(camera, dom, world) {
     if (!force && towerKey && best.key !== towerKey && bestD > curD * 0.8) return;   // hysteresis
     if (best.key !== towerKey || force) {
       towerKey = best.key;
-      const apt = list.find((a) => a.icao === best.key);
+      const apt = list.find((a) => a.icao === (best.icao || best.key));
       let ox = 0, oz = 0;
       if (apt && apt.center) {
         const dx = apt.center.x - best.x, dz = apt.center.z - best.z, d = Math.hypot(dx, dz);
@@ -561,7 +564,8 @@ export function createCameraRig(camera, dom, world) {
   function nearestTowerDist() {
     let best = Infinity;
     const list = airports();
-    const cand = list.length ? list.map((a) => TOWERS[a.icao] || a.center).filter(Boolean) : Object.values(TOWERS);
+    const wt = Array.isArray(world.towers) ? world.towers : [];
+    const cand = wt.length ? wt : list.length ? list.map((a) => TOWERS[a.icao] || a.center).filter(Boolean) : Object.values(TOWERS);
     for (const c of cand) best = Math.min(best, Math.hypot(c.x - P.x, c.z - P.z));
     return best;
   }
