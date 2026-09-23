@@ -321,3 +321,15 @@ Players keep files in their browser cache, so every asset URL carries a content 
   2560×1440 renders for the end, and never leave Blender processes running.
 - Keep §5.1 node names, pivots and contact points; keep real dimensions. The game must still load with 0 console errors
   (`node tools/shot.mjs "index.html?aircraft=<id>&spawn=<spawn>" ...`, the dev server runs at http://localhost:5173/).
+
+## 11. Anonymous usage statistics (lead)
+
+- `src/core/telemetry.js` sends GET beacons to `_e?t=<type>&s=<random page session id>&…` on the game's own origin: `open`
+  (page opened: screen, quality, GPU name, language), `fly` (aircraft, spawn, load seconds), `hb` (one per active flight
+  minute: fps, pixel ratio, view), `err` (≤ 5 per page), `end`. No cookies, no stored id, nothing personal. Off on localhost
+  (unless `?telemetry=1`), with `?telemetry=0` and under Do Not Track / Global Privacy Control.
+- CloudFront: the `/_e` behaviour runs the CloudFront Function `gokyuzu-beacon` (204 at the edge, uncached); standard access
+  logs of both distributions go to `s3://gokyuzu-sf-logs-<aws-account-id>-eu-central-1/<target>/` (deleted after 30 days).
+  Setup: `tools/analytics/setup.py <target>` (admin profile). The local dev server answers `/_e` with 204 and prints it.
+- Report: `.venv/bin/python tools/analytics/report.py [production|staging] [--days N]` (read-only IAM user
+  `gokyuzu-analytics`); visitors are salted hashes, raw IPs are never printed.

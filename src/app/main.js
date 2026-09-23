@@ -14,6 +14,7 @@ import { loadSettings } from '../core/settings.js';
 import { QUALITY } from '../core/quality.js';
 import { IS_MAC } from '../core/platform.js';
 import { goToMenu, guardUnload } from '../core/leave.js';
+import { startTelemetry, trackFlight } from '../core/telemetry.js';
 
 const params = new URLSearchParams(location.search);
 const app = document.getElementById('app');
@@ -88,6 +89,8 @@ async function start() {
   loading.hide();
   state.readyAt = performance.now();   // dynamic resolution ignores the first seconds (shader compiles, tile bursts)
   console.log(`[app] ready in ${((performance.now() - t0) / 1000).toFixed(1)} s`);
+  state.aircraftId = choice.aircraftId;
+  trackFlight(choice.aircraftId, spawn.id, (performance.now() - t0) / 1000, settings.quality);
   const heli = state.def.spec.category === 'helicopter';
   // airborne on final with gear + flaps already out: pressing G (as for a normal approach) would retract the gear
   const onFinal = spawn.altitude && state.def.spec.category === 'airliner' && state.flight.gearHandleDown;
@@ -314,7 +317,10 @@ fetch('build.json', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null))
     tag.style.cssText = 'position:fixed;right:10px;bottom:10px;z-index:50;padding:4px 10px;border-radius:6px;background:#f2801a;color:#111;font:600 12px -apple-system,sans-serif;pointer-events:none;opacity:.9';
     document.body.append(tag);
   }
-}).catch(() => {});
+}).catch(() => {}).finally(() => startTelemetry({
+  build: state.build, renderer, quality: settings.quality,
+  state: () => ({ flying: !!(state.flight && state.readyAt), paused: state.paused, aircraft: state.aircraftId, fps: window.__fps, pixelRatio: renderer.getPixelRatio(), view: cameraRig.view }),
+}));
 
 requestAnimationFrame(frame);
 start().catch((e) => { console.error(e); hud.showMessage(`Hata: ${e.message}`, 10000); });

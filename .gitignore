@@ -26,3 +26,4 @@ blender/**/ref/**/*.pdf
 blender/**/ref/**/*.tif
 blender/**/ref/**/*.tiff
 blender/**/refimg/
+data/analytics/

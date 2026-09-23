@@ -268,6 +268,8 @@ export function openCredits(container) {
   ];
   for (const [k, v] of rows) { const li = el('li', null, ul); el('b', null, li, k); el('span', null, li, v); }
   el('p', 'gkp-disc', box, DISCLAIMER);
+  // CONTRACTS-SF.md §11 (src/core/telemetry.js)
+  el('p', 'gkp-disc', box, 'Gizlilik: Oyunu geliştirmek için anonim kullanım istatistikleri toplanır (seçilen uçak, oynama süresi, kare hızı, hatalar). Çerez kullanılmaz, kişisel bilgi toplanmaz, sunucu kayıtları 30 gün sonra silinir. Tarayıcında “Do Not Track” veya “Global Privacy Control” açıksa istatistik gönderilmez.');
   const f = el('div', 'gkp-foot', m.card);
   el('span', null, f, 'Ücretsiz · ticari olmayan hayran projesi');
   const okb = el('button', 'gkp-btn primary', f, 'Kapat');
