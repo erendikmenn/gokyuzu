@@ -211,14 +211,15 @@ def build_lod(M, target=36000):
         bmesh.ops.delete(bm, geom=dead, context='FACES')
         bm.to_mesh(o.data)
         bm.free()
-    ratios = {'fuselage': 0.28, 'doghouse': 0.25, 'blade_': 0.22, 'rotor_main': 0.30, 'ctl_stabilator': 0.3,
+    ratios = {'details_black': 1.0, 'fuselage': 0.28, 'doghouse': 0.25, 'blade_': 0.22, 'rotor_main': 0.30, 'ctl_stabilator': 0.3,
               'nacelle_': 0.3, 'pylon': 0.35, 'door_': 0.35, 'wheel_': 0.3, 'details_': 0.5, 'tail_blade': 0.4,
               'gear_': 0.5, 'shaft_cover': 0.35, 'hirss': 0.5, 'rotor_tail': 0.5}
     for o in list(bpy.data.objects):
         if o.type != 'MESH' or o.name.endswith('_blur'):
             continue
         r = next((v for k, v in ratios.items() if o.name.startswith(k)), 0.6)
-        lib.add_modifier_apply(o, 'DECIMATE', ratio=r, use_collapse_triangulate=True)
+        if r < 1.0:
+            lib.add_modifier_apply(o, 'DECIMATE', ratio=r, use_collapse_triangulate=True)
     n = count_tris([o for o in bpy.data.objects if o.type == 'MESH'])
     log('LOD triangles:', n)
     util.export_glb(os.path.join(OUT_DIR, 'uh60_lod.glb'))
