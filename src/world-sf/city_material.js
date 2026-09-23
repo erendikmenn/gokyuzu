@@ -36,13 +36,33 @@ function toArrayTexture(pixels, meta, srgb, anisotropy) {
   tex.anisotropy = anisotropy;
   tex.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
   tex.needsUpdate = true;
+  // release the ~37 MB CPU copy once uploaded (anisotropy changes go straight to GL, see setAnisotropy)
+  tex.onUpdate = () => { tex.image.data = null; tex.onUpdate = null; };
   return tex;
 }
 
+/** Change the anisotropic filtering of already-uploaded array textures without re-uploading them. */
+export function setAnisotropy(renderer, textures, value) {
+  if (!renderer) return;
+  const gl = renderer.getContext();
+  const ext = gl.getExtension('EXT_texture_filter_anisotropic');
+  if (!ext) return;
+  const v = Math.max(1, Math.min(value, renderer.capabilities.getMaxAnisotropy()));
+  for (const t of textures) {
+    t.anisotropy = v;
+    const wt = renderer.properties.get(t).__webglTexture;
+    if (!wt) continue;
+    gl.bindTexture(gl.TEXTURE_2D_ARRAY, wt);
+    gl.texParameterf(gl.TEXTURE_2D_ARRAY, ext.TEXTURE_MAX_ANISOTROPY_EXT, v);
+  }
+  gl.bindTexture(gl.TEXTURE_2D_ARRAY, null);
+  renderer.state.reset();
+}
+
 /** Loads the atlas and returns { material, uniforms, meta }. */
-export async function createCityMaterial(renderer, base) {
+export async function createCityMaterial(renderer, base, anisotropy = null) {
   const meta = await (await fetch(base + 'atlas.json')).json();
-  const aniso = Math.min(16, renderer?.capabilities?.getMaxAnisotropy?.() || 8);
+  const aniso = Math.min(anisotropy || 16, renderer?.capabilities?.getMaxAnisotropy?.() || 8);
   const [alb, mat, nrm] = await Promise.all(['albedo', 'mat', 'nrm'].map((k) => loadPixels(base + meta.images[k], meta.size)));
   const tAlbedo = toArrayTexture(alb, meta, true, aniso);
   const tMat = toArrayTexture(mat, meta, false, aniso);

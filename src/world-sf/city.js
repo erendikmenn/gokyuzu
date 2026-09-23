@@ -4,20 +4,26 @@
 // once every tile of the new level is loaded (no holes), drops every building onto the live terrain
 // (ctx.terrain.getHeight) and answers heightAt / hitTest from 4 m building obstacle rasters (trees are not obstacles).
 import * as THREE from 'three';
-import { createCityMaterial, prepareCityGeometry } from './city_material.js';
+import { createCityMaterial, prepareCityGeometry, setAnisotropy } from './city_material.js';
 import { createCityObstacles } from './city_obstacles.js';
 import { createCityTrees } from './city_trees.js';
 
 const BASE = 'assets/sf/city/';
-const DEFAULTS = { r0: 1300, r1: 3600, r2: 8000, rMax: 26000, maxLoads: 4, unloadAfter: 20, frameBudgetMs: 3, uploadsPerFrame: 1, warmUpload: true, lodScale: 1 };
+function freeArray() { this.array = null; }
+const DEFAULTS = { r0: 1300, r1: 3600, r2: 8000, rMax: 26000, maxLoads: 4, unloadAfter: 20, frameBudgetMs: 3, uploadsPerFrame: 1, warmUpload: true, lodScale: 1, shadows: true };
 
 export async function createCity(ctx, options = {}) {
   const opt = { ...DEFAULTS, ...options };
+  const q0 = ctx.quality;
+  if (q0) {   // CONTRACTS-SF §8: pick the LOD scale before the first request so low never loads tiles it won't show
+    if (q0.cityLodScale != null && options.lodScale == null) opt.lodScale = q0.cityLodScale;
+    if (q0.cityShadows != null) opt.shadows = !!q0.cityShadows;
+  }
   const base = options.base || BASE;
   const { terrain, focus = { x: 0, z: 0 } } = ctx;
   const getH = (x, z) => (terrain ? terrain.getHeight(x, z) : 0);
   const index = await (await fetch(base + 'index.json')).json();
-  const { material, materialFar, uniforms } = await createCityMaterial(ctx.renderer, base + 'atlas/');
+  const { material, materialFar, uniforms, textures } = await createCityMaterial(ctx.renderer, base + 'atlas/', q0 && q0.anisotropy);
   const gltf = ctx.loader?.gltf || (await import('../core/assets.js')).createAssetLoader(ctx.renderer).gltf;
 
   const group = new THREE.Group();
@@ -138,12 +144,16 @@ export async function createCity(ctx, options = {}) {
   function finish(job) {
     const { rec, mesh } = job;
     mesh.material = rec.level === 0 ? material : materialFar;
-    mesh.castShadow = rec.level === 0;
+    mesh.castShadow = rec.level === 0 && opt.shadows;
     mesh.receiveShadow = true;
     mesh.matrixAutoUpdate = false;
     mesh.updateMatrix();
     mesh.matrixWorld.copy(mesh.matrix);
     mesh.name = `city_L${rec.level}_${rec.i}_${rec.j}`;
+    // static tiles: free the JS copies of the vertex/index arrays once they are on the GPU (hundreds of MB otherwise)
+    const geo = mesh.geometry;
+    for (const a of Object.values(geo.attributes)) a.onUpload(freeArray);
+    if (geo.index) geo.index.onUpload(freeArray);
     // GPU upload now (1x1 target, frustum culling off) instead of in the frame where the LOD swap reveals the tile
     if (ctx.renderer && opt.warmUpload) {
       const r = ctx.renderer, prev = r.getRenderTarget(), prevAuto = r.shadowMap.autoUpdate;
@@ -269,6 +279,7 @@ export async function createCity(ctx, options = {}) {
   if (index.trees) {
     try {
       trees = await createCityTrees({ ...ctx, base, getH, indexUrl: base + index.trees });
+      if (q0) trees.setQuality(q0);
       group.add(trees.object);
     } catch (e) {
       console.warn('[city] trees unavailable:', e.message);
@@ -314,6 +325,17 @@ export async function createCity(ctx, options = {}) {
     setNight(v) { uniforms.uCityNight.value = v; },
     /** LOD distance multiplier (e.g. 0.8 on very high resolutions / low-end GPUs, 1.3 for screenshots). */
     setLodScale(s) { opt.lodScale = Math.max(0.3, s); lastSelect = -1; },
+    /** CONTRACTS-SF §8 (live): cityLodScale, cityShadows, treeDensity, treeDistance, anisotropy. */
+    setQuality(q) {
+      if (!q) return;
+      if (q.cityLodScale != null) this.setLodScale(q.cityLodScale);
+      if (q.cityShadows != null) {
+        opt.shadows = !!q.cityShadows;
+        for (const r of loadedTiles) if (r.mesh) r.mesh.castShadow = r.level === 0 && opt.shadows;
+      }
+      if (q.anisotropy != null) setAnisotropy(ctx.renderer, textures, q.anisotropy);
+      if (trees) trees.setQuality(q);
+    },
     update(dt, camera) {
       clock += dt;
       camera.getWorldPosition(camPos);
