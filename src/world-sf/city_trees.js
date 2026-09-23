@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 
 const CELL = 250;
-const DEF = { r0: 280, r1: 1900, rShrub: 650, tileRadius: 2300, maxPerSpecies: 70000, maxNearPerSpecies: 5000 };
+const DEF = { r0: 260, r1: 1900, rShrub: 650, tileRadius: 2300, maxPerSpecies: 70000, maxNearPerSpecies: 4000, frameBudgetMs: 2 };
 
 export async function createCityTrees(ctx) {
   const opt = { ...DEF, ...(ctx.treeOptions || {}) };
@@ -65,64 +65,84 @@ export async function createCityTrees(ctx) {
   const col = new THREE.Color();
   let loading = 0;
 
+  // Tile processing (terrain lookup + instance matrices for up to ~150k trees) runs as a generator, advanced in
+  // update() under a per-frame time budget, so a forest tile never freezes a frame.
+  const jobs = [];
+
   async function loadTile(key) {
     const t = { state: 'loading', cells: [], key, lastUsed: performance.now() };
     tiles.set(key, t);
     loading++;
     try {
       const buf = await (await fetch(`${base}trees/${key}.bin`)).arrayBuffer();
-      const dv = new DataView(buf);
-      const n = dv.getUint32(12, true);
-      const ti = dv.getInt32(4, true), tj = dv.getInt32(8, true);
-      const x0 = ti * size, z0 = tj * size;
-      const nc = Math.ceil(size / CELL);
-      const bins = new Map();
-      for (let k = 0; k < n; k++) {
-        const o = 16 + k * 12;
-        const x = dv.getFloat32(o, true), z = dv.getFloat32(o + 4, true);
-        const s = dv.getUint8(o + 8), h = dv.getUint8(o + 9) / 4, r = dv.getUint8(o + 10), c = dv.getUint8(o + 11);
-        const ci = Math.min(nc - 1, Math.max(0, Math.floor((x - x0) / CELL))), cj = Math.min(nc - 1, Math.max(0, Math.floor((z - z0) / CELL)));
-        const bk = ci * nc + cj;
-        let b = bins.get(bk);
-        if (!b) { b = { x: x0 + (ci + 0.5) * CELL, z: z0 + (cj + 0.5) * CELL, list: [], maxTop: 0 }; bins.set(bk, b); }
-        b.list.push(x, z, s, h, r, c);
-      }
-      for (const b of bins.values()) {
-        const cnt = b.list.length / 6;
-        const counts = new Uint32Array(nS);
-        for (let k = 0; k < cnt; k++) counts[b.list[k * 6 + 2]]++;
-        const mats = counts.map ? Array.from(counts, (c) => new Float32Array(c * 16)) : [];
-        const cols = Array.from(counts, (c) => new Float32Array(c * 3));
-        const pts = Array.from(counts, (c) => new Float32Array(c * 4));   // x, y, z, top
-        const fill = new Uint32Array(nS);
-        let yMin = Infinity, yMax = -Infinity;
-        for (let k = 0; k < cnt; k++) {
-          const x = b.list[k * 6], z = b.list[k * 6 + 1], s = b.list[k * 6 + 2], h = b.list[k * 6 + 3], r = b.list[k * 6 + 4], c = b.list[k * 6 + 5];
-          const y = getH(x, z) - 0.15;
-          const sc = h / refH[species[s]];
-          pos.set(x, y, z);
-          q.setFromAxisAngle(up, r / 255 * Math.PI * 2);
-          const wobble = 0.9 + 0.2 * ((r * 7) % 13) / 13;
-          scl.set(sc * wobble, sc, sc * (2 - wobble));
-          m4.compose(pos, q, scl);
-          const f = fill[s]++;
-          m4.toArray(mats[s], f * 16);
-          const v = 0.78 + 0.34 * (c / 255);
-          col.setRGB(v * (0.94 + 0.12 * ((c * 5) % 17) / 17), v, v * (0.9 + 0.1 * ((c * 3) % 11) / 11));
-          col.toArray(cols[s], f * 3);
-          pts[s][f * 4] = x; pts[s][f * 4 + 1] = y; pts[s][f * 4 + 2] = z; pts[s][f * 4 + 3] = y + h;
-          if (y < yMin) yMin = y;
-          if (y + h > yMax) yMax = y + h;
-        }
-        t.cells.push({ x: b.x, z: b.z, yMin, yMax, counts, mats, cols, pts, sphere: new THREE.Sphere(new THREE.Vector3(b.x, (yMin + yMax) / 2, b.z), Math.hypot(CELL * 0.71, (yMax - yMin) / 2 + 5)) });
-      }
-      t.state = 'ready';
-      dirty = true;
+      t.state = 'processing';
+      jobs.push({ t, it: processTile(t, buf) });
     } catch (e) {
       console.warn('[city] tree tile', key, e.message);
       t.state = 'failed';
     } finally {
       loading--;
+    }
+  }
+
+  function* processTile(t, buf) {
+    const dv = new DataView(buf);
+    const n = dv.getUint32(12, true);
+    const ti = dv.getInt32(4, true), tj = dv.getInt32(8, true);
+    const x0 = ti * size, z0 = tj * size;
+    const nc = Math.ceil(size / CELL);
+    const bins = new Map();
+    for (let k = 0; k < n; k++) {
+      const o = 16 + k * 12;
+      const x = dv.getFloat32(o, true), z = dv.getFloat32(o + 4, true);
+      const s = dv.getUint8(o + 8), h = dv.getUint8(o + 9) / 4, r = dv.getUint8(o + 10), c = dv.getUint8(o + 11);
+      const ci = Math.min(nc - 1, Math.max(0, Math.floor((x - x0) / CELL))), cj = Math.min(nc - 1, Math.max(0, Math.floor((z - z0) / CELL)));
+      const bk = ci * nc + cj;
+      let b = bins.get(bk);
+      if (!b) { b = { x: x0 + (ci + 0.5) * CELL, z: z0 + (cj + 0.5) * CELL, list: [] }; bins.set(bk, b); }
+      b.list.push(x, z, s, h, r, c);
+      if ((k & 8191) === 8191) yield;
+    }
+    for (const b of bins.values()) {
+      const cnt = b.list.length / 6;
+      const counts = new Uint32Array(nS);
+      for (let k = 0; k < cnt; k++) counts[b.list[k * 6 + 2]]++;
+      const mats = Array.from(counts, (c) => new Float32Array(c * 16));
+      const cols = Array.from(counts, (c) => new Float32Array(c * 3));
+      const pts = Array.from(counts, (c) => new Float32Array(c * 4));   // x, y, z, top
+      const fill = new Uint32Array(nS);
+      let yMin = Infinity, yMax = -Infinity;
+      for (let k = 0; k < cnt; k++) {
+        const x = b.list[k * 6], z = b.list[k * 6 + 1], s = b.list[k * 6 + 2], h = b.list[k * 6 + 3], r = b.list[k * 6 + 4], c = b.list[k * 6 + 5];
+        const y = getH(x, z) - 0.15;
+        const sc = h / refH[species[s]];
+        pos.set(x, y, z);
+        q.setFromAxisAngle(up, r / 255 * Math.PI * 2);
+        const wobble = 0.9 + 0.2 * ((r * 7) % 13) / 13;
+        scl.set(sc * wobble, sc, sc * (2 - wobble));
+        m4.compose(pos, q, scl);
+        const f = fill[s]++;
+        m4.toArray(mats[s], f * 16);
+        const v = 0.78 + 0.34 * (c / 255);
+        col.setRGB(v * (0.94 + 0.12 * ((c * 5) % 17) / 17), v, v * (0.9 + 0.1 * ((c * 3) % 11) / 11));
+        col.toArray(cols[s], f * 3);
+        pts[s][f * 4] = x; pts[s][f * 4 + 1] = y; pts[s][f * 4 + 2] = z; pts[s][f * 4 + 3] = y + h;
+        if (y < yMin) yMin = y;
+        if (y + h > yMax) yMax = y + h;
+        if ((k & 2047) === 2047) yield;
+      }
+      t.cells.push({ x: b.x, z: b.z, yMin, yMax, counts, mats, cols, pts, sphere: new THREE.Sphere(new THREE.Vector3(b.x, (yMin + yMax) / 2, b.z), Math.hypot(CELL * 0.71, (yMax - yMin) / 2 + 5)) });
+      yield;
+    }
+    t.state = 'ready';
+    dirty = true;
+  }
+
+  function processJobs(budgetMs) {
+    const t0 = performance.now();
+    while (jobs.length && performance.now() - t0 < budgetMs) {
+      const j = jobs[0];
+      if (j.t.state !== 'processing' || j.it.next().done) jobs.shift();
     }
   }
 
@@ -210,10 +230,10 @@ export async function createCityTrees(ctx) {
       }
     // evict far tiles
     for (const [key, t] of tiles) {
-      if (t.state !== 'ready') continue;
+      if (t.state !== 'ready' && t.state !== 'processing') continue;
       const [i, j] = key.split('_').map(Number);
       const dx = Math.max(0, i * size - x, x - (i + 1) * size), dz = Math.max(0, j * size - z, z - (j + 1) * size);
-      if (Math.hypot(dx, dz) > R * 1.6) { tiles.delete(key); dirty = true; }
+      if (Math.hypot(dx, dz) > R * 1.6) { t.state = 'evicted'; tiles.delete(key); dirty = true; }
     }
   }
 
@@ -248,7 +268,9 @@ export async function createCityTrees(ctx) {
 
   return {
     object: group,
-    ready: Promise.all(initial),
+    ready: Promise.all(initial).then(async () => {
+      while (jobs.length) { processJobs(20); await new Promise((r) => setTimeout(r, 0)); }
+    }),
     get stats() { return { tiles: tiles.size, instances }; },
     update(dt, camera) {
       timer += dt;
@@ -256,6 +278,7 @@ export async function createCityTrees(ctx) {
       camera.getWorldPosition(camPos);
       camera.getWorldDirection(camDir);
       if (streamTimer > 0.4) { stream(camPos.x, camPos.z); streamTimer = 0; }
+      processJobs(opt.frameBudgetMs);
       const moved = camPos.distanceToSquared(lastPos) > 12 * 12 || camDir.dot(lastDir) < 0.995;
       if ((moved && timer > 0.12) || (dirty && timer > 0.25) || timer > 1.0) {
         rebuild(camera);

@@ -54,8 +54,9 @@ export async function createCityMaterial(renderer, base) {
     uCityNight: { value: 0 },            // 0 = day, 1 = night (window lights)
     uCityNormalScale: { value: 1.0 },
   };
+  const make = (far) => {
   const material = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.85, metalness: 0.0, envMapIntensity: 1.0 });
-  material.name = 'city_atlas';
+  material.name = far ? 'city_atlas_far' : 'city_atlas';
   material.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, uniforms);
     shader.vertexShader = shader.vertexShader
@@ -100,7 +101,7 @@ vec3 cityTint = mix(vec3(1.0), vTint, cityMat.r);
 diffuseColor.rgb *= cityAlb.rgb * cityTint;`)
       .replace('#include <roughnessmap_fragment>', `float roughnessFactor = clamp(cityMat.g, 0.04, 1.0);`)
       .replace('#include <metalnessmap_fragment>', `float metalnessFactor = cityNrm.b;`)
-      .replace('#include <normal_fragment_maps>', `{
+      .replace('#include <normal_fragment_maps>', far ? '' : `{
   vec2 nxy = cityNrm.rg * 2.0 - 1.0;
   float fade = uCityNormalScale * clamp(1.0 - length(vViewPosition) / 900.0, 0.0, 1.0);
   nxy *= fade;
@@ -122,8 +123,12 @@ if (uCityNight > 0.0 && cityMat.b > 0.05) {
   totalEmissiveRadiance += on * vec3(1.0, 0.78, 0.5) * 1.6 * cityAlb.rgb * 4.0;
 }`);
   };
-  material.customProgramCacheKey = () => 'city_atlas_v1';
-  return { material, uniforms, meta, textures: [tAlbedo, tMat, tNrm] };
+  material.customProgramCacheKey = () => (far ? 'city_atlas_far_v1' : 'city_atlas_v1');
+  return material;
+  };
+  // near (L0): full shading incl. the atlas normal map; far (L1-L3, > 1.3 km): no normal-map TBN work
+  const material = make(false), materialFar = make(true);
+  return { material, materialFar, uniforms, meta, textures: [tAlbedo, tMat, tNrm] };
 }
 
 /** Rename the glTF attributes of a city tile geometry to the material's custom names. */

@@ -738,6 +738,13 @@ def main():
         if b['src'] == 'osm' and b['id'].rsplit('_', 1)[0] in apt_ids:
             drop.add(i)
     lm_zones = load_landmark_bounds()
+    if lm_zones:
+        # W3 building-type landmarks: also drop footprints overlapping the model bounds by >= 25 % of their area
+        lt = STRtree(lm_zones)
+        for bi, li in zip(*lt.query(polys, predicate='intersects')):
+            p = polys[bi]
+            if p.intersection(lm_zones[li]).area >= 0.25 * p.area:
+                drop.add(int(bi))
     apt_zones = apt_zones + lm_zones
     if apt_zones:
         zt = STRtree(apt_zones)

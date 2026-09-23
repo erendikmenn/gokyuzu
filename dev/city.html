@@ -98,18 +98,40 @@ if (q.get('agl') !== '0') {
 camera.position.copy(cam);
 camera.lookAt(look);
 
+if (q.get('landmarks') === '1') {
+  // W3 landmarks next to the city (duplicate check); their loader expects repo-root relative URLs
+  try {
+    const { createLandmarks } = await import('../src/world-sf/landmarks.js');
+    const fix = (u) => (/^(assets|data)\//.test(u) ? '../' + u : u);
+    const lmLoader = { ...loader, loadJSON: (u) => loader.loadJSON(fix(u)), loadGLTF: (u) => loader.loadGLTF(fix(u)),
+      loadTexture: (u, o) => loader.loadTexture(fix(u), o), loadBinary: (u) => loader.loadBinary(fix(u)) };
+    const lm = await createLandmarks({ ...ctx, loader: lmLoader });
+    scene.add(lm.object);
+    window.__landmarks = lm;
+    await Promise.race([lm.ready, new Promise((r) => setTimeout(r, 15000))]);
+  } catch (e) { console.warn('landmarks unavailable', e); }
+}
 const t0 = performance.now();
 const city = await createCity(ctx, { base: '../assets/sf/city/' });
 scene.add(city.object);
 await city.ready;
 const loadS = ((performance.now() - t0) / 1000).toFixed(1);
 if (q.get('night')) city.setNight(Number(q.get('night')));
+// perf experiments: cityoff=1 treesoff=1 bldoff=1 noshadow=1 far=1
+if (q.get('cityoff') === '1') city.object.visible = false;
+if (q.get('treesoff') === '1') city.object.children[1] && (city.object.children[1].visible = false);
+if (q.get('bldoff') === '1') city.object.children[0].visible = false;
+if (q.get('noshadow') === '1') setInterval(() => city.object.traverse((o) => { o.castShadow = false; }), 500);
+if (q.get('far') === '1') setInterval(() => city.object.children[0].traverse((o) => { if (o.isMesh) o.material = city.materialFar; }), 500);
 window.__city = city;
 
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.target.copy(look);
 controls.update();
 const fly = q.get('fly') === '1';
+const move = q.get('move') ? q.get('move').split(',').map(Number) : null;   // camera velocity vx,vz (m/s)
+window.__frames = { n: 0, max: 0, over33: 0, over50: 0, over100: 0, list: [] };
+let lastTs = 0;
 const clock = new THREE.Timer();
 let acc = 0, frames = 0;
 renderer.info.autoReset = false;
@@ -117,11 +139,19 @@ function frame(ts) {
   requestAnimationFrame(frame);
   clock.update(ts);
   const dt = Math.min(clock.getDelta(), 0.1);
+  if (lastTs) {
+    const ft = ts - lastTs, F = window.__frames;
+    F.n++; if (ft > F.max) F.max = ft; if (ft > 33) F.over33++; if (ft > 50) F.over50++; if (ft > 100) F.over100++;
+    if (ft > 50) F.list.push([F.n, Math.round(ft)]);
+  }
+  lastTs = ts;
+  if (move) { camera.position.x += move[0] * dt; camera.position.z += move[1] * dt; controls.target.x += move[0] * dt; controls.target.z += move[1] * dt; }
   if (fly) { const r = camera.position.clone().sub(controls.target); r.applyAxisAngle(new THREE.Vector3(0, 1, 0), dt * 0.05); camera.position.copy(controls.target).add(r); camera.lookAt(controls.target); }
   controls.update();
   env?.update?.(dt, camera);
   terrain.update(dt, camera);
   city.update(dt, camera);
+  window.__landmarks?.update?.(dt, camera);
   renderer.info.reset();
   renderer.render(scene, camera);
   acc += dt; frames++;
