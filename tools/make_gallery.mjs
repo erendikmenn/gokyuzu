@@ -16,7 +16,7 @@ const TITLES = {
 const groups = [];
 function walk(dir) {
   const entries = fs.readdirSync(dir, { withFileTypes: true });
-  const images = entries.filter((e) => e.isFile() && /\.(png|jpe?g|webp)$/i.test(e.name) && !/^thumb/i.test(e.name))
+  const images = entries.filter((e) => e.isFile() && /\.(png|jpe?g|webp)$/i.test(e.name) && !/^(thumb|compare|cmp)/i.test(e.name))
     .map((e) => e.name).sort();
   const rel = path.relative(rendersDir, dir).split(path.sep).join('/');
   if (images.length && rel) {
@@ -28,7 +28,7 @@ function walk(dir) {
       }),
     });
   }
-  for (const e of entries) if (e.isDirectory() && !e.name.startsWith('_')) walk(path.join(dir, e.name));
+  for (const e of entries) if (e.isDirectory() && !e.name.startsWith('_') && !['before', 'fidelity'].includes(e.name)) walk(path.join(dir, e.name));
 }
 if (fs.existsSync(rendersDir)) walk(rendersDir);
 const order = ['aircraft/f16', 'aircraft/f22', 'aircraft/a320neo', 'aircraft/b737', 'aircraft/uh60', 'landmarks', 'airports', 'city'];

@@ -63,7 +63,7 @@ export async function createTraffic(ctx, items, prepare) {
       const ti = TYPES.indexOf(pick(rnd, TYPES));
       const c = pick(rnd, COLORS);
       const tint = 0.85 + 0.3 * rnd();
-      L.cars.push({ s, type: ti, r: c[0] * tint, g: c[1] * tint, b: c[2] * tint });
+      L.cars.push({ s, type: ti, r: c[0] * tint, g: c[1] * tint, b: c[2] * tint, keep: rnd() });
       counts[ti]++;
       s += TYPES[ti].len + L.gap[0] + rnd() * (L.gap[1] - L.gap[0]);
     }
@@ -101,8 +101,11 @@ export async function createTraffic(ctx, items, prepare) {
   }
 
   const active = new Set();
+  let density = 1;
   return {
     object: root,
+    /** Fraction of the vehicles drawn (quality: low 0.35, medium 0.7, high/ultra 1). */
+    setDensity(d) { density = Math.max(0, Math.min(1, d)); },
     update(dt, camPos) {
       n.fill(0);
       active.clear();
@@ -119,7 +122,7 @@ export async function createTraffic(ctx, items, prepare) {
           car.s += ds;
           if (car.s > L.len) car.s -= L.len;
           const im = inst[car.type];
-          if (!im) continue;
+          if (!im || car.keep > density) continue;
           place(L, car, n[car.type]++);
         }
       }

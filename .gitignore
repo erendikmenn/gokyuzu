@@ -17,3 +17,4 @@ blender/**/tex/
 blender/**/*.jpg
 blender/**/*.exr
 *.blend
+dist/

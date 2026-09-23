@@ -1,0 +1,30 @@
+#!/usr/bin/env node
+// Loads the game from a publish-build server and lists every HTTP >= 400 response per aircraft/spawn.
+// Usage: node tools/deploy/check_dist.mjs [baseUrl]   (default http://localhost:5190/)
+import { chromium } from 'playwright';
+const base = process.argv[2] || 'http://localhost:5190/';
+const cases = [['f16', 'KNGZ-24'], ['f22', 'AIR-GGB'], ['a320neo', 'KSFO-28R'], ['b737', 'AIR-SFO-FINAL'], ['uh60', 'AIR-CITY'], ['a320neo', 'KOAK-30']];
+const browser = await chromium.launch({ args: ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist'] });
+let bad = 0;
+for (const [ac, sp] of cases) {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  const errors = new Set();
+  page.on('response', (r) => { if (r.status() >= 400) errors.add(`${r.status()} ${r.url().replace(base, '/')}`); });
+  page.on('pageerror', (e) => errors.add(`pageerror ${e.message}`));
+  page.on('console', (m) => { if (m.type() === 'error' && !/ERR_ABORTED/.test(m.text())) errors.add(`console ${m.text().slice(0, 160)}`); });
+  await page.goto(`${base}index.html?aircraft=${ac}&spawn=${sp}`);
+  await page.waitForTimeout(15000);
+  const ok = await page.evaluate(() => !!(window.__game && window.__game.flight && window.__game.rig)).catch(() => false);
+  console.log(`${ac}@${sp}: ready=${ok} problems=${errors.size}`);
+  for (const e of errors) console.log('   ', e);
+  bad += errors.size + (ok ? 0 : 1);
+  await page.close();
+}
+for (const p of ['galeri.html', 'ada.html']) {
+  const page = await browser.newPage(); const errors = [];
+  page.on('response', (r) => { if (r.status() >= 400) errors.push(`${r.status()} ${r.url()}`); });
+  await page.goto(base + p); await page.waitForTimeout(3000);
+  console.log(`${p}: problems=${errors.length}`); errors.slice(0, 5).forEach((e) => console.log('   ', e)); bad += errors.length; await page.close();
+}
+await browser.close();
+process.exit(bad ? 1 : 0);

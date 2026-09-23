@@ -232,10 +232,30 @@ function createCollision(groundAt = () => 0) {
 }
 
 // ---------------------------------------------------------------------------------------------- materials
-function prepareMaterials(root, sink, { shadows = true } = {}) {
+// Thin ropes (suspenders, hand ropes) are centimetres wide: without MSAA they break into dashes at a distance.
+// *_cable materials push their vertices out along the normal so that a rope stays about 1 px wide (fades out at 4 km).
+const ROPE = { uLmPixel: { value: 0.001 } };
+function widenRopes(m) {
+  m.onBeforeCompile = (sh) => {
+    sh.uniforms.uLmPixel = ROPE.uLmPixel;
+    sh.vertexShader = 'uniform float uLmPixel;\n' + sh.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
+      {
+        vec4 lmView = modelViewMatrix * vec4(transformed, 1.0);
+        float lmDist = max(-lmView.z, 0.0);
+        transformed += normalize(objectNormal) * (lmDist * uLmPixel * 0.5) * (1.0 - smoothstep(2500.0, 4000.0, lmDist));
+      }`);
+  };
+  m.customProgramCacheKey = () => 'lm-rope';
+}
+
+function applyShadows(root, cast, receive) {
+  root.traverse((o) => { if (o.isMesh) { o.castShadow = cast; o.receiveShadow = receive; } });
+}
+
+function prepareMaterials(root, sink, { shadows = true, cast = shadows } = {}) {
   root.traverse((o) => {
     if (!o.isMesh) return;
-    o.castShadow = shadows;
+    o.castShadow = cast;
     o.receiveShadow = shadows;
     const mats = Array.isArray(o.material) ? o.material : [o.material];
     for (const m of mats) {
@@ -252,6 +272,7 @@ function prepareMaterials(root, sink, { shadows = true } = {}) {
         if (n.includes('warn')) sink.warn.push(m); else sink.lamp.push(m);
       }
       if (n.includes('_glass')) { m.envMapIntensity = 1.4; }
+      if (n.endsWith('_cable')) widenRopes(m);
     }
   });
 }
@@ -291,10 +312,11 @@ function anchorShift(ctx, group, ax, g, az, cache) {
 }
 
 class Landmark {
-  constructor(def, ctx, parent, sink) {
+  constructor(def, ctx, parent, sink, qs) {
     this.def = def;
     this.ctx = ctx;
     this.sink = sink;
+    this.qs = qs;                 // shared quality state { lodScale, shadows }
     this.group = new THREE.Group();
     this.group.name = `landmark_${def.id}`;
     this.inst = def.instances || null;
@@ -373,9 +395,19 @@ class Landmark {
   }
 
   wantedLod(dist) {
-    const L = this.def.lods;
-    for (let i = 0; i < L.length; i++) if (dist < L[i].dist) return i;
+    const L = this.def.lods, k = this.qs.lodScale;
+    for (let i = 0; i < L.length; i++) if (dist < L[i].dist * k) return i;
     return L.length - 1;
+  }
+
+  /** Shadow flags for LOD i under the current quality: only the nearest LOD casts, LOD0/LOD1 receive. */
+  shadowFlags(i) {
+    const on = this.qs.shadows && this.def.shadows !== false;
+    return { cast: on && i === 0, receive: on && i < 2 };
+  }
+
+  applyQuality() {
+    this.lods.forEach((o, i) => { if (o) { const f = this.shadowFlags(i); applyShadows(o, f.cast, f.receive); } });
   }
 
   load(i) {
@@ -384,7 +416,8 @@ class Landmark {
     this.pending[i] = this.ctx.loader.loadGLTF(url).then((gltf) => {
       let obj = gltf.scene;
       if (obj.parent) obj = obj.clone();
-      prepareMaterials(obj, this.sink, { shadows: i < 2 && this.def.shadows !== false });
+      const f = this.shadowFlags(i);
+      prepareMaterials(obj, this.sink, { shadows: f.receive, cast: f.cast });
       if (this.inst) obj = this.instantiate(obj);
       if (this.def.anchored) this.applyAnchors(obj);
       obj.visible = false;
@@ -445,7 +478,16 @@ export async function createLandmarks(ctx) {
     return empty;
   }
   const sink = { warn: [], lamp: [] };
-  const items = index.landmarks.map((def) => new Landmark(def, ctx, root, sink));
+  // graphics quality (CONTRACTS-SF.md §8): LOD distance scale + shadow policy, shared by every landmark
+  const qs = { lodScale: 1, shadows: true, traffic: 1 };
+  const readQuality = (q) => {
+    if (!q) return;
+    if (Number.isFinite(q.landmarkLodScale)) qs.lodScale = q.landmarkLodScale;
+    if (typeof q.shadows === 'boolean') qs.shadows = q.shadows;
+    qs.traffic = q.id === 'low' ? 0.35 : q.id === 'medium' ? 0.7 : 1;
+  };
+  readQuality(ctx.quality);
+  const items = index.landmarks.map((def) => new Landmark(def, ctx, root, sink, qs));
   const groundAt = (x, z) => (ctx.terrain ? ctx.terrain.getHeight(x, z) : 0);
   let collision = createCollision(groundAt);
   const glow = createGlow(8192);
@@ -500,7 +542,7 @@ export async function createLandmarks(ctx) {
   // moving traffic on the bridges (loaded in the background; never blocks the layer)
   let traffic = null;
   createTraffic(ctx, items, (obj) => prepareMaterials(obj, sink, { shadows: false }))
-    .then((tr) => { if (tr) { traffic = tr; root.add(tr.object); } })
+    .then((tr) => { if (tr) { traffic = tr; tr.setDensity(qs.traffic); root.add(tr.object); } })
     .catch((e) => console.warn('[landmarks] traffic', e));
 
   // initial loads: coarsest LOD everywhere, the LOD needed at the focus point for nearby landmarks
@@ -544,6 +586,8 @@ export async function createLandmarks(ctx) {
       const blinkOn = ((t / 1.5) % 1) < 0.5;
       for (const m of sink.warn) m.emissiveIntensity = m.userData.baseEmissive * (blinkOn ? 1 : 0.05);
       glow.update(t, camera, ctx.renderer, night);
+      const hpx = ctx.renderer ? ctx.renderer.domElement.height : 900;
+      ROPE.uLmPixel.value = 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) / Math.max(1, hpx);
     },
     heightAt: (x, z) => collision.heightAt(x, z),
     // { bottom, top } of the obstacles at (x, z); bottom is the deck/cable underside for bridges, -Infinity for grounded
@@ -551,6 +595,13 @@ export async function createLandmarks(ctx) {
     spanAt: (x, z, out) => collision.spanAt(x, z, out),
     hitTest: (x, y, z, r) => collision.hitTest(x, y, z, r),
     replace() { for (const it of items) it.place(); buildWorldData(); },
+    /** Live quality change (CONTRACTS-SF.md §8): q.landmarkLodScale scales the LOD switch distances, q.shadows
+     * (false = no landmark shadows; otherwise only the nearest LOD casts), traffic density 35 % / 70 % / 100 %. */
+    setQuality(q) {
+      readQuality(q);
+      for (const it of items) { it.applyQuality(); it.shown = -2; }    // force the LOD re-selection on next update
+      if (traffic) traffic.setDensity(qs.traffic);
+    },
     // debug / tooling
     items, get collision() { return collision; },
   };

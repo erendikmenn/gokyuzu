@@ -6,8 +6,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const port = Number(process.argv[2] || 5173);
+// Usage: node tools/serve.mjs [port] [--root <dir>]   (default root: the repo; e.g. --root dist to test the publish build)
+const argv = process.argv.slice(2);
+const rootArg = argv.includes('--root') ? argv[argv.indexOf('--root') + 1] : null;
+const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const root = rootArg ? path.resolve(repo, rootArg) : repo;
+const port = Number(argv.find((a) => /^\d+$/.test(a)) || 5173);
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.md': 'text/markdown; charset=utf-8',
