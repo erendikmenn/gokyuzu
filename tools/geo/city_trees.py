@@ -349,6 +349,21 @@ def main():
         fb[k] += len(cand)
     print(f'fallback scatter (no photo): {dict(fb)} ({time.time() - t0:.0f} s)', flush=True)
 
+    # ---- final exclusion for every tree (street/OSM trees too): landmarks, airports (aerodromes, W4 zones incl. the
+    # KNGZ air base fence line), Alameda Point, plus a clear strip along every runway
+    rw = json.load(open(os.path.join(ROOT, 'data', 'sf', 'runways.json')))
+    strips = []
+    for apt in rw['airports']:
+        for r in apt['runways']:
+            a, b = r['ends']
+            strips.append(LineString([(a['x'], a['z']), (b['x'], b['z'])]).buffer(r['width'] / 2 + 150, cap_style=2))
+    ex_all = STRtree(excl + apt_zones + strips)
+    xy = np.array([(t[0], t[1]) for t in trees])
+    hit = ex_all.query(shapely.points(xy), predicate='intersects')
+    bad = set(hit[0].tolist())
+    trees = [t for k, t in enumerate(trees) if k not in bad]
+    print(f'excluded {len(bad)} trees (airports / landmarks / runway strips)', flush=True)
+
     # ---- tiles
     tiles = defaultdict(list)
     for (x, z, s, h, key) in trees:

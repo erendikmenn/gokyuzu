@@ -29,8 +29,8 @@ TILES = os.path.join(REPO, 'data', 'sf', 'cache', 'city', 'tiles')
 # camera / look in three.js local meters (y = above terrain when agl=True); sun elevation, azimuth (deg from north, cw)
 VIEWS = {
     'alamo': dict(cam=(-5330, 70, -17370), look=(-2900, 70, -18750), lens=40, radius=3200, far=16000, sun=(11, 215), agl=True, haze=0.00005),
-    'downtown': dict(cam=(-700, 520, -17600), look=(-2500, 60, -19400), lens=30, radius=3500, far=18000, sun=(22, 250), agl=True),
-    'sunset': dict(cam=(-9200, 190, -14300), look=(-10600, 10, -16300), lens=30, radius=2600, far=12000, sun=(7, 275), agl=True),
+    'downtown': dict(cam=(-400, 480, -17300), look=(-2400, 90, -19300), lens=32, radius=3400, far=18000, sun=(24, 235), agl=True, haze=0.00007),
+    'sunset': dict(cam=(-9000, 160, -14200), look=(-10400, 10, -16000), lens=30, radius=2600, far=12000, sun=(14, 250), agl=True, haze=0.00008),
     'mission': dict(cam=(-4390, 40, -15230), look=(-4380, 12, -15950), lens=35, radius=2000, far=9000, sun=(12, 255), agl=True),
 }
 

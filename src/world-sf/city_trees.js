@@ -1,7 +1,8 @@
 // W2 city: instanced trees (street trees, parks, forests, back yards, scrub) — 9 Blender species, 2 LODs each.
 // Tree tiles (2 km, assets/sf/city/trees/<i>_<j>.bin) stream around the camera; each tile is binned into 250 m cells
 // with precomputed instance matrices per species, so rebuilding the global per-species InstancedMeshes (LOD0 near,
-// LOD1 far) is mostly bulk copies. Trees sit on ctx.terrain; heightAt/hitTest cover loaded trees ("ağaç").
+// LOD1 far) is mostly bulk copies. Trees sit on ctx.terrain. heightAt/hitTest here are available for tools but the
+// city layer does not report trees as obstacles (helicopters must be able to land next to / GPWS ignores canopy).
 import * as THREE from 'three';
 
 const CELL = 250;

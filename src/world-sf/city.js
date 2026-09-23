@@ -1,7 +1,8 @@
 // W2 city layer: San Francisco + Bay Area buildings (DataSF LiDAR footprints + OSM, meshes built in Blender) and trees.
-// Streams three LOD levels (L0 500 m tiles with full detail, L1 1 km simplified, L2 2 km merged blocks) chosen per
-// 2 km cell by camera distance, swaps a cell's level only once every tile of the new level is loaded (no holes), drops
-// every building onto the live terrain (ctx.terrain.getHeight) and answers heightAt / hitTest from 4 m obstacle rasters.
+// Streams four LOD levels (L0 500 m tiles with full detail < 1.3 km, L1 1 km simplified < 3.6 km, L2 2 km merged
+// blocks < 8 km, L3 2 km tall blocks only beyond) chosen per 2 km cell by camera distance, swaps a cell's level only
+// once every tile of the new level is loaded (no holes), drops every building onto the live terrain
+// (ctx.terrain.getHeight) and answers heightAt / hitTest from 4 m building obstacle rasters (trees are not obstacles).
 import * as THREE from 'three';
 import { createCityMaterial, prepareCityGeometry } from './city_material.js';
 import { createCityObstacles } from './city_obstacles.js';
@@ -271,15 +272,8 @@ export async function createCity(ctx, options = {}) {
       pump();
       if (trees) trees.update(dt, camera);
     },
-    heightAt(x, z) {
-      const hb = obstacles.heightAt(x, z);
-      const ht = trees ? trees.heightAt(x, z) : -Infinity;
-      return hb > ht ? hb : ht;
-    },
-    hitTest(x, y, z, r) {
-      const hit = obstacles.hitTest(x, y, z, r);
-      if (hit) return hit;
-      return trees ? trees.hitTest(x, y, z, r) : null;
-    },
+    // buildings only: trees are not obstacles for physics/GPWS (a helicopter must not land on treetops)
+    heightAt(x, z) { return obstacles.heightAt(x, z); },
+    hitTest(x, y, z, r) { return obstacles.hitTest(x, y, z, r); },
   };
 }
