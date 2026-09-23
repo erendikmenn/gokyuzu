@@ -1,14 +1,22 @@
 #!/usr/bin/env node
 // Builds dist/ = exactly the files the published game needs (no Blender sources, caches, raw data, tests, dev pages).
-// Files are hard-linked (no extra disk space). Usage: node tools/deploy/build_dist.mjs [--gallery]
+// Files are hard-linked (no extra disk space). The JavaScript is bundled (tools/build/bundle.mjs: minified, code-split,
+// content-hashed chunks in dist/js/, pages rewritten with modulepreload); development keeps serving src/ unbundled.
+// Usage: node tools/deploy/build_dist.mjs [--gallery] [--out <dir>]   (--out: build elsewhere than dist/, e.g. a scratch dir)
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { execSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { bundlePage, JS_DIR } from '../build/bundle.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-const dist = path.join(root, 'dist');
+const outIdx = process.argv.indexOf('--out');
+const dist = outIdx > 0 ? path.resolve(process.argv[outIdx + 1]) : path.join(root, 'dist');
+// --out gets emptied first: only ever an empty/new directory or an earlier build (never the repo or one of its parents)
+if (outIdx > 0 && (root === dist || root.startsWith(dist + path.sep) || (fs.existsSync(dist) && fs.readdirSync(dist).length && !fs.existsSync(path.join(dist, 'build.json'))))) {
+  throw new Error(`--out ${dist}: not an earlier build output`);
+}
 const withGallery = process.argv.includes('--gallery');
 
 // directory names and file patterns that are build inputs / caches, never loaded by the game
@@ -44,18 +52,17 @@ function addFile(rel) { if (fs.existsSync(path.join(root, rel))) link(path.join(
 fs.rmSync(dist, { recursive: true, force: true });
 fs.mkdirSync(dist, { recursive: true });
 
-// pages
-addFile('index.html');
-addFile('ada.html');
+// pages (index.html and ada.html are written by the JavaScript bundle step below)
 for (const f of ['favicon.ico', 'favicon.svg', 'favicon-180.png', 'apple-touch-icon.png', 'apple-touch-icon-precomposed.png', 'manifest.json', 'robots.txt']) addFile(f);   // site icons (iOS probes the root apple-touch-icon names), web app manifest, crawler rules
-// code (no per-agent dev/test pages inside src)
-addTree('src', (rel) => !/\/(preview|view|cockpit_check)\.html$/.test(rel) && !rel.includes(`${path.sep}tools${path.sep}`));
+// code: the modules are bundled into js/ below; src/ keeps the files the code loads by URL (fonts, map image, CSS);
+// no per-agent dev/test pages
+addTree('src', (rel) => !/\.m?js$/.test(rel) && !/\/(preview|view|cockpit_check)\.html$/.test(rel) && !rel.includes(`${path.sep}tools${path.sep}`));
 // shared data (runways, landmarks, region, …)
 addTree('data/sf', (rel) => rel.endsWith('.json'));
-// three.js runtime (import map points at node_modules/three/…)
+// three.js is bundled too; the Draco / Basis decoders stay files (loaded at runtime from src/core/assets.js LIBS)
 addFile('node_modules/three/LICENSE');
-addTree('node_modules/three/build');
-addTree('node_modules/three/examples/jsm');
+addTree('node_modules/three/examples/jsm/libs/draco');
+addTree('node_modules/three/examples/jsm/libs/basis');
 // game assets
 addTree('assets');
 // menu thumbnails (and optionally the render gallery)
@@ -64,6 +71,41 @@ if (withGallery) {
   addFile('galeri.html');
   addFile('renders/manifest.json');
   addTree('renders', (rel) => /\.(png|jpe?g|webp)$/i.test(rel));
+}
+
+// JavaScript bundle (tools/build/bundle.mjs): each page's module graph → dist/js/<name>-<content hash>.js (+ external
+// source maps, never uploaded: deploy.sh skips *.map), the page rewritten to load it. Hashed names are the cache busting
+// for code (deploy.sh: js/ a year + immutable, the pages no-cache). Deploy builds also keep their maps in
+// node_modules/.cache/gokyuzu/sourcemaps/<target>/ so errors of a live build can be mapped back after dist/ was rebuilt
+// (tools/build/symbolicate.mjs).
+{
+  const t0 = Date.now();
+  const jsDir = path.join(dist, JS_DIR);
+  fs.rmSync(jsDir, { recursive: true, force: true });
+  const summary = [];
+  for (const page of ['index.html', 'ada.html']) {
+    if (!fs.existsSync(path.join(root, page))) continue;
+    const r = await bundlePage({ root, dist, page });
+    summary.push(`${page} → ${r.entry} + ${r.preload.length} preloaded chunks`);
+    files++;
+  }
+  let jsBytes = 0, jsFiles = 0;
+  for (const f of fs.readdirSync(jsDir)) if (f.endsWith('.js')) { jsFiles++; jsBytes += fs.statSync(path.join(jsDir, f)).size; }
+  files += jsFiles; bytes += jsBytes;
+  const target = process.env.DEPLOY_TARGET;
+  if (target) {
+    const archive = path.join(root, 'node_modules/.cache/gokyuzu/sourcemaps', target);
+    fs.mkdirSync(archive, { recursive: true });
+    for (const f of fs.readdirSync(jsDir)) {
+      if (!f.endsWith('.map')) continue;
+      const dst = path.join(archive, f);
+      fs.rmSync(dst, { force: true });
+      try { fs.linkSync(path.join(jsDir, f), dst); } catch { fs.copyFileSync(path.join(jsDir, f), dst); }
+    }
+    const old = Date.now() - 90 * 864e5;   // S3 keeps old versions 30 days (rollback.py); errors of older builds are unlikely
+    for (const f of fs.readdirSync(archive)) if (fs.statSync(path.join(archive, f)).mtimeMs < old) fs.rmSync(path.join(archive, f));
+  }
+  console.log(`js/: ${jsFiles} chunks, ${(jsBytes / 1e6).toFixed(2)} MB (${summary.join('; ')}) in ${((Date.now() - t0) / 1000).toFixed(1)} s`);
 }
 
 // Cache busting for sounds: write each file's content hash into dist's copy of the audio manifest

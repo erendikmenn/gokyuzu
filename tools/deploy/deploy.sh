@@ -19,7 +19,10 @@ case "$TARGET" in
 esac
 node tools/make_gallery.mjs >/dev/null
 DEPLOY_TARGET="$TARGET" node tools/deploy/build_dist.mjs --gallery
-aws s3 sync dist/node_modules $BUCKET/node_modules --delete --only-show-errors --cache-control "public, max-age=604800"
+# node_modules/: only three's Draco/Basis decoders are files now (three itself is in the JS bundle). The unbundled modules of
+# the pre-bundle site (three/build, the rest of three/examples/jsm) stay for pages opened before; prune_js.mjs removes them.
+aws s3 sync dist/node_modules $BUCKET/node_modules --delete --only-show-errors --cache-control "public, max-age=604800" \
+  --exclude "three/build/*" --exclude "three/examples/jsm/*" --include "three/examples/jsm/libs/draco/*" --include "three/examples/jsm/libs/basis/*"
 # Game files are requested as <file>?v=<hash of its directory> (CONTRACTS-SF.md §9, dist/assets/versions.json), so a
 # changed file gets a new URL and no browser keeps an old copy. They still get 1 day, not a year + immutable: S3 and
 # CloudFront send one Cache-Control per object whatever the query string, some requests stay unversioned (render gallery,
@@ -32,7 +35,18 @@ aws s3 sync dist/renders $BUCKET/renders --delete --only-show-errors --cache-con
 # the version map goes up only after every file it points to (nobody gets a new ?v= URL before its file is there);
 # short-lived like the other JSON, and the game revalidates it on every start (fetch cache: 'no-cache')
 aws s3 cp dist/assets/versions.json $BUCKET/assets/versions.json --only-show-errors --cache-control "public, max-age=300" --content-type "application/json"
-aws s3 sync dist $BUCKET --delete --only-show-errors --exclude "assets/*" --exclude "node_modules/*" --exclude "renders/*" --cache-control "public, max-age=300"
+# JavaScript (tools/build/bundle.mjs): chunk names carry their content hash, so a year + immutable (no revalidation), and
+# uploaded before the pages that name them. Never --delete here: pages opened before this deploy still import their
+# lazy chunks (aircraft, sounds) from their own build; prune_js.mjs below removes chunks no open page can need.
+# Source maps (*.map) are never uploaded (kept locally: dist/js and node_modules/.cache/gokyuzu/sourcemaps/).
+aws s3 sync dist/js $BUCKET/js --size-only --only-show-errors --exclude "*.map" --cache-control "public, max-age=31536000, immutable" --content-type "text/javascript; charset=utf-8"
+# the rest (pages, build.json, icons, fonts/images under src/, data/): 5 min; the unbundled src/**/*.js of the pre-bundle
+# site is left to prune_js.mjs
+aws s3 sync dist $BUCKET --delete --only-show-errors --exclude "assets/*" --exclude "node_modules/*" --exclude "renders/*" --exclude "js/*" --exclude "src/*.js" --exclude "*.map" --cache-control "public, max-age=300"
+# pages last and never cached without revalidation: a page names the hashed chunks of exactly its own build, so a
+# reload always gets the current build in one piece (no mix of old and new modules)
+aws s3 cp dist $BUCKET --recursive --exclude "*" --include "*.html" --only-show-errors --cache-control "no-cache" --content-type "text/html; charset=utf-8"
+node tools/build/prune_js.mjs $BUCKET
 INV_ID=$(aws cloudfront create-invalidation --distribution-id $DIST_ID --paths "/*" --query "Invalidation.Id" --output text)
 if [ "$TARGET" = "production" ]; then
   # fs.erenailab.com sits behind the Cloudflare proxy: once CloudFront serves the new files, drop Cloudflare's copies
