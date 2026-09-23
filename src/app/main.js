@@ -181,6 +181,7 @@ const cameraRig = createCameraRig(camera, renderer.domElement, worldProxy);
 Object.assign(state, { camera, cameraRig, renderer, scene, hud, audio });   // test hooks (CONTRACTS-SF.md §7)
 const SYSTEM_ACTIONS = ['gear', 'flapsDown', 'flapsUp', 'speedbrake', 'reverser', 'canopy', 'lights', 'autopilot'];
 for (const a of SYSTEM_ACTIONS) input.on(a, () => { if (state.flight && state.flight.command) state.flight.command(a); });
+input.on('autopilot', () => { if (audio.acknowledge) audio.acknowledge(); });   // silences an AP-disconnect alert (the causing press is ignored by audio)
 input.on('camera', () => hud.showMessage(`Kamera: ${cameraRig.next()}`, 1000));
 input.on('cameraPrev', () => hud.showMessage(`Kamera: ${cameraRig.prev()}`, 1000));
 input.on('view', () => hud.showMessage(cameraRig.toggleView(), 1000));

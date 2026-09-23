@@ -100,6 +100,30 @@ def tts(text, voice_id, model='eleven_multilingual_v2', stability=0.8, similarit
     return signal.resample_poly(pcm, 160, 147)        # 44.1 kHz → 48 kHz
 
 
+def sound_effect(text, duration, prompt_influence=0.6, tag='sfx'):
+    """ElevenLabs sound-effects generation → float samples at 48 kHz (MP3 cached under data/sf/raw/elevenlabs/sfx)."""
+    import subprocess
+    import tempfile
+    body = {'text': text, 'duration_seconds': duration, 'prompt_influence': prompt_influence}
+    h = hashlib.sha1(json.dumps(body, sort_keys=True).encode()).hexdigest()[:20]
+    d = os.path.join(CACHE, 'sfx')
+    os.makedirs(d, exist_ok=True)
+    path = os.path.join(d, f'{tag}_{h}.mp3')
+    if not os.path.exists(path):
+        raw = _request('POST', '/sound-generation', body, accept='audio/mpeg')
+        with open(path, 'wb') as fh:
+            fh.write(raw)
+        with open(os.path.join(d, 'index.jsonl'), 'a') as fh:
+            fh.write(json.dumps({'file': os.path.basename(path), **body}) + '\n')
+    with tempfile.TemporaryDirectory() as td:
+        wav = os.path.join(td, 'o.wav')
+        subprocess.run(['afconvert', '-f', 'WAVE', '-d', f'LEI16@{SR_OUT}', path, wav], check=True, capture_output=True)
+        from scipy.io import wavfile
+        sr, x = wavfile.read(wav)
+    x = x.astype(float) / 32768.0
+    return x.mean(axis=1) if x.ndim > 1 else x
+
+
 def chars_used():
     return _chars_used
 

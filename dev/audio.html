@@ -49,6 +49,7 @@
       <label class="c"><input type="checkbox" id="ground" checked />yerde</label>
       <label class="c"><input type="checkbox" id="spool" checked />motor gecikmesi</label>
       <label class="c"><input type="checkbox" id="ap" />otopilot</label>
+      <button id="apFault" title="istem dışı ayrılma: onaylanana (O) kadar çalar">AP arızası</button>
       <label class="c"><input type="checkbox" id="crash" />kaza</label>
     </fieldset>
     <fieldset><legend>Sistemler</legend>
@@ -97,6 +98,7 @@ const flight = {
   gear: 1, flaps: 0, flapsIndex: 0, spoilers: 0, speedbrake: 0, reverser: 0, brakes: 0, fuel: 1000,
   warnings: { stall: false, overspeed: false, gear: false, bank: false, sinkRate: false, pullUp: false },
   autopilot: { on: false }, rotorRPM: 1, collective: 0.4, torque: 0.5, stalled: false, canopy: 0,
+  _ls: {}, on(ev, cb) { (this._ls[ev] ||= []).push(cb); }, _emit(ev, d) { for (const cb of this._ls[ev] || []) cb(d); },
   getVisualState() { return { canopy: this.canopy, engines: this.engines.map((e) => ({ n1: e.n1, afterburner: e.afterburner, reverser: this.reverser })) }; },
 };
 window.__fake = flight;
@@ -135,6 +137,7 @@ async function load(id) {
   flight.engines.length = 0;
   for (let i = 0; i < nE; i++) flight.engines.push({ n1: 0.2, thrust: 0, afterburner: 0 });
 }
+$('apFault').onclick = () => { if (!flight.autopilot.on) return; flight.autopilot.on = false; $('ap').checked = false; flight._emit('autopilot', { on: false, reason: 'fault' }); };
 $('start').onclick = async () => { audio.start(); if (!current) await load($('ac').value); };
 $('ac').onchange = () => load($('ac').value);
 $('mute').onchange = (e) => audio.setMuted(e.target.checked);
@@ -208,7 +211,7 @@ function frame() {
   f.reverser = S.rev; f.airspeed = S.tas; f.ias = S.tas * Math.exp(-S.agl / 16000); f.mach = S.tas / 340; f.agl = S.agl; f.altitude = S.agl;
   f.verticalSpeed = S.vs; f.gForce = S.g; f.onGround = $('ground').checked; f.crashed = $('crash').checked; f.gear = S.gear; f.flaps = S.flaps;
   f.speedbrake = S.sb; f.spoilers = S.spoil; f.brakes = S.brake; f.canopy = S.canopy; f.rotorRPM = S.rotor; f.collective = S.coll; f.torque = S.coll;
-  f.autopilot.on = $('ap').checked;
+  if (f.autopilot.on !== $('ap').checked) { f.autopilot.on = $('ap').checked; f._emit('autopilot', { on: f.autopilot.on, reason: 'pilot' }); }
   // aircraft pose & camera
   const mode = $('cam').value;
   if (mode === 'static') {
@@ -288,6 +291,39 @@ window.__rec = (() => {
 })();
 window.__ready = () => { const d = audio.debug(); return d.state === 'running' && d.layers.length > 0 && d.layers.every((l) => l.loaded); };
 const qp = new URLSearchParams(location.search);
+
+// ---- ?ap=1 : autopilot-disconnect audition (candidates from assets/audio/candidates/apdisc/index.json) ----
+if (qp.get('ap')) {
+  const panel = document.createElement('div');
+  panel.style.cssText = 'margin:10px;padding:12px 16px;border:1px solid #c07a3a;border-radius:8px;background:#1d1812;max-width:980px';
+  panel.innerHTML = '<h2 style="margin:0 0 6px;font-size:16px;color:#f0b070">Otopilot ayırma sesi — dinle ve seç</h2>'
+    + '<div style="color:#b9a58c;margin-bottom:8px">A320: “cavalry charge” (kısa sentetik boru fanfarı) · 737: “wailer” (inip çıkan elektronik siren). '
+    + 'Her aday aynı ses yüksekliğine ayarlandı. Beğendiğinin kimliğini (ör. <code>a320_synthA</code>) söylemen yeterli.</div><div id="apList"></div>';
+  document.body.insertBefore(panel, document.body.firstChild);
+  fetch('../assets/audio/candidates/apdisc/index.json').then((r) => r.json()).then((items) => {
+    const list = panel.querySelector('#apList');
+    let current = null;
+    for (const ac of ['a320neo', 'b737']) {
+      const h = document.createElement('h3');
+      h.textContent = ac === 'a320neo' ? 'Airbus A320neo — cavalry charge' : 'Boeing 737-800 — A/P disconnect wailer';
+      h.style.cssText = 'margin:10px 0 4px;font-size:14px;color:#8fb4d8';
+      list.appendChild(h);
+      for (const it of items.filter((x) => x.aircraft === ac)) {
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:center;gap:10px;margin:3px 0';
+        const b = document.createElement('button');
+        b.textContent = '▶ ' + it.id;
+        b.style.minWidth = '150px';
+        const a = new Audio('../assets/audio/' + it.file + '.wav');
+        b.onclick = () => { if (current) { current.pause(); current.currentTime = 0; } current = a; a.currentTime = 0; a.play(); };
+        const lab = document.createElement('span');
+        lab.textContent = it.label;
+        row.append(b, lab);
+        list.appendChild(row);
+      }
+    }
+  });
+}
 if (qp.get('ac')) { $('ac').value = qp.get('ac'); }
 if (qp.get('cam')) { $('cam').value = qp.get('cam'); }
 // headless/automation: ?auto=1 starts on the first click anywhere

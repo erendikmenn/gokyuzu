@@ -349,6 +349,7 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
       if (L.src) try { L.src.stop(t + 0.3); } catch { /* */ }
     }
     stopVoice(I);
+    stopApDisc(I);
     setTimeout(() => {
       for (const L of all) { try { L.g.disconnect(); L.src && L.src.disconnect(); L.f && L.f.disconnect(); L.ext && L.ext.disconnect(); L.int && L.int.disconnect(); } catch { /* */ } }
       for (const em of Object.values(I.emitters)) { try { em.pan.disconnect(); em.intIn.disconnect(); em.intPan && em.intPan.disconnect(); } catch { /* */ } }
@@ -768,9 +769,8 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
     // autopilot engage / disconnect
     const ap = !!(f.autopilot && f.autopilot.on);
     if (I.apOn !== null && ap !== I.apOn) {
-      const A = I.profile.alerts || {};
-      if (!ap && A.apDisconnect) playFile(I, A.apDisconnect, { bus: G.alert, gain: 0.9 });
-      else shot(I, 'clickSoft', { bus: G.ui, gain: 0.7 });
+      if (ap) { shot(I, 'clickSoft', { bus: G.ui, gain: 0.7 }); stopApDisc(I); }
+      else if (!I.apEvents) apDisconnect(I, false);          // flight model without events: treat as intentional
     }
     I.apOn = ap;
     // sonic boom when accelerating through Mach 1 near an exterior camera
@@ -778,6 +778,55 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
       I.boomT = now;
       playBoom(I, air);
     }
+  }
+
+  // ---- autopilot disconnect aural alert -------------------------------------------------------------------
+  // A320 'cavalry charge': once on an intentional disconnect, repeating until acknowledged when involuntary.
+  // 737 'wailer': sounds ~3 s (intentional) or until acknowledged (involuntary, max 8 s).
+  // Acknowledge = a second autopilot-disconnect press (KeyO / api.acknowledge()) or the autopilot re-engaging.
+  function apDisconnect(I, involuntary) {
+    const A = I.profile.alerts || {};
+    if (!A.apDisconnect || !ctx) return;
+    stopApDisc(I);
+    const boeing = A.style === 'boeing';
+    const now = ctx.currentTime;
+    I.apd = { t0: now, until: now + (boeing ? (involuntary ? 8 : 3) : (involuntary ? 10 : 0)), file: A.apDisconnect,
+      srcs: [], next: now, boeing, cut: boeing };
+    playApd(I);
+  }
+  function playApd(I) {
+    const apd = I.apd;
+    apd.next = Infinity;
+    getBuffer(apd.file).then((buf) => {
+      if (!buf || I.apd !== apd || inst !== I) return;
+      const src = ctx.createBufferSource(); src.buffer = buf;
+      const gn = gainNode(1);
+      src.connect(gn).connect(G.alert);
+      src.start();
+      apd.srcs.push({ src, gn });
+      apd.next = ctx.currentTime + buf.duration + (apd.boeing ? 0 : 0.35);
+      src.onended = () => { try { gn.disconnect(); } catch { /* */ } };
+    });
+  }
+  function stopApDisc(I) {
+    if (!I || !I.apd) return;
+    const now = ctx.currentTime;
+    for (const { src, gn } of I.apd.srcs) {
+      try { gn.gain.cancelScheduledValues(now); gn.gain.setTargetAtTime(0, now, 0.03); src.stop(now + 0.25); } catch { /* */ }
+    }
+    I.apd = null;
+  }
+  function serviceApDisc(I, now) {
+    const apd = I.apd;
+    if (!apd) return;
+    if (apd.cut && now >= apd.until) { stopApDisc(I); return; }
+    if (now >= apd.next) { if (now < apd.until) playApd(I); else if (now > apd.next + 1) I.apd = null; }
+  }
+  function acknowledge() {
+    if (inst && inst.apd && ctx && ctx.currentTime > inst.apd.t0 + 0.15) stopApDisc(inst);
+  }
+  if (typeof window !== 'undefined') {
+    window.addEventListener('keydown', (e) => { if (e.code === 'KeyO' && !e.repeat) acknowledge(); }, { capture: true });
   }
 
   function playBoom(I, em) {
@@ -807,6 +856,20 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
       try { vis = flight.getVisualState(); I.vis = vis; I.visT = now; } catch { vis = null; }
     } else vis = I.vis || null;
     const s = deriveState(I, dt, flight, opts, vis);
+    if (I.flightRef !== flight) {
+      I.flightRef = flight;
+      I.apEvents = false;
+      if (typeof flight.on === 'function') {
+        try {
+          flight.on('autopilot', (e) => {
+            if (inst !== I || I.flightRef !== flight || !e) return;
+            if (e.on) stopApDisc(I);
+            else apDisconnect(I, e.reason !== 'pilot');
+          });
+          I.apEvents = true;
+        } catch { I.apEvents = false; }
+      }
+    }
 
     // --- geometry
     if (obj) { obj.updateWorldMatrix(true, false); obj.getWorldPosition(vB); obj.getWorldQuaternion(qA); resolveEmitterNodes(I, obj); }
@@ -958,6 +1021,7 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
     // --- transitions, alerts, timers
     runEvents(I, s, flight, dt, obj);
     runAlerts(I, s);
+    serviceApDisc(I, now);
     serviceVoices(I);
     if (I.timers.length) {
       for (let i = I.timers.length - 1; i >= 0; i--) if (now >= I.timers[i].t) { const t = I.timers[i]; I.timers.splice(i, 1); try { t.fn(); } catch { /* */ } }
@@ -982,7 +1046,7 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
     const co = (A.callouts || []).find((c) => String(c.ft) === String(name));
     if (co) return { rel: co.voice, bus: G.alert, voice: true };
     if (name === 'retard' && A.retard) return { rel: A.retard, bus: G.alert, voice: true };
-    if (name === 'apDisconnect' && A.apDisconnect) return { rel: A.apDisconnect, bus: G.alert };
+    if (name === 'apDisconnect' && A.apDisconnect) return { apd: true };
     if (name === 'touchdown') return { rel: p.shots?.touchdownLight || 'common/touchdown_light' };
     if (name === 'boom' || name === 'sonicBoom') return { rel: 'boom' };
     if (name.includes('/')) return { rel: name, bus: name.includes('/v_') ? G.alert : null };
@@ -996,6 +1060,7 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
     const I = inst;
     if (name === 'crash') { if (ctx.currentTime - I.crashT > 1) { I.crashT = ctx.currentTime; shot(I, 'crash', { ext: 1.4, int: 1.2 }); } return; }
     const r = resolveName(I, String(name));
+    if (r.apd) { apDisconnect(I, false); return; }
     if (r.rel === 'boom') { playBoom(I, I.emitters.air); return; }
     if (r.voice) { enqueueVoice(I, r.rel, 6, 'play:' + name, 2); return; }
     const tryPlay = (rel) => getBuffer(rel).then((b) => b);
@@ -1028,6 +1093,7 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
       reduction: G ? +(G.glue.reduction ?? 0).toFixed?.(1) : 0,
       layers: I ? I.layers.map((L) => ({ id: L.id, loaded: !!L.src, g: +(L.last.g ?? 0).toFixed(3), rate: +(L.last.rate ?? 1).toFixed(3), ext: +(L.last.ext ?? 0).toFixed(3), int: +(L.last.int ?? 0).toFixed(3) })) : [],
       emitters: I ? Object.values(I.emitters).map((e) => ({ name: e.name, d: +e.d.toFixed(1), delay: +e.delayCur.toFixed(3), tau: +e.tau.toFixed(3), cos: +e.cos.toFixed(2), inside: e.inside !== false })) : [],
+      apd: I && I.apd ? { file: I.apd.file, srcs: I.apd.srcs.length, left: +(I.apd.until - ctx.currentTime).toFixed(2) } : null,
       voice: I?.voice?.rel ?? null, queue: I ? I.queue.map((q) => q.rel) : [], idleN1: I?.idleN1, s: I ? { n1: I.s.n1, n1s: I.s.n1s, pow: I.s.pow, ab: I.s.ab } : null,
     };
   }
@@ -1044,7 +1110,7 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
 
   const api = {
     muted: false,
-    start, setMuted, setPaused, loadAircraft, update, play, debug, setVolumes,
+    start, setMuted, setPaused, loadAircraft, update, play, debug, setVolumes, acknowledge,
     get volumes() { return { ...vol }; },
     get atcInput() { return G ? G.atc : null; },       // connect ATC/radio sources here (atc volume applies)
     get context() { return ctx; },
