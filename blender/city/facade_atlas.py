@@ -2,7 +2,7 @@
 
   Blender -b -P blender/city/facade_atlas.py -- [--only name1,name2] [--res 1024] [--samples 64]
 
-Outputs assets/sf/city/atlas/cells/<name>_{albedo,data,win,normal}.png (1024 px renders); tools/geo/city_atlas.py packs
+Outputs data/sf/cache/city/atlas_cells/<name>_{albedo,data,win,normal}.png (1024 px renders); tools/geo/city_atlas.py packs
 them into the 4K atlas PNGs + atlas.json. Cell list / sizes: STYLES below (single source of truth, dumped to cells.json).
 """
 import json
@@ -20,7 +20,7 @@ import facade_kit as K  # noqa: E402
 from facade_kit import (Cell, box, quad, prism, wall_with_holes, reveal, window, punched, periodic, srgb,  # noqa: E402
                         m_plain, m_stucco, m_concrete, m_brick, m_stone, m_siding, m_corrugated, m_glass, m_gravel)
 
-OUT = os.path.join(REPO, 'assets', 'sf', 'city', 'atlas', 'cells')
+OUT = os.path.join(REPO, 'data', 'sf', 'cache', 'city', 'atlas_cells')   # build input for tools/geo/city_atlas.py
 TAU = math.pi * 2
 
 

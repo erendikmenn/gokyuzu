@@ -25,7 +25,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'
 from util import reset_scene, setup_cycles, export_glb, REPO  # noqa: E402
 
 OUT = os.path.join(REPO, 'assets', 'sf', 'city', 'trees')
-TEX = os.path.join(OUT, 'tex')
+TEX = os.path.join(REPO, 'data', 'sf', 'cache', 'city', 'tree_tex')   # Cycles-rendered sources, embedded into the GLBs
 REF_H = {'broadleaf': 12, 'small': 7, 'eucalyptus': 28, 'cypress': 14, 'pine': 18, 'conifer': 22, 'palm_date': 11,
          'palm_fan': 16, 'shrub': 2}
 

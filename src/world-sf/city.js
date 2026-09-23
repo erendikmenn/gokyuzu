@@ -10,7 +10,7 @@ import { createCityTrees } from './city_trees.js';
 
 const BASE = 'assets/sf/city/';
 function freeArray() { this.array = null; }
-const DEFAULTS = { r0: 1300, r1: 3600, r2: 8000, rMax: 26000, maxLoads: 4, unloadAfter: 20, frameBudgetMs: 3, uploadsPerFrame: 1, warmUpload: true, lodScale: 1, shadows: true };
+const DEFAULTS = { r0: 1300, r1: 3600, r2: 8000, rMax: 26000, maxLoads: 4, unloadAfter: 20, frameBudgetMs: 3, uploadsPerFrame: 1, warmUpload: true, lodScale: 1, shadows: true, readyRadius: 900 };
 
 export async function createCity(ctx, options = {}) {
   const opt = { ...DEFAULTS, ...options };
@@ -67,8 +67,10 @@ export async function createCity(ctx, options = {}) {
   let active = 0;
   const loadedTiles = new Set();
 
+  let preloadRadius = Infinity;   // while waiting for `ready`, only tiles this close to the focus are requested
   function request(rec, prio) {
     if (rec.state !== 'none') return;
+    if (prio > preloadRadius) return;
     rec.state = 'queued';
     rec.prio = prio;
     queue.push(rec);
@@ -275,31 +277,37 @@ export async function createCity(ctx, options = {}) {
 
   // ---- obstacles, trees -----------------------------------------------------------------------------------------
   const obstacles = createCityObstacles({ base, index: index.obstacles, terrain });
-  let trees = null;
-  if (index.trees) {
+  let trees = null, lastQuality = null;
+  // trees (models ~4 MB + instance tiles) are not needed to start: they load after `ready`, then stream with budgets
+  const startTrees = async () => {
+    if (!index.trees) return;
     try {
       trees = await createCityTrees({ ...ctx, base, getH, indexUrl: base + index.trees });
-      if (q0) trees.setQuality(q0);
+      if (lastQuality || q0) trees.setQuality(lastQuality || q0);
       group.add(trees.object);
     } catch (e) {
       console.warn('[city] trees unavailable:', e.message);
     }
-  }
+  };
 
   // ---- initial load around the focus --------------------------------------------------------------------------------
-  const focusCam = new THREE.Vector3(focus.x, getH(focus.x, focus.z) + 300, focus.z);
+  // `ready` = the obstacle grid around the spawn + the building tiles of the cells within opt.readyRadius at the LOD a
+  // camera near the spawn would show. Everything else (farther tiles, finer LODs, trees) streams after the start.
+  const focusCam = new THREE.Vector3(focus.x, getH(focus.x, focus.z) + 150, focus.z);
+  preloadRadius = opt.readyRadius;
   select(focusCam);
   const ready = (async () => {
     const need = () => {
       let pendingCount = 0;
       for (const c of cells.values()) {
-        if (dist(focusCam, c) > opt.r1 * 1.2) continue;
+        if (dist(focusCam, c) > opt.readyRadius) continue;
         const w = wanted(c, focusCam);
-        for (const t of w.tiles) if (t.state !== 'ready' && t.state !== 'failed') pendingCount++;
+        for (const t of w.tiles) if (t.state !== 'ready' && t.state !== 'failed' && dist(focusCam, t) <= opt.readyRadius) pendingCount++;
       }
       return pendingCount;
     };
     const t0 = performance.now();
+    const obst = obstacles.preload(focus.x, focus.z, 1200);
     while (need() > 0 && performance.now() - t0 < 45000) {
       pump();
       processJobs(25, 64);
@@ -307,9 +315,11 @@ export async function createCity(ctx, options = {}) {
       clock += 0.03;
       select(focusCam);
     }
-    await obstacles.preload(focus.x, focus.z, 2500);
-    if (trees) await trees.ready;
+    await obst;
+    // the rest (farther tiles, trees) starts with the first update() = when the game loop runs, so it doesn't compete
+    // with the other layers / the aircraft for bandwidth before the first playable frame
   })();
+  let started = false;
 
   return {
     object: group,
@@ -328,6 +338,7 @@ export async function createCity(ctx, options = {}) {
     /** CONTRACTS-SF §8 (live): cityLodScale, cityShadows, treeDensity, treeDistance, anisotropy. */
     setQuality(q) {
       if (!q) return;
+      lastQuality = q;
       if (q.cityLodScale != null) this.setLodScale(q.cityLodScale);
       if (q.cityShadows != null) {
         opt.shadows = !!q.cityShadows;
@@ -337,6 +348,7 @@ export async function createCity(ctx, options = {}) {
       if (trees) trees.setQuality(q);
     },
     update(dt, camera) {
+      if (!started) { started = true; preloadRadius = Infinity; startTrees(); }
       clock += dt;
       camera.getWorldPosition(camPos);
       const moved = camPos.distanceToSquared(lastCam) > 15 * 15;

@@ -2,10 +2,10 @@
 
   .venv/bin/python tools/geo/city_atlas.py [--cell 512]
 
-Inputs : assets/sf/city/atlas/cells/<name>_{albedo,data,win,normal}.png + cells.json
-Outputs: assets/sf/city/atlas/atlas_albedo.jpg   RGB albedo (sRGB, sky occlusion baked)
-         assets/sf/city/atlas/atlas_mat.png      R = tint mask, G = roughness, B = window light mask   (linear)
-         assets/sf/city/atlas/atlas_nrm.png      R,G = tangent normal xy, B = metalness                  (linear)
+Inputs : data/sf/cache/city/atlas_cells/<name>_{albedo,data,win,normal}.png + cells.json
+Outputs: assets/sf/city/atlas/atlas_albedo.webp  RGB albedo (sRGB, sky occlusion baked)
+         assets/sf/city/atlas/atlas_mat.webp     R = tint mask, G = roughness, B = window light mask   (linear)
+         assets/sf/city/atlas/atlas_nrm.webp     R,G = tangent normal xy, B = metalness                  (linear)
          assets/sf/city/atlas/atlas.json         grid, cell size and per-layer metadata (name, kind, W, H, floors)
 The runtime splits the 8x8 grid into texture-array layers (one layer per cell) so each cell can tile with REPEAT.
 """
@@ -15,7 +15,7 @@ from PIL import Image
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 ADIR = os.path.join(ROOT, 'assets', 'sf', 'city', 'atlas')
-CDIR = os.path.join(ADIR, 'cells')
+CDIR = os.path.join(ROOT, 'data', 'sf', 'cache', 'city', 'atlas_cells')
 
 
 def load(path, size, mode='RGB', resample=Image.LANCZOS):
@@ -52,15 +52,20 @@ def main():
         nrm[sl] = np.stack([n[..., 0] * 0.5 + 0.5, n[..., 1] * 0.5 + 0.5, d[..., 2]], -1)
         layers.append({'index': i, 'name': c['name'], 'kind': c['kind'], 'W': c['W'], 'H': c['H'], 'floors': c['floors']})
     to8 = lambda x: Image.fromarray(np.clip(x * 255 + 0.5, 0, 255).astype(np.uint8))
-    to8(alb).save(os.path.join(ADIR, 'atlas_albedo.jpg'), quality=92, subsampling=0)
-    to8(mat).save(os.path.join(ADIR, 'atlas_mat.png'), optimize=True)
-    to8(nrm).save(os.path.join(ADIR, 'atlas_nrm.png'), optimize=True)
+    # lossy WebP: ~1.6 MB for all three 4K maps (was 10 MB as JPEG + PNG); data maps at q95 (masks/normals tolerate
+    # the 4:2:0 chroma of VP8 at 1.2 cm/px)
+    to8(alb).save(os.path.join(ADIR, 'atlas_albedo.webp'), 'WEBP', quality=92, method=6)
+    to8(mat).save(os.path.join(ADIR, 'atlas_mat.webp'), 'WEBP', quality=95, method=6)
+    to8(nrm).save(os.path.join(ADIR, 'atlas_nrm.webp'), 'WEBP', quality=95, method=6)
+    for old in ('atlas_albedo.jpg', 'atlas_mat.png', 'atlas_nrm.png'):
+        if os.path.exists(os.path.join(ADIR, old)):
+            os.remove(os.path.join(ADIR, old))
     meta = {'grid': grid, 'cell': cell, 'size': size, 'layers': layers,
-            'images': {'albedo': 'atlas_albedo.jpg', 'mat': 'atlas_mat.png', 'nrm': 'atlas_nrm.png'},
+            'images': {'albedo': 'atlas_albedo.webp', 'mat': 'atlas_mat.webp', 'nrm': 'atlas_nrm.webp'},
             'channels': {'albedo': 'rgb albedo (sRGB)', 'mat': 'r tint mask, g roughness, b window light mask',
                          'nrm': 'rg tangent normal (x right, y up), b metalness'}}
     json.dump(meta, open(os.path.join(ADIR, 'atlas.json'), 'w'), indent=1)
-    for f in ('atlas_albedo.jpg', 'atlas_mat.png', 'atlas_nrm.png'):
+    for f in ('atlas_albedo.webp', 'atlas_mat.webp', 'atlas_nrm.webp'):
         print(f, os.path.getsize(os.path.join(ADIR, f)) // 1024, 'KB')
 
 
