@@ -6,7 +6,7 @@ import { readArrays, buildGround, buildStructures } from './airports_ground.js';
 import { buildLights, updateLights } from './airports_lights.js';
 import { buildSigns } from './airports_signs.js';
 import { loadBuildings, updateBuildingLights } from './airports_buildings.js';
-import { buildProps, updateProps } from './airports_props.js';
+import { buildProps, updateProps, setPropsDensity } from './airports_props.js';
 import { buildFence, buildCables, buildFloodPools } from './airports_extras.js';
 import { Draper, meshJob, lightsJob, instancedJob, rigidJob } from './airports_drape.js';
 
@@ -20,6 +20,26 @@ export async function createAirports(ctx) {
   const lightMeshes = [];
   const colliders = new Colliders();
   const state = { time: 0, day: 1, dayOverride: null, sunCheck: 0, sun: null };
+  // graphics quality (CONTRACTS-SF.md §8): airportLodScale scales every LOD distance, shadows toggles casting,
+  // low presets thin out parked aircraft / service vehicles
+  const Q = { lod: 1, shadows: true, acFrac: 1, vehFrac: 1 };
+  const applyQuality = (apt) => {
+    apt.root.traverse((o) => {
+      if (!(o.isMesh || o.isInstancedMesh || o.isBatchedMesh)) return;
+      if (o.userData.castOrig === undefined) o.userData.castOrig = o.castShadow;
+      o.castShadow = o.userData.castOrig && Q.shadows;
+    });
+    if (apt.props) setPropsDensity(apt.props, Q.acFrac, Q.vehFrac, Q.lod);
+    if (apt.lights) apt.lights.material.uniforms.uFarFade.value = 30000 * Math.max(0.6, Q.lod);
+  };
+  const setQ = (q) => {
+    if (!q) return;
+    Q.lod = q.airportLodScale ?? 1;
+    Q.shadows = q.shadows !== false;
+    Q.acFrac = Q.lod <= 0.65 ? 0.55 : Q.lod <= 0.85 ? 0.8 : 1;
+    Q.vehFrac = Q.lod <= 0.65 ? 0.3 : Q.lod <= 0.85 ? 0.65 : 1;
+  };
+  setQ(ctx.quality);
   const focus = ctx.focus || { x: 0, z: 0 };
 
   const loadMeta = async (icao) => {
@@ -93,6 +113,7 @@ export async function createAirports(ctx) {
         apt.draper = dr;
         apt.drapeDue = 0;
       } catch (e) { console.warn('[airports] drape', meta.icao, e); }
+      applyQuality(apt);
       group.updateMatrixWorld(true);
     }
     timing.all = performance.now() - timing.t0;
@@ -132,6 +153,8 @@ export async function createAirports(ctx) {
     allReady: all,
     timing,
     colliders,
+    /** Apply a src/core/quality.js preset live (airportLodScale, shadows). */
+    setQuality(q) { setQ(q); for (const apt of airports) applyQuality(apt); },
     /** Force the light/day factor (0 = night … 1 = day); null returns to automatic (sun elevation). */
     setDaylight(v) { state.dayOverride = v; },
     update(dt, camera) {
@@ -154,18 +177,19 @@ export async function createAirports(ctx) {
         const [ox, oz] = apt.meta.origin;
         const d = Math.hypot(_cam.x - ox, _cam.z - oz);
         const R = apt.meta.radius || 3000;
-        apt.root.visible = d < R + 30000;
+        apt.root.visible = d < R + 30000 * Math.max(0.6, Q.lod);
         if (!apt.root.visible) continue;
         for (const f of apt.fixtures) {
           // fixture meshes are small: show them only when the camera is close to (some part of) the field
-          f.visible = d < R + f.userData.lodDist;
+          f.visible = d < R + f.userData.lodDist * Q.lod;
         }
+        if (apt.buildings) apt.buildings.object.visible = d < R + 22000 * Q.lod;
         if (apt.buildings) updateBuildingLights(apt.buildings, day, d, _cam);
         if (apt.pools) apt.pools.userData.setNight(1 - day);
         if (apt.signMat) apt.signMat.emissiveIntensity = (1 - day) * 0.9;
         if (apt.props) {
           // distance LOD: parked aircraft / vehicles are invisible specks beyond ~8 km
-          apt.props.object.visible = d < R + 8000;
+          apt.props.object.visible = d < R + 8000 * Q.lod;
           if (apt.props.object.visible) updateProps(apt.props, dt, _cam, day);
         }
       }
@@ -211,6 +235,7 @@ export class Colliders {
         l.push(item);
       }
     }
+    return item;
   }
   addPolygon(pts, base, top, name) {
     // pts: [[x,z],...] world coordinates
@@ -231,7 +256,7 @@ export class Colliders {
   addBox(cx, cz, hdg, halfLen, halfWid, base, top, name) {
     const s = Math.sin(hdg), c = Math.cos(hdg);
     const R = Math.hypot(halfLen, halfWid);
-    this.add({
+    return this.add({
       minX: cx - R, maxX: cx + R, minZ: cz - R, maxZ: cz + R, base, top, name,
       test: (x, z, r) => {
         const dx = x - cx, dz = z - cz;
@@ -271,7 +296,7 @@ export class Colliders {
     if (!l) return -Infinity;
     let h = -Infinity;
     for (const it of l) {
-      if (x < it.minX || x > it.maxX || z < it.minZ || z > it.maxZ) continue;
+      if (it.off || x < it.minX || x > it.maxX || z < it.minZ || z > it.maxZ) continue;
       const top = it.ground ? it.ground() + it.top : it.top;
       if (top <= h) continue;
       if (it.test(x, z, 0)) h = top;
@@ -286,7 +311,7 @@ export class Colliders {
         const l = this.grid.get(this._key(i, j));
         if (!l) continue;
         for (const it of l) {
-          if (x + r < it.minX || x - r > it.maxX || z + r < it.minZ || z - r > it.maxZ) continue;
+          if (it.off || x + r < it.minX || x - r > it.maxX || z + r < it.minZ || z - r > it.maxZ) continue;
           const g = it.ground ? it.ground() : 0;
           if (y - r > g + it.top || y + r < g + it.base) continue;
           if (it.test(x, z, r)) return it.name;

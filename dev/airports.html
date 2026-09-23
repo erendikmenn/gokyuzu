@@ -12,13 +12,14 @@
 <script type="module">
 // W4 airport preview. Query params:
 //   view=sfo|sfo-28r|sfo-tower|sfo-gates|alameda|alameda-has|alameda-24|oak   night=1 (or day=0..1)   cam=x,y,z&look=x,y,z
-//   city=1 (also load city + landmarks layers)   fov=deg
+//   city=1 (also load city + landmarks layers)   fov=deg   quality=low|medium|high|ultra (src/core/quality.js)
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { createAssetLoader } from '../src/core/assets.js';
 import { createEnvironment } from '../src/world-sf/environment.js';
 import { createTerrain } from '../src/world-sf/terrain.js';
 import { createAirports } from '../src/world-sf/airports.js';
+import { QUALITY } from '../src/core/quality.js';
 
 const q = new URLSearchParams(location.search);
 const info = document.getElementById('info');
@@ -72,7 +73,9 @@ if (q.get('cam')) v.cam = q.get('cam').split(',').map(Number);
 if (q.get('look')) v.look = q.get('look').split(',').map(Number);
 if (v.fov && !q.get('fov')) { camera.fov = v.fov; camera.updateProjectionMatrix(); }
 const focus = { x: v.look[0], z: v.look[2] };
-const ctx = { scene, renderer, camera, loader: L, runways, landmarks, region, focus };
+const quality = QUALITY[q.get('quality')] || null;
+if (quality) renderer.shadowMap.enabled = quality.shadows;
+const ctx = { scene, renderer, camera, loader: L, runways, landmarks, region, focus, quality };
 function flatTerrain() {
   const b = region.local, w = b.maxX - b.minX, d = b.maxZ - b.minZ;
   const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, d, 64, 64).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ color: 0x6d8a5a }));
@@ -116,6 +119,7 @@ if (q.get('city') === '1') {
   }
 }
 await Promise.all([terrain.ready, ...layers.map((l) => l.ready), airports.allReady]);
+if (quality) for (const part of [environment, terrain, ...layers]) if (part.setQuality) part.setQuality(quality);
 const loadS = ((performance.now() - t0) / 1000).toFixed(1);
 if (q.has('night')) airports.setDaylight(q.get('night') === '1' ? 0 : 1);
 if (q.has('day')) airports.setDaylight(Number(q.get('day')));

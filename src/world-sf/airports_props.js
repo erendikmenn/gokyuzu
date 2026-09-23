@@ -256,7 +256,8 @@ export async function buildProps(meta, ctx, colliders) {
         const b = a[key];
         if (!b) continue;
         const [cx, cz] = at(b[0], 0);
-        colliders.addBox(cx + ox, cz + oz, h, b[1], b[2], y + b[3], y + b[4], type === 'heli_uh60' ? 'park halindeki helikopter' : 'park halindeki uçak');
+        const c = colliders.addBox(cx + ox, cz + oz, h, b[1], b[2], y + b[3], y + b[4], type === 'heli_uh60' ? 'park halindeki helikopter' : 'park halindeki uçak');
+        if (c) (it.coll || (it.coll = [])).push(c);
       }
     }
     // service vehicles
@@ -369,7 +370,8 @@ export async function buildProps(meta, ctx, colliders) {
   };
   const lampMeshes = [];
   group.traverse((o) => { if (o.isInstancedMesh && lamps.includes(o.material)) lampMeshes.push(o); });
-  return { object: group, batch, nearSets, lamps, lampMeshes, drapeJob, timer: 0, origin: [ox, oz], lastDay: -1, aircraftCount: count };
+  items.forEach((it, i) => { it.rank = rng(i * 104729 + 7)(); });    // stable per-item rank for density thinning
+  return { object: group, batch, items, nearSets, lamps, lampMeshes, drapeJob, timer: 0, origin: [ox, oz], lastDay: -1, aircraftCount: count };
 }
 
 const _cam = new THREE.Vector3();
@@ -392,10 +394,12 @@ export function updateProps(p, dt, camPos, day) {
     const nearLists = e.near.map(() => []);
     let tris = 0;
     for (const s of scored) {
+      if (s.it.hidden) continue;
       let k = e.near.findIndex((n) => n.id === s.it.pref);
       if (k < 0) k = s.i % e.near.length;
       const n = e.near[k];
-      const near = s.d < NEAR_DIST && tris + n.tris < NEAR_TRI_BUDGET;
+      const ns = p.nearScale ?? 1;
+      const near = s.d < NEAR_DIST * ns && tris + n.tris < NEAR_TRI_BUDGET * ns;
       if (near) { nearLists[k].push(s.it); tris += n.tris; }
       if (s.it.near !== near) {
         s.it.near = near;
@@ -404,4 +408,20 @@ export function updateProps(p, dt, camPos, day) {
     }
     e.near.forEach((n, k) => n.set.set(nearLists[k]));
   }
+}
+
+// quality: keep only a fraction of the parked aircraft / service vehicles (floodlights and windsocks always stay).
+// Hidden aircraft also stop colliding.
+const ALWAYS = new Set(['floodlight', 'windsock']);
+export function setPropsDensity(p, acFrac, vehFrac, lodScale = 1) {
+  if (!p) return;
+  p.nearScale = lodScale;          // distance (and triangle budget) for the aircraft agents' detailed LODs
+  for (const it of p.items) {
+    const keep = ALWAYS.has(it.type) || it.rank < (it.ac ? acFrac : vehFrac);
+    it.hidden = !keep;
+    for (const iid of it.ids) p.batch.setVisibleAt(iid, keep && !it.near);
+    if (it.coll) for (const c of it.coll) c.off = !keep;
+  }
+  for (const e of p.nearSets) for (const it of e.list) it.near = undefined;
+  p.timer = 0;
 }
