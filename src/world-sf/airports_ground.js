@@ -34,22 +34,32 @@ export function depthBias(mat, layer, onCompile) {
 }
 
 let texCache = null;
+let texOpts = null;
+/** Ground textures, each loaded on first use (an airport only downloads what its pavements use). */
 export function groundTextures(loader, renderer) {
   if (texCache) return texCache;
-  const aniso = renderer ? renderer.capabilities.getMaxAnisotropy() : 8;
-  const load = (name, srgb = true) => {
-    const t = new THREE.TextureLoader(loader && loader.manager).load(TEX + name);
-    t.wrapS = t.wrapT = THREE.RepeatWrapping;
-    t.anisotropy = aniso;
-    t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
-    return t;
+  texOpts = { manager: loader && loader.manager, aniso: renderer ? renderer.capabilities.getMaxAnisotropy() : 8 };
+  const FILES = {
+    asphaltRwy: ['asphalt_rwy.jpg', true], asphaltTwy: ['asphalt_twy.jpg', true], shoulder: ['shoulder.jpg', true],
+    concrete: ['concrete.jpg', true], concreteRwy: ['concrete_rwy.jpg', true],
+    macro: ['macro.jpg', false], rubber: ['rubber.jpg', false], paint: ['paintwear.jpg', false], detailN: ['detail_n.jpg', false],
   };
-  texCache = {
-    asphaltRwy: load('asphalt_rwy.jpg'), asphaltTwy: load('asphalt_twy.jpg'), shoulder: load('shoulder.jpg'),
-    concrete: load('concrete.jpg'), concreteRwy: load('concrete_rwy.jpg'),
-    macro: load('macro.jpg', false), rubber: load('rubber.png', false), paint: load('paintwear.jpg', false),
-    detailN: load('detail_n.png', false),
-  };
+  texCache = {};
+  for (const [key, [name, srgb]] of Object.entries(FILES)) {
+    let t = null;
+    Object.defineProperty(texCache, key, {
+      enumerable: true,
+      get() {
+        if (!t) {
+          t = new THREE.TextureLoader(texOpts.manager).load(TEX + name);
+          t.wrapS = t.wrapT = THREE.RepeatWrapping;
+          t.anisotropy = texOpts.aniso;
+          t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+        }
+        return t;
+      },
+    });
+  }
   return texCache;
 }
 
@@ -143,14 +153,16 @@ export function buildGround(meta, A, ctx, opts = {}) {
   const mil = meta.military;
   const gridRot = opts.gridRot || 0;
   const cr = Math.cos(gridRot), sr = Math.sin(gridRot);
-  const mats = {
-    shoulder: pavementMaterial({ name: 'apt-shoulder', map: tex.shoulder, tile: 8, layer: 1, rough: 0.95, tint: 0xf2efe8 }),
-    apron: pavementMaterial({ name: 'apt-apron', map: tex.concrete, tile: 30.48, layer: 2, rough: 0.86, tint: mil ? 0xe8e8e2 : 0xffffff }),
-    taxiway: pavementMaterial({ name: 'apt-taxiway', map: mil ? tex.concrete : tex.asphaltTwy, tile: mil ? 30.48 : 8, layer: 2, rough: 0.9 }),
-    pad: pavementMaterial({ name: 'apt-pad', map: tex.concrete, tile: 30.48, layer: 3, rough: 0.86, tint: 0xf4f2ec }),
-    blast: pavementMaterial({ name: 'apt-blast', map: tex.asphaltTwy, tile: 8, layer: 3, rough: 0.93, tint: 0xd8d8d8 }),
-    runway: pavementMaterial({ name: 'apt-runway', map: mil ? tex.concreteRwy : tex.asphaltRwy, tile: mil ? 15.24 : 8, layer: 4, rough: 0.9, rubber: true, detailN: tex.detailN }),
+  const MAT = {
+    shoulder: () => pavementMaterial({ name: 'apt-shoulder', map: tex.shoulder, tile: 8, layer: 1, rough: 0.95, tint: 0xf2efe8 }),
+    apron: () => pavementMaterial({ name: 'apt-apron', map: tex.concrete, tile: 30.48, layer: 2, rough: 0.86, tint: mil ? 0xe8e8e2 : 0xffffff }),
+    taxiway: () => pavementMaterial({ name: 'apt-taxiway', map: mil ? tex.concrete : tex.asphaltTwy, tile: mil ? 30.48 : 8, layer: 2, rough: 0.9 }),
+    pad: () => pavementMaterial({ name: 'apt-pad', map: tex.concrete, tile: 30.48, layer: 3, rough: 0.86, tint: 0xf4f2ec }),
+    blast: () => pavementMaterial({ name: 'apt-blast', map: tex.asphaltTwy, tile: 8, layer: 3, rough: 0.93, tint: 0xd8d8d8 }),
+    runway: () => pavementMaterial({ name: 'apt-runway', map: mil ? tex.concreteRwy : tex.asphaltRwy, tile: mil ? 15.24 : 8, layer: 4, rough: 0.9, rubber: true, detailN: tex.detailN }),
   };
+  const mats = {};
+  for (const key of Object.keys(MAT)) if (A[`surf.${key}.p`]) mats[key] = MAT[key]();
   const meshes = {};
   const hBuf = new Map();
   const height = (x, z) => terrain.getHeight(x, z);
@@ -193,7 +205,13 @@ export function buildGround(meta, A, ctx, opts = {}) {
   }
   // ---- markings
   if (A['marks.p']) {
-    const p = A['marks.p'], idx = A['marks.i'], c = A['marks.c'], e = A['marks.e'];
+    const p = A['marks.p'], idx = A['marks.i'], c = A['marks.c'];
+    let e = A['marks.e'];
+    if (!e && A['marks.e16']) {         // int16-quantised runway coords (see airports_build.py export)
+      const q = A['marks.e16'], k = meta.e16Scale || [0.01, 0.125, 0.2, 0.2];
+      e = new Float32Array(q.length);
+      for (let i = 0; i < q.length; i++) e[i] = q[i] * k[i & 3];
+    }
     const n = p.length / 2;
     const pos = new Float32Array(n * 3), col = new Float32Array(n * 3), rw = new Float32Array(n * 4);
     for (let i = 0; i < n; i++) {

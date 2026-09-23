@@ -118,9 +118,10 @@ if (q.get('city') === '1') {
     try { const m = await import(mod); const l = await m[fn](ctx); scene.add(l.object); layers.push(l); } catch (e) { console.warn(e); }
   }
 }
-await Promise.all([terrain.ready, ...layers.map((l) => l.ready), airports.allReady]);
+await Promise.all([terrain.ready, ...layers.map((l) => l.ready)]);
 if (quality) for (const part of [environment, terrain, ...layers]) if (part.setQuality) part.setQuality(quality);
-const loadS = ((performance.now() - t0) / 1000).toFixed(1);
+let loadS = ((performance.now() - t0) / 1000).toFixed(1);
+airports.allReady.then(() => { loadS = `${loadS}/${((performance.now() - t0) / 1000).toFixed(1)}`; window.__aptAll = true; });
 if (q.has('night')) airports.setDaylight(q.get('night') === '1' ? 0 : 1);
 if (q.has('day')) airports.setDaylight(Number(q.get('day')));
 window.__apt = airports;

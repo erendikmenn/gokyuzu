@@ -8,9 +8,9 @@ Output: assets/sf/airports/tex/*.jpg|png
   concrete_rwy.jpg  grooved runway concrete slabs (military runway), 15.24 m tile
   shoulder.jpg      shoulder asphalt (older, lighter), 8 m tile
   macro.jpg         low-frequency variation (tile 512 m)
-  rubber.png        tyre rubber streaks, 16 m across x 128 m along
+  rubber.jpg        tyre rubber streaks, 16 m across x 128 m along
   paintwear.jpg     paint coverage mask, 4 m tile
-  detail_n.png      fine aggregate normal map, 2 m tile
+  detail_n.jpg      fine aggregate normal map, 2 m tile
 """
 import os
 import numpy as np
@@ -39,9 +39,12 @@ def field(n, m=None, beta=2.0, fmin=1.0, fmax=None, aniso=(1.0, 1.0)):
     return r / (r.std() + 1e-9)
 
 
-def save(name, arr, q=90):
+def save(name, arr, q=80):
+    """JPEG q80 (4:2:0) for colour maps; single-channel masks saved as greyscale JPEG (web payload)."""
     os.makedirs(OUT, exist_ok=True)
     a = np.clip(arr, 0, 1)
+    if a.ndim == 3 and name.endswith('.jpg') and np.allclose(a[..., 0], a[..., 1]) and np.allclose(a[..., 1], a[..., 2]):
+        a = a[..., 0]
     img = Image.fromarray((a * 255 + 0.5).astype(np.uint8))
     p = os.path.join(OUT, name)
     if name.endswith('.jpg'):
@@ -147,7 +150,8 @@ def main():
     g += 0.035 * field(N, beta=2.2, fmin=1)
     cr = cracks(N, 26, 2.2, seglen=(60, 300), wiggle=0.5)
     g = g * (1 - 0.45 * cr)
-    save('shoulder.jpg', rgbify(g, (1.0, 0.99, 0.975), 0.006))
+    sh = rgbify(g, (1.0, 0.99, 0.975), 0.006)
+    save('shoulder.jpg', np.asarray(Image.fromarray((np.clip(sh, 0, 1) * 255).astype(np.uint8)).resize((1024, 1024), Image.LANCZOS), np.float32) / 255)
 
     # ---------------- apron concrete slabs: 4x4 slabs of 7.62 m in a 30.48 m tile (1.5 cm/px)
     g = np.full((N, N), 0.64, np.float32)
@@ -216,7 +220,7 @@ def main():
     s2 = field(H, W, beta=0.8, fmin=10, aniso=(1.0, 25.0))
     r = np.clip(0.55 + 0.35 * s + 0.2 * s2, 0, 1)
     r = r ** 1.4
-    save('rubber.png', r)
+    save('rubber.jpg', r)
 
     # ---------------- paint wear mask (4 m tile): 1 = full paint
     P = 1024
@@ -233,7 +237,7 @@ def main():
     nx, ny, nz = -gx * k, -gy * k, np.ones_like(hgt)
     ln = np.sqrt(nx * nx + ny * ny + nz * nz)
     nrm = np.stack([nx / ln, ny / ln, nz / ln], -1) * 0.5 + 0.5
-    save('detail_n.png', nrm)
+    save('detail_n.jpg', nrm)
 
 
 if __name__ == '__main__':

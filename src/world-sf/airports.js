@@ -6,7 +6,7 @@ import { readArrays, buildGround, buildStructures } from './airports_ground.js';
 import { buildLights, updateLights } from './airports_lights.js';
 import { buildSigns } from './airports_signs.js';
 import { loadBuildings, updateBuildingLights } from './airports_buildings.js';
-import { buildProps, updateProps, setPropsDensity } from './airports_props.js';
+import { buildProps, updateProps, setPropsDensity, addAgentLods } from './airports_props.js';
 import { buildFence, buildCables, buildFloodPools } from './airports_extras.js';
 import { Draper, meshJob, lightsJob, instancedJob, rigidJob } from './airports_drape.js';
 
@@ -47,80 +47,120 @@ export async function createAirports(ctx) {
     const buf = await ctx.loader.loadBinary(BASE + meta.bin);
     return { meta, A: readArrays(meta, buf) };
   };
-  // nearest airport first so the spawn area is ready first
-  const order = ICAOS.slice();
   const metas = {};
-
+  // airports in distance order from the spawn (centres from data/sf/runways.json, no download needed)
+  const RADIUS = { KSFO: 3500, KOAK: 3000, KNGZ: 2200 };
+  const order = (ctx.runways ? ctx.runways.airports.map((a) => ({ icao: a.icao, x: a.center.x, z: a.center.z })) : [])
+    .filter((a) => ICAOS.includes(a.icao.toLowerCase()))
+    .map((a) => ({ ...a, d: Math.hypot(a.x - focus.x, a.z - focus.z) }))
+    .sort((a, b) => a.d - b.d);
   const timing = { t0: performance.now() };
-  let resolveFirst;
-  const firstReady = new Promise((r) => { resolveFirst = r; });
-  const all = (async () => {
+  // the game loop calls update() only once the player can play: that starts the background loading
+  let resolveStart;
+  const started = new Promise((r) => { resolveStart = r; });
+  state.started = false;
+  const frame = () => new Promise((r) => requestAnimationFrame(() => r()));
+
+  /** Core of an airport: pavement, paint, lights, light fixtures, signs, fence, props.glb props, collisions. */
+  async function buildCore(icao) {
+    const { meta, A } = await loadMeta(icao);
+    metas[icao] = { meta, A };
+    const apt = { meta, root: new THREE.Group(), lights: null, fixtures: [], buildings: null, props: null };
+    apt.root.name = `airport-${meta.icao}`;
+    const gridRot = meta.icao === 'KSFO' ? -27.42 * Math.PI / 180 : meta.icao === 'KNGZ' ? -75 * Math.PI / 180 : -21.7 * Math.PI / 180;
+    const { group: ground } = buildGround(meta, A, ctx, { gridRot });
+    apt.ground = ground;
+    apt.root.add(ground);
+    const structs = buildStructures(meta, A, ctx);
+    apt.structs = structs;
+    apt.root.add(structs);
+    structs.traverse((o) => { if (o.userData.lodDist) apt.fixtures.push(o); });
+    apt.lights = buildLights(meta, A, ctx);
+    if (apt.lights) { apt.root.add(apt.lights); lightMeshes.push(apt.lights); }
+    try {
+      for (const f of [buildFence(meta, ctx), buildCables(meta, ctx)]) {
+        if (f) { apt.root.add(f); apt.fixtures.push(f); }
+      }
+      apt.pools = buildFloodPools(meta, ctx);
+      if (apt.pools) apt.root.add(apt.pools);
+    } catch (e) { console.warn('[airports] extras', e); }
+    try {
+      const signs = buildSigns(meta, ctx);
+      if (signs) { apt.root.add(signs); apt.fixtures.push(signs); signs.userData.lodDist = 3500; apt.signMat = signs.material; }
+    } catch (e) { console.warn('[airports] signs', e); }
+    colliders.addAirport(meta, ctx);       // buildings / towers / jet bridges collide from here on (footprints from the json)
+    try {
+      apt.props = await buildProps(meta, ctx, colliders);
+      if (apt.props) apt.root.add(apt.props.object);
+    } catch (e) { console.warn('[airports] props', meta.icao, e); }
+    setupDrape(apt);
+    applyQuality(apt);
+    group.add(apt.root);
+    airports.push(apt);
+    group.updateMatrixWorld(true);
+    return apt;
+  }
+
+  /** Heavy optional parts, loaded in the background: buildings GLB and the aircraft agents' LOD models. */
+  async function buildHeavy(apt) {
+    try {
+      apt.buildings = await loadBuildings(apt.meta, ctx, colliders);
+      if (apt.buildings) apt.root.add(apt.buildings.object);
+    } catch (e) { console.warn('[airports] buildings', apt.meta.icao, e); }
+    await frame();
+    try { await addAgentLods(apt.props, ctx); } catch (e) { console.warn('[airports] lods', apt.meta.icao, e); }
+    setupDrape(apt);
+    applyQuality(apt);
+    group.updateMatrixWorld(true);
+  }
+
+  function setupDrape(apt) {
+    try {
+      const O = apt.meta.origin;
+      const dr = new Draper(ctx.terrain);
+      apt.ground.traverse((o) => { if (o.isMesh && o.userData.off != null) dr.add(meshJob(o, O, o.userData.off)); });
+      if (apt.lights) dr.add(lightsJob(apt.lights, O, apt.lights.userData.heights, apt.lights.userData.modes, ctx.terrain.isWater ? (x, z) => ctx.terrain.isWater(x, z) : null));
+      apt.structs.traverse((o) => { if (o.isInstancedMesh && o.userData.drapeDy != null) dr.add(instancedJob(o, O, o.userData.drapeDy)); });
+      if (apt.pools) dr.add(instancedJob(apt.pools, O, 0.12));
+      if (apt.signMat) apt.root.traverse((o) => { if (o.userData.drapeGroups && o.userData.drapeGroups.length) dr.add(rigidJob(o.userData.drapeGroups)); });
+      if (apt.buildings && apt.buildings.drapeGroups.length) dr.add(rigidJob(apt.buildings.drapeGroups));
+      if (apt.props) {
+        dr.add(apt.props.drapeJob);
+        for (const lm of apt.props.lampMeshes) dr.add(instancedJob(lm, O, 0));
+      }
+      apt.draper = dr;
+      apt.drapeDue = 0;
+    } catch (e) { console.warn('[airports] drape', apt.meta.icao, e); }
+  }
+
+  // ready = the airport at the spawn (its pavement, markings, lights, collisions). Spawns far from every airport
+  // (airborne starts over the city / Golden Gate) do not wait for any airport data at all.
+  const near = order[0];
+  const nearNeeded = near && near.d < (RADIUS[near.icao] || 3000) + 6000;
+  const ready = (async () => {
+    if (!nearNeeded) return;
     if (ctx.terrain && ctx.terrain.ready) {
       await Promise.race([Promise.resolve(ctx.terrain.ready).catch(() => {}), new Promise((r) => setTimeout(r, 20000))]);
     }
-    const loaded = await Promise.all(order.map((i) => loadMeta(i).catch((e) => { console.warn('[airports]', i, e.message); return null; })));
-    loaded.forEach((l, k) => { if (l) metas[order[k]] = l; });
-    const dist = (m) => Math.hypot(m.meta.origin[0] - focus.x, m.meta.origin[1] - focus.z);
-    const list = Object.values(metas).sort((a, b) => dist(a) - dist(b));
-    for (const [n, { meta, A }] of list.entries()) {
-      if (n === 1) { timing.first = performance.now() - timing.t0; resolveFirst(); }
-      const apt = { meta, root: new THREE.Group(), lights: null, fixtures: [], buildings: null, props: null };
-      apt.root.name = `airport-${meta.icao}`;
-      const gridRot = meta.icao === 'KSFO' ? -27.42 * Math.PI / 180 : meta.icao === 'KNGZ' ? -75 * Math.PI / 180 : -21.7 * Math.PI / 180;
-      const { group: ground } = buildGround(meta, A, ctx, { gridRot });
-      apt.root.add(ground);
-      const structs = buildStructures(meta, A, ctx);
-      apt.root.add(structs);
-      structs.traverse((o) => { if (o.userData.lodDist) apt.fixtures.push(o); });
-      apt.lights = buildLights(meta, A, ctx);
-      if (apt.lights) { apt.root.add(apt.lights); lightMeshes.push(apt.lights); }
+    try { await buildCore(near.icao.toLowerCase()); } catch (e) { console.warn('[airports]', near.icao, e.message); }
+    timing.first = performance.now() - timing.t0;
+  })();
+  const all = (async () => {
+    await ready;
+    // start after the first game frame (or after 12 s on pages that never call update)
+    await Promise.race([started, new Promise((r) => setTimeout(r, 12000))]);
+    await frame();
+    for (const a of order) {
+      const icao = a.icao.toLowerCase();
       try {
-        for (const f of [buildFence(meta, ctx), buildCables(meta, ctx)]) {
-          if (f) { apt.root.add(f); apt.fixtures.push(f); }
-        }
-        apt.pools = buildFloodPools(meta, ctx);
-        if (apt.pools) apt.root.add(apt.pools);
-      } catch (e) { console.warn('[airports] extras', e); }
-      try {
-        const signs = buildSigns(meta, ctx);
-        if (signs) { apt.root.add(signs); apt.fixtures.push(signs); signs.userData.lodDist = 3500; apt.signMat = signs.material; }
-      } catch (e) { console.warn('[airports] signs', e); }
-      colliders.addAirport(meta, ctx);
-      group.add(apt.root);
-      airports.push(apt);
-      try {
-        apt.buildings = await loadBuildings(meta, ctx, colliders);
-        if (apt.buildings) apt.root.add(apt.buildings.object);
-      } catch (e) { console.warn('[airports] buildings', meta.icao, e); }
-      try {
-        apt.props = await buildProps(meta, ctx, colliders);
-        if (apt.props) apt.root.add(apt.props.object);
-      } catch (e) { console.warn('[airports] props', meta.icao, e); }
-      // re-draping jobs (terrain LOD refines as the camera approaches)
-      try {
-        const O = meta.origin;
-        const dr = new Draper(ctx.terrain);
-        ground.traverse((o) => { if (o.isMesh && o.userData.off != null) dr.add(meshJob(o, O, o.userData.off)); });
-        if (apt.lights) dr.add(lightsJob(apt.lights, O, apt.lights.userData.heights, apt.lights.userData.modes, ctx.terrain.isWater ? (x, z) => ctx.terrain.isWater(x, z) : null));
-        structs.traverse((o) => { if (o.isInstancedMesh && o.userData.drapeDy != null) dr.add(instancedJob(o, O, o.userData.drapeDy)); });
-        if (apt.pools) dr.add(instancedJob(apt.pools, O, 0.12));
-        if (apt.signMat) apt.root.traverse((o) => { if (o.userData.drapeGroups && o.userData.drapeGroups.length) dr.add(rigidJob(o.userData.drapeGroups)); });
-        if (apt.buildings && apt.buildings.drapeGroups.length) dr.add(rigidJob(apt.buildings.drapeGroups));
-        if (apt.props) {
-          dr.add(apt.props.drapeJob);
-          for (const lm of apt.props.lampMeshes) dr.add(instancedJob(lm, O, 0));
-        }
-        apt.draper = dr;
-        apt.drapeDue = 0;
-      } catch (e) { console.warn('[airports] drape', meta.icao, e); }
-      applyQuality(apt);
-      group.updateMatrixWorld(true);
+        let apt = airports.find((x) => x.meta.icao === a.icao);
+        if (!apt) { apt = await buildCore(icao); await frame(); }
+        await buildHeavy(apt);
+        await frame();
+      } catch (e) { console.warn('[airports]', a.icao, e.message); }
     }
     timing.all = performance.now() - timing.t0;
-    resolveFirst();
   })();
-  // the layer is "ready" once the airport nearest to the spawn is complete; the others stream in afterwards
-  const ready = firstReady;
   all.catch((e) => console.error('[airports]', e));
 
   const _cam = new THREE.Vector3();
@@ -158,6 +198,7 @@ export async function createAirports(ctx) {
     /** Force the light/day factor (0 = night … 1 = day); null returns to automatic (sun elevation). */
     setDaylight(v) { state.dayOverride = v; },
     update(dt, camera) {
+      if (!state.started) { state.started = true; resolveStart(); }
       state.time += dt;
       state.sunCheck -= dt;
       if (state.sunCheck <= 0) { state.sun = findSun(); state.sunCheck = state.sun ? 20 : 2; }

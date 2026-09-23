@@ -848,7 +848,12 @@ class Airport:
             bw.add_mesh('surf.' + k, m, self.origin)
             stats[k] = (len(m.p), len(m.i) // 3)
         dedupe(self.marks)
+        # runway coords of the paint (t, s, dA, dB) quantised to int16: 1 cm, 12.5 cm, 20 cm, 20 cm steps
+        e = np.asarray(self.marks.attrs.pop('e'), dtype=np.float64)
         bw.add_mesh('marks', self.marks, self.origin, {'c': np.uint8})
+        E16_SCALE = np.array([0.01, 0.125, 0.2, 0.2])
+        bw.add('marks.e16', np.clip(np.round(e / E16_SCALE), -32767, 32767), np.int16)
+        self.marks.attrs['e'] = e.tolist()
         stats['marks'] = (len(self.marks.p), len(self.marks.i) // 3)
         if self.lights:
             L = np.array(self.lights, dtype=np.float64)
@@ -876,6 +881,7 @@ class Airport:
             'cables': [[[round(a[0] - self.origin[0], 2), round(a[1] - self.origin[1], 2)], [round(b[0] - self.origin[0], 2), round(b[1] - self.origin[1], 2)]] for a, b in self.cable_lines],
             'radius': self.cfg.get('radius', 3000),
             'floods': self.floods,
+            'e16Scale': [0.01, 0.125, 0.2, 0.2],
         }
         meta.update(self.lines_extra)
         save_json(os.path.join(OUT, f'{self.icao.lower()}.json'), meta)
@@ -1060,7 +1066,8 @@ def build_ksfo():
             pts = np.array(b['poly'])
             area = Polygon(pts).area
             cx, cz = Polygon(pts).centroid.coords[0]
-            ap.structures[0].update({'x': round(cx, 2), 'z': round(cz, 2), 'r': round(math.sqrt(area / math.pi), 2),
+            twr = next(st for st in ap.structures if st['kind'] == 'sfo_tower')
+            twr.update({'x': round(cx, 2), 'z': round(cz, 2), 'r': round(math.sqrt(area / math.pi), 2),
                                      'cab0': b['minh'], 'top': b['h'], 'collide': [round(cx, 2), round(cz, 2), 7.0, b['minh']],
                                      'name': 'SFO kulesi'})
             ap.light(cx + ap.origin[0], cz + ap.origin[1], b['h'] + 6.5, L_OBS_FL)

@@ -38,8 +38,10 @@ SHOTS = {
 def load_airport(icao):
     meta = json.load(open(os.path.join(A_DIR, f'{icao}.json')))
     raw = open(os.path.join(A_DIR, meta['bin']), 'rb').read()
-    T = {'f32': np.float32, 'u32': np.uint32, 'u16': np.uint16, 'u8': np.uint8}
+    T = {'f32': np.float32, 'u32': np.uint32, 'u16': np.uint16, 'u8': np.uint8, 'i16': np.int16}
     A = {k: np.frombuffer(raw, T[t], n, o) for k, (o, n, t) in meta['arrays'].items()}
+    if 'marks.e' not in A and 'marks.e16' in A:
+        A['marks.e'] = (A['marks.e16'].reshape(-1, 4) * np.array(meta.get('e16Scale', [0.01, 0.125, 0.2, 0.2]))).astype(np.float32).ravel()
     return meta, A
 
 
@@ -196,7 +198,7 @@ def rubber_amount(nt):
     lat1 = math_node(nt, 'SUBTRACT', 1.0, smoothstep_node(nt, math_node(nt, 'ABSOLUTE', math_node(nt, 'SUBTRACT', at, 3.5)), 4.0, 12.5))
     lat2 = math_node(nt, 'MULTIPLY', math_node(nt, 'SUBTRACT', 1.0, smoothstep_node(nt, math_node(nt, 'ABSOLUTE', math_node(nt, 'SUBTRACT', at, 6.2)), 0.0, 2.2)), 0.55)
     lat = math_node(nt, 'MAXIMUM', lat1, lat2)
-    tex = nt.nodes.new('ShaderNodeTexImage'); tex.image = img('rubber.png', non_color=True)
+    tex = nt.nodes.new('ShaderNodeTexImage'); tex.image = img('rubber.jpg', non_color=True)
     cxyz = nt.nodes.new('ShaderNodeCombineXYZ')
     nt.links.new(math_node(nt, 'DIVIDE', t, 16.0), cxyz.inputs['X'])
     nt.links.new(math_node(nt, 'DIVIDE', s, 128.0), cxyz.inputs['Y'])

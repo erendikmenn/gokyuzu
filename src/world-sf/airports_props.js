@@ -340,16 +340,8 @@ export async function buildProps(meta, ctx, colliders) {
     if (!lamps.includes(pt.mat)) lamps.push(pt.mat);
   }
 
-  // ---------------- agent LODs for the nearest aircraft
+  // agent LODs for the nearest aircraft are optional and loaded later (addAgentLods) so they never delay the start
   const nearSets = [];
-  for (const [type, list] of aircraft) {
-    const entry = { type, list, near: [] };
-    for (const id of AGENT_ID[type] || []) {
-      const lod = await loadAgentLod(id, ctx);
-      if (lod) entry.near.push({ id, set: new NearSet(`${type}-${id}`, lod.parts, list.length, group), tris: lod.tris });
-    }
-    if (entry.near.length) nearSets.push(entry);
-  }
   let count = 0;
   for (const l of aircraft.values()) count += l.length;
   // re-grounding job (see airports_drape.js): items keep x/z; y and the batch matrices follow the terrain
@@ -371,7 +363,7 @@ export async function buildProps(meta, ctx, colliders) {
   const lampMeshes = [];
   group.traverse((o) => { if (o.isInstancedMesh && lamps.includes(o.material)) lampMeshes.push(o); });
   items.forEach((it, i) => { it.rank = rng(i * 104729 + 7)(); });    // stable per-item rank for density thinning
-  return { object: group, batch, items, nearSets, lamps, lampMeshes, drapeJob, timer: 0, origin: [ox, oz], lastDay: -1, aircraftCount: count };
+  return { object: group, batch, items, aircraft, nearSets, lamps, lampMeshes, drapeJob, timer: 0, origin: [ox, oz], lastDay: -1, aircraftCount: count };
 }
 
 const _cam = new THREE.Vector3();
@@ -423,5 +415,19 @@ export function setPropsDensity(p, acFrac, vehFrac, lodScale = 1) {
     if (it.coll) for (const c of it.coll) c.off = !keep;
   }
   for (const e of p.nearSets) for (const it of e.list) it.near = undefined;
+  p.timer = 0;
+}
+
+/** Load the aircraft agents' LOD models (background, after the game has started) and hook them into the near set. */
+export async function addAgentLods(p, ctx) {
+  if (!p) return;
+  for (const [type, list] of p.aircraft) {
+    const entry = { type, list, near: [] };
+    for (const id of AGENT_ID[type] || []) {
+      const lod = await loadAgentLod(id, ctx);
+      if (lod) entry.near.push({ id, set: new NearSet(`${type}-${id}`, lod.parts, list.length, p.object), tris: lod.tris });
+    }
+    if (entry.near.length) p.nearSets.push(entry);
+  }
   p.timer = 0;
 }
