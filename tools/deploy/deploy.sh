@@ -18,6 +18,9 @@ case "$TARGET" in
   *) echo "Kullanım: tools/deploy/deploy.sh staging | production [--yes]"; exit 2 ;;
 esac
 node tools/make_gallery.mjs >/dev/null
+# KTX2 textures (tools/assets): a GLB re-exported from Blender must be converted before it ships (phones would get a stale
+# .phone.glb, desktops an uncompressed texture). One-time setup on a new machine: node tools/assets/setup.mjs
+node tools/assets/textures.mjs --check || { echo "Önce: node tools/assets/textures.mjs (KTX2 dönüşümü güncel değil)"; exit 1; }
 DEPLOY_TARGET="$TARGET" node tools/deploy/build_dist.mjs --gallery
 # node_modules/: only three's Draco/Basis decoders are files now (three itself is in the JS bundle). The unbundled modules of
 # the pre-bundle site (three/build, the rest of three/examples/jsm) stay for pages opened before; prune_js.mjs removes them.
