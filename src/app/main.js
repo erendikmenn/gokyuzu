@@ -74,6 +74,8 @@ async function start() {
 
   const loading = createLoadingScreen(uiRoot);
   const t0 = performance.now();
+  // fetch the aircraft model in parallel with the world (loadGLTF caches the promise, loadAircraft reuses it)
+  loadAircraftDefinition(choice.aircraftId).then((d) => d.model.url && loader.loadGLTF(d.model.url)).catch(() => {});
   if (!state.world) {
     state.world = await createSFWorld({ scene, renderer, camera, loader, quality, focus: { x: spawn.x, z: spawn.z }, onProgress: (p, t) => loading.setProgress(p * 0.8, t) });
   }
@@ -121,7 +123,8 @@ async function loadAircraft(id) {
   input.setAircraft(def.spec);
   hud.setAircraft(def);
   cameraRig.setAircraft(rig, def);
-  await audio.loadAircraft(id).catch((e) => console.warn('[audio]', e));
+  // audio streams in the background: the game starts without waiting and sounds fade in when their buffers arrive
+  audio.loadAircraft(id).catch((e) => console.warn('[audio]', e));
   Object.assign(state, { def, rig, flight });
 }
 
