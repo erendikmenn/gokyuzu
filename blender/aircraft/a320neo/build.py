@@ -1,4 +1,4 @@
-"""A320neo (CFM LEAP-1A) — Gökyüzü Hava Yolları TC-GKA. Deterministic Blender build.
+"""A320neo (CFM LEAP-1A) — Turkish Airlines TC-LUA (livery from textures.py / livery_thy.py). Deterministic Blender build.
 
 /Applications/Blender.app/Contents/MacOS/Blender -b -P blender/aircraft/a320neo/build.py -- [--no-export] [--no-lod]
     [--save-blend] [--skip-interior] [--preview]

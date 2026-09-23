@@ -458,7 +458,76 @@ def shot_flightdeck():
     util.render_still(os.path.join(OUT, 'flightdeck.png'))
 
 
-SHOTS = dict(hero=shot_hero, front34=shot_front34, takeoff=shot_takeoff, planform=shot_planform,
+def overcast(level=0.75):
+    sc = bpy.context.scene
+    w = bpy.data.worlds.new('Overcast')
+    sc.world = w
+    w.use_nodes = True
+    nt = w.node_tree
+    for n in list(nt.nodes):
+        nt.nodes.remove(n)
+    out = nt.nodes.new('ShaderNodeOutputWorld')
+    bg = nt.nodes.new('ShaderNodeBackground')
+    # soft vertical gradient: brighter overhead, darker near the ground
+    tc = nt.nodes.new('ShaderNodeTexCoord')
+    sep = nt.nodes.new('ShaderNodeSeparateXYZ')
+    ramp = nt.nodes.new('ShaderNodeValToRGB')
+    ramp.color_ramp.elements[0].position = 0.35
+    ramp.color_ramp.elements[0].color = (level * 0.55, level * 0.56, level * 0.58, 1)
+    ramp.color_ramp.elements[1].position = 0.75
+    ramp.color_ramp.elements[1].color = (level, level * 1.01, level * 1.03, 1)
+    mp = nt.nodes.new('ShaderNodeMapRange')
+    mp.inputs['From Min'].default_value = -1.0
+    mp.inputs['From Max'].default_value = 1.0
+    nt.links.new(tc.outputs['Generated'], sep.inputs['Vector'])
+    nt.links.new(sep.outputs['Z'], mp.inputs['Value'])
+    nt.links.new(mp.outputs['Result'], ramp.inputs['Fac'])
+    nt.links.new(ramp.outputs['Color'], bg.inputs['Color'])
+    bg.inputs['Strength'].default_value = 1.0
+    nt.links.new(bg.outputs['Background'], out.inputs['Surface'])
+
+
+def pose_landing():
+    """CONF FULL: slats 27 deg, flaps 40 deg with Fowler travel, approach attitude +3 deg."""
+    for o in bpy.data.objects:
+        n = o.name
+        if n.startswith('ctl_flap_'):
+            rotate_local(o, 'X', D(32))
+            o.location += Vector((0, -0.62 if n.endswith('_1') else -0.42, -0.16))
+        elif n.startswith('ctl_slat_'):
+            rotate_local(o, 'X', -D(24))
+            o.location += Vector((0, 0.22, -0.09))
+    root = bpy.data.objects['a320neo']
+    R = Matrix.Rotation(D(3.0), 4, 'X')
+    root.matrix_world = R @ root.matrix_world
+
+
+def shot_ams():
+    """Same view as the reference photo a321neo_TC-LSB_AMS.jpg: camera solved from 10 known points on the A321neo
+    (8.9 deg below, ~540 mm lens, roll -3.2 deg), yaw then matched visually (55 deg off the nose, the point fit's 43
+    deg looked too frontal); distance/framing adapted to the shorter A320."""
+    for o in list(bpy.data.objects):
+        if o.name.startswith('g_'):
+            bpy.data.objects.remove(o, do_unlink=True)
+    pose_landing()
+    overcast(arg('--lvl', 0.45))
+    sc = cycles(1920, 1440, SAMPLES, exposure=arg('--exp', 0.0))
+    sc.view_settings.exposure = arg('--exp', 0.0)
+    az, el, roll = D(arg('--az', -55.0)), D(arg('--el', -8.90)), D(-3.19)
+    L = 37.57 / 44.51
+    T = Vector((-5.33 * L, LY.S_CG - 0.414 * 37.57, -1.74))
+    dist = 549.0 * L * arg('--dscale', 1.22)
+    dirc = Vector((math.cos(el) * math.sin(az), math.cos(el) * math.cos(az), math.sin(el)))
+    right = dirc.cross(Vector((0, 0, 1))).normalized()          # camera right (camera looks along -dirc)
+    right = -right
+    T = T + right * arg('--tshift', 1.3) + Vector((0, 0, arg('--tz', -0.4)))
+    C = T + dirc * dist
+    c = cam(tuple(C), tuple(T), 28884.8 * 36.0 / 1920.0, roll=roll)
+    c.data.clip_end = 5000
+    util.render_still(os.path.join(OUT, arg('--out', 'compare_ams.png')))
+
+
+SHOTS = dict(ams=shot_ams, hero=shot_hero, front34=shot_front34, takeoff=shot_takeoff, planform=shot_planform,
              flightdeck=shot_flightdeck)
 
 if __name__ == '__main__':

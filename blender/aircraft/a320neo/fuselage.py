@@ -342,7 +342,7 @@ def _offset_polygon(P, d):
     return np.array(out)
 
 
-def window_frames(col, mat, width=0.055, lift=0.0025, samples=18):
+def window_frames(col, mat, width=0.028, lift=0.0025, samples=18):
     """Dark painted frame rings around the cockpit openings as real geometry (crisp at any distance)."""
     rings = []
     for side in (1, -1):
