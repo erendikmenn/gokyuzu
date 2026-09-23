@@ -203,7 +203,7 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
     const a = p.alerts || {};
     for (const r of a.rules || []) { if (r.voice) s.add(r.voice); if (r.loop) s.add(r.loop); }
     for (const c of a.callouts || []) s.add(c.voice);
-    for (const k of ['chime', 'apDisconnect', 'altAlert', 'retard']) if (a[k]) s.add(a[k]);
+    for (const k of ['chime', 'apDisconnect', 'apDisconnectLoop', 'apButton', 'altAlert', 'retard']) if (a[k]) s.add(a[k]);
     s.delete(undefined); s.delete(null);
     return [...s];
   }
@@ -790,22 +790,26 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
     stopApDisc(I);
     const boeing = A.style === 'boeing';
     const now = ctx.currentTime;
-    I.apd = { t0: now, until: now + (boeing ? (involuntary ? 8 : 3) : (involuntary ? 10 : 0)), file: A.apDisconnect,
-      srcs: [], next: now, boeing, cut: boeing };
+    if (!involuntary && A.apButton) shot(I, A.apButton, { ext: 0, int: 0.8 });     // the disconnect pushbutton
+    const loop = boeing || involuntary;
+    I.apd = { t0: now, until: now + (boeing ? (involuntary ? 8 : 3) : (involuntary ? 10 : 30)), srcs: [], loop,
+      file: loop ? (A.apDisconnectLoop || A.apDisconnect) : A.apDisconnect };
     playApd(I);
   }
   function playApd(I) {
     const apd = I.apd;
-    apd.next = Infinity;
     getBuffer(apd.file).then((buf) => {
       if (!buf || I.apd !== apd || inst !== I) return;
       const src = ctx.createBufferSource(); src.buffer = buf;
+      if (apd.loop) {
+        src.loop = true;
+        if (buf.__loop) { src.loopStart = buf.__loop.start; src.loopEnd = buf.__loop.start + buf.__loop.dur; }
+      }
       const gn = gainNode(1);
       src.connect(gn).connect(G.alert);
-      src.start();
+      src.start(ctx.currentTime, apd.loop && buf.__loop ? buf.__loop.start : 0);
       apd.srcs.push({ src, gn });
-      apd.next = ctx.currentTime + buf.duration + (apd.boeing ? 0 : 0.35);
-      src.onended = () => { try { gn.disconnect(); } catch { /* */ } };
+      src.onended = () => { try { gn.disconnect(); } catch { /* */ } if (I.apd === apd && !apd.loop) I.apd = null; };
     });
   }
   function stopApDisc(I) {
@@ -817,10 +821,7 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
     I.apd = null;
   }
   function serviceApDisc(I, now) {
-    const apd = I.apd;
-    if (!apd) return;
-    if (apd.cut && now >= apd.until) { stopApDisc(I); return; }
-    if (now >= apd.next) { if (now < apd.until) playApd(I); else if (now > apd.next + 1) I.apd = null; }
+    if (I.apd && now >= I.apd.until) stopApDisc(I);         // 737: ~3 s (intentional) / safety limits
   }
   function acknowledge() {
     if (inst && inst.apd && ctx && ctx.currentTime > inst.apd.t0 + 0.15) stopApDisc(inst);

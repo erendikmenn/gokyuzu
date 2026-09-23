@@ -405,15 +405,13 @@ def main(voices_only=False):
     if voices_only:
         return
     rng = np.random.default_rng(99)
-    print('[alerts]')
+    print('[alerts]')   # A/P-disconnect sounds come from real recordings: gen_fgsounds.py
     write_wav('a320neo/single_chime.wav', chime(), target_lufs=-18)
     write_wav('a320neo/crc.wav', crc(), target_lufs=-18, loop=True)
-    write_wav('a320neo/cavalry.wav', cavalry_charge(rng), target_lufs=-17)
     write_wav('a320neo/cricket.wav', cricket(), target_lufs=-18, loop=True)
     write_wav('a320neo/c_chord.wav', c_chord(), target_lufs=-20)
     write_wav('b737/shaker.wav', stick_shaker(rng), target_lufs=-17, loop=True)
     write_wav('b737/clacker.wav', clacker(rng), target_lufs=-18, loop=True)
-    write_wav('b737/wailer.wav', wailer(), target_lufs=-18)
     write_wav('b737/chime.wav', ding_dong(), target_lufs=-19)
     write_wav('b737/c_chord.wav', c_chord(), target_lufs=-20)
 

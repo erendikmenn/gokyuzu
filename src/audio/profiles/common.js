@@ -119,7 +119,11 @@ export function airlinerAlerts(dir, airbus) {
   return {
     style: airbus ? 'airbus' : 'boeing',
     chime: v(airbus ? 'single_chime' : 'chime'),
+    // A/P disconnect (real reference recordings, see assets/audio/CREDITS.txt): A320 cavalry charge once on an
+    // intentional disconnect (with the pushbutton click), cavalry_loop repeated when involuntary; 737 wailer loop
     apDisconnect: v(airbus ? 'cavalry' : 'wailer'),
+    apDisconnectLoop: v(airbus ? 'cavalry_loop' : 'wailer'),
+    apButton: airbus ? v('ap_button') : null,
     altAlert: v('c_chord'),
     rules,
     callouts: (airbus ? RA_AIRBUS : RA_BOEING).map(([ft, n]) => ({ ft, voice: v(n) })),

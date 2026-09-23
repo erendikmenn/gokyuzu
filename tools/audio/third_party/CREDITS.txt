@@ -1,0 +1,25 @@
+Gökyüzü SF — audio credits
+==========================
+
+Autopilot-disconnect sounds (a320neo/cavalry, a320neo/cavalry_loop, a320neo/ap_button, b737/wailer) are derived
+(resampled to 48 kHz, level-matched, 80 Hz high-pass, 737 wailer cut to a seamless loop) from recordings in two
+open-source FlightGear aircraft, licensed under the GNU General Public License v2.0 (GPL-2.0):
+
+  * A320-family for FlightGear — legoboyvdlp, Octal450 and contributors
+    https://github.com/legoboyvdlp/A320-family  (Sounds/Cockpit/cavalry-charge-once.wav, cavalry-charge-loop.wav,
+    autopilot-disconnect pushbutton sound) — GPL-2.0
+  * Boeing 737-800YV for FlightGear — YV3399 and contributors
+    https://github.com/YV3399/737-800YV  (Sounds/Apdisco.wav) — GPL-2.0
+
+The derived files are distributed under GPL-2.0 as well. Unmodified originals, the licence text and SHA-256 sums are
+in tools/audio/third_party/flightgear/ of the source repository.
+
+Voice callouts: generated with ElevenLabs text-to-speech (voices Sarah, Bill, Eric) under the project's ElevenLabs
+licence. All other sounds (engines, rotors, wind, mechanical sounds, chimes, warning tones) are synthesised by the
+project's own scripts in tools/audio/.
+
+Türkçe:
+Otopilot ayırma sesleri, FlightGear açık kaynak uçaklarından türetilmiştir: A320-family (legoboyvdlp, Octal450 ve
+katkıda bulunanlar — github.com/legoboyvdlp/A320-family) ve Boeing 737-800YV (YV3399 ve katkıda bulunanlar —
+github.com/YV3399/737-800YV); lisans: GNU GPL-2.0. Anons sesleri ElevenLabs ile üretilmiştir; diğer tüm sesler
+projenin kendi sentez betikleriyle oluşturulmuştur.

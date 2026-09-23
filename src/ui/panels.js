@@ -263,6 +263,8 @@ export function openCredits(container) {
     ['Bina verisi', 'DataSF'],
     ['Yazılım', 'Three.js (MIT)'],
     ['Yazı tipi', 'B612 font (OFL)'],
+    ['Sesli uyarılar', 'ElevenLabs ile üretildi'],
+    ['Otopilot ayırma sesleri', 'FlightGear A320-family (legoboyvdlp, Octal450 ve katkıda bulunanlar) ve Boeing 737-800YV (YV3399 ve katkıda bulunanlar) projelerinden türetilmiştir · GNU GPL-2.0'],
   ];
   for (const [k, v] of rows) { const li = el('li', null, ul); el('b', null, li, k); el('span', null, li, v); }
   el('p', 'gkp-disc', box, DISCLAIMER);

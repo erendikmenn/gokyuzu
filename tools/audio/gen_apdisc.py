@@ -139,11 +139,25 @@ def el_candidate(text, dur, infl, tag, loop):
 
 def main():
     rng = np.random.default_rng(7)
+    from dsp import read_wav
+    from gen_voices import cavalry_charge, wailer
+    # real reference recordings (FlightGear, GPL-2.0) — the in-game defaults; demos of the looped behaviour
+    loop = read_wav(os.path.join(OUT, 'a320neo/cavalry_loop.wav'))
+    write_wav(f'{DST}/a320_fg_loop_demo.wav', np.tile(loop, 6))
+    wl = read_wav(os.path.join(OUT, 'b737/wailer.wav'))
+    demo = np.tile(wl, 3)[:N(3.0)]
+    write_wav(f'{DST}/b737_fg_3s.wav', fade(demo, 0.0, 0.03))
+    write_wav(f'{DST}/a320_oldsynth.wav', level(speaker_tone(cavalry_charge(rng), rng)))
+    write_wav(f'{DST}/b737_oldsynth.wav', level(speaker_tone(wailer(), rng, room=False), -19))
     items = [
-        {'id': 'a320_current', 'aircraft': 'a320neo', 'label': 'Mevcut (eski sentez)', 'file': 'a320neo/cavalry'},
+        {'id': 'a320_fg_once', 'aircraft': 'a320neo', 'label': 'Gerçek referans (FlightGear) — kasıtlı ayırma: tek sefer, 3 kısa tril (oyundaki varsayılan)', 'file': 'a320neo/cavalry'},
+        {'id': 'a320_fg_loop', 'aircraft': 'a320neo', 'label': 'Gerçek referans (FlightGear) — istem dışı ayırma: onaylanana kadar tekrar (örnek)', 'file': f'{DST}/a320_fg_loop_demo'},
+        {'id': 'a320_fg_button', 'aircraft': 'a320neo', 'label': 'Gerçek referans (FlightGear) — ayırma düğmesi tık sesi', 'file': 'a320neo/ap_button'},
+        {'id': 'a320_oldsynth', 'aircraft': 'a320neo', 'label': 'Eski sentez (önceki varsayılan)', 'file': f'{DST}/a320_oldsynth'},
         {'id': 'a320_synthA', 'aircraft': 'a320neo', 'label': 'Sentez A — pirinç boru "charge" (G-C-E-G…E-G)', 'fn': cavalry_a},
         {'id': 'a320_synthB', 'aircraft': 'a320neo', 'label': 'Sentez B — daha hızlı, elektronik trompet', 'fn': cavalry_b},
-        {'id': 'b737_current', 'aircraft': 'b737', 'label': 'Mevcut (eski sentez)', 'file': 'b737/wailer'},
+        {'id': 'b737_fg', 'aircraft': 'b737', 'label': 'Gerçek referans (FlightGear) — wailer, 3 s (oyundaki varsayılan)', 'file': f'{DST}/b737_fg_3s'},
+        {'id': 'b737_oldsynth', 'aircraft': 'b737', 'label': 'Eski sentez (önceki varsayılan)', 'file': f'{DST}/b737_oldsynth'},
         {'id': 'b737_synthA', 'aircraft': 'b737', 'label': 'Sentez A — yukarı/aşağı siren 1.1–2.4 kHz, 3.3/s', 'fn': wailer_a},
         {'id': 'b737_synthB', 'aircraft': 'b737', 'label': 'Sentez B — piezo tipi yükselen süpürme 1–2.5 kHz, 4/s', 'fn': wailer_b},
     ]

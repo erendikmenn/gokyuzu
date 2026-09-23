@@ -297,7 +297,7 @@ if (qp.get('ap')) {
   const panel = document.createElement('div');
   panel.style.cssText = 'margin:10px;padding:12px 16px;border:1px solid #c07a3a;border-radius:8px;background:#1d1812;max-width:980px';
   panel.innerHTML = '<h2 style="margin:0 0 6px;font-size:16px;color:#f0b070">Otopilot ayırma sesi — dinle ve seç</h2>'
-    + '<div style="color:#b9a58c;margin-bottom:8px">A320: “cavalry charge” (kısa sentetik boru fanfarı) · 737: “wailer” (inip çıkan elektronik siren). '
+    + '<div style="color:#b9a58c;margin-bottom:8px">A320: “cavalry charge” (FCOM: üç kısa bip/tril patlaması — kasıtlı ayırmada bir kez, istem dışında onaylanana kadar tekrar) · 737: “wailer” (inip çıkan elektronik siren). En üstteki “Gerçek referans (FlightGear)” kayıtları oyundaki varsayılandır. '
     + 'Her aday aynı ses yüksekliğine ayarlandı. Beğendiğinin kimliğini (ör. <code>a320_synthA</code>) söylemen yeterli.</div><div id="apList"></div>';
   document.body.insertBefore(panel, document.body.firstChild);
   fetch('../assets/audio/candidates/apdisc/index.json').then((r) => r.json()).then((items) => {

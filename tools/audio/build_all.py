@@ -36,10 +36,10 @@ def main():
         only = set(sys.argv[sys.argv.index('--only') + 1].split(','))
     if '--manifest-only' not in sys.argv:
         t0 = time.time()
-        import gen_airliners, gen_common, gen_fighters, gen_uh60, gen_voices  # noqa: E401
+        import gen_airliners, gen_common, gen_fgsounds, gen_fighters, gen_uh60, gen_voices  # noqa: E401
         steps = {'common': gen_common.main, 'fighters': lambda: [gen_fighters.gen(a) for a in gen_fighters.ENGINES],
                  'airliners': lambda: [gen_airliners.gen(a) for a in gen_airliners.ENGINES], 'uh60': gen_uh60.main,
-                 'voices': gen_voices.main}
+                 'voices': gen_voices.main, 'fgsounds': gen_fgsounds.main}
         for k, fn in steps.items():
             if only is None or k in only:
                 fn()
