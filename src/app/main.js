@@ -149,6 +149,7 @@ const worldProxy = new Proxy({}, {
   },
 });
 const cameraRig = createCameraRig(camera, renderer.domElement, worldProxy);
+Object.assign(state, { camera, cameraRig, renderer, scene, hud, audio });   // test hooks (CONTRACTS-SF.md §7)
 const SYSTEM_ACTIONS = ['gear', 'flapsDown', 'flapsUp', 'speedbrake', 'reverser', 'canopy', 'lights', 'autopilot'];
 for (const a of SYSTEM_ACTIONS) input.on(a, () => { if (state.flight && state.flight.command) state.flight.command(a); });
 input.on('camera', () => hud.showMessage(`Kamera: ${cameraRig.next()}`, 1000));
@@ -157,7 +158,7 @@ input.on('view', () => hud.showMessage(cameraRig.toggleView(), 1000));
 input.on('lookBack', () => cameraRig.lookBack(true));
 input.on('reset', () => { if (state.flight) { resetFlight(); hud.showMessage('Yeniden başlatıldı', 1000); } });
 input.on('pause', () => { state.paused = !state.paused; hud.setPaused(state.paused); audio.setPaused(state.paused); });
-input.on('hud', () => { state.hudVisible = !state.hudVisible; hud.setVisible(state.hudVisible); });
+input.on('hud', () => { if (hud.cycleMode) hud.cycleMode(); else { state.hudVisible = !state.hudVisible; hud.setVisible(state.hudVisible); } });   // full → compact → off
 input.on('mute', () => { state.userMuted = !state.userMuted; audio.setMuted(state.userMuted); hud.showMessage(state.userMuted ? 'Ses kapalı' : 'Ses açık', 900); });
 input.on('help', () => { state.helpVisible = !state.helpVisible; hud.showHelp(input.bindings, state.helpVisible); });
 input.on('menu', () => { location.href = location.pathname; });

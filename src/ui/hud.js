@@ -5,7 +5,7 @@
 // Canvases are redrawn every frame; DOM nodes are only touched when their value changes.
 import * as THREE from 'three';
 import { injectCSS, BASE_CSS } from './styles.js';
-import { el, clamp, smoothstep, wrap360, wrap180, num, fmtInt, fmtDist, keyChips, codeForKeyLabel, pressKey, KT, FT, FPM, DEG } from './util.js';
+import { el, clamp, smoothstep, wrap360, wrap180, num, fmtInt, fmtDist, keyChips, codeForKeyLabel, pressKey, storageGet, storageSet, KT, FT, FPM, DEG } from './util.js';
 import { createMinimap } from './minimap.js';
 import { AIRPORTS, LANDMARK_NAMES, CATEGORY_LABEL, AIRCRAFT_INFO } from './data.js';
 import { shared } from './shared.js';
@@ -47,6 +47,9 @@ const CSS = `
   background: linear-gradient(180deg, rgba(10, 18, 32, 0.34), rgba(4, 9, 18, 0.42));
   -webkit-backdrop-filter: blur(9px) saturate(1.15); backdrop-filter: blur(9px) saturate(1.15);
   box-shadow: 0 8px 26px rgba(0, 0, 0, .16), inset 0 1px 0 rgba(255, 255, 255, .06); }
+.gkh.gkh-compact .gkh-tape { background: linear-gradient(180deg, rgba(10, 18, 32, 0.12), rgba(4, 9, 18, 0.2)); border-color: rgba(255, 255, 255, 0.08);
+  -webkit-backdrop-filter: blur(6px) saturate(1.1); backdrop-filter: blur(6px) saturate(1.1); box-shadow: none; }
+.gkh.gkh-compact .gkh-fma { top: var(--fma-top, 80px); }
 .gkh-panel { position: absolute; overflow: hidden;
   background: linear-gradient(180deg, rgba(16, 26, 42, 0.52), rgba(6, 11, 20, 0.5));
   border: 1px solid rgba(255, 255, 255, 0.12); border-radius: calc(14px * var(--ps));
@@ -211,7 +214,11 @@ export function createHUD(container) {
   const center = el('div', 'gkh-layer', ext);         // tapes + attitude (hidden in the cinematic cameras)
   const tapes = [el('div', 'gkh-tape', center), el('div', 'gkh-tape', center), el('div', 'gkh-tape', center)];
   const cv = el('canvas', 'gkh-cv', center);
-  const ctx = cv.getContext('2d');
+  const mainCtx = cv.getContext('2d');
+  let ctx = mainCtx;                                   // current drawing target (full canvas or a compact column)
+  // compact mode: three small canvases at the screen edges (speed column, altitude column, heading tape)
+  const cvL = el('canvas', 'gkh-cv', center), cvR = el('canvas', 'gkh-cv', center), cvT = el('canvas', 'gkh-cv', center);
+  const lctx = cvL.getContext('2d'), rctx = cvR.getContext('2d'), tctx = cvT.getContext('2d');
   const info = el('div', 'gkh-panel gkh-info', ext);
   const iName = el('div', 'gkh-i-name', info, '');
   const iLoc = el('div', 'gkh-i-loc', info, '');
@@ -284,7 +291,12 @@ export function createHUD(container) {
 
   // ---------- state ----------
   let def = null, category = 'airliner', spec = {};
-  let visible = true, view = 'exterior', paused = false;
+  const MODE_KEY = 'gokyuzu-sf.hudMode';
+  const MODES = ['full', 'compact', 'off'];
+  const MODE_NAMES = { full: 'Tam', compact: 'Sade', off: 'Kapalı' };
+  let hudMode = MODES.includes(storageGet(MODE_KEY)) ? storageGet(MODE_KEY) : 'compact';
+  let visible = hudMode !== 'off', view = 'exterior', paused = false;
+  const compact = () => hudMode === 'compact';
   let lastT = performance.now(), pulse = 0;
   let lastKt = 0, ktTrend = 0, maxG = 1, gLoad = 0;
   let infoTimer = 0;
@@ -299,27 +311,63 @@ export function createHUD(container) {
 
   // ---------- layout ----------
   let s = 1, pscale = 1, dpr = 1, vw = 0, vh = 0, mapPx = MAP_DU, sysW = 0, sysH = 0;
+  const CS = 0.7;                                       // compact instrument scale (relative to s)
+  const colBox = { L: null, R: null, T: null };         // compact column boxes in design units
+  function colDu() {
+    const rowsL = category === 'fighter' ? 4 : 2, rowsR = category === 'helicopter' ? 3 : 2;
+    return {
+      L: { x0: SPD.x1 - SPD.w - 8, y0: -SPD.h / 2 - 28, w: SPD.w + 16, h: SPD.h + 28 + 12 + rowsL * 24 },
+      R: { x0: ALT.x0 - 8, y0: -ALT.h / 2 - 28, w: ALT.w + 16 + 44, h: ALT.h + 28 + 12 + rowsR * 24 + (category === 'helicopter' ? 6 : 0) },
+      T: { x0: -HDG.w / 2 - 4, y0: HDG.y0 - 4, w: HDG.w + 8, h: HDG.h + 34 },
+    };
+  }
   function layout() {
     vw = container.clientWidth || window.innerWidth;
     vh = container.clientHeight || window.innerHeight;
     s = clamp(Math.min(vh / 900, vw / 1240), 0.6, 2.4);
-    pscale = clamp(s, 0.78, 2);
+    pscale = clamp(s, 0.78, 2) * (compact() ? 0.82 : 1);
     root.style.setProperty('--s', s.toFixed(4));
     root.style.setProperty('--ps', pscale.toFixed(4));
+    root.classList.toggle('gkh-compact', compact());
     dpr = Math.min(window.devicePixelRatio || 1, 2);
     const cssW = Math.round(CW * s), cssH = Math.round(CH * s);
     cv.style.width = `${cssW}px`; cv.style.height = `${cssH}px`;
     cv.style.left = `${Math.round(vw / 2 - cssW / 2)}px`; cv.style.top = `${Math.round(vh / 2 - cssH / 2)}px`;
     cv.width = Math.round(cssW * dpr); cv.height = Math.round(cssH * dpr);
-    const place = (node, x, y, w, h) => {
-      node.style.left = `${Math.round(vw / 2 + x * s)}px`; node.style.top = `${Math.round(vh / 2 + y * s)}px`;
-      node.style.width = `${Math.round(w * s)}px`; node.style.height = `${Math.round(h * s)}px`;
+    const px = (node, l, t, w, h) => {
+      node.style.left = `${Math.round(l)}px`; node.style.top = `${Math.round(t)}px`;
+      node.style.width = `${Math.round(w)}px`; node.style.height = `${Math.round(h)}px`;
     };
+    const place = (node, x, y, w, h) => px(node, vw / 2 + x * s, vh / 2 + y * s, w * s, h * s);
     // instrument columns: caption row + tape + readouts (row count depends on the category)
-    const rowsL = category === 'fighter' ? 4 : 2, rowsR = category === 'helicopter' ? 3 : 2;
-    place(tapes[0], SPD.x1 - SPD.w - 8, -SPD.h / 2 - 28, SPD.w + 16, SPD.h + 28 + 12 + rowsL * 24);
-    place(tapes[1], ALT.x0 - 8, -ALT.h / 2 - 28, ALT.w + 16 + 44, ALT.h + 28 + 12 + rowsR * 24 + (category === 'helicopter' ? 6 : 0));
-    place(tapes[2], -HDG.w / 2, HDG.y0, HDG.w, HDG.h);
+    const du = colDu();
+    const cmp = compact();
+    cv.style.display = cmp ? 'none' : '';
+    for (const c of [cvL, cvR, cvT]) c.style.display = cmp ? '' : 'none';
+    if (!cmp) {
+      place(tapes[0], du.L.x0, du.L.y0, du.L.w, du.L.h);
+      place(tapes[1], du.R.x0, du.R.y0, du.R.w, du.R.h);
+      place(tapes[2], -HDG.w / 2, HDG.y0, HDG.w, HDG.h);
+      root.style.removeProperty('--fma-top');
+    } else {
+      // compact: smaller columns pinned to the left / right screen edges, heading tape at the top centre
+      const k = s * CS, m = 16 * pscale;
+      const lh = du.L.h * k, rh = du.R.h * k;
+      const top = vh / 2 - (SPD.h / 2 + 28) * k - 24 * s;           // both tapes centred at the same height
+      const L = { l: m, t: top, w: du.L.w * k, h: lh };
+      const Rr = { l: vw - m - du.R.w * k, t: top, w: du.R.w * k, h: rh };
+      const T = { l: vw / 2 - (du.T.w * k) / 2, t: 12 * pscale, w: du.T.w * k, h: du.T.h * k };
+      colBox.L = { ...du.L, k, ...L }; colBox.R = { ...du.R, k, ...Rr }; colBox.T = { ...du.T, k, ...T };
+      px(tapes[0], L.l, L.t, L.w, L.h);
+      px(tapes[1], Rr.l, Rr.t, Rr.w, Rr.h);
+      px(tapes[2], T.l + 4 * k, T.t + 4 * k, HDG.w * k, HDG.h * k);
+      for (const [c, b] of [[cvL, L], [cvR, Rr], [cvT, T]]) {
+        c.style.left = `${Math.round(b.l)}px`; c.style.top = `${Math.round(b.t)}px`;
+        c.style.width = `${Math.round(b.w)}px`; c.style.height = `${Math.round(b.h)}px`;
+        c.width = Math.round(b.w * dpr); c.height = Math.round(b.h * dpr);
+      }
+      root.style.setProperty('--fma-top', `${Math.round(T.t + T.h + 4)}px`);
+    }
     mapPx = Math.round(MAP_DU * pscale);
     mapCv.width = Math.round(mapPx * dpr); mapCv.height = Math.round(mapPx * dpr);
     layoutSys();
@@ -729,8 +777,11 @@ export function createHUD(container) {
     text(ctx, value, x1 - 2, y, color);
   }
 
-  function drawReadouts(f, kt) {
+  function drawReadouts(f, kt, side) {
     const y = SPD.h / 2 + 22;
+    const wantL = side !== 'R', wantR = side !== 'L';
+    // route each readout to its column (compact mode draws the columns into separate canvases)
+    const ro = (label, value, x0, x1, yy, color, big) => { if (x0 < 0 ? wantL : wantR) readout(label, value, x0, x1, yy, color, big); };
     const sx0 = SPD.x1 - SPD.w, sx1 = SPD.x1, ax0 = ALT.x0, ax1 = ALT.x0 + ALT.w;
     const fpm = num(f.verticalSpeed) * FPM;
     const vsStr = `${fpm > 5 ? '+' : ''}${Math.round(fpm / 10) * 10}`;
@@ -739,17 +790,17 @@ export function createHUD(container) {
     const gs = f.velocity ? Math.hypot(f.velocity.x, f.velocity.z) * KT : kt;
     if (category === 'fighter') {
       const mach = Number.isFinite(f.mach) ? f.mach : num(f.airspeed) / 340;
-      readout('M', mach.toFixed(2), sx0, sx1, y, mach > 1 ? C.ab : C.fg, true);
-      readout('G', g.toFixed(1), sx0, sx1, y + 24, g > 8 || g < -2.5 ? C.warn : g > 6.5 ? C.caution : C.fg);
-      readout('α', `${att.aoa.toFixed(1)}°`, sx0, sx1, y + 46, att.aoa > 20 ? C.caution : C.fg);
-      readout('MAKS G', maxG.toFixed(1), sx0, sx1, y + 68, C.dim);
-      readout('FT/DK', vsStr, ax0, ax1, y);
+      ro('M', mach.toFixed(2), sx0, sx1, y, mach > 1 ? C.ab : C.fg, true);
+      ro('G', g.toFixed(1), sx0, sx1, y + 24, g > 8 || g < -2.5 ? C.warn : g > 6.5 ? C.caution : C.fg);
+      ro('α', `${att.aoa.toFixed(1)}°`, sx0, sx1, y + 46, att.aoa > 20 ? C.caution : C.fg);
+      ro('MAKS G', maxG.toFixed(1), sx0, sx1, y + 68, C.dim);
+      ro('FT/DK', vsStr, ax0, ax1, y);
       if (agl != null && agl * FT < 2500 && !f.onGround) readout('RA', String(Math.round(agl * FT / 10) * 10), ax0, ax1, y + 24, agl < 60 ? C.caution : C.accent);
     } else if (category === 'helicopter') {
-      readout('GS', String(Math.round(gs)), sx0, sx1, y);
-      readout('TRQ', `${Math.round(torquePct(f))}%`, sx0, sx1, y + 24, torquePct(f) > 100 ? C.warn : C.fg);
-      readout('FT/DK', vsStr, ax0, ax1, y);
-      if (agl != null) {
+      ro('GS', String(Math.round(gs)), sx0, sx1, y);
+      ro('TRQ', `${Math.round(torquePct(f))}%`, sx0, sx1, y + 24, torquePct(f) > 100 ? C.warn : C.fg);
+      ro('FT/DK', vsStr, ax0, ax1, y);
+      if (agl != null && wantR) {
         const ra = Math.max(0, agl * FT);
         // radar altitude box, prominent
         const yy = y + 34;
@@ -760,9 +811,9 @@ export function createHUD(container) {
         text(ctx, ra < 1500 ? String(Math.round(ra)) : '----', ax1 - 7, yy + 1, ra < 50 ? C.caution : C.fg, false);
       }
     } else {
-      readout('GS', String(Math.round(gs)), sx0, sx1, y);
-      readout('M', (Number.isFinite(f.mach) ? f.mach : num(f.airspeed) / 340).toFixed(2), sx0, sx1, y + 24, C.dim);
-      readout('FT/DK', vsStr, ax0, ax1, y);
+      ro('GS', String(Math.round(gs)), sx0, sx1, y);
+      ro('M', (Number.isFinite(f.mach) ? f.mach : num(f.airspeed) / 340).toFixed(2), sx0, sx1, y + 24, C.dim);
+      ro('FT/DK', vsStr, ax0, ax1, y);
       if (agl != null && agl * FT < 2500 && !f.onGround) readout('RA', String(Math.round(agl * FT / 10) * 10), ax0, ax1, y + 24, agl < 60 ? C.caution : C.accent);
     }
   }
@@ -1179,8 +1230,17 @@ export function createHUD(container) {
     setCls(strip, 'gkh-off', !visible || !(cockpit || cinematic));
     setCls(warnBox, 'gkh-off', !visible);
     warnBox.style.display = visible ? '' : 'none';
-    setCls(warnBox, 'gkh-cockpit', cockpit || cinematic);
-    setCls(root, 'gkh-top', !visible || cockpit || cinematic);
+    setCls(warnBox, 'gkh-cockpit', cockpit || cinematic || compact());
+    setCls(root, 'gkh-top', !visible || cockpit || cinematic || compact());
+  }
+  function setMode(m) {
+    if (!MODES.includes(m)) return hudMode;
+    hudMode = m;
+    visible = m !== 'off';
+    storageSet(MODE_KEY, m);
+    layout();
+    applyVisibility();
+    return hudMode;
   }
 
   const hud = {
@@ -1231,21 +1291,37 @@ export function createHUD(container) {
         minimap.draw(mctx, MAP_DU, f, infoArg.world, att.hdg, pulse);
         return;
       }
-      const k = dpr * s;
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.clearRect(0, 0, cv.width, cv.height);
-      ctx.setTransform(k, 0, 0, k, cv.width / 2, cv.height / 2);
-      ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.textBaseline = 'middle'; ctx.setLineDash([]); ctx.globalAlpha = 1;
-      const mode = shared.cameraMode;
-      // attitude symbology only where it is meaningful: chase camera, airborne or rolling fast
-      const attA = f.onGround ? smoothstep(25, 70, kt) : 1;
-      if ((mode === 'chase' || !shared.camera) && !shared.lookingBack && f.quaternion && attA > 0.01) {
-        attAlpha = attA; ctx.globalAlpha = attA; drawAttitude(f); ctx.globalAlpha = 1;
+      const prep = (c, canvas, k, ox, oy) => {
+        c.setTransform(1, 0, 0, 1, 0, 0);
+        c.clearRect(0, 0, canvas.width, canvas.height);
+        c.setTransform(k, 0, 0, k, ox, oy);
+        c.lineJoin = 'round'; c.lineCap = 'round'; c.textBaseline = 'middle'; c.setLineDash([]); c.globalAlpha = 1;
+        ctx = c;
+      };
+      if (compact() && colBox.L) {
+        // compact: edge columns, no attitude symbology
+        const { L, R: Rb, T } = colBox;
+        prep(lctx, cvL, dpr * L.k, -L.x0 * dpr * L.k, -L.y0 * dpr * L.k);
+        drawSpeedTape(f, kt); drawReadouts(f, kt, 'L');
+        prep(rctx, cvR, dpr * Rb.k, -Rb.x0 * dpr * Rb.k, -Rb.y0 * dpr * Rb.k);
+        drawAltTape(f, ft); drawReadouts(f, kt, 'R');
+        prep(tctx, cvT, dpr * T.k, -T.x0 * dpr * T.k, -T.y0 * dpr * T.k);
+        drawHeadingTape(f, aptCache);
+        ctx = mainCtx;
+      } else {
+        const k = dpr * s;
+        prep(mainCtx, cv, k, cv.width / 2, cv.height / 2);
+        const mode = shared.cameraMode;
+        // attitude symbology only where it is meaningful: chase camera, airborne or rolling fast
+        const attA = f.onGround ? smoothstep(25, 70, kt) : 1;
+        if ((mode === 'chase' || !shared.camera) && !shared.lookingBack && f.quaternion && attA > 0.01) {
+          attAlpha = attA; ctx.globalAlpha = attA; drawAttitude(f); ctx.globalAlpha = 1;
+        }
+        drawSpeedTape(f, kt);
+        drawAltTape(f, ft);
+        drawHeadingTape(f, aptCache);
+        drawReadouts(f, kt);
       }
-      drawSpeedTape(f, kt);
-      drawAltTape(f, ft);
-      drawHeadingTape(f, aptCache);
-      drawReadouts(f, kt);
       drawSystems(f);
       updateFMA(f);
       infoTimer -= dt;
@@ -1271,7 +1347,16 @@ export function createHUD(container) {
       clearTimeout(toastTimer);
       toastTimer = setTimeout(() => toast.classList.remove('show'), Math.max(300, ms));
     },
-    setVisible(v) { visible = !!v; applyVisibility(); },
+    /** H key: cycles the HUD full → compact → off (main.js calls this with a toggled boolean; the value is ignored). */
+    setVisible() { return hud.cycleMode(); },
+    /** Cycle full → compact → off; returns the Turkish mode name and shows a small chip. */
+    cycleMode() {
+      setMode(MODES[(MODES.indexOf(hudMode) + 1) % MODES.length]);
+      showChip('Göstergeler', MODE_NAMES[hudMode], 1100);
+      return MODE_NAMES[hudMode];
+    },
+    setMode(m) { setMode(m); return hudMode; },
+    get mode() { return hudMode; },
     showHelp(bindings, show) {
       if (bindings !== helpBindings || !helpCard.firstChild || show) { helpBindings = bindings; buildHelp(bindings); }
       help.classList.toggle('show', !!show);

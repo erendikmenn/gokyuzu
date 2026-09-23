@@ -7,6 +7,49 @@ import { shared } from './shared.js';
 import { createSpawnMap, SPAWN_MAP_CSS } from './baymap.js';
 
 const STORE_KEY = 'gokyuzu-sf.menu';
+
+// ---------- controls summary from the live key bindings (src/flight/input.js), per aircraft category ----------
+const SHORT = [
+  [/^Burun/i, 'Burun'], [/^Cyclic ileri/i, 'Cyclic ileri / geri'], [/^Cyclic sola/i, 'Cyclic yan'], [/yatış/i, 'Yatış'],
+  [/^Pedal/i, 'Pedal'], [/^Dümen/i, 'Dümen'], [/^Kolektif artır/i, 'Kolektif'], [/^Gaz artır/i, 'Gaz'],
+  [/^Art yakıcı/i, 'Art yakıcı'], [/^İniş takımı/i, 'İniş takımı'], [/^Flap/i, 'Flap'], [/^Otomatik havada asılı/i, 'Hover tutma'],
+  [/^Otopilot(?! açıkken)/i, 'Otopilot'], [/^Kamera/i, 'Kamera'], [/^Kokpit/i, 'Kokpit'], [/^Arkaya bak/i, 'Arkaya bak'],
+  [/^Duraklat/i, 'Duraklat'], [/^Yardım/i, 'Tüm kontroller'],
+];
+const PRIORITY = {
+  airliner: ['Burun', 'Yatış', 'Dümen', 'Gaz', 'İniş takımı', 'Flap', 'Otopilot', 'Kamera', 'Kokpit', 'Tüm kontroller'],
+  fighter: ['Burun', 'Yatış', 'Dümen', 'Gaz', 'Art yakıcı', 'İniş takımı', 'Kamera', 'Kokpit', 'Duraklat', 'Tüm kontroller'],
+  helicopter: ['Cyclic ileri / geri', 'Cyclic yan', 'Pedal', 'Kolektif', 'Hover tutma', 'Kamera', 'Kokpit', 'Arkaya bak', 'Duraklat', 'Tüm kontroller'],
+};
+let inputModPromise = null;
+const bindingRows = new Map();          // category → [[keys, label], …] | null
+/** Promise<[keys, label][] | null> built from createInput(null).bindings for the category (null → use the static list). */
+function controlRows(category) {
+  if (bindingRows.has(category)) return Promise.resolve(bindingRows.get(category));
+  if (!inputModPromise) inputModPromise = import(new URL('../flight/input.js', import.meta.url).href).catch(() => null);
+  return inputModPromise.then((mod) => {
+    let rows = null;
+    try {
+      const inp = mod && mod.createInput ? mod.createInput(null) : null;
+      if (inp && typeof inp.setAircraft === 'function') inp.setAircraft({ category, abDetent: category === 'fighter' ? 0.9 : null });
+      const list = inp && Array.isArray(inp.bindings) ? inp.bindings : [];
+      const found = new Map();
+      for (const b of list) {
+        const label = String(b.label || '');
+        const hit = SHORT.find(([re]) => re.test(label));
+        if (!hit || found.has(hit[1])) continue;
+        let keys = String(b.keys || '').split('·')[0].trim();
+        if (hit[1] === 'Art yakıcı') keys = '2× Shift';
+        if (hit[1] === 'Tüm kontroller') keys = keys.split('/')[0].trim();
+        found.set(hit[1], [keys, hit[1]]);
+      }
+      rows = (PRIORITY[category] || PRIORITY.airliner).map((k) => found.get(k)).filter(Boolean);
+      if (rows.length < 6) rows = null;
+    } catch { rows = null; }
+    bindingRows.set(category, rows);
+    return rows;
+  });
+}
 const thumbCache = new Map();     // aircraft id → Promise<string|null> (resolved thumbnail URL)
 
 /** Resolve an aircraft's menu thumbnail (from its model module), or null. */
@@ -471,6 +514,15 @@ export function createMenu(container, { aircraft = [], spawns = [] } = {}) {
     function renderControls() {
       const a = currentAircraft();
       const cat = (a && a.category) || 'airliner';
+      controlRows(cat).then((rows) => {
+        if (closed || !rows || ((currentAircraft() && currentAircraft().category) || 'airliner') !== cat) return;
+        ctrlGrid.textContent = '';
+        for (const [keys, label] of rows.slice(0, 10)) {
+          const r = el('div', 'gkm-ctrl-row', ctrlGrid);
+          el('span', null, r, label);
+          keyChips(r, keys);
+        }
+      });
       ctrlGrid.textContent = '';
       const common = MENU_CONTROLS.common;
       const extra = MENU_CONTROLS[cat] || [];
