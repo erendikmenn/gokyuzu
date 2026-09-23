@@ -223,34 +223,48 @@ export function createMinimap() {
       ctx.lineWidth = w + 2; ctx.strokeStyle = 'rgba(0,0,0,0.45)'; ctx.stroke();
       ctx.lineWidth = w; ctx.strokeStyle = a.military ? '#cfe3ff' : '#e9eef5'; ctx.stroke();
     }
-    // landmarks
-    ctx.font = `600 9.5px ${SANS}`;
-    ctx.textBaseline = 'middle';
-    for (const l of landmarksOf(world)) {
-      if (!SHOW_LANDMARKS.includes(l.id)) continue;
-      const x = X(l.x), y = Y(l.z);
-      if (x < -20 || x > M + 20 || y < -10 || y > M + 10) continue;
-      ctx.beginPath(); ctx.arc(x, y, 2, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(255,190,150,0.85)'; ctx.fill();
-      if (span < 12500) {
-        const name = LANDMARK_NAMES[l.id] || l.name;
+    // landmark + airport labels: kept fully inside the map (flipped / nudged inward, dropped when they don't fit),
+    // clear of the north marker (top centre) and the scale bar (bottom right)
+    const PAD = 4;
+    const reserved = [[M / 2 - 10, 0, M / 2 + 10, 18], [M - 64, M - 30, M, M]];
+    const placed = [];
+    const hits = (x0, y0, x1, y1) => reserved.some((r) => x0 < r[2] && x1 > r[0] && y0 < r[3] && y1 > r[1])
+      || placed.some((r) => x0 < r[2] && x1 > r[0] && y0 < r[3] && y1 > r[1]);
+    const label = (str, ax, ay, prefer, color, halo) => {
+      const w = ctx.measureText(str).width, h = 11;
+      const cands = prefer === 'center'
+        ? [[clamp(ax - w / 2, PAD, M - PAD - w), ay]]
+        : [[ax + 5, ay], [ax - 5 - w, ay]];                       // right of the dot, else flipped to the left
+      for (const [x0, cy] of cands) {
+        const y0 = cy - h / 2;
+        if (x0 < PAD || x0 + w > M - PAD || y0 < PAD || y0 + h > M - PAD) continue;
+        if (hits(x0, y0, x0 + w, y0 + h)) continue;
+        placed.push([x0, y0, x0 + w, y0 + h]);
         ctx.textAlign = 'left';
-        ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(6,12,22,0.7)'; ctx.strokeText(name, x + 5, y);
-        ctx.fillStyle = 'rgba(255,214,190,0.8)'; ctx.fillText(name, x + 5, y);
+        ctx.lineWidth = 3; ctx.strokeStyle = halo; ctx.strokeText(str, x0, cy);
+        ctx.fillStyle = color; ctx.fillText(str, x0, cy);
+        return;
       }
-    }
-    // airport labels
+    };
+    ctx.textBaseline = 'middle';
+    // airports first (they win the space)
     ctx.font = `700 10.5px ${SANS}`;
     for (const a of apts) {
       const c = a.center || (a.runways && a.runways[0] && a.runways[0].center);
       if (!c) continue;
       const x = X(c.x), y = Y(c.z);
-      const code = (AIRPORTS[a.icao] && AIRPORTS[a.icao].code) || a.icao;
-      const lx = x, ly = y - 16 * Math.min(1, 9000 / span) - 6;
       if (x < -20 || x > M + 20 || y < -20 || y > M + 20) continue;
-      ctx.textAlign = 'center';
-      ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(6,12,22,0.75)'; ctx.strokeText(code, lx, ly);
-      ctx.fillStyle = '#5cf2c8'; ctx.fillText(code, lx, ly);
+      const code = (AIRPORTS[a.icao] && AIRPORTS[a.icao].code) || a.icao;
+      label(code, x, y - 16 * Math.min(1, 9000 / span) - 6, 'center', '#5cf2c8', 'rgba(6,12,22,0.75)');
+    }
+    ctx.font = `600 9.5px ${SANS}`;
+    for (const l of landmarksOf(world)) {
+      if (!SHOW_LANDMARKS.includes(l.id)) continue;
+      const x = X(l.x), y = Y(l.z);
+      if (x < 2 || x > M - 2 || y < 2 || y > M - 2) continue;
+      ctx.beginPath(); ctx.arc(x, y, 2, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(255,190,150,0.85)'; ctx.fill();
+      if (span < 12500) label(LANDMARK_NAMES[l.id] || l.name, x, y, 'side', 'rgba(255,214,190,0.8)', 'rgba(6,12,22,0.7)');
     }
 
     // track line (where the velocity vector points)

@@ -295,7 +295,7 @@ export function createHUD(container) {
   const MODES = ['full', 'compact', 'off'];
   const MODE_NAMES = { full: 'Tam', compact: 'Sade', off: 'Kapalı' };
   let hudMode = MODES.includes(storageGet(MODE_KEY)) ? storageGet(MODE_KEY) : 'compact';
-  let visible = hudMode !== 'off', view = 'exterior', paused = false;
+  let visible = hudMode !== 'off', view = 'exterior', paused = false, cinematic = false;
   const compact = () => hudMode === 'compact';
   let lastT = performance.now(), pulse = 0;
   let lastKt = 0, ktTrend = 0, maxG = 1, gLoad = 0;
@@ -371,6 +371,26 @@ export function createHUD(container) {
     mapPx = Math.round(MAP_DU * pscale);
     mapCv.width = Math.round(mapPx * dpr); mapCv.height = Math.round(mapPx * dpr);
     layoutSys();
+    positionTopStack();
+  }
+  // Top-of-screen stack, per mode, so toasts never cover the autopilot strip (FMA) or the warnings:
+  //   full exterior: toast at the very top, FMA under it (vh/2 − 362 s), warnings below the heading tape
+  //   compact:       heading tape → FMA → toast → warnings
+  //   cockpit / flyby / tower / HUD off: top strip → toast → warnings
+  function positionTopStack() {
+    let toastTop, warnTop;
+    if (view === 'cockpit' || cinematic || !visible) {
+      toastTop = 66 * pscale; warnTop = toastTop + 62 * s;
+    } else if (compact()) {
+      const fmaTop = parseFloat(root.style.getPropertyValue('--fma-top')) || 64 * s;
+      toastTop = fmaTop + 38 * s;
+      warnTop = toastTop + 64 * s;
+    } else {
+      toastTop = Math.min(12 * pscale, vh / 2 - 362 * s - 58 * s);
+      warnTop = vh / 2 - 236 * s;
+    }
+    toast.style.top = `${Math.round(Math.max(6, toastTop))}px`;
+    warnBox.style.top = `${Math.round(warnTop)}px`;
   }
   function layoutSys() {
     const [w, h] = SYS[category] || SYS.airliner;
@@ -1222,7 +1242,6 @@ export function createHUD(container) {
     chipTimer = setTimeout(() => chip.classList.remove('show'), ms);
   }
 
-  let cinematic = false;
   function applyVisibility() {
     const cockpit = view === 'cockpit';
     setCls(ext, 'gkh-off', !visible || cockpit);
@@ -1232,6 +1251,7 @@ export function createHUD(container) {
     warnBox.style.display = visible ? '' : 'none';
     setCls(warnBox, 'gkh-cockpit', cockpit || cinematic || compact());
     setCls(root, 'gkh-top', !visible || cockpit || cinematic || compact());
+    positionTopStack();
   }
   function setMode(m) {
     if (!MODES.includes(m)) return hudMode;
