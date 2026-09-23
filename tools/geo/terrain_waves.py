@@ -1,11 +1,27 @@
 """Generate the tileable water wave slope texture (assets/sf/terrain/waves.png) from a random-phase directional
 wave spectrum (Phillips-like, inverse FFT). R,G = slopes dh/dx, dh/dz (128 = 0), B = normalized height.
-Usage: .venv/bin/python tools/geo/terrain_waves.py
+Also waves_lo.png: 64x64 box average of waves.png (= its mip 3, 10 KB), the stand-in terrain.js shows until the full
+texture has loaded after the start.
+Usage: .venv/bin/python tools/geo/terrain_waves.py        (waves.png, waves_lo.png, detail.png)
+       .venv/bin/python tools/geo/terrain_waves.py --lo   (only waves_lo.png from the existing waves.png)
 """
-import os
+import os, sys
 import numpy as np
 from PIL import Image
 from terrain_common import OUT
+
+
+def write_waves_lo(size=64):
+    a = np.asarray(Image.open(os.path.join(OUT, 'waves.png')).convert('RGB'), np.float64)
+    f = a.shape[0] // size
+    lo = a.reshape(size, f, size, f, 3).mean(axis=(1, 3))
+    Image.fromarray(np.clip(np.round(lo), 0, 255).astype(np.uint8)).save(os.path.join(OUT, 'waves_lo.png'), optimize=True)
+    print('saved waves_lo.png', lo.shape)
+
+
+if '--lo' in sys.argv:
+    write_waves_lo()
+    sys.exit(0)
 
 N = 512
 rng = np.random.default_rng(1234)
@@ -33,6 +49,7 @@ img = np.stack([np.clip(128 + 127 * sx, 0, 255), np.clip(128 + 127 * sz, 0, 255)
 os.makedirs(OUT, exist_ok=True)
 Image.fromarray(img).save(os.path.join(OUT, 'waves.png'))
 print('saved waves.png', img.shape, 'slope rms', np.sqrt((sx ** 2 + sz ** 2).mean()))
+write_waves_lo()
 
 # ---------------- ground detail texture (tileable): R = fine grain, G = mid-scale variation, B = coarse patches
 def band_noise(n, k0, k1, seed):

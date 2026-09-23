@@ -28,7 +28,11 @@ aws s3 sync dist/node_modules $BUCKET/node_modules --delete --only-show-errors -
 # CloudFront send one Cache-Control per object whatever the query string, some requests stay unversioned (render gallery,
 # dev pages), a player who loaded the old version map just before a deploy fetches new bytes under old ?v= URLs while
 # the sync runs, and rollback.py brings old hashes back. One day bounds all of these.
-aws s3 sync dist/assets $BUCKET/assets --delete --only-show-errors --exclude "versions.json" --cache-control "public, max-age=86400"
+# The terrain height packs sf/terrain/h/<L>.bin (range requests) are no longer published: the game reads hz/ (small
+# cacheable files). The copies already in the bucket stay for pages loaded before the switch; once no such page can be
+# open any more (a week), remove them with `aws s3 rm $BUCKET/assets/sf/terrain/h --recursive`, then drop this exclude
+# and the Cloudflare cache-bypass rule for /assets/sf/terrain/h/.
+aws s3 sync dist/assets $BUCKET/assets --delete --only-show-errors --exclude "versions.json" --exclude "sf/terrain/h/*" --cache-control "public, max-age=86400"
 # manifests/indexes change with every build: keep them short-lived so browsers never mix old lists with new files
 aws s3 cp $BUCKET/assets $BUCKET/assets --recursive --exclude "*" --include "*.json" --exclude "versions.json" --metadata-directive REPLACE --cache-control "public, max-age=300" --content-type "application/json" --only-show-errors
 aws s3 sync dist/renders $BUCKET/renders --delete --only-show-errors --cache-control "public, max-age=86400"

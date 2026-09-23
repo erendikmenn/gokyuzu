@@ -2,7 +2,8 @@
 // the edge of the data: Pacific Ocean west of the coast, generic hazy land elsewhere (aerial perspective does the rest).
 import * as THREE from 'three';
 
-export function createHorizonRing({ rootMinX, rootMinZ, rootSize, waveTex }) {
+/** waveUniform: the terrain's shared { value: waves texture } (the full texture replaces a small one after the start). */
+export function createHorizonRing({ rootMinX, rootMinZ, rootSize, waveUniform }) {
   const x0 = rootMinX, z0 = rootMinZ, x1 = rootMinX + rootSize, z1 = rootMinZ + rootSize;
   const R = 500000;
   // square annulus as 4 quads (outer square -> inner square)
@@ -19,7 +20,7 @@ export function createHorizonRing({ rootMinX, rootMinZ, rootSize, waveTex }) {
   g.setAttribute('normal', new THREE.Float32BufferAttribute(new Array(16).fill(0).flatMap(() => [0, 1, 0]), 3));
   g.setIndex(idx);
   g.computeBoundingSphere();
-  const uniforms = { uWaveTex: { value: waveTex } };
+  const uniforms = { uWaveTex: waveUniform };
   const m = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, metalness: 0 });
   m.name = 'sf-horizon';
   m.onBeforeCompile = (sh) => {

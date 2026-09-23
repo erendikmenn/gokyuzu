@@ -21,8 +21,10 @@ const withGallery = process.argv.includes('--gallery');
 
 // directory names and file patterns that are build inputs / caches, never loaded by the game
 const SKIP_DIRS = new Set(['_bake', 'bake', 'build', 'render', 'cache', 'raw', 'src_img', '__pycache__', 'before', 'fidelity', 'ref', 'candidates']);   // candidates: audio research material (dev/sesler.html), never shipped
-// aircraft textures are embedded in the GLBs (tex/ holds bake inputs); other layers (airports) load tex/ at runtime
-const SKIP_UNDER = [['assets/aircraft', 'tex']];
+// aircraft textures are embedded in the GLBs (tex/ holds bake inputs); other layers (airports) load tex/ at runtime.
+// Terrain heights: the game reads the small cacheable files in hz/; the 0.7 GB h/<L>.bin level packs are only the
+// input of tools/geo/terrain_heightfiles.py (deploy.sh leaves the copies already in the bucket alone for old pages).
+const SKIP_UNDER = [['assets/aircraft', 'tex'], ['assets/sf/terrain', 'h']];
 const SKIP_FILE = /(\.(blend\d?|exr|tif|tiff|py|pyc|psd|kra|log)$)|(^\.)|(^compare)|(^cmp)/i;
 
 let files = 0, bytes = 0;

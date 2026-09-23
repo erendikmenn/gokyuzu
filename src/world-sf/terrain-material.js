@@ -116,22 +116,26 @@ const mat2 SF_R3 = mat2(-0.6663, 0.7457, -0.7457, -0.6663);
 #ifndef SF_WATER
   #define SF_WATER 2
 #endif
-vec2 sfWaveSlope(vec2 p, float dist) {
+// The water maths runs only where water shows (FRAG_MAP: sfLandA < 1), i.e. in non-uniform control flow, where
+// implicit texture derivatives are undefined (2x2 pixel quads that straddle a coastline). So the fetches in there take
+// explicit gradients: gx, gy = dFdx / dFdy of the world position xz, taken outside the branch; every texture coordinate
+// is linear in it, so its gradient is the same linear map of gx, gy (anisotropic filtering applies as before).
+vec2 sfWaveSlope(vec2 p, float dist, vec2 gx, vec2 gy) {
   vec2 s = vec2(0.0);
 #if SF_WATER >= 1
   // regional choppiness variation breaks up any visible repetition
-  float region = texture2D(uWaveTex, p / 2900.0).b;
-  float region2 = texture2D(uWaveTex, SF_R2 * p / 1100.0 + 0.37).b;
+  float region = textureGrad(uWaveTex, p / 2900.0, gx / 2900.0, gy / 2900.0).b;
+  float region2 = textureGrad(uWaveTex, SF_R2 * p / 1100.0 + 0.37, SF_R2 * gx / 1100.0, SF_R2 * gy / 1100.0).b;
 #else
   float region = 0.5, region2 = 0.5;
 #endif
-  s += SF_R1 * (texture2D(uWaveTex, SF_R1 * p / 67.0 + uTime * vec2(0.012, 0.007)).xy - 0.5) * (0.6 + 0.8 * region);
-  s += SF_R2 * (texture2D(uWaveTex, SF_R2 * p / 23.3 + uTime * vec2(-0.021, 0.029)).xy - 0.5) * (0.4 + 0.6 * region2) * (1.0 - smoothstep(900.0, 3500.0, dist));
+  s += SF_R1 * (textureGrad(uWaveTex, SF_R1 * p / 67.0 + uTime * vec2(0.012, 0.007), SF_R1 * gx / 67.0, SF_R1 * gy / 67.0).xy - 0.5) * (0.6 + 0.8 * region);
+  s += SF_R2 * (textureGrad(uWaveTex, SF_R2 * p / 23.3 + uTime * vec2(-0.021, 0.029), SF_R2 * gx / 23.3, SF_R2 * gy / 23.3).xy - 0.5) * (0.4 + 0.6 * region2) * (1.0 - smoothstep(900.0, 3500.0, dist));
 #if SF_WATER >= 1
-  s += SF_R3 * (texture2D(uWaveTex, SF_R3 * p / 241.0 + uTime * vec2(0.0041, -0.0019)).xy - 0.5) * 0.7;
+  s += SF_R3 * (textureGrad(uWaveTex, SF_R3 * p / 241.0 + uTime * vec2(0.0041, -0.0019), SF_R3 * gx / 241.0, SF_R3 * gy / 241.0).xy - 0.5) * 0.7;
 #endif
 #if SF_WATER >= 2
-  s += (texture2D(uWaveTex, p / 7.9 + uTime * vec2(0.06, 0.04)).xy - 0.5) * 0.35 * (1.0 - smoothstep(60.0, 350.0, dist));
+  s += (textureGrad(uWaveTex, p / 7.9 + uTime * vec2(0.06, 0.04), gx / 7.9, gy / 7.9).xy - 0.5) * 0.35 * (1.0 - smoothstep(60.0, 350.0, dist));
 #endif
   return s * 0.6 * uWaveScale;
 }
@@ -164,47 +168,53 @@ const FRAG_MAP = /* glsl */`
     land *= 1.0 + ((g1 - 0.5) * 0.45 + (g2 - 0.5) * 0.35) * dfade;
   }
 
-  // water
-  vec2 dUv = vSfWorld.xz * uDepthXform.xy + uDepthXform.zw;
-  vec2 dEnc = texture2D(uDepthTex, dUv).rg;
-  float depth = dEnc.r * dEnc.r * 60.0;
-  float shoreDist = dEnc.g * dEnc.g * 2000.0;              // global distance to shore (m), smooth at 32 m/texel
-  sfShore = smoothstep(160.0, 0.0, shoreDist) * (1.0 - a);
-  // Pacific side: west of the SF/Peninsula coast south of Lands End, west of the bridge in the Golden Gate strait
-  float coastX = vSfWorld.z > -21200.0 ? -11100.0 : -9700.0;
-  float ocean = smoothstep(coastX + 500.0, coastX - 900.0, vSfWorld.x);
-  vec3 deep = mix(uWaterDeep, uWaterOcean, ocean);
-  vec3 wcol = mix(uWaterShallow, deep, smoothstep(0.5, 14.0, depth));
-  wcol = mix(wcol, uWaterShallow * 1.35, sfShore * 0.6);
-  vec2 slope = sfWaveSlope(vSfWorld.xz, sfDist);
-  float fade = 1.0 - smoothstep(800.0, 12000.0, sfDist) * 0.6;
-  slope *= fade * mix(0.55, 1.0, smoothstep(0.5, 6.0, depth)) * mix(0.35, 1.0, 1.0 - smoothstep(0.4, 1.2, abs(vSfWorld.y)));
-  sfWaterN = normalize(vec3(-slope.x, 1.0, -slope.y));
-  // keep the mirror direction above the horizon (a facet reflecting downward would see more water, not dark ground)
-  vec3 Vw = normalize(cameraPosition - vSfWorld);
-  float ry = reflect(-Vw, sfWaterN).y;
-  sfWaterN = normalize(mix(sfWaterN, vec3(0.0, 1.0, 0.0), clamp((0.06 - ry) * 6.0, 0.0, 1.0)));
-  // thin swash line at the waterline + breaking surf on the exposed Pacific beaches: bands follow the iso-lines of a
-  // ~160 m blurred land coverage (parallel to the coast) and travel shoreward
-  float seaLvl = 1.0 - smoothstep(0.4, 1.2, abs(vSfWorld.y));   // lakes/lagoons above sea level: calm, no surf
-  float foamN = texture2D(uWaveTex, vSfWorld.xz / 31.0 + uTime * vec2(0.013, 0.021)).b;
-  float swash = smoothstep(0.45, 0.02, 1.0 - img.a) * (1.0 - a);
-  float surfZone = ocean * smoothstep(280.0, 40.0, shoreDist) * smoothstep(11.0, 1.5, depth) * (1.0 - a);
+  // water: skipped for pure-land fragments (sfLandA == 1: the colour below is mix(wcol, land, 1.0) = land, the normal,
+  // roughness and specular mixes also take the land side), about 10 % of the GPU frame over land; debug views need it all
+  vec3 wcol = vec3(0.0);
+  float sfDbg = 0.0;
+  sfShore = 0.0;
+  sfWaterN = vec3(0.0, 1.0, 0.0);
+  vec2 sfGx = dFdx(vSfWorld.xz), sfGy = dFdy(vSfWorld.xz);   // in uniform control flow (see sfWaveSlope)
+  if (sfLandA < 1.0 || uDebug > 0.5) {
+    vec2 dUv = vSfWorld.xz * uDepthXform.xy + uDepthXform.zw;
+    vec2 dEnc = textureGrad(uDepthTex, dUv, sfGx * uDepthXform.xy, sfGy * uDepthXform.xy).rg;
+    float depth = dEnc.r * dEnc.r * 60.0;
+    float shoreDist = dEnc.g * dEnc.g * 2000.0;              // global distance to shore (m), smooth at 32 m/texel
+    sfShore = smoothstep(160.0, 0.0, shoreDist) * (1.0 - a);
+    // Pacific side: west of the SF/Peninsula coast south of Lands End, west of the bridge in the Golden Gate strait
+    float coastX = vSfWorld.z > -21200.0 ? -11100.0 : -9700.0;
+    float ocean = smoothstep(coastX + 500.0, coastX - 900.0, vSfWorld.x);
+    vec3 deep = mix(uWaterDeep, uWaterOcean, ocean);
+    wcol = mix(uWaterShallow, deep, smoothstep(0.5, 14.0, depth));
+    wcol = mix(wcol, uWaterShallow * 1.35, sfShore * 0.6);
+    vec2 slope = sfWaveSlope(vSfWorld.xz, sfDist, sfGx, sfGy);
+    float fade = 1.0 - smoothstep(800.0, 12000.0, sfDist) * 0.6;
+    slope *= fade * mix(0.55, 1.0, smoothstep(0.5, 6.0, depth)) * mix(0.35, 1.0, 1.0 - smoothstep(0.4, 1.2, abs(vSfWorld.y)));
+    sfWaterN = normalize(vec3(-slope.x, 1.0, -slope.y));
+    // keep the mirror direction above the horizon (a facet reflecting downward would see more water, not dark ground)
+    vec3 Vw = normalize(cameraPosition - vSfWorld);
+    float ry = reflect(-Vw, sfWaterN).y;
+    sfWaterN = normalize(mix(sfWaterN, vec3(0.0, 1.0, 0.0), clamp((0.06 - ry) * 6.0, 0.0, 1.0)));
+    // thin swash line at the waterline + breaking surf on the exposed Pacific beaches: bands follow the iso-lines of a
+    // ~160 m blurred land coverage (parallel to the coast) and travel shoreward
+    float seaLvl = 1.0 - smoothstep(0.4, 1.2, abs(vSfWorld.y));   // lakes/lagoons above sea level: calm, no surf
+    float foamN = textureGrad(uWaveTex, vSfWorld.xz / 31.0 + uTime * vec2(0.013, 0.021), sfGx / 31.0, sfGy / 31.0).b;
+    float swash = smoothstep(0.45, 0.02, 1.0 - img.a) * (1.0 - a);
+    float surfZone = ocean * smoothstep(280.0, 40.0, shoreDist) * smoothstep(11.0, 1.5, depth) * (1.0 - a);
 #if SF_WATER >= 1
-  float sets = texture2D(uWaveTex, vSfWorld.xz / 610.0 + vec2(0.37, uTime * 0.0015)).b;   // breaking sections vary along the shore
-  float crest = smoothstep(0.74, 0.97, sin(shoreDist * 0.075 + uTime * 0.55 + foamN * 1.6 + sets * 4.0) * 0.5 + 0.5) * smoothstep(0.3, 0.62, sets);
-  float surf = surfZone * (crest * 0.85 + 0.5 * smoothstep(100.0, 15.0, shoreDist)) * smoothstep(0.25, 0.7, foamN + 0.15);
+    float sets = textureGrad(uWaveTex, vSfWorld.xz / 610.0 + vec2(0.37, uTime * 0.0015), sfGx / 610.0, sfGy / 610.0).b;   // breaking sections vary along the shore
+    float crest = smoothstep(0.74, 0.97, sin(shoreDist * 0.075 + uTime * 0.55 + foamN * 1.6 + sets * 4.0) * 0.5 + 0.5) * smoothstep(0.3, 0.62, sets);
+    float surf = surfZone * (crest * 0.85 + 0.5 * smoothstep(100.0, 15.0, shoreDist)) * smoothstep(0.25, 0.7, foamN + 0.15);
 #else
-  float surf = surfZone * 0.35 * smoothstep(100.0, 15.0, shoreDist);
+    float surf = surfZone * 0.35 * smoothstep(100.0, 15.0, shoreDist);
 #endif
-  float foam = (swash * 0.6 * smoothstep(0.3, 0.7, foamN) + surf) * seaLvl;
-  wcol = mix(wcol, vec3(0.62), clamp(foam, 0.0, 1.0) * 0.85);
-  diffuseColor.rgb = mix(wcol, land, sfLandA);
-  if (uDebug > 0.5) {
-    float dv = uDebug < 1.5 ? ocean : uDebug < 2.5 ? shoreDist / 500.0 : uDebug < 3.5 ? depth / 20.0 : uDebug < 4.5 ? surfZone : uDebug < 5.5 ? sfShore : uDebug < 6.5 ? vSunVis
-      : uDebug < 7.5 ? sfLandA : uDebug < 8.5 ? uTile.x / 32.0 : uDebug < 9.5 ? img.a * 10.0 : abs(vSfWorld.y) * 0.5;
-    diffuseColor.rgb = vec3(dv);
+    float foam = (swash * 0.6 * smoothstep(0.3, 0.7, foamN) + surf) * seaLvl;
+    wcol = mix(wcol, vec3(0.62), clamp(foam, 0.0, 1.0) * 0.85);
+    if (uDebug > 0.5) sfDbg = uDebug < 1.5 ? ocean : uDebug < 2.5 ? shoreDist / 500.0 : uDebug < 3.5 ? depth / 20.0 : uDebug < 4.5 ? surfZone : uDebug < 5.5 ? sfShore : uDebug < 6.5 ? vSunVis
+        : uDebug < 7.5 ? sfLandA : uDebug < 8.5 ? uTile.x / 32.0 : uDebug < 9.5 ? img.a * 10.0 : abs(vSfWorld.y) * 0.5;
   }
+  diffuseColor.rgb = mix(wcol, land, sfLandA);
+  if (uDebug > 0.5) diffuseColor.rgb = vec3(sfDbg);
 }
 `;
 
@@ -269,7 +279,7 @@ export function createTerrainMaterial(shared, tile) {
       .replace('#include <lights_physical_fragment>', '#include <lights_physical_fragment>\n' + FRAG_SPEC)
       .replace('#include <lights_fragment_begin>', LIGHTS_BEGIN_SUNVIS);
   };
-  m.customProgramCacheKey = () => 'sf-terrain-4';   // defines (SF_WATER) are part of three's program key
+  m.customProgramCacheKey = () => 'sf-terrain-5';   // defines (SF_WATER) are part of three's program key
   m.userData.sfId = _id++;
   return m;
 }

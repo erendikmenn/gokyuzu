@@ -1,11 +1,13 @@
 // W1: streaming quadtree terrain of the San Francisco Bay Area (USGS 3DEP 2 m lidar/topobathy + USGS NAIP 1 m imagery).
 // Format: assets/sf/terrain/README.md (built by tools/geo/terrain_build.py + imagery_build.py).
 //  - chunked LOD: each node = 64x64 quads (+ skirts), refined by screen-space geometric error and imagery texel size
-//  - streaming: height tiles via HTTP range requests into per-level packs, imagery as WebP, a few uploads per frame
+//  - streaming: heights as small deflated files of 4 sibling tiles (hz/, whole-file GETs the browser and CDN cache),
+//    imagery as WebP, a few uploads per frame
 //  - getHeight(x,z) samples exactly the triangles that are rendered near the camera (same data, same diagonal split)
 import * as THREE from 'three';
 import { createTerrainShared, createTerrainMaterial, setTerrainWaterQuality, applyWaterDefine } from './terrain-material.js';
 import { createHorizonRing } from './terrain-horizon.js';
+import { parseHeightFile, decodeTile, heightFileOf } from './terrain-heights.js';
 import { assetData, assetImage, isNetworkError, reportLoadFailure, retryDelay } from '../core/assets.js';
 
 const BASE = new URL('../../assets/sf/terrain/', import.meta.url).href;
@@ -31,10 +33,15 @@ function getSharedIndex() {
   sharedIndex = new THREE.BufferAttribute(new Uint16Array(idx), 1);
   return sharedIndex;
 }
-/** Inflate a deflate-compressed download (downloaded whole first, so a broken connection is retried by assetData). */
+/** Inflate a deflate-compressed download (downloaded whole first, so a broken connection is retried by assetData).
+ *  Browsers without DecompressionStream (Safari < 16.4) inflate with three's bundled fflate. */
 async function loadDeflated(url) {
-  if (typeof DecompressionStream === 'undefined') throw new Error('no DecompressionStream');
   const raw = await assetData(url, 'arrayBuffer');
+  if (typeof DecompressionStream === 'undefined') {
+    const { unzlibSync } = await import('three/addons/libs/fflate.module.js');
+    const u = unzlibSync(new Uint8Array(raw));
+    return u.byteOffset === 0 && u.byteLength === u.buffer.byteLength ? u.buffer : u.slice().buffer;
+  }
   return new Response(new Blob([raw]).stream().pipeThrough(new DecompressionStream('deflate'))).arrayBuffer();
 }
 /** Image file -> THREE.Texture (versioned URL, retried like every asset request). */
@@ -95,6 +102,9 @@ export async function createTerrain(ctx) {
   }
   const ROOT = index.rootSize, RX = index.rootMinX, RZ = index.rootMinZ;
   const TILE_BYTES = index.tileBytes;
+  // heights: small cacheable files (tools/geo/terrain_heightfiles.py); an index without them reads the h/<L>.bin packs
+  // with range requests (older data)
+  const HF = index.heightFiles && index.heightFiles.format === 1 ? index.heightFiles : null;
 
   // ---------------- nodes ----------------
   const key = (L, i, j) => L * 1048576 + i * 1024 + j;
@@ -138,11 +148,33 @@ export async function createTerrain(ctx) {
   refreshChildImg();
 
   // ---------------- shared GPU resources ----------------
-  // non-essential textures load after start (placeholders until then): bathymetry/shore distance and ground detail
+  // The water/ground textures load right after the first playable frame (lateTextures, from the first update()), so
+  // their 2.5 MB do not delay the start; until then: bathymetry/shore distance and ground detail are flat, the waves
+  // come from waves_lo.png (64x64 = mip 3 of waves.png, 10 KB). Sampler settings as before, so the settled image is the same.
   const flat = (r, g, b) => { const t = new THREE.DataTexture(new Uint8Array([r, g, b, 255]), 1, 1, THREE.RGBAFormat); t.needsUpdate = true; return t; };
   const depthTex = flat(150, 255, 0);   // ~20 m deep, far from shore
+  const setupWaves = (t) => {
+    t.colorSpace = THREE.NoColorSpace;
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.minFilter = THREE.LinearMipmapLinearFilter;
+    t.anisotropy = 8;   // as uploaded before (setQuality's later anisotropy change never reached the GPU copy)
+    return t;
+  };
+  let lateStarted = false;
   const lateTextures = () => {
-    loadTexture(BASE + 'water_depth.png').then((t) => {
+    lateStarted = true;
+    loadTexture(BASE + 'waves.png').then((t) => {
+      shared.uWaveTex.value = setupWaves(t);   // the horizon ring shares this uniform
+    }).catch((e) => console.warn('[terrain] waves', e));
+    loadTexture(BASE + 'detail.png').then((t) => {
+      t.colorSpace = THREE.NoColorSpace;
+      t.wrapS = t.wrapT = THREE.RepeatWrapping;
+      t.anisotropy = Math.min(qual.aniso, maxAniso);
+      shared.uDetailTex.value = t;
+    }).catch((e) => console.warn('[terrain] detail', e));
+    // 4096² bathymetry: decoded off the main thread (an <img> is decoded again at upload: ~110 ms vs ~15 ms, same texels)
+    assetData(BASE + 'water_depth.png', 'blob').then((b) => createImageBitmap(b, { premultiplyAlpha: 'none', colorSpaceConversion: 'none' })).then((bmp) => {
+      const t = new THREE.Texture(bmp);
       t.flipY = false;   // row 0 = north (rootMinZ), like every other terrain texture
       t.colorSpace = THREE.NoColorSpace;
       t.minFilter = THREE.LinearMipmapLinearFilter;
@@ -150,18 +182,12 @@ export async function createTerrain(ctx) {
       t.needsUpdate = true;
       shared.uDepthTex.value = t;
     }).catch((e) => console.warn('[terrain] water_depth', e));
-    loadTexture(BASE + 'detail.png').then((t) => {
-      t.colorSpace = THREE.NoColorSpace;
-      t.wrapS = t.wrapT = THREE.RepeatWrapping;
-      t.anisotropy = Math.min(qual.aniso, maxAniso);
-      shared.uDetailTex.value = t;
-    }).catch((e) => console.warn('[terrain] detail', e));
   };
-  const waveTex = await loadTexture(BASE + 'waves.png');
-  waveTex.colorSpace = THREE.NoColorSpace;
-  waveTex.wrapS = waveTex.wrapT = THREE.RepeatWrapping;
-  waveTex.minFilter = THREE.LinearMipmapLinearFilter;
-  waveTex.anisotropy = 8;
+  let waveTex;
+  try { waveTex = setupWaves(await loadTexture(BASE + 'waves_lo.png')); } catch (e) {
+    if (isNetworkError(e)) throw e;
+    waveTex = setupWaves(await loadTexture(BASE + 'waves.png'));   // data built before waves_lo.png existed
+  }
   const maxAniso = renderer.capabilities.getMaxAnisotropy();
   const detailTex = flat(128, 128, 128);
   const shared = createTerrainShared({ depthTex, waveTex, detailTex, rootMinX: RX, rootMinZ: RZ });
@@ -180,7 +206,7 @@ export async function createTerrain(ctx) {
 
   const object = new THREE.Group();
   object.name = 'sf-terrain';
-  object.add(createHorizonRing({ rootMinX: RX, rootMinZ: RZ, rootSize: ROOT, waveTex }));
+  object.add(createHorizonRing({ rootMinX: RX, rootMinZ: RZ, rootSize: ROOT, waveUniform: shared.uWaveTex }));
 
   // ---------------- loading ----------------
   const MAX_INFLIGHT = 12;
@@ -223,9 +249,32 @@ export async function createTerrain(ctx) {
     }
   }
 
+  // Height files hold the 4 children of one node, which the selection always requests together: siblings share one
+  // download (in flight or recently inflated; the browser's HTTP cache serves later revisits).
+  const heightFiles = new Map();   // path -> Promise<{ bytes, tiles }>, least recently used first
+  function heightFile(path) {
+    let p = heightFiles.get(path);
+    if (p) heightFiles.delete(path);
+    else {
+      p = loadDeflated(BASE + path).then((buf) => ({ bytes: new Uint8Array(buf), tiles: parseHeightFile(buf) }));
+      p.catch(() => { if (heightFiles.get(path) === p) heightFiles.delete(path); });   // failed: the next request tries again
+    }
+    heightFiles.set(path, p);
+    if (heightFiles.size > 48) heightFiles.delete(heightFiles.keys().next().value);
+    return p;
+  }
+  /** Promise of the tile's TILE_BYTES record (the h/<L>.bin layout decodeHeights reads). */
   function fetchHeights(n) {
-    const start = n.rank * TILE_BYTES;
-    return assetData(`${BASE}h/${n.L}.bin`, 'arrayBuffer', { headers: { Range: `bytes=${start}-${start + TILE_BYTES - 1}` } });
+    if (!HF) {
+      const start = n.rank * TILE_BYTES;
+      return assetData(`${BASE}h/${n.L}.bin`, 'arrayBuffer', { headers: { Range: `bytes=${start}-${start + TILE_BYTES - 1}` } });
+    }
+    const { path, key } = heightFileOf(HF, n.L, n.i, n.j);
+    return heightFile(path).then((f) => {
+      const off = f.tiles.get(key);
+      if (off === undefined) throw new Error(`tile ${n.L}/${n.i}_${n.j} missing in ${path}`);
+      return decodeTile(f.bytes, off);
+    });
   }
   function decodeHeights(n, buf) {
     let ab = buf;
@@ -287,6 +336,17 @@ export async function createTerrain(ctx) {
     };
     walk(root);
     list.sort((a, b) => a.L - b.L || a.rank - b.rank);
+    if (HF) {   // height files: siblings share a download (fetchHeights dedupes), 16 tiles in flight
+      let k = 0;
+      const worker = async () => {
+        while (k < list.length) {
+          const n = list[k++];
+          try { const buf = await fetchHeights(n); if (!n.heights) decodeHeights(n, buf); } catch (e) { reportLoadFailure('terrain', `height tile ${n.L}`, e); }
+        }
+      };
+      await Promise.all(Array.from({ length: 16 }, worker));
+      return list.length;
+    }
     const runs = [];
     for (const n of list) {
       const r = runs[runs.length - 1];
@@ -649,7 +709,6 @@ export async function createTerrain(ctx) {
       if (!isReady && ((root.state === READY && pinsDone && pendingNear === 0 && inflight === 0 && built.length === 0) || performance.now() - t0 > 25000)) {
         isReady = true;
         readyResolve();
-        lateTextures();
       }
     }
     if (!disposed) setTimeout(internalPump, isReady ? 100 : 8);
@@ -699,6 +758,7 @@ export async function createTerrain(ctx) {
       return out.set(-hx, 2 * e, -hz).normalize();
     },
     update(dt, camera) {
+      if (!lateStarted) lateTextures();   // the game loop's first update = the first playable frame
       lastExternal = performance.now();
       step(camera, false, dt);
     },
@@ -715,7 +775,7 @@ export async function createTerrain(ctx) {
         for (const n of built.splice(0)) { if (n.bitmap && n.bitmap.close) n.bitmap.close(); n.bitmap = null; n.state = UNLOADED; }
       }
       if (waterChanged) for (const n of loadedSet) if (n.mesh) applyWaterDefine(n.mesh.material);
-      waveTex.anisotropy = shared.uDetailTex.value.anisotropy = Math.min(qual.aniso, maxAniso);
+      shared.uWaveTex.value.anisotropy = shared.uDetailTex.value.anisotropy = Math.min(qual.aniso, maxAniso);
     },
     get quality() { return { ...qual }; },
     dispose() {

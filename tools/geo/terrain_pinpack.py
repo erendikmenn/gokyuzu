@@ -8,11 +8,14 @@ Airports (runway bbox + 1.5 km) at full depth, landmarks (450 m, bridges 1.6 km)
 Also writes assets/sf/terrain/index.bin: deflate of u32 headerLength + header JSON (index.json without "nodes") +
   per node (index.json order) 12 bytes: u8 level, u16 i, u16 j, u8 flags (1 hasChildren, 2 img, 4|8 water), u16 error cm,
   i16 hmin dm, i16 hmax dm (little endian).
+And the cacheable height files assets/sf/terrain/hz/ (terrain_heightfiles.py) the game streams instead of range requests
+into h/<L>.bin; their layout goes into the "heightFiles" entry of index.json and index.bin.
 Usage: .venv/bin/python tools/geo/terrain_pinpack.py   (after terrain_build.py + imagery_build.py published index.json)
 """
 import os, json, zlib, struct
 import numpy as np
 from terrain_common import ROOT, OUT
+import terrain_heightfiles
 
 Q = 0.1
 NS = 67
@@ -35,8 +38,17 @@ def write_index_bin(d):
     print('index.bin', len(d['nodes']), 'nodes', round(len(z) / 1e6, 2), 'MB')
 
 
+def write_index_json(d):
+    tmp = os.path.join(OUT, 'index.json.tmp')
+    json.dump(d, open(tmp, 'w'), separators=(',', ':'))
+    os.replace(tmp, os.path.join(OUT, 'index.json'))
+
+
 def main():
     d = json.load(open(os.path.join(OUT, 'index.json')))
+    # small cacheable height files (hz/) first: index.json / index.bin must only name files that exist
+    d['heightFiles'] = terrain_heightfiles.build(d)
+    write_index_json(d)
     write_index_bin(d)
     RS, RX, RZ, TB = d['rootSize'], d['rootMinX'], d['rootMinZ'], d['tileBytes']
     rank, cnt = {}, {}
