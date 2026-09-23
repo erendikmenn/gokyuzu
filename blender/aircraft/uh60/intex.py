@@ -79,11 +79,11 @@ def panel_face():
 
     # recessed MFD wells
     for x in (0.535, 0.195, -0.195, -0.535):
-        box(x - 0.125, 0.02 - 0.152, x + 0.125, 0.02 + 0.152, (22, 23, 24), (60, 62, 64), 8, 3)
+        box(x - 0.125, 0.075 - 0.152, x + 0.125, 0.075 + 0.152, (22, 23, 24), (60, 62, 64), 8, 3)
     # centre stack: master caution / warning, standby instrument, clock
     for s, u in (('MASTER\nCAUTION', -0.05), ('MASTER\nWARNING', 0.05)):
-        box(u - 0.035, 0.205, u + 0.035, 0.245, (70, 50, 20) if 'CAU' in s else (80, 20, 18), (10, 10, 10), 4)
-        d.multiline_text(P(u, 0.225), s, font=f(F_NB, 12), fill=(235, 200, 110) if 'CAU' in s else (240, 120, 110), anchor='mm', align='center')
+        box(u - 0.035, 0.235, u + 0.035, 0.275, (70, 50, 20) if 'CAU' in s else (80, 20, 18), (10, 10, 10), 4)
+        d.multiline_text(P(u, 0.255), s, font=f(F_NB, 12), fill=(235, 200, 110) if 'CAU' in s else (240, 120, 110), anchor='mm', align='center')
     box(-0.05, -0.245, 0.05, -0.155, (15, 15, 16), (80, 82, 84), 6, 3)
     label(0, -0.14, 'ESIS', 12)
     x, y = P(0, -0.20)

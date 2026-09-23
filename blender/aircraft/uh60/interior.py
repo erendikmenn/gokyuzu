@@ -17,13 +17,13 @@ EYE_Y, EYE_Z = 2.78, 1.88
 
 # instrument panel frame: origin, right, up (tilted back 15 deg), normal toward the crew
 PANEL_TILT = math.radians(15)
-P_O = Vector((0.0, Y_PANEL, 1.29))
+P_O = Vector((0.0, Y_PANEL, 1.33))
 P_R = Vector((1, 0, 0))
 P_U = Vector((0, math.sin(PANEL_TILT), math.cos(PANEL_TILT)))
 P_N = Vector((0, -math.cos(PANEL_TILT), math.sin(PANEL_TILT)))
 P_W, P_H = 1.92, 0.60                      # panel face size
 MFD_X = (0.535, 0.195, -0.195, -0.535)       # MFD 1..4 centres (x); 1 = pilot PFD (right seat), 4 = copilot PFD
-MFD_UP = 0.02
+MFD_UP = 0.075
 BEZEL_W, BEZEL_H = 0.236, 0.292
 SCREEN_W, SCREEN_H = 0.1524, 0.2032        # 6 x 8 inch active area
 
@@ -146,7 +146,7 @@ def build_cockpit(M, parent, A):
         objs.append(s)
     # standby flight display (ESIS) + master caution panel on the centre
     A.add('int_black', oriented_box(panel_pt(0, -0.20, 0.02), P_R, P_U, P_N, 0.09, 0.09, 0.04))
-    A.add('int_black', oriented_box(panel_pt(0, 0.215, 0.02), P_R, P_U, P_N, 0.13, 0.05, 0.03))
+    A.add('int_black', oriented_box(panel_pt(0, 0.255, 0.02), P_R, P_U, P_N, 0.13, 0.05, 0.03))
     # knobs along the bottom edge of the panel
     for u in np.linspace(-0.85, 0.85, 14):
         p = panel_pt(u, -0.255, 0.012)
@@ -237,21 +237,21 @@ def build_cockpit(M, parent, A):
         sx = s * SEAT_X
         build_seat(A, sx)
         # cyclic
-        v, f = prim_cylinder(0.07, 0.03, 0.10, n=14, center=(sx, 3.20, FLOOR_CP))
+        v, f = prim_cylinder(0.07, 0.03, 0.10, n=14, center=(sx, 3.30, FLOOR_CP))
         A.add('int_rubber', (v, f))
-        v, f = prim_tube([(sx, 3.20, FLOOR_CP + 0.05), (sx, 3.17, 1.00), (sx, 3.10, 1.24)], 0.014, n=10)
+        v, f = prim_tube([(sx, 3.30, FLOOR_CP + 0.05), (sx, 3.27, 1.00), (sx, 3.20, 1.22)], 0.014, n=10)
         A.add('int_metal', (v, f))
-        v, f = prim_sphere(0.034, n=12, m=8, center=(sx, 3.085, 1.30), scale=(0.9, 1.1, 2.0))
+        v, f = prim_sphere(0.034, n=12, m=8, center=(sx, 3.185, 1.28), scale=(0.9, 1.1, 2.0))
         A.add('int_black', (v, f))
         # collective (left of each seat), pivot aft
         cx = sx - 0.31
-        v, f = prim_tube([(cx, 2.62, 0.92), (cx, 2.98, 1.00), (cx, 3.12, 1.02)], 0.016, n=10)
+        v, f = prim_tube([(cx, 2.72, 0.92), (cx, 3.06, 1.00), (cx, 3.18, 1.02)], 0.016, n=10)
         A.add('int_metal', (v, f))
-        v, f = prim_cylinder(0.028, 0.028, 0.16, n=12, axis='Y', center=(cx, 3.12, 1.02))
+        v, f = prim_cylinder(0.028, 0.028, 0.16, n=12, axis='Y', center=(cx, 3.18, 1.02))
         A.add('int_black', (v, f))
-        v, f = prim_box((0.06, 0.05, 0.05), center=(cx, 3.30, 1.03))
+        v, f = prim_box((0.06, 0.05, 0.05), center=(cx, 3.36, 1.03))
         A.add('int_black', (v, f))
-        v, f = prim_box((0.10, 0.60, 0.16), center=(cx - 0.02, 2.80, 0.80))
+        v, f = prim_box((0.10, 0.60, 0.16), center=(cx - 0.02, 2.90, 0.80))
         A.add('int_grey', (v, f))
         # pedals
         for ps in (-1, 1):
@@ -266,7 +266,7 @@ def build_cockpit(M, parent, A):
 
 def build_seat(A, sx):
     """Armoured crashworthy crew seat (bucket shell, side armour wing, cushions, headrest, 5-point harness)."""
-    y0 = 2.82           # front edge of the seat pan
+    y0 = 2.96           # front edge of the seat pan
     zp = 1.12           # cushion top
     X = Vector((1, 0, 0))
     so = 1 if sx > 0 else -1

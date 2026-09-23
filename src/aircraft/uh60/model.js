@@ -19,8 +19,10 @@ export const model = {
 // ---- real UH-60M numbers
 const NR_RPM = 258; // main rotor 100 % NR
 const TR_RPM = 1190; // tail rotor 100 %
-const MAIN = { R: 8.18, root: 1.3, chord: 0.58, tipStart: 7.52, sweep: Math.tan((20 * Math.PI) / 180), tipTaper: 0.4, cuffR: 0.95, cuffW: 0.18 };
-const TAIL = { R: 1.675, root: 0.3, chord: 0.246, tipStart: 99, sweep: 0, tipTaper: 0, cuffR: 0.18, cuffW: 0.12 };
+const MAIN = { R: 8.18, root: 1.3, chord: 0.58, tipStart: 7.52, sweep: Math.tan((20 * Math.PI) / 180), tipTaper: 0.4, cuffR: 0.95, cuffW: 0.18,
+  base: 3.2, ring: 0.12, fres: 2.6, maxA: 0.6 };
+const TAIL = { R: 1.675, root: 0.3, chord: 0.246, tipStart: 99, sweep: 0, tipTaper: 0, cuffR: 0.18, cuffW: 0.12,
+  base: 3.0, ring: 0.16, fres: 2.6, maxA: 0.65 };
 const DEG = Math.PI / 180;
 const BLADE_SWITCH = 0.07; // rad swept per frame above which the shader disc replaces the blade meshes
 
@@ -50,35 +52,54 @@ function rotorGLSL(plane) {
   return `
 varying vec3 vRotorPos;
 uniform float uPsi, uDelta, uFade, uR, uRoot, uChord, uTip, uSweep, uTaper, uCuffR, uCuffW;
+uniform float uBase, uGhost, uRing, uMaxA;
+float bladeChord(float r) {
+  float c = uChord;
+  if (r > uTip) { float k = (r - uTip) / (uR - uTip); c *= 1.0 - uTaper * pow(k, 1.2); }
+  if (r < uRoot) c = uCuffW;
+  return c;
+}
 // time-averaged coverage of one blade whose quarter-chord line ends the exposure at relative angle 0
 float bladeCov(float rel, float r) {
-  float c = uChord, off = 0.0;
-  if (r > uTip) { float k = (r - uTip) / (uR - uTip); off = -(r - uTip) * uSweep; c *= 1.0 - uTaper * pow(k, 1.2); }
-  if (r < uRoot) { c = uCuffW; off = 0.5 * uCuffW - 0.25 * c; }
+  float c = bladeChord(r), off = 0.0;
+  if (r > uTip) off = -(r - uTip) * uSweep;
+  if (r < uRoot) off = 0.5 * uCuffW - 0.25 * c;
   // blade spans arc distance [off - 0.75c, off + 0.25c] around its axis (positive = ahead in rotation)
   float s = rel * r;
-  float a = s - (off + 0.25 * c), b = s - (off - 0.75 * c);   // blade-axis positions (arc) that cover this point
+  float a = s - (off + 0.25 * c), b = s - (off - 0.75 * c);
   float d = max(uDelta * r, 1e-4);
   float lo = max(a, -d), hi = min(b, 0.0);
   return clamp((hi - lo) / d, 0.0, 1.0);
 }
-float rotorCoverage(out float le) {
+// density of the spinning rotor as a camera sees it: persistent disc (blade solidity, radial falloff) + this
+// frame's motion-blurred blade ghosts + the brighter tip-path ring
+float rotorDensity(out float tip) {
   float r = ${rr};
+  tip = 0.0;
   if (r > uR || r < uCuffR) return 0.0;
   float th = ${az};
   float u = mod(th - uPsi, 1.5707963);
-  float cov = bladeCov(u, r) + bladeCov(u - 1.5707963, r);
-  le = smoothstep(uR - 0.3, uR, r);
-  return clamp(cov, 0.0, 1.0);
+  float ghost = clamp(bladeCov(u, r) + bladeCov(u - 1.5707963, r), 0.0, 1.0);
+  float solidity = 4.0 * bladeChord(r) / (6.2831853 * r);
+  float edge = smoothstep(uR, uR - 0.12 * uR, r) * smoothstep(uCuffR, uCuffR + 0.25 * uR, r);
+  float disc = min(solidity, 0.075) * (0.8 + 0.2 * r / uR) * edge;
+  tip = smoothstep(uR - 0.06 * uR, uR - 0.015 * uR, r) * (1.0 - smoothstep(uR - 0.01 * uR, uR, r));
+  return uBase * disc + uGhost * ghost + uRing * tip;
 }`;
 }
 
 function makeRotorDiscMaterial(p, plane, color) {
-  const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.62, metalness: 0.05, transparent: true, depthWrite: false, side: THREE.DoubleSide });
+  // near-black: a blurred rotor mostly *darkens* what is behind it (blades are dark and largely self-shadowed);
+  // a lit grey disc ends up as bright as sunlit concrete and disappears
+  // diffuse-only (Lambert): a Standard material shows a strong grazing-angle Fresnel sheen of the sky, which is wrong for
+  // a blur of discrete blades and made the disc as bright as the ground
+  const mat = new THREE.MeshLambertMaterial({ color, transparent: true, depthWrite: false, side: THREE.DoubleSide });
+  mat.forceSinglePass = true;
   const uniforms = {
     uPsi: { value: 0 }, uDelta: { value: 0 }, uFade: { value: 0 },
     uR: { value: p.R }, uRoot: { value: p.root }, uChord: { value: p.chord }, uTip: { value: p.tipStart },
     uSweep: { value: p.sweep }, uTaper: { value: p.tipTaper }, uCuffR: { value: p.cuffR }, uCuffW: { value: p.cuffW },
+    uBase: { value: p.base }, uGhost: { value: 0.6 }, uRing: { value: p.ring }, uFres: { value: p.fres }, uMaxA: { value: p.maxA },
   };
   mat.userData.uniforms = uniforms;
   const vert = (shader) => shader.vertexShader
@@ -88,21 +109,25 @@ function makeRotorDiscMaterial(p, plane, color) {
     Object.assign(shader.uniforms, uniforms);
     shader.vertexShader = vert(shader);
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', '#include <common>\n' + rotorGLSL(plane))
+      .replace('#include <common>', '#include <common>\nuniform float uFres;\n' + rotorGLSL(plane))
       .replace('#include <color_fragment>', `#include <color_fragment>
-{ float tipMark; float cov = rotorCoverage(tipMark);
-  diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.42), tipMark * 0.6);
-  diffuseColor.a = cov * uFade; if (diffuseColor.a < 0.004) discard; }`);
+{ float tipMark; float dens = rotorDensity(tipMark);
+  // fresnel-like term: a disc seen edge-on shows much more blade per pixel (and reads as a thin dark band)
+  vec3 nV = normalize(vNormal);
+  float cosv = abs(dot(nV, normalize(vViewPosition)));
+  float fres = 1.0 + uFres * pow(1.0 - cosv, 4.0);
+  diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.30), tipMark * 0.55);
+  diffuseColor.a = clamp(dens * fres, 0.0, uMaxA) * uFade; if (diffuseColor.a < 0.004) discard; }`);
   };
   mat.customProgramCacheKey = () => `uh60rotor-${plane}`;
-  // shadow: hashed alpha from the same time-averaged coverage -> faint, streaky rotor shadow (PCF softens the hash)
+  // shadow: hashed alpha from the same density (no view-dependent term) -> faint rotor shadow with blade streaks
   const depth = new THREE.MeshDepthMaterial({ alphaHash: true, side: THREE.DoubleSide });
   depth.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, uniforms);
     shader.vertexShader = vert(shader);
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', '#include <common>\n' + rotorGLSL(plane))
-      .replace('#include <alphatest_fragment>', `{ float tm; diffuseColor.a = rotorCoverage(tm) * uFade; }
+      .replace('#include <alphatest_fragment>', `{ float tm; diffuseColor.a = clamp(rotorDensity(tm) * 0.7, 0.0, uMaxA) * uFade; }
 #include <alphatest_fragment>`);
   };
   depth.customProgramCacheKey = () => `uh60rotor-depth-${plane}`;
@@ -175,12 +200,14 @@ export function createRig(gltfScene) {
   // rotor discs get the motion-blur shader
   const discMat = {};
   if (blurMain) {
-    discMat.main = makeRotorDiscMaterial(MAIN, 'xz', 0x2b2d2b);
-    blurMain.traverse((o) => { if (o.isMesh) { o.material = discMat.main; o.customDepthMaterial = discMat.main.userData.depthMaterial; o.renderOrder = 2; } });
+    discMat.main = makeRotorDiscMaterial(MAIN, 'xz', 0x191b19);
+    // high renderOrder: drawn after the world's transparent layers (runway markings, water), which would otherwise
+    // paint over the depth-write-free disc
+    blurMain.traverse((o) => { if (o.isMesh) { o.material = discMat.main; o.customDepthMaterial = discMat.main.userData.depthMaterial; o.renderOrder = 20; } });
   }
   if (blurTail) {
-    discMat.tail = makeRotorDiscMaterial(TAIL, 'yz', 0x2b2d2b);
-    blurTail.traverse((o) => { if (o.isMesh) { o.material = discMat.tail; o.customDepthMaterial = discMat.tail.userData.depthMaterial; o.renderOrder = 2; } });
+    discMat.tail = makeRotorDiscMaterial(TAIL, 'yz', 0x191b19);
+    blurTail.traverse((o) => { if (o.isMesh) { o.material = discMat.tail; o.customDepthMaterial = discMat.tail.userData.depthMaterial; o.renderOrder = 20; } });
   }
   // the discs cast a faint hashed shadow through customDepthMaterial (castShadow is enabled by the loader)
   const discMeshes = [];
@@ -192,7 +219,7 @@ export function createRig(gltfScene) {
     const m = new THREE.SpriteMaterial({ map: glowTex, color, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true });
     const s = new THREE.Sprite(m);
     s.scale.setScalar(size);
-    s.renderOrder = 3;
+    s.renderOrder = 21;
     node.add(s);
     return s;
   };
@@ -291,7 +318,7 @@ export function createRig(gltfScene) {
     const delta = omega * Math.max(dt, 1 / 240) * 1.0; // exposure = one frame
     const spin = rpm; // 0..1
     const cone = ro && Number.isFinite(ro.coning) ? Math.max(-3.2 * DEG, ro.coning - 0.9 * DEG * (1 - Math.min(1, spin * 2)))
-      : (-3.2 + (1.2 + 4.5 * coll) * 4.2 * Math.min(1, spin * spin)) * DEG; // droop at rest, coning when turning
+      : (-3.2 + (4.4 + 2.4 * coll) * Math.min(1, spin * spin)) * DEG; // droop at rest, ~2-3.5 deg coning when turning
     // tip-path-plane tilt: flight model tiltLon (+ forward) / tiltLat (+ right), else from the cyclic
     const pitchTilt = ro && Number.isFinite(ro.tiltLon) ? -ro.tiltLon : cy * 5 * DEG * Math.min(1, spin * 2);
     const rollTilt = ro && Number.isFinite(ro.tiltLat) ? ro.tiltLat : cx * 5 * DEG * Math.min(1, spin * 2);
@@ -317,6 +344,8 @@ export function createRig(gltfScene) {
       u.uPsi.value = psi;
       u.uDelta.value = delta;
       u.uFade.value = 1;
+      u.uBase.value = MAIN.base * smooth(0.12, 0.75, spin);
+      u.uRing.value = MAIN.ring * smooth(0.3, 0.9, spin);
       blurMain.visible = delta >= BLADE_SWITCH;
       // coning (the disc mesh is built with a 2.5 deg cone) and tip-path-plane tilt
       blurMain.scale.set(1, Math.max(0.05, (cone / DEG) / 2.5), 1);
@@ -350,6 +379,8 @@ export function createRig(gltfScene) {
       u.uPsi.value = psiT;
       u.uDelta.value = deltaT;
       u.uFade.value = 1;
+      u.uBase.value = TAIL.base * smooth(0.05, 0.5, spin);
+      u.uRing.value = TAIL.ring * smooth(0.2, 0.8, spin);
       blurTail.visible = deltaT >= BLADE_SWITCH;
     }
 

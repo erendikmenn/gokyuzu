@@ -33,8 +33,8 @@ import tempfile
 REPO = util.REPO
 OUT_DIR = os.path.join(REPO, 'assets', 'aircraft', 'uh60')
 CG = (0.0, -0.35, 1.55)          # centre of gravity in G (0.35 m aft of the mast, 1.55 m above the ground)
-EYE_PILOT = (0.54, 2.78, 1.88)   # right seat (pilot in command)
-EYE_COPILOT = (-0.54, 2.78, 1.88)
+EYE_PILOT = (0.52, 2.72, 1.87)   # right seat (pilot in command): ~0.8 m above the seat pan, ~0.85 m behind the panel
+EYE_COPILOT = (-0.52, 2.72, 1.87)
 
 ARGS = sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else []
 
@@ -269,6 +269,7 @@ def preview(outdir):
         'top': ((0, -2.5, 40), (0, 0, 0), 21.0, 1400, 1400),
         'rear': ((0, -40, 2.2), (math.radians(90), 0, 0), 7.0, 1000, 1000),
         'persp': None,
+        'eye': 'eye',
     }
     for m in bpy.data.materials:
         m.diffuse_color = (0.55, 0.55, 0.55, 1)
@@ -277,7 +278,19 @@ def preview(outdir):
     for o in hidden:
         o.hide_render = True
     for name, spec in views.items():
-        if spec is None:
+        if spec == 'eye':
+            # the game's cockpit camera: eye_pilot, looking forward, -8 deg rest pitch, 76 deg vertical fov, 16:10
+            cam = bpy.data.cameras.new('pv_eye')
+            cam.sensor_fit = 'VERTICAL'
+            cam.angle_y = math.radians(76)
+            cam.clip_start = 0.02
+            ob = bpy.data.objects.new('pv_eye', cam)
+            sc.collection.objects.link(ob)
+            ob.location = EYE_PILOT
+            ob.rotation_euler = (math.radians(90 - 8), 0, 0)
+            sc.camera = ob
+            sc.render.resolution_x, sc.render.resolution_y = 1440, 900
+        elif spec is None:
             util.add_camera((9.5, 9.0, 4.2), (0, 0.4, 1.7), lens=35, name='pv_persp')
             sc.render.resolution_x, sc.render.resolution_y = 1600, 1000
         else:

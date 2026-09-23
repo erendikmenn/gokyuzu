@@ -75,8 +75,8 @@ def ws_prism(name, poly, mat=None):
 
 
 # ---------------------------------------------------------------------------------------------- outlines (G frame)
-CREW_DOOR = rounded_poly([(3.53, 0.92), (2.56, 0.92), (2.56, 2.02), (2.86, 2.05), (3.56, 1.70), (3.60, 1.28)], 0.07)
-CREW_WIN = rounded_poly([(3.42, 1.27), (2.63, 1.27), (2.63, 1.96), (2.88, 1.98), (3.48, 1.66), (3.52, 1.42)], 0.08)
+CREW_DOOR = rounded_poly([(3.55, 0.92), (2.56, 0.92), (2.56, 2.06), (2.86, 2.08), (3.52, 1.72), (3.61, 1.28)], 0.07)
+CREW_WIN = rounded_poly([(3.45, 1.27), (2.63, 1.27), (2.63, 1.99), (2.88, 2.01), (3.44, 1.68), (3.52, 1.44)], 0.07)
 GUNNER_WIN = rounded_poly([(2.33, 1.30), (1.84, 1.30), (1.84, 1.90), (2.33, 1.90)], 0.09)
 CABIN_DOOR = rounded_poly([(1.40, 0.58), (-0.86, 0.58), (-0.86, 1.975), (1.40, 1.975)], 0.06)
 CABIN_OPEN = rounded_poly([(1.32, 0.62), (-0.78, 0.62), (-0.78, 1.93), (1.32, 1.93)], 0.05)
@@ -84,7 +84,7 @@ CABIN_WIN_A = rounded_poly([(1.26, 1.30), (0.16, 1.30), (0.16, 1.86), (1.26, 1.8
 CABIN_WIN_B = rounded_poly([(-0.04, 1.30), (-0.74, 1.30), (-0.74, 1.86), (-0.04, 1.86)], 0.09)
 CHIN_WIN = rounded_poly([(4.30, 0.96), (4.08, 0.70), (3.66, 0.66), (3.62, 1.14), (4.10, 1.20)], [0.12, 0.14, 0.08, 0.08, 0.14])
 # windshield pane (right half) in (x, s) plane coordinates
-WS_PANE = rounded_poly([(0.055, 0.04), (0.87, 0.04), (0.79, 1.12), (0.055, 1.19)], [0.03, 0.08, 0.08, 0.03])
+WS_PANE = rounded_poly([(0.055, 0.04), (0.97, 0.04), (0.88, 1.12), (0.055, 1.19)], [0.03, 0.08, 0.08, 0.03])
 
 
 def solidify_skin(ob, thickness=SKIN_T):
@@ -135,8 +135,11 @@ def cut_openings(fuse, M):
         # crew doors: pilot sits right
         dn = 'door_pilot' if side > 0 else 'door_copilot'
         d = duplicate(src, dn)
-        boolean(d, side_prism('_c', CREW_DOOR, side), 'INTERSECT', keep_cutter=False)
-        w = side_prism('_w', CREW_WIN, side)
+        boolean(d, side_prism('_c', CREW_DOOR, side, x0=0.62), 'INTERSECT', keep_cutter=False)
+        for s2 in (1, -1):          # the windshield panes win where they overlap the door corner
+            poly = [(s2 * a, b) for a, b in WS_PANE]
+            boolean(d, ws_prism('_wsd', poly if s2 > 0 else poly[::-1]), 'DIFFERENCE', keep_cutter=False)
+        w = side_prism('_w', CREW_WIN, side, x0=0.62)
         boolean(d, w, 'DIFFERENCE')
         g = duplicate(src, f'glass_{dn}')
         boolean(g, w, 'INTERSECT', keep_cutter=False)
@@ -169,7 +172,7 @@ def cut_openings(fuse, M):
             offset_along_normals(g, -0.012)
             out['glass'].append((g, None))
             cutters.append(w)
-        cutters.append(side_prism('_c', CREW_DOOR, side))
+        cutters.append(side_prism('_c', CREW_DOOR, side, x0=0.62))
         cutters.append(side_prism('_c', CABIN_OPEN, side))
     # windshield panes
     for s, nm in ((1, 'R'), (-1, 'L')):

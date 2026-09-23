@@ -67,7 +67,8 @@ async function start() {
   loading.setProgress(1, 'Hazır');
   loading.hide();
   console.log(`[app] ready in ${((performance.now() - t0) / 1000).toFixed(1)} s`);
-  hud.showMessage(spawn.altitude ? 'İyi uçuşlar!' : 'Gaz ver (Shift / X), kalkış hızında burnu kaldır (S)', 4000);
+  const heli = state.def.spec.category === 'helicopter';
+  hud.showMessage(spawn.altitude ? 'İyi uçuşlar!' : heli ? 'Kolektifi artır (Shift / X), havalanınca O ile askıda kal' : 'Gaz ver (Shift / X), kalkış hızında burnu kaldır (S)', 4000);
 }
 
 async function loadAircraft(id) {
@@ -78,7 +79,7 @@ async function loadAircraft(id) {
     if (!o.isMesh) return;
     // glass, plumes and other see-through materials neither cast shadows nor darken the cockpit
     const seeThrough = [].concat(o.material).some((m) => m && (m.transparent || m.transmission > 0 || m.blending === THREE.AdditiveBlending));
-    o.castShadow = !seeThrough;
+    o.castShadow = !seeThrough || !!o.customDepthMaterial;   // rigs may give see-through parts (rotor disc) a custom shadow
     o.receiveShadow = true;
   });
   if (state.rig) scene.remove(state.rig.object);
