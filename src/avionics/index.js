@@ -9,7 +9,7 @@
 // (cockpit view, in the frustum); for HUDs also pass { eye: rig.eye.pilot, root: rig.object } for a conformal
 // calibration from the real combiner geometry. display.enabled = false also suspends redraws.
 import * as THREE from 'three';
-import { createFlightState, readFlight, makeCanvas, Layer, font, text } from './core.js';
+import { createFlightState, readFlight, makeCanvas, Layer, CanvasRecorder, fontVersion, loadAvionicsFonts, font, text } from './core.js';
 import { navData } from './nav.js';
 import { calibrateHud } from './hud.js';
 import { AIRBUS } from './airbus.js';
@@ -32,6 +32,10 @@ const NODATA = {
 
 /** Registry of all display types: { vw, vh, size, transparent?, create(env) → draw(g, S, ctx) }. */
 export const DISPLAY_SPECS = { ...AIRBUS, ...BOEING, ...F16, ...F22, ...UH60 };
+// Update rates (spec `hz`, default: every 30 Hz tick): attitude and HUD-type displays (PFD, HUD, standby, the F-16 FCR
+// with its horizon line and antenna sweep) keep 30 Hz; slow-changing pages (ND / TSD / HSD maps, EWD / EICAS / engine
+// pages, SD, RWR) run at 10 Hz, CDU / DED / UFD / checklists at 2–4 Hz. Unchanged frames are not uploaded (CanvasRecorder).
+export { loadAvionicsFonts } from './core.js';
 export const DISPLAY_TYPES = Object.keys(DISPLAY_SPECS).filter((k) => !DISPLAY_SPECS[k].variants);
 
 const sharedCores = new Map();
@@ -82,9 +86,12 @@ function watchMesh(core, mesh) {
 }
 
 function createCore(type, def, w, h, opts, shareable) {
+  loadAvionicsFonts();
   const canvas = makeCanvas(w, h);
   const transparent = !!def.transparent;
-  const g = canvas.getContext('2d', { alpha: transparent });
+  const g0 = canvas.getContext('2d', { alpha: transparent });
+  // drawing goes through a recorder: a frame that provably repeats the previous one is not uploaded again (core.js)
+  const rec = new CanvasRecorder(g0), g = rec.ctx;
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.anisotropy = 8;
@@ -104,7 +111,7 @@ function createCore(type, def, w, h, opts, shareable) {
   const minInterval = def.hz ? 1000 / def.hz - 4 : 0;
 
   const display = {
-    type, canvas, texture, aspect: w / h, enabled: true, draws: 0, drawMs: 0, watched: false, lastSeen: 0,
+    type, canvas, texture, aspect: w / h, enabled: true, draws: 0, drawMs: 0, watched: false, lastSeen: 0, skips: 0,
     /** Redraws the display. dt: seconds since the previous update. Never throws. */
     update(dt, flight, world) {
       const now = performance.now();
@@ -115,25 +122,29 @@ function createCore(type, def, w, h, opts, shareable) {
       if (display.watched && lastDraw >= 0 && now - display.lastSeen > 400 && now - lastDraw < 2000) return;   // not on screen
       lastDraw = now; lastFlight = flight;
       const step = Math.min(pendingDt, 0.5); pendingDt = 0;
+      let changed = true;
       try {
         readFlight(S, flight, world, step);
         ctx.world = world || null; ctx.flight = flight || null; ctx.nav = navData(world); ctx.dt = step; ctx.now = now / 1000;
+        rec.begin(fontVersion());
         g.setTransform(sx, 0, 0, sy, 0, 0);
         g.lineJoin = 'round'; g.lineCap = 'butt'; g.textBaseline = 'alphabetic'; g.globalAlpha = 1; g.setLineDash([]);
         if (transparent) g.clearRect(0, 0, def.vw, def.vh);
         draw(g, S, ctx);
+        changed = rec.end();
       } catch (e) {
         if (++errors <= 3) console.warn(`[avionics] ${type} draw error`, e);
+        rec.invalidate();
         try {
-          if (typeof g.reset === 'function') g.reset(); else canvas.width = w;
-          g.setTransform(sx, 0, 0, sy, 0, 0);
-          if (!transparent) { g.fillStyle = '#000'; g.fillRect(0, 0, def.vw, def.vh); }
-          g.strokeStyle = '#ff2020'; g.lineWidth = 8;
-          g.beginPath(); g.moveTo(def.vw * 0.2, def.vh * 0.2); g.lineTo(def.vw * 0.8, def.vh * 0.8);
-          g.moveTo(def.vw * 0.8, def.vh * 0.2); g.lineTo(def.vw * 0.2, def.vh * 0.8); g.stroke();
+          if (typeof g0.reset === 'function') g0.reset(); else canvas.width = w;
+          g0.setTransform(sx, 0, 0, sy, 0, 0);
+          if (!transparent) { g0.fillStyle = '#000'; g0.fillRect(0, 0, def.vw, def.vh); }
+          g0.strokeStyle = '#ff2020'; g0.lineWidth = 8;
+          g0.beginPath(); g0.moveTo(def.vw * 0.2, def.vh * 0.2); g0.lineTo(def.vw * 0.8, def.vh * 0.8);
+          g0.moveTo(def.vw * 0.8, def.vh * 0.2); g0.lineTo(def.vw * 0.2, def.vh * 0.8); g0.stroke();
         } catch { /* ignore */ }
       }
-      texture.needsUpdate = true;
+      if (changed) texture.needsUpdate = true; else display.skips++;   // unchanged frame: the texture already shows it
       const ms = performance.now() - now;
       display.draws++; display.drawMs = display.draws < 5 ? ms : display.drawMs * 0.95 + ms * 0.05;
     },

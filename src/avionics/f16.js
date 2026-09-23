@@ -238,7 +238,7 @@ function f16Rwr(env) {
 export const F16 = {
   'f16.hud': { vw: 1140, vh: 1000, size: 1024, transparent: true, create: (env) => createHud(env, 'f16') },
   'f16.mfd.left': { vw: 1000, vh: 1000, size: 512, create: f16Fcr },
-  'f16.mfd.right': { vw: 1000, vh: 1000, size: 512, hz: 15, create: f16Hsd },
+  'f16.mfd.right': { vw: 1000, vh: 1000, size: 512, hz: 10, create: f16Hsd },
   'f16.ded': { vw: 1000, vh: 372, size: 512, hz: 4, create: f16Ded },
-  'f16.rwr': { vw: 1000, vh: 1000, size: 512, hz: 15, create: f16Rwr },
+  'f16.rwr': { vw: 1000, vh: 1000, size: 512, hz: 10, create: f16Rwr },
 };

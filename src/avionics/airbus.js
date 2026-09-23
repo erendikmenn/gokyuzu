@@ -947,8 +947,8 @@ function a320Isis(env) {
 
 export const AIRBUS = {
   'a320.pfd': { vw: 1000, vh: 1000, size: 1024, create: a320Pfd },
-  'a320.nd': { vw: 1000, vh: 1000, size: 1024, create: a320Nd },
-  'a320.ewd': { vw: 1000, vh: 1000, size: 512, hz: 15, create: a320Ewd },
+  'a320.nd': { vw: 1000, vh: 1000, size: 1024, hz: 10, create: a320Nd },
+  'a320.ewd': { vw: 1000, vh: 1000, size: 512, hz: 10, create: a320Ewd },
   'a320.sd': { vw: 1000, vh: 1000, size: 512, hz: 10, create: a320Sd },
   'a320.isis': { vw: 1000, vh: 1000, size: 512, create: a320Isis },
 };

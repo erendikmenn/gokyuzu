@@ -12,8 +12,12 @@ export const DEG = Math.PI / 180;
 // B612 is the open-source cockpit typeface designed for Airbus flight decks (SIL OFL 1.1, see fonts/OFL.txt).
 let fontEpoch = 0;
 export const fontVersion = () => fontEpoch;
-(function loadFonts() {
-  if (typeof document === 'undefined' || typeof FontFace === 'undefined') return;
+// Loaded with the first display (or earlier through loadAvionicsFonts() when the cockpit starts to stream), not with the
+// module: nothing needs them before the cockpit, and the 0.5 MB would compete with the menu and the world downloads.
+let fontsRequested = false;
+export function loadAvionicsFonts() {
+  if (fontsRequested || typeof document === 'undefined' || typeof FontFace === 'undefined') return;
+  fontsRequested = true;
   const files = [
     ['B612', 'B612-Regular.ttf', '400'], ['B612', 'B612-Bold.ttf', '700'],
     ['B612 Mono', 'B612Mono-Regular.ttf', '400'], ['B612 Mono', 'B612Mono-Bold.ttf', '700'],
@@ -25,7 +29,7 @@ export const fontVersion = () => fontEpoch;
       face.load().then(() => { fontEpoch++; }, () => {});
     } catch { /* fall back to system fonts */ }
   }
-})();
+}
 const SANS = "B612, 'Arial Narrow', 'Helvetica Neue', Arial, sans-serif";
 const MONO = "'B612 Mono', Menlo, Consolas, monospace";
 const fontCache = new Map();
@@ -228,9 +232,16 @@ export class Layer {
       const lg = this.g;
       lg.setTransform(1, 0, 0, 1, 0, 0);
       lg.clearRect(0, 0, this.canvas.width, this.canvas.height);
-      lg.setTransform(this.sx, 0, 0, this.sy, 0, 0);
-      lg.lineJoin = 'round'; lg.lineCap = 'butt';
-      this.draw(lg);
+      // drawn through a recorder: a layer that starts with an opaque fill of its whole area counts as a complete
+      // repaint when a display blits it first (upload skipping, see CanvasRecorder)
+      const rec = new CanvasRecorder(lg), rg = rec.ctx;
+      rec.begin(0);
+      rg.setTransform(this.sx, 0, 0, this.sy, 0, 0);
+      rg.lineJoin = 'round'; rg.lineCap = 'butt';
+      this.draw(rg);
+      rec.end();
+      this.canvas.__opaque = rec.opaqueCover;
+      this.canvas.__v = (this.canvas.__v || 0) + 1;   // content version for recorders that draw this canvas
     }
     g.save();
     g.setTransform(1, 0, 0, 1, 0, 0);
@@ -238,6 +249,175 @@ export class Layer {
     g.restore();
   }
 }
+
+/** Marks a canvas as changed for CanvasRecorder (call after drawing into a canvas that displays blit). */
+export function touchCanvas(c) { if (c) c.__v = (c.__v || 0) + 1; }
+
+// ---------------------------------------------------------------- change detection (skip unchanged uploads)
+// A display whose drawing did not change since its last upload does not need another canvas → texture upload (the
+// upload, and the GPU raster of the canvas it triggers, are the cost of the cockpit displays). CanvasRecorder stands in
+// for the CanvasRenderingContext2D: every call and property write goes straight to the real context and into a 64-bit
+// hash of the command stream (numbers at float32 precision, strings, the content version of every canvas drawn). end() reports a
+// change unless the frame provably produced the same pixels as the previous one: the same commands from the same
+// starting state (context properties, transform, save stack, font epoch) on a canvas the frame repaints completely
+// (its first painting operation clears or opaquely fills the whole canvas, or blits an opaque full-size layer).
+// Anything the recorder cannot vouch for (style objects, drawn images without a version, pixel writes, a clip before the
+// first paint, unbalanced save/restore) counts as a change.
+// Numbers are hashed as float32, the precision Skia (Chrome's and Safari's canvas rasterizer) draws with.
+const F32 = new Float32Array(1), U32 = new Uint32Array(F32.buffer);
+const STR = new Map();
+function strKey(s) {
+  let k = STR.get(s);
+  if (k === undefined) {
+    let a = 0x811c9dc5 ^ s.length, b = 0x9747b28c;
+    for (let i = 0; i < s.length; i++) { const c = s.charCodeAt(i); a = Math.imul(a ^ c, 0x01000193); b = Math.imul(b ^ c, 0x5bd1e995); b ^= b >>> 15; }
+    if (STR.size > 8192) STR.clear();
+    k = [a | 0, b | 0];
+    STR.set(s, k);
+  }
+  return k;
+}
+const OBJ_IDS = new WeakMap();
+let objSeq = 1;
+const objId = (o) => { let id = OBJ_IDS.get(o); if (!id) { id = objSeq++; OBJ_IDS.set(o, id); } return id; };
+const isOpaqueColor = (c) => {
+  if (typeof c !== 'string') return false;
+  const s = c.trim().toLowerCase();
+  if (s[0] === '#') return s.length === 4 || s.length === 7 || (s.length === 9 && s.endsWith('ff')) || (s.length === 5 && s.endsWith('f'));
+  if (s.startsWith('rgba(') || s.startsWith('hsla(')) { const m = /,\s*([\d.]+)\s*\)$/.exec(s); return !!m && Number(m[1]) >= 1; }
+  if (s.startsWith('rgb(') || s.startsWith('hsl(')) return !s.includes('/');
+  return /^[a-z]+$/.test(s) && s !== 'transparent';
+};
+const PAINT = new Set(['fill', 'stroke', 'fillRect', 'strokeRect', 'clearRect', 'fillText', 'strokeText', 'drawImage', 'putImageData', 'drawFocusIfNeeded']);
+let RecorderProto = null, PROPS = null;
+function recorderProto() {
+  if (RecorderProto) return RecorderProto;
+  RecorderProto = {};
+  PROPS = [];
+  const P = typeof CanvasRenderingContext2D !== 'undefined' ? CanvasRenderingContext2D.prototype : {};
+  let id = 0;
+  for (const name of Object.getOwnPropertyNames(P)) {
+    if (name === 'constructor') continue;
+    const d = Object.getOwnPropertyDescriptor(P, name);
+    const key = ++id;
+    if (typeof d.value === 'function') {
+      const special = RecorderMethods[name];
+      RecorderProto[name] = special ? function () { return special.call(this, key, arguments); }
+        : PAINT.has(name) ? function () { this._paint(false); this._call(key, arguments); return this._g[name].apply(this._g, arguments); }
+          : function () { this._call(key, arguments); return this._g[name].apply(this._g, arguments); };
+    } else if (d.get) {
+      if (name === 'canvas' || !d.set) { Object.defineProperty(RecorderProto, name, { get() { return this._g[name]; } }); continue; }
+      const slot = PROPS.length;
+      PROPS.push(name);
+      Object.defineProperty(RecorderProto, name, {
+        get() { return this._g[name]; },
+        set(v) { this._i(key); this._v(v); this._s[slot] = v; this._g[name] = v; },
+      });
+    }
+  }
+  Object.assign(RecorderProto, RECORDER_API);
+  [S_FILL, S_ALPHA, S_OP, S_FILTER] = ['fillStyle', 'globalAlpha', 'globalCompositeOperation', 'filter'].map((n) => PROPS.indexOf(n));
+  return RecorderProto;
+}
+let S_FILL = -1, S_ALPHA = -1, S_OP = -1, S_FILTER = -1;
+const RecorderMethods = {
+  save(key) { this._i(key); this._stack.push({ s: this._s.slice(), m: this._m.slice(), clip: this._clip, dash: this._dash }); this._g.save(); },
+  restore(key) { this._i(key); const t = this._stack.pop(); if (t) { this._s = t.s; this._m = t.m; this._clip = t.clip; this._dash = t.dash; } this._g.restore(); },
+  reset(key) { this._i(key); this._s = []; this._m = [1, 0, 0, 1, 0, 0]; this._stack.length = 0; this._clip = false; this._dash = ''; this._paint('clear'); this._g.reset(); },
+  setTransform(key, a) {
+    this._call(key, a);
+    if (a.length >= 6) this._m = [a[0], a[1], a[2], a[3], a[4], a[5]]; else this._unknown = true;
+    return this._g.setTransform.apply(this._g, a);
+  },
+  resetTransform(key, a) { this._call(key, a); this._m = [1, 0, 0, 1, 0, 0]; return this._g.resetTransform(); },
+  translate(key, a) { this._call(key, a); this._mul(1, 0, 0, 1, a[0], a[1]); return this._g.translate(a[0], a[1]); },
+  scale(key, a) { this._call(key, a); this._mul(a[0], 0, 0, a[1], 0, 0); return this._g.scale(a[0], a[1]); },
+  rotate(key, a) { this._call(key, a); const c = Math.cos(a[0]), s = Math.sin(a[0]); this._mul(c, s, -s, c, 0, 0); return this._g.rotate(a[0]); },
+  transform(key, a) { this._call(key, a); this._mul(a[0], a[1], a[2], a[3], a[4], a[5]); return this._g.transform.apply(this._g, a); },
+  clip(key, a) { this._call(key, a); this._clip = true; return this._g.clip.apply(this._g, a); },
+  setLineDash(key, a) { this._call(key, a); this._dash = a[0] ? Array.from(a[0]).join(',') : ''; return this._g.setLineDash(a[0]); },
+  fillRect(key, a) {
+    const st = this._s[S_FILL];
+    this._paint(this._covers(a[0], a[1], a[2], a[3]) && this._plain() && isOpaqueColor(st === undefined ? '#000' : st) ? 'opaque' : false);
+    this._call(key, a); return this._g.fillRect(a[0], a[1], a[2], a[3]);
+  },
+  clearRect(key, a) { this._paint(this._covers(a[0], a[1], a[2], a[3]) ? 'clear' : false); this._call(key, a); return this._g.clearRect(a[0], a[1], a[2], a[3]); },
+  drawImage(key, a) {
+    const src = a[0];
+    let full = false;
+    if (src && src.__opaque && this._plain() && (a.length === 3 || a.length === 5)) {
+      const w = a.length === 5 ? a[3] : src.width, h = a.length === 5 ? a[4] : src.height;
+      full = this._covers(a[1], a[2], w, h) ? 'opaque' : false;
+    }
+    this._paint(full);
+    this._call(key, a); return this._g.drawImage.apply(this._g, a);
+  },
+  putImageData(key, a) { this._unknown = true; this._paint(false); return this._g.putImageData.apply(this._g, a); },
+};
+
+export class CanvasRecorder {
+  constructor(g) {
+    this.ctx = Object.create(recorderProto());
+    Object.assign(this.ctx, { _g: g, _s: [], _m: [1, 0, 0, 1, 0, 0], _stack: [], _clip: false, _dash: '', h1: 0, h2: 0, _unknown: false, _first: null });
+    this.prev1 = 0; this.prev2 = 0; this.fresh = true;
+    this.fullCover = false; this.opaqueCover = false;
+  }
+  /** Start of a frame: seeds the hash with the starting state (and `epoch`, e.g. the font epoch). */
+  begin(epoch) {
+    const r = this.ctx;
+    r.h1 = 0x12345679; r.h2 = 0x7654321;
+    r._unknown = false; r._first = null;
+    r._n(epoch);
+    for (let i = 0; i < r._s.length; i++) { r._i(i + 7919); r._v(r._s[i]); }
+    for (const x of r._m) r._n(x);
+    r._i(r._stack.length); r._i(r._clip ? 1 : 2); r._v(r._dash);
+    this.depth = r._stack.length;
+  }
+  /** End of a frame: true when the canvas may differ from the previous frame (upload it). */
+  end() {
+    const r = this.ctx;
+    this.fullCover = r._first === 'clear' || r._first === 'opaque';
+    this.opaqueCover = r._first === 'opaque';
+    const same = !this.fresh && !r._unknown && this.fullCover && r._stack.length === this.depth && r.h1 === this.prev1 && r.h2 === this.prev2;
+    this.prev1 = r.h1; this.prev2 = r.h2; this.fresh = false;
+    return !same;
+  }
+  /** The real context was reset behind the recorder's back (error recovery): forget its state, next frame uploads. */
+  invalidate() { const r = this.ctx; r._s = []; r._m = [1, 0, 0, 1, 0, 0]; r._stack.length = 0; r._clip = false; r._dash = ''; this.fresh = true; }
+}
+const RECORDER_API = {
+  _i(x) {
+    let a = Math.imul(this.h1 ^ x, 0x9e3779b1); a ^= a >>> 16; this.h1 = a;
+    let b = Math.imul(this.h2 ^ x, 0x85ebca77) + 0x27d4eb2f | 0; b ^= b >>> 13; this.h2 = b;
+  },
+  _n(v) { F32[0] = v > -1e-9 && v < 1e-9 ? 0 : v; this._i(U32[0]); },   // (|v| < 1e-9: no float32 coordinate moves)
+  _v(v) {
+    const t = typeof v;
+    if (t === 'number') this._n(v);
+    else if (t === 'string') { const k = strKey(v); this._i(k[0]); this._i(k[1]); }
+    else if (t === 'boolean') this._i(v ? 0x51 : 0x52);
+    else if (v == null) this._i(v === null ? 0x53 : 0x54);
+    else if (ArrayBuffer.isView(v) || Array.isArray(v)) { this._i(v.length); for (let i = 0; i < v.length; i++) this._v(v[i]); }
+    else if (t === 'object' && typeof v.__v === 'number') { this._i(objId(v)); this._n(v.__v); }   // versioned canvas (Layer, nav images)
+    else { this._i(objId(v)); this._unknown = true; }   // gradients, patterns, bitmaps, Path2D, DOMMatrix: not tracked
+  },
+  _call(key, args) { this._i(key); this._i(args.length); for (let i = 0; i < args.length; i++) this._v(args[i]); },
+  _paint(kind) { if (this._first === null) this._first = this._clip ? false : kind; },
+  _plain() {
+    const a = this._s[S_ALPHA], op = this._s[S_OP], f = this._s[S_FILTER];
+    return (a === undefined || a === 1) && (op === undefined || op === 'source-over') && (f === undefined || f === 'none');
+  },
+  _covers(x, y, w, h) {
+    const m = this._m, W = this._g.canvas.width, H = this._g.canvas.height;
+    if (Math.abs(m[1]) > 1e-9 || Math.abs(m[2]) > 1e-9) return false;
+    const x0 = m[0] * x + m[4], x1 = m[0] * (x + w) + m[4], y0 = m[3] * y + m[5], y1 = m[3] * (y + h) + m[5];
+    return Math.min(x0, x1) <= 1e-6 && Math.max(x0, x1) >= W - 1e-6 && Math.min(y0, y1) <= 1e-6 && Math.max(y0, y1) >= H - 1e-6;
+  },
+  _mul(a, b, c, d, e, f) {
+    const m = this._m;
+    this._m = [m[0] * a + m[2] * b, m[1] * a + m[3] * b, m[0] * c + m[2] * d, m[1] * c + m[3] * d, m[0] * e + m[2] * f + m[4], m[1] * e + m[3] * f + m[5]];
+  },
+};
 
 export function text(g, s, x, y, color, align = 'left', f = null) {
   if (f) g.font = f;

@@ -1,12 +1,13 @@
 // Lead-owned entry point of the San Francisco game.
 import * as THREE from 'three';
-import { createAssetLoader, loadAssetVersions, isNetworkError } from '../core/assets.js';
+import { createAssetLoader, loadAssetVersions, loadBuildInfo, isNetworkError, retryDelay } from '../core/assets.js';
+import { modelSeen, noteModelLoaded, measuredMbps, loadGlbJson, parseSkeleton, graftLod, copyVisual } from './aircraft-lod.js';   // LOD-first start (plan #2)
 import { createSFWorld } from '../world-sf/index.js';
 import { AIRCRAFT, loadAircraftDefinition } from '../aircraft/registry.js';
 import { createFixedWingModel } from '../flight/fixedwing.js';
 import { createHelicopterModel } from '../flight/helicopter.js';
 import { createInput } from '../flight/input.js';
-import { createDisplay } from '../avionics/index.js';
+import { createDisplay, loadAvionicsFonts } from '../avionics/index.js';
 import { createAudioSystem } from '../audio/index.js';
 import { createMenu, createLoadingScreen, createHUD, createCameraRig, createOnboarding } from '../ui/index.js';
 import { buildSpawns } from './spawns.js';
@@ -93,7 +94,8 @@ const hud = createHUD(hudRoot, null);
 // onboarding hook (src/ui/tutorial.js): first-flight tutorial / key card / hints; "Eğitimi yeniden başlat" resets the flight
 const onboarding = createOnboarding(hudRoot, { input, hud, restart: () => { if (state.flight) resetFlight(); } });
 
-const state = { world: null, def: null, rig: null, flight: null, displays: [], paused: false, hudVisible: true, helpVisible: false, crashTimer: 0, spawn: null, userMuted: false };
+const state = { world: null, def: null, rig: null, flight: null, displays: [], paused: false, hudVisible: true, helpVisible: false, crashTimer: 0, spawn: null, userMuted: false,
+  standIn: null, upgrade: null, warming: false, texQueue: [] };
 state.input = input;
 state.onboarding = onboarding;   // test hook
 window.__game = state;
@@ -125,23 +127,29 @@ async function start() {
 
   loading = createLoadingScreen(uiRoot);
   const t0 = performance.now();
-  // fetch the aircraft model in parallel with the world (loadGLTF caches the promise, loadAircraft reuses it)
-  loadAircraftDefinition(choice.aircraftId).then((d) => d.model.url && loader.loadGLTF(d.model.url)).catch(() => {});
+  state.t0 = t0;
+  // the aircraft is built while the world loads (its lights and materials are then part of the scene the loading frames
+  // compile): the full model, or on a cold start on the ground its LOD stand-in with the full model after the first frame
+  const aircraftP = prepareAircraft(choice.aircraftId, { lodOk: !resumed && !spawn.altitude });
+  aircraftP.catch(() => {});   // (awaited below, after the world)
   if (!state.world) {
     const focus = resumed ? { x: resumed.x, z: resumed.z } : { x: spawn.x, z: spawn.z };   // robustness hook: load around the resumed aircraft
     state.world = await createSFWorld({ scene, renderer, camera, loader, quality, focus, onProgress: (p, t) => loading.setProgress(p * 0.8, t) });
   }
   loading.setProgress(0.85, 'Uçak yükleniyor');
-  await loadAircraft(choice.aircraftId);
+  await loadAircraft(await aircraftP);
   resetFlight();
   let resumeNote = null;
   if (resumed) { try { resumeNote = applyResume(state, resumed, { input }); } catch (e) { console.warn('[resume]', e); } }   // robustness hook
+  loading.setProgress(0.95, 'Görüntü hazırlanıyor');
+  await prewarm();
   loading.setProgress(1, 'Hazır');
   loading.hide();
   state.readyAt = performance.now();   // dynamic resolution ignores the first seconds (shader compiles, tile bursts)
   console.log(`[app] ready in ${((performance.now() - t0) / 1000).toFixed(1)} s`);
   state.aircraftId = choice.aircraftId;
   if (state.halted) return;   // robustness: the graphics guard gave up while loading (notice shown): no flight to report
+  if (state.standIn) upgradeAircraft();   // LOD start: the full model now, swapped in when it is ready
   trackFlight(choice.aircraftId, spawn.id, (performance.now() - t0) / 1000, settings.quality, { in: touchUI.active ? 'touch' : input.kind, tilt: touchUI.active && settings.tilt ? 1 : undefined });
   if (resumed) {   // robustness hook: back in the same flight after a graphics failure (no tutorial / key card)
     gpu.report('resume', { why: resumed.crash ? 'crash' : resumed.reason || 'gpu', ac: choice.aircraftId });
@@ -153,10 +161,25 @@ async function start() {
   onboarding.begin({ flight: state.flight, def: state.def, spawn });
 }
 
-async function loadAircraft(id) {
+/**
+ * Definition + rig of the chosen aircraft, built while the world loads, and added to the scene with its shadow flags and
+ * the cockpit fill light right away (the light count is final before the world's materials are compiled).
+ * LOD start (docs/perf/plan.md #2; src/app/aircraft-lod.js): on a cold start on the ground in the chase view the rig is a
+ * stand-in (the full GLB's node skeleton from its first ~100 KB + the 0.4–0.6 MB LOD mesh) with the full model's exact
+ * contacts, eye points, bounds, lights and effects; upgradeAircraft() swaps the full model in after the first frame.
+ */
+async function prepareAircraft(id, { lodOk }) {
   const def = await loadAircraftDefinition(id);
-  const gltf = def.model.url ? await loader.loadGLTF(def.model.url) : null;
-  const rig = def.createRig(gltf ? gltf.scene : null);
+  let prepared = null;
+  if (lodOk && lodStartWanted(def)) {
+    try { prepared = await buildStandIn(def); } catch (e) { console.warn('[app] LOD start unavailable, loading the full model:', e && e.message); }
+  }
+  if (!prepared) {
+    const gltf = def.model.url ? await loader.loadGLTF(def.model.url) : null;
+    if (gltf) noteModelLoaded(def.model.url);
+    prepared = { def, rig: def.createRig(gltf ? gltf.scene : null), standIn: null };
+  }
+  const { rig } = prepared;
   setupShadows(rig.object);
   if (state.rig) scene.remove(state.rig.object);
   scene.add(rig.object);
@@ -164,8 +187,37 @@ async function loadAircraft(id) {
   state.cockpitFill = new THREE.PointLight(0xfff0dc, 0, 3.5, 2);
   state.cockpitFill.position.copy(rig.eye.pilot).add(new THREE.Vector3(0, 0.35, 0.25));
   rig.object.add(state.cockpitFill);
+  state.texQueue.push(...texturesIn(rig.object));   // uploaded one per frame while the world is still loading
+  return prepared;
+}
+
+/**
+ * LOD start only where the full model would hold up the start: not downloaded by this browser before (a cached model
+ * decodes as fast as the LOD would download) and no fast connection (≥ 50 Mbit/s: the full model costs < 1 s there).
+ * ?lod=0 / ?lod=1 force it off / on (tests).
+ */
+function lodStartWanted(def) {
+  const m = def.model, force = params.get('lod');
+  if (!m.url || !m.lodUrl || force === '0' || cameraRig.view !== 'exterior') return false;
+  if (force === '1') return true;
+  if (modelSeen(m.url)) return false;
+  const mbps = measuredMbps();
+  state.startMbps = mbps == null ? null : Math.round(mbps);   // test hook
+  return !(mbps >= 50);
+}
+
+async function buildStandIn(def) {
+  // (the LOD load is cached: the airports' parked aircraft use the same file)
+  const [json, lod] = await Promise.all([loadGlbJson(def.model.url), loader.loadGLTF(def.model.lodUrl)]);
+  const skeleton = await parseSkeleton(json, loader.draco);
+  const lodParts = graftLod(skeleton, lod.scene);
+  const rig = def.createRig(skeleton);
+  return { def, rig, standIn: { rig, lodParts, cockpit: null } };
+}
+
+async function loadAircraft({ def, rig, standIn }) {
   const factory = def.spec.category === 'helicopter' ? createHelicopterModel : createFixedWingModel;
-  const flight = factory(def.spec, { contacts: rig.contacts });
+  const flight = factory(def.spec, { contacts: rig.contacts });   // (a stand-in's contacts are the full model's)
   bindFlightEvents(flight);
   flight.setRoute(navRoute);         // navigation hook: LNAV guidance (flight.nav) + autopilot NAV mode
   navMap.setFlight(flight, def);
@@ -174,25 +226,193 @@ async function loadAircraft(id) {
   if (!lazyCockpit) bindDisplays(def, rig);
   input.setAircraft(def.spec);
   hud.setAircraft(def);
-  cameraRig.setAircraft(rig, def);
+  Object.assign(state, { def, rig, flight, standIn });
+  cameraRig.setAircraft(rigView, def);   // (reads bounds + eye now; follows whichever rig is current, see rigView)
   // audio streams in the background: the game starts without waiting and sounds fade in when their buffers arrive
-  audio.loadAircraft(id).catch((e) => console.warn('[audio]', e));
-  Object.assign(state, { def, rig, flight });
+  audio.loadAircraft(def.id).catch((e) => console.warn('[audio]', e));
+  if (standIn) return;   // cockpit and full model follow after the start (upgradeAircraft)
   if (lazyCockpit) {
-    // detailed cockpit (CONTRACTS-SF.md §6.2.1): streamed after the exterior; the game only waits for it when it starts in the cockpit
-    const loadCockpit = () => loader.loadGLTF(def.model.cockpitUrl).then((g) => {
-      if (state.rig !== rig) return;   // another aircraft was loaded meanwhile
-      rig.attachCockpit(g.scene);
-      setupShadows(g.scene);
-      bindDisplays(def, rig);
-    }).catch((e) => console.warn('[app] cockpit', e));
-    // robustness hook: memory-limited devices (quality.lazyCockpit) fetch it only when the cockpit view is first entered
-    if (quality.lazyCockpit && cameraRig.view !== 'cockpit') state.loadCockpit = loadCockpit;
-    else {
-      const ready = loadCockpit();
-      if (cameraRig.view === 'cockpit') await ready;
-    }
+    const ready = setupCockpit(def);
+    if (ready && cameraRig.view === 'cockpit') await ready;
   }
+}
+// the camera rig keeps one rig object for the whole flight: this one always answers with the current rig
+const rigView = {
+  get object() { return state.rig ? state.rig.object : null; },
+  get bounds() { return state.rig ? state.rig.bounds : null; },
+  get eye() { return state.rig ? state.rig.eye : null; },
+};
+
+/**
+ * Detailed cockpit (CONTRACTS-SF.md §6.2.1): streamed after the start and attached to whichever rig is current when it
+ * arrives (a LOD stand-in hands it over to the full rig at the swap). Returns the load promise (null when deferred).
+ */
+function setupCockpit(def) {
+  const loadCockpit = () => (loadAvionicsFonts(), loader.loadGLTF(def.model.cockpitUrl)).then((g) => {
+    const rig = state.rig;
+    if (!rig || state.def !== def || rig.cockpitReady || g.scene.parent) return;   // (attached already / other aircraft)
+    if (state.standIn && rig === state.standIn.rig) state.standIn.cockpit = { scene: g.scene, snap: snapshotNodes(g.scene) };
+    attachCockpit(def, rig, g.scene);
+  }).catch((e) => console.warn('[app] cockpit', e));
+  // robustness hook: memory-limited devices (quality.lazyCockpit) fetch it only when the cockpit view is first entered
+  if (quality.lazyCockpit && cameraRig.view !== 'cockpit') { state.loadCockpit = loadCockpit; return null; }
+  state.loadCockpit = null;
+  return loadCockpit();
+}
+function attachCockpit(def, rig, cockpitScene) {
+  rig.attachCockpit(cockpitScene);
+  setupShadows(cockpitScene);
+  bindDisplays(def, rig);
+  // the first switch to the cockpit view without shader compiles (after the rig's next update, which may adjust shadow
+  // flags); its textures still upload on the first cockpit frame (a background upload would stall a random frame)
+  afterFrames(2, () => { if (state.rig === rig) renderer.compileAsync(cockpitScene, camera, scene).catch(() => {}); });
+}
+/** Local transforms, visibility and screen UVs of a freshly loaded cockpit, to give a second rig the same starting point. */
+function snapshotNodes(root) {
+  const nodes = [], uvs = [];
+  root.traverse((o) => {
+    nodes.push([o, o.position.clone(), o.quaternion.clone(), o.scale.clone(), o.visible]);
+    const uv = o.isMesh && o.geometry && o.geometry.attributes.uv;
+    if (uv && /^screen_/.test(o.name)) uvs.push([o, uv.array.slice(), o.userData.uvFlipped]);
+  });
+  return { nodes, uvs };
+}
+function restoreNodes(snap) {
+  for (const [o, p, q, s, v] of snap.nodes) { o.position.copy(p); o.quaternion.copy(q); o.scale.copy(s); o.visible = v; }
+  for (const [o, arr, flipped] of snap.uvs) {
+    const uv = o.geometry.attributes.uv;
+    uv.array.set(arr); uv.needsUpdate = true;
+    if (flipped === undefined) delete o.userData.uvFlipped; else o.userData.uvFlipped = flipped;
+  }
+}
+
+// ---- LOD start: the full model after the first frame (plan #2)
+// The full rig is built hidden in the scene, replays every (dt, VisualState, view) the stand-in received since the start
+// (its smoothing, strobe and wheel/rotor phases end up exactly where the stand-in's are), compiles its programs and
+// uploads its textures one per frame, and replaces the stand-in between two frames at the same transform. The flight
+// model keeps its contacts (identical by construction); the camera follows through rigView.
+function upgradeAircraft() {
+  const { def, rig: from } = state;
+  const up = { def, from, log: [], replayed: 0, rig: null, textures: null, compiled: false, t: performance.now() };
+  state.upgrade = up;
+  (async () => {
+    // the detailed cockpit first (the stand-in cannot show it; it moves to the full rig at the swap), then the exterior
+    // (memory-limited devices: the cockpit when its view is first entered)
+    const cockpit = def.model.cockpitUrl && from.attachCockpit ? setupCockpit(def) : null;
+    if (cockpit) await cockpit;
+    let gltf;
+    for (let n = 1; ; n++) {   // a dropped connection: keep flying the stand-in and try again later
+      try { gltf = await loader.loadGLTF(def.model.url); break; } catch (e) { if (!isNetworkError(e)) throw e; await sleep(retryDelay(n)); }
+    }
+    noteModelLoaded(def.model.url);
+    up.tLoaded = performance.now();
+    if (state.upgrade !== up) return;
+    const rig = def.createRig(gltf.scene);
+    setupShadows(rig.object);
+    rig.object.visible = false;   // hidden: its lights do not count yet (the stand-in's do), nothing is drawn
+    rig.object.position.copy(from.object.position); rig.object.quaternion.copy(from.object.quaternion);
+    scene.add(rig.object);
+    up.rig = rig;   // stepUpgrade replays into it; programs and textures follow its first update (rigs adjust shadow flags there)
+    up.tRig = performance.now();
+  })().catch((e) => { if (state.upgrade === up) state.upgrade = null; console.warn('[app] full aircraft model unavailable, keeping the LOD model:', e && e.message); });
+}
+const UPGRADE_LOG_MAX = 7200;   // 2 min at 60 fps of VisualState copies while the full model downloads
+function recordUpgrade(up, dt, vis, view) {
+  if (up.log.length >= UPGRADE_LOG_MAX) { up.log.splice(0, 1200); up.replayed = Math.max(0, up.replayed - 1200); }
+  up.log.push([dt, copyVisual(vis), view]);
+}
+/** After the render: replay the recorded frames into the hidden full rig (≤ 3 ms per frame) and upload one texture. */
+function stepUpgrade(up) {
+  if (!up.rig) return;
+  const t = performance.now();
+  while (up.replayed < up.log.length && performance.now() - t < 3) {
+    const [dt, v, view] = up.log[up.replayed++];
+    up.rig.update(dt, v);
+    up.rig.setView(view);
+  }
+  if (up.replayed === up.log.length) { up.log.length = 0; up.replayed = 0; }
+  if (!up.textures) {
+    up.textures = [...texturesIn(up.rig.object)];
+    renderer.compileAsync(up.rig.object, camera, scene).catch(() => {}).then(() => { up.compiled = true; up.tCompiled = performance.now(); });
+  } else if (up.textures.length) renderer.initTexture(up.textures.shift());
+}
+function swapAircraft(up) {
+  const { from, rig, def } = up;
+  state.upgrade = null;
+  if (state.rig !== from) { scene.remove(rig.object); return; }
+  rig.object.visible = true;
+  scene.remove(from.object);
+  if (state.cockpitFill) rig.object.add(state.cockpitFill);   // the same light moves over: the light count never changes
+  state.rig = rig;
+  if (rig.contacts.some((c, i) => !from.contacts[i] || c.position.distanceTo(from.contacts[i].position) > 1e-9)) console.warn('[app] stand-in contacts differ from the full model');
+  const standIn = state.standIn, ck = standIn && standIn.cockpit;
+  if (ck) { restoreNodes(ck.snap); attachCockpit(def, rig, ck.scene); }   // the stand-in's cockpit moves over, as loaded
+  disposeStandIn(from, standIn, rig);
+  state.standIn = null;
+  state.swapAt = performance.now();
+  state.swapInfo = { loaded: up.tLoaded, rig: up.tRig, compiled: up.tCompiled, swap: state.swapAt };   // test hook
+  console.log(`[app] full aircraft model in ${((state.swapAt - (state.readyAt || state.swapAt)) / 1000).toFixed(1)} s after the start`);
+  if (ck) return;
+  if (def.model.cockpitUrl && rig.attachCockpit) setupCockpit(def);   // (not loaded yet: attaches to the full rig when it arrives)
+  else { state.displays = []; bindDisplays(def, rig); }
+}
+/** The stand-in's own materials (rig-made and the LOD copies); LOD geometries and textures stay (shared with the airports). */
+function disposeStandIn(from, standIn, keep) {
+  const kept = new Set();
+  keep.object.traverse((o) => { for (const m of [].concat(o.material || [])) kept.add(m); });
+  const mats = new Set(standIn && standIn.lodParts ? standIn.lodParts.materials : []);
+  from.object.traverse((o) => { for (const m of [].concat(o.material || [])) if (m && !kept.has(m)) mats.add(m); });
+  for (const m of mats) m.dispose();
+}
+const TEX_KEYS = ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap', 'aoMap', 'alphaMap', 'bumpMap', 'lightMap', 'specularMap',
+  'clearcoatMap', 'clearcoatNormalMap', 'clearcoatRoughnessMap', 'sheenColorMap', 'sheenRoughnessMap', 'transmissionMap', 'thicknessMap',
+  'specularIntensityMap', 'specularColorMap', 'iridescenceMap', 'iridescenceThicknessMap', 'anisotropyMap', 'envMap'];
+/** Image textures of a subtree that are not on the GPU yet. */
+function texturesIn(root) {
+  const out = new Set();
+  const add = (t) => {
+    if (!t || !t.isTexture || t.isRenderTargetTexture || t.isCubeTexture || t.isVideoTexture || t.isCanvasTexture) return;
+    const p = renderer.properties.get(t);
+    if (!p.__webglTexture || p.__version !== t.version) out.add(t);
+  };
+  root.traverse((o) => {
+    for (const m of [].concat(o.material || [])) {
+      if (!m) continue;
+      for (const k of TEX_KEYS) add(m[k]);
+      if (m.uniforms) for (const u of Object.values(m.uniforms)) if (u && u.value && u.value.isTexture) add(u.value);
+    }
+  });
+  return out;
+}
+
+// ---- pre-warm (plan #4): the first playable frame without the start-up stutter
+// Compile every material of the scene against the final lights (in parallel where KHR_parallel_shader_compile exists),
+// then render the start view once behind the loading screen (it uploads the textures the view shows), then lift it.
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const nextFrame = () => new Promise((r) => { requestAnimationFrame(() => r()); setTimeout(r, 250); });   // (hidden tab: no rAF)
+const afterFrames = (n, fn) => (n <= 0 ? fn() : requestAnimationFrame(() => afterFrames(n - 1, fn)));
+async function prewarm() {
+  if (document.hidden || params.get('prewarm') === '0') return;
+  const t = performance.now(), info = { programs0: renderer.info.programs.length };
+  state.warming = true;   // the loop keeps streaming and places aircraft + camera, but neither steps the flight nor renders
+  try {
+    await nextFrame();
+    info.frameMs = Math.round(performance.now() - t);
+    // (again while the world keeps streaming during the wait: the second pass only finds what arrived meanwhile)
+    for (let pass = 0, until = performance.now() + 5000; pass < 3 && performance.now() < until; pass++) {
+      const n = renderer.info.programs.length;
+      await Promise.race([renderer.compileAsync(scene, camera), sleep(until - performance.now())]);
+      if (pass > 0 && renderer.info.programs.length === n) break;
+    }
+    info.compileMs = Math.round(performance.now() - t) - info.frameMs;
+    info.programs1 = renderer.info.programs.length;
+    while (state.texQueue.length) renderer.initTexture(state.texQueue.shift());   // the aircraft's textures not uploaded yet
+    state.warming = 'render';   // one frame rendered behind the loading screen (uploads the textures of the start view)
+    for (let n = renderCount, i = 0; renderCount === n && i < 8; i++) await nextFrame();
+    await nextFrame();   // (presented before the loading screen starts to fade)
+  } catch (e) { console.warn('[app] prewarm', e); } finally { state.warming = false; }
+  state.prewarmMs = Math.round(performance.now() - t);
+  state.prewarmInfo = Object.assign(info, { totalMs: state.prewarmMs, programs2: renderer.info.programs.length });
 }
 
 function setupShadows(root) {
@@ -305,7 +525,7 @@ guardUnload(() => !!state.flight && !state.halted);   // (robustness: the graphi
 // ---- loop ----
 const timer = new THREE.Timer();
 timer.connect(document);
-let fpsAcc = 0, fpsFrames = 0, displayAcc = 0;
+let fpsAcc = 0, fpsFrames = 0, displayAcc = 0, renderCount = 0;
 const invertedInput = {};
 function frame(ts) {
   requestAnimationFrame(frame);
@@ -313,9 +533,11 @@ function frame(ts) {
   const dt = Math.min(timer.getDelta(), 0.1);
   input.update(dt);
   if (state.halted) return;   // robustness: graphics failure being handled (notice shown, page reloading)
+  const up = state.upgrade;   // LOD start: the full model replaces the stand-in between two frames once it is ready
+  if (up && up.compiled && up.textures && !up.textures.length && up.replayed === up.log.length) swapAircraft(up);
   const { flight, rig, world } = state;
   if (flight && rig && world) {
-    if (!state.paused && !state.halted) {
+    if (!state.paused && !state.halted && !state.warming) {
       if (!flight.crashed) {
         // invert pitch (settings) on a copy so the input module's own smoothing state is untouched
         let inp = input.state;
@@ -326,10 +548,13 @@ function frame(ts) {
       if (state.crashTimer > 0 && (state.crashTimer -= dt) <= 0) resetFlight();
     }
     syncRig();
-    rig.update(dt, flight.getVisualState());
-    cameraRig.update(dt, flight);
+    const vis = flight.getVisualState();
+    const rdt = state.warming ? 0 : dt;   // pre-warm frames place aircraft and camera without advancing their animations
+    rig.update(rdt, vis);
+    cameraRig.update(rdt, flight);
     guardCamera();   // robustness hook
     rig.setView(cameraRig.view);
+    if (state.upgrade) recordUpgrade(state.upgrade, rdt, vis, cameraRig.view);
     if (state.loadCockpit && cameraRig.view === 'cockpit') { const load = state.loadCockpit; state.loadCockpit = null; hud.showMessage('Kokpit yükleniyor…', 1500); load(); }   // lazy cockpit
     if (state.cockpitFill) state.cockpitFill.intensity = cameraRig.view === 'cockpit' ? 2.5 : 0;
     world.update(dt, camera);
@@ -343,7 +568,9 @@ function frame(ts) {
   }
   // robustness hook: a render that throws every frame draws nothing (the canvas shows the page background) → the guard
   // recovers like after a context loss; texture releases, GPU budget and the flight snapshot run in gpu.tick
-  try { renderer.render(scene, camera); gpu.renderOk(); } catch (e) { gpu.renderFailed(e); }
+  if (state.warming !== true) { try { renderer.render(scene, camera); gpu.renderOk(); } catch (e) { gpu.renderFailed(e); } renderCount++; }
+  if (state.upgrade) stepUpgrade(state.upgrade);
+  else if (state.texQueue.length && !state.readyAt) renderer.initTexture(state.texQueue.shift());   // aircraft textures while the world loads
   gpu.tick(dt);
   fpsAcc += dt; fpsFrames++;
   if (fpsAcc >= 1) {
@@ -413,7 +640,7 @@ function adaptResolution(fps, span) {
 }
 
 // Build stamp (dist/build.json, written by the publish build): a clear ribbon on staging so it is never mistaken for live.
-fetch('build.json', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).then((b) => {
+loadBuildInfo().then((b) => {   // (the same memoized request the asset version map uses)
   if (!b) return;
   state.build = b;
   if (b.target === 'staging') {

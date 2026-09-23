@@ -648,8 +648,8 @@ function b737Lower(env) {
 
 export const BOEING = {
   'b737.pfd': { vw: 1000, vh: 1000, size: 1024, create: b737Pfd },
-  'b737.nd': { vw: 1000, vh: 1000, size: 1024, create: b737Nd },
-  'b737.eicas': { vw: 1000, vh: 1000, size: 512, hz: 15, create: b737Eicas },
+  'b737.nd': { vw: 1000, vh: 1000, size: 1024, hz: 10, create: b737Nd },
+  'b737.eicas': { vw: 1000, vh: 1000, size: 512, hz: 10, create: b737Eicas },
   'b737.cdu': { vw: 1000, vh: 800, size: 512, hz: 4, create: b737Cdu },
   'b737.lower': { vw: 1000, vh: 1000, size: 512, hz: 10, create: b737Lower },
 };

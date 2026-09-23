@@ -1,7 +1,7 @@
 // Navigation data for the displays: airports/runways, a shared terrain height grid sampled progressively from
 // world.getGroundHeight (EGPWS terrain + relief maps), map projection, synthetic air traffic (TCAS/radar) and a
 // fighter steerpoint route. Everything is cached and budgeted so that no display update spends > ~0.4 ms here.
-import { DEG, NM, FT, clamp, wrap360, makeCanvas, font } from './core.js';
+import { DEG, NM, FT, clamp, wrap360, makeCanvas, touchCanvas, font } from './core.js';
 
 // ---------------------------------------------------------------- airports & runways
 const RUNWAYS_URL = new URL('../../data/sf/runways.json', import.meta.url).href;
@@ -165,7 +165,7 @@ class TerrainGrid {
       }
       if ((++n & 31) === 0) {
         const dt = performance.now() - now;
-        if (dt > budget) { frameSpent += dt; break; }
+        if (dt > budget || n >= N * N) { frameSpent += dt; break; }   // (at most one pass: a frozen or coarse clock never hangs here)
       }
     }
   }
@@ -222,6 +222,7 @@ export class TerrainAlertImage {
       }
     }
     this.g.putImageData(this.img, 0, 0, 0, this.row, GN, r1 - this.row);
+    touchCanvas(this.canvas);   // content version for the displays' upload skipping
     this.row = r1;
     if (this.row >= GN) { this.hasContent = true; this.peak = this._peak; }
   }
@@ -281,6 +282,7 @@ export class ReliefImage {
       }
     }
     this.g.putImageData(this.img, 0, 0, 0, this.row, RN, r1 - this.row);
+    touchCanvas(this.canvas);   // content version for the displays' upload skipping
     this.row = r1;
     if (this.row >= RN) this.hasContent = true;
   }
@@ -511,9 +513,11 @@ export class LocalRelief {
       D[p] = r; D[p + 1] = gg; D[p + 2] = b; D[p + 3] = 255;
     }
     this.g.putImageData(this.img, 0, 0, 0, this.row, n, r1 - this.row);
+    touchCanvas(this.canvas);   // content version for the displays' upload skipping
     this.row = r1;
     if (this.row < n) return;
     this.fg.drawImage(this.canvas, 0, 0);
+    touchCanvas(this.front);
     this.shown = { x0: this.cx - this.half, z0: this.cz - this.half, size: 2 * this.half };
     this.cursor = -1;
   }

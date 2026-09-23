@@ -341,6 +341,6 @@ function uh60Eng(env) {
 
 export const UH60 = {
   'uh60.mfd.pfd': { vw: W, vh: H, size: 1024, create: uh60Pfd },
-  'uh60.mfd.nd': { vw: W, vh: H, size: 1024, create: uh60Nd },
-  'uh60.mfd.eng': { vw: W, vh: H, size: 512, hz: 15, create: uh60Eng },
+  'uh60.mfd.nd': { vw: W, vh: H, size: 1024, hz: 10, create: uh60Nd },
+  'uh60.mfd.eng': { vw: W, vh: H, size: 512, hz: 10, create: uh60Eng },
 };

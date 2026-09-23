@@ -284,7 +284,7 @@ export const F22 = {
   'f22.ufd': { vw: 1000, vh: 750, size: 512, variants: ['f22.ufd.cni', 'f22.ufd.icaws'] },
   'f22.ufd.cni': { vw: 1000, vh: 750, size: 512, hz: 4, create: f22UfdCni },
   'f22.ufd.icaws': { vw: 1000, vh: 750, size: 512, hz: 4, create: f22UfdIcaws },
-  'f22.pmfd': { vw: 1000, vh: 1000, size: 1024, create: f22Pmfd },
+  'f22.pmfd': { vw: 1000, vh: 1000, size: 1024, hz: 10, create: f22Pmfd },
   'f22.smfd': { vw: 1000, vh: 1000, size: 512, variants: ['f22.smfd.sms', 'f22.smfd.cklst', 'f22.smfd.eng'] },
   'f22.smfd.sms': { vw: 1000, vh: 1000, size: 512, hz: 2, create: f22Sms },
   'f22.smfd.cklst': { vw: 1000, vh: 1000, size: 512, hz: 4, create: f22Checklist },
