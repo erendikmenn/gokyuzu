@@ -21,9 +21,18 @@ from dsp import (N, SR, bump, butter, circ_filter, fade, hp, lp, modal, say, sof
 warnings.filterwarnings('ignore')
 TAU = 2 * np.pi
 
-BETTY = 'Samantha'
-GPWS = 'Daniel'
-HELO = 'Samantha'
+# ---- voice providers ------------------------------------------------------------------------------------------
+# Default: ElevenLabs (licensed for public use). Fallback: macOS `say` (personal use only) with --provider say.
+PROVIDER = 'elevenlabs'
+EL_MODEL = 'eleven_multilingual_v2'
+EL_VOICES = {                      # role → (ElevenLabs premade voice id, name) — see `elevenlabs.py voices`
+    'betty': ('EXAVITQu4vr4xnSDxMaL', 'Sarah'),    # calm, mature, reassuring US female (F-16 / F-22 VMS)
+    'helo': ('EXAVITQu4vr4xnSDxMaL', 'Sarah'),     # same warning voice for the UH-60M
+    'boeing': ('pqHfZKP75CvOlQylNhV4', 'Bill'),    # crisp, mature US male (Honeywell EGPWS style)
+    'airbus': ('cjVigY5qzO86Huf0OWal', 'Eric'),    # smooth, neutral US male (Airbus FWC callouts)
+}
+SAY_VOICES = {'betty': 'Samantha', 'helo': 'Samantha', 'boeing': 'Daniel', 'airbus': 'Daniel'}
+BETTY, GPWS, HELO = 'betty', 'boeing', 'helo'     # roles (kept for compatibility)
 
 
 def compress(x, thresh_db=-18, ratio=3.0, att=0.003, rel=0.08):
@@ -131,8 +140,38 @@ def cockpit_audio(x, rng, kind='speaker', pitch=1.0, drive=1.8, hiss_db=None):
     return fade(y, 0.004, 0.04)
 
 
-def voice(text, v, rate=None):
-    return say(text, v, rate=rate)
+def _f0_spread(x):
+    fr = N(0.03); hop = fr // 2; f = []
+    for i in range(0, len(x) - fr, hop):
+        seg = x[i:i + fr] * np.hanning(fr)
+        if np.sqrt(np.mean(seg * seg)) < 0.03 * np.max(np.abs(x)):
+            continue
+        ac = np.correlate(seg, seg, 'full')[fr - 1:]
+        lo, hi = int(SR / 350), int(SR / 70)
+        k = lo + int(np.argmax(ac[lo:hi]))
+        if ac[k] > 0.4 * ac[0]:
+            f.append(np.log2(SR / k))
+    return float(np.std(f)) if len(f) > 3 else 1.0
+
+
+def voice(text, role, rate=None, takes=3):
+    """Render text for a voice role. rate: words per minute (say) → mapped to an ElevenLabs speed factor."""
+    from dsp import trim_silence
+    if PROVIDER == 'say':
+        return say(text, SAY_VOICES.get(role, role), rate=rate)
+    import elevenlabs as el
+    vid = EL_VOICES[role][0]
+    speed = float(np.clip((rate or 175) / 175.0, 0.8, 1.18))
+    # several takes (different seeds); keep the steadiest delivery (flattest pitch, no dragging), like picking
+    # the best recording in a studio session
+    best, best_score = None, 1e9
+    for seed in range(1, takes + 1):
+        x = el.tts(text, vid, EL_MODEL, stability=0.85, similarity=0.8, style=0.0, speed=speed, seed=seed)
+        x = trim_silence(x, thresh_db=-42, pad=0.015)
+        score = _f0_spread(x) * 4 + len(x) / SR
+        if score < best_score:
+            best, best_score = x, score
+    return best
 
 
 def silence(s):
@@ -323,7 +362,7 @@ def gen_gpws(aid, v, rng, airbus):
         P.update({'v_2500': ('Twenty five hundred', 195, False, 0),
                   'v_hundredabove': ('Approaching minimums', 182, False, 0), 'v_minimums': ('Minimums', 178, False, 0)})
     # the Airbus FWC voice is a little deeper and more compressed than the Honeywell EGPWS voice
-    pitch, drive = (0.95, 2.0) if airbus else (1.0, 1.6)
+    pitch, drive = ((0.95 if PROVIDER == 'say' else 1.0), 2.0) if airbus else (1.0, 1.6)
     for k, (txt, rate, rep, gap) in P.items():
         x = render(txt, v, rate, rep, gap)
         if k == 'v_stall' and airbus:
@@ -343,11 +382,12 @@ def gen_gpws(aid, v, rng, airbus):
 
 
 def gen_helo(rng):
-    for k, (txt, rate, rep, gap) in {'v_lowrotor': ('Low rotor R P M', 175, False, 0),
+    for k, (txt, rate, rep, gap) in {'v_lowrotor': ('Low rotor R.P.M.' if PROVIDER != 'say' else 'Low rotor R P M', 175, False, 0),
                                      'v_altitude': ('Altitude', 172, True, 0.25), 'v_pullup': ('Pull up', 175, True, 0.22),
                                      'v_bankangle': ('Bank angle', 175, False, 0)}.items():
         x = render(txt, HELO, rate, rep, gap)
-        write_wav(f'uh60/{k}.wav', cockpit_audio(x, rng, 'headset', pitch=0.97, drive=2.2, hiss_db=-34))
+        write_wav(f'uh60/{k}.wav', cockpit_audio(x, rng, 'headset', pitch=0.97 if PROVIDER == 'say' else 1.0, drive=2.2,
+                                                 hiss_db=-34))
 
 
 def main_voices():
@@ -355,8 +395,8 @@ def main_voices():
     print('[voices]')
     gen_betty('f16', rng, BETTY, drive=1.8, pitch=1.0, hiss_db=-38)
     gen_betty('f22', rng, BETTY, drive=1.3, pitch=1.02, hiss_db=None)    # F-22: cleaner digital audio
-    gen_gpws('a320neo', GPWS, rng, True)
-    gen_gpws('b737', GPWS, rng, False)
+    gen_gpws('a320neo', 'airbus', rng, True)
+    gen_gpws('b737', 'boeing', rng, False)
     gen_helo(rng)
 
 
@@ -380,4 +420,9 @@ def main(voices_only=False):
 
 if __name__ == '__main__':
     import sys
+    if '--provider' in sys.argv:
+        PROVIDER = sys.argv[sys.argv.index('--provider') + 1]
     main(voices_only='--voices-only' in sys.argv)
+    if PROVIDER == 'elevenlabs':
+        import elevenlabs as el
+        print(f'ElevenLabs characters used this run (uncached): {el.chars_used()}')

@@ -40,6 +40,10 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
   const prevCam = new THREE.Vector3();
   let prevCamValid = false;
 
+  // user volume categories (0..1): master, engine (engines/rotors), voice (callouts + alert tones), atc, ambient
+  const vol = { master: 1, engine: 1, voice: 1, atc: 1, ambient: 1 };
+  const ENGINE_LAYER = /^(whine|roar|ab|rumble|fan|buzzsaw|jet|reverse|apu|rotor|slap|tail|turbine|gearbox)/;
+  const ENGINE_SHOT = /^(abLightoff|abOut|reverser)$/;
   const warnOnce = (k, ...a) => { if (!warned.has(k)) { warned.add(k); console.warn('[audio]', ...a); } };
 
   // ------------------------------------------------------------------------------------------------ context
@@ -93,7 +97,8 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
     G.analyser = ctx.createAnalyser();
     G.analyser.fftSize = 4096;
     G.hp = ctx.createBiquadFilter(); G.hp.type = 'highpass'; G.hp.frequency.value = 22; G.hp.Q.value = 0.7;
-    G.mix.connect(G.hp).connect(G.duck).connect(G.mute).connect(G.glue).connect(G.limiter).connect(G.out).connect(ctx.destination);
+    G.vol = g(vol.master * vol.master);                       // user master volume (squared = perceptual taper)
+    G.mix.connect(G.hp).connect(G.duck).connect(G.mute).connect(G.glue).connect(G.limiter).connect(G.out).connect(G.vol).connect(ctx.destination);
     G.out.connect(G.analyser);
     G.ext = g(0); G.ext.connect(G.mix);
     G.int = g(1); G.int.connect(G.mix);
@@ -104,6 +109,7 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
     G.intDirect = g(1); G.intDirect.connect(G.int);
     G.alert = g(1); G.alert.connect(G.mix);
     G.ui = g(0.8); G.ui.connect(G.mix);
+    G.atc = g(vol.atc * vol.atc); G.atc.connect(G.mix);        // for radio/ATC audio of other modules (api.atcInput)
     const resume = () => { if (ctx && started && !document.hidden && ctx.state !== 'running' && ctx.state !== 'closed') ctx.resume().catch(() => {}); };
     for (const ev of ['pointerdown', 'keydown', 'touchend', 'mousedown']) window.addEventListener(ev, resume, { passive: true, capture: true });
     document.addEventListener('visibilitychange', () => {
@@ -273,7 +279,8 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
 
   function addLayer(I, def, ei) {
     const em = emitterFor(I, def, ei);
-    const L = { id: def.id + (ei >= 0 ? `#${ei + 1}` : ''), def, ei, em, src: null, f: null, g: gainNode(0), ext: null, int: null, last: {}, norm: 1 };
+    const L = { id: def.id + (ei >= 0 ? `#${ei + 1}` : ''), def, ei, em, src: null, f: null, g: gainNode(0), ext: null, int: null, last: {}, norm: 1,
+      cat: def.cat || (ENGINE_LAYER.test(def.id) ? 'engine' : 'ambient') };
     if (def.lp) {
       L.f = ctx.createBiquadFilter(); L.f.type = 'lowpass'; L.f.Q.value = def.lpQ ?? 0.6; L.f.frequency.value = 8000;
       L.f.connect(L.g);
@@ -527,7 +534,8 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
 
   function shot(I, key, opts = {}) {
     const rel = I.profile.shots?.[key] || key;
-    playFile(I, rel, { em: opts.em || I.emitters.air, ...opts });
+    const v = opts.bus ? 1 : ENGINE_SHOT.test(key) ? vol.engine * vol.engine : vol.ambient * vol.ambient;
+    playFile(I, rel, { em: opts.em || I.emitters.air, ...opts, gain: (opts.gain ?? 1) * v });
   }
 
   // ------------------------------------------------------------------------------------------------ voices
@@ -800,7 +808,7 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
     const tauView = 0.06;
     setP(I, 'ext', G.ext.gain, cockpit ? 0 : 1, tauView);
     setP(I, 'int', G.int.gain, cockpit ? 1 : 0, tauView);
-    setP(I, 'alert', G.alert.gain, cockpit ? 1.0 : 0.5, 0.1);
+    setP(I, 'alert', G.alert.gain, (cockpit ? 1.0 : 0.5) * vol.voice * vol.voice, 0.1);
     const canopy = s.canopy;
     const supersonicQuiet = I.profile.category === 'fighter' ? 1 - 0.55 * sstep(1.0, 1.25, s.mach) : 1;
     setP(I, 'intEng', G.intEng.gain, db((ip.engineDb ?? 0) + (ip.canopyOpenDb ?? 0) * canopy) * supersonicQuiet, 0.1);
@@ -892,13 +900,14 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
     }
 
     // --- layers
+    const volE = vol.engine * vol.engine, volA = vol.ambient * vol.ambient;
     for (const L of I.layers) {
       const def = L.def;
       const e = L.ei >= 0 ? s.eng[L.ei] : s.eng[0];
       let g = 0;
       try { g = Math.max(0, num(def.gain(s, e))); } catch { g = 0; }
       const tau = def.tau ?? 0.07;
-      setP(L, 'g', L.g.gain, g * L.norm, tau);
+      setP(L, 'g', L.g.gain, g * L.norm * (L.cat === 'engine' ? volE : volA), tau);
       if (g <= 0 && L.last.g === 0) continue;
       if (L.src && (def.rate || L.ei > 0)) {
         let r = 1;
@@ -985,7 +994,7 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
       rms = 10 * Math.log10(sq / dbgBuf.length + 1e-12); peak = 20 * Math.log10(pk + 1e-12);
     }
     return {
-      state: ctx ? ctx.state : 'none', sampleRate: ctx?.sampleRate, aircraft: I?.id ?? null, rmsDb: +rms.toFixed(1), peakDb: +peak.toFixed(1),
+      state: ctx ? ctx.state : 'none', sampleRate: ctx?.sampleRate, masterGain: G ? +G.vol.gain.value.toFixed(3) : null, aircraft: I?.id ?? null, rmsDb: +rms.toFixed(1), peakDb: +peak.toFixed(1),
       reduction: G ? +(G.glue.reduction ?? 0).toFixed?.(1) : 0,
       layers: I ? I.layers.map((L) => ({ id: L.id, loaded: !!L.src, g: +(L.last.g ?? 0).toFixed(3), rate: +(L.last.rate ?? 1).toFixed(3), ext: +(L.last.ext ?? 0).toFixed(3), int: +(L.last.int ?? 0).toFixed(3) })) : [],
       emitters: I ? Object.values(I.emitters).map((e) => ({ name: e.name, d: +e.d.toFixed(1), delay: +e.delayCur.toFixed(3), tau: +e.tau.toFixed(3), cos: +e.cos.toFixed(2), inside: e.inside !== false })) : [],
@@ -993,9 +1002,21 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
     };
   }
 
+  function setVolumes(v = {}) {
+    if (!v || typeof v !== 'object') return;
+    for (const k of Object.keys(vol)) if (typeof v[k] === 'number' && Number.isFinite(v[k])) vol[k] = clamp(v[k], 0, 1);
+    if (!G) return;
+    const t = ctx.currentTime;
+    G.vol.gain.setTargetAtTime(vol.master * vol.master, t, 0.05);
+    G.atc.gain.setTargetAtTime(vol.atc * vol.atc, t, 0.05);
+    if (inst) { inst.last.alert = undefined; for (const L of inst.layers) L.last.g = undefined; }   // re-apply next frame
+  }
+
   const api = {
     muted: false,
-    start, setMuted, setPaused, loadAircraft, update, play, debug,
+    start, setMuted, setPaused, loadAircraft, update, play, debug, setVolumes,
+    get volumes() { return { ...vol }; },
+    get atcInput() { return G ? G.atc : null; },       // connect ATC/radio sources here (atc volume applies)
     get context() { return ctx; },
     get analyser() { return G ? G.analyser : null; },
     get output() { return G ? G.out : null; },          // post-limiter master (dev tools tap this for recording)
