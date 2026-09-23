@@ -82,11 +82,9 @@ async function loadAircraft(id) {
   state.displays = Object.entries(def.model.displays || {}).flatMap(([meshName, type]) => {
     const mesh = rig.screens[meshName];
     if (!mesh) { console.warn(`[app] screen mesh ${meshName} missing`); return []; }
-    const display = createDisplay(type);
-    const mat = mesh.material.clone();
-    mat.map = display.texture; mat.emissive = new THREE.Color(0xffffff); mat.emissiveMap = display.texture; mat.emissiveIntensity = 1;
-    if (type.endsWith('.hud')) { mat.transparent = true; mat.blending = THREE.AdditiveBlending; mat.depthWrite = false; }
-    mesh.material = mat;
+    // mesh/eye/root let the avionics align HUD symbology with the real glass and skip redraws of off-screen displays
+    const display = createDisplay(type, { mesh, eye: rig.eye.pilot, root: rig.object });
+    mesh.material = bindScreenMaterial(display, type);
     return [{ display, mesh }];
   });
   input.setAircraft(def.spec);
@@ -94,6 +92,16 @@ async function loadAircraft(id) {
   cameraRig.setAircraft(rig, def);
   await audio.loadAircraft(id).catch((e) => console.warn('[audio]', e));
   Object.assign(state, { def, rig, flight });
+}
+
+/** Self-lit screen material: LCDs keep their exact colors (no tone mapping); HUD symbology is added onto the combiner glass. */
+function bindScreenMaterial(display, type) {
+  const hud = type.endsWith('.hud');
+  return new THREE.MeshBasicMaterial({
+    map: display.texture, toneMapped: false,
+    transparent: hud, blending: hud ? THREE.AdditiveBlending : THREE.NormalBlending, depthWrite: !hud,
+    polygonOffset: true, polygonOffsetFactor: -1,
+  });
 }
 
 function bindFlightEvents(flight) {

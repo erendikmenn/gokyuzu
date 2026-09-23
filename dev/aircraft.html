@@ -52,10 +52,9 @@ const fakeFlight = { ias: 70, airspeed: 70, altitude: 1200, verticalSpeed: 2, he
 const displays = Object.entries(def.model.displays || {}).flatMap(([name, type]) => {
   const mesh = rig.screens[name];
   if (!mesh) return [];
-  const d = createDisplay(type);
-  mesh.material = mesh.material.clone();
-  Object.assign(mesh.material, { map: d.texture, emissiveMap: d.texture, emissive: new THREE.Color(0xffffff) });
-  if (type.endsWith('.hud')) Object.assign(mesh.material, { transparent: true, blending: THREE.AdditiveBlending, depthWrite: false });
+  const d = createDisplay(type, { mesh, eye: rig.eye.pilot, root: rig.object });
+  const hud = type.endsWith('.hud');
+  mesh.material = new THREE.MeshBasicMaterial({ map: d.texture, toneMapped: false, transparent: hud, blending: hud ? THREE.AdditiveBlending : THREE.NormalBlending, depthWrite: !hud, polygonOffset: true, polygonOffsetFactor: -1 });
   return [d];
 });
 
