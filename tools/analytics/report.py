@@ -222,7 +222,13 @@ def main():
         minutes = max(float(q.get('m', 0) or 0) for _, q, _ in evs)
         active = max([int(q.get('a', 0) or 0) for _, q, _ in evs] + [0])
         fps = [int(q['fps']) for q in hbs if q.get('fps', '').isdigit()]
+        kinds = [q.get('t') for _, q, _ in evs]
+        tut = [q for _, q, _ in evs if q.get('t') == 'tut']
         sessions.append({
+            'took_off': 'takeoff' in kinds, 'landings': kinds.count('land'),
+            'runway_landings': sum(1 for _, q, _ in evs if q.get('t') == 'land' and q.get('rw') == '1'),
+            'crashes': [q.get('r') or q.get('d') or '?' for _, q, _ in evs if q.get('t') == 'crash'],
+            'tut_steps': [(q.get('sc'), q.get('st'), q.get('s'), q.get('x')) for q in tut],
             'vid': vid, 'start': start, 'minutes': max(minutes, (end - start).total_seconds() / 60), 'active': active,
             'aircraft': fly.get('ac'), 'spawn': fly.get('sp'), 'load': fly.get('lt'), 'fps': round(statistics.mean(fps)) if fps else None,
             'gpu': first.get('gpu'), 'quality': fly.get('q') or first.get('q'), 'version': first.get('v') or fly.get('v'),
@@ -245,7 +251,8 @@ def main():
                 continue
             ac = next((p.split('/')[3] for _, p in g if p.startswith('/assets/aircraft/') and p.endswith('.glb')
                        and not p.endswith(('_lod.glb', '_cockpit.glb'))), None)
-            sessions.append({'vid': vid, 'start': start, 'minutes': (end - start).total_seconds() / 60, 'active': None,
+            sessions.append({'took_off': None, 'landings': 0, 'runway_landings': 0, 'crashes': [], 'tut_steps': [],
+                             'vid': vid, 'start': start, 'minutes': (end - start).total_seconds() / 60, 'active': None,
                              'aircraft': ac, 'spawn': None, 'load': None, 'fps': None, 'gpu': None, 'quality': None,
                              'version': None, 'errors': [], 'exact': False})
 
@@ -279,6 +286,31 @@ def main():
         print(f'Performans: ortalama {statistics.mean(fps):.0f} fps · 40 fps altında: {low} oturum')
         print('Ekran kartları:', top(Counter(s['gpu'] for s in real if s['gpu'])))
         print('Kalite ayarı:', top(Counter(s['quality'] for s in real if s['quality'])))
+    exact_flights = [s for s in flights if s['exact']]
+    if exact_flights:
+        up = sum(1 for s in exact_flights if s['took_off'])
+        crashes = Counter(c for s in exact_flights for c in s['crashes'])
+        print(f"\nOynanış (kesin ölçülen {len(exact_flights)} uçuş): kalkış yapan {up} (%{100 * up / len(exact_flights):.0f}) · "
+              f"iniş {sum(s['landings'] for s in exact_flights)} (pistte {sum(s['runway_landings'] for s in exact_flights)}) · "
+              f"kaza {sum(crashes.values())}")
+        if crashes:
+            print('Kaza nedenleri:', top(crashes, 6))
+        tut = [t for s in exact_flights for t in s['tut_steps']]
+        if tut:
+            started = sum(1 for s in exact_flights if s['tut_steps'])
+            done = sum(1 for s in exact_flights if any(st == 'done' for _, st, _, _ in s['tut_steps']))
+            skipped = sum(1 for s in exact_flights if any(x == 'skip' for _, _, _, x in s['tut_steps']))
+            print(f'Eğitim: başlayan {started} · bitiren {done} · geçen {skipped}')
+            times = defaultdict(list)
+            for sc, st, sec, x in tut:
+                if st not in ('done', 'restart') and not x and sec:
+                    times[f'{sc}/{st}'].append(float(sec))
+            slow = sorted(((statistics.median(v), k, len(v)) for k, v in times.items()), reverse=True)[:5]
+            if slow:
+                print('En uzun süren adımlar (medyan sn):', ' · '.join(f'{k} {m:.0f} sn ({n})' for m, k, n in slow))
+            quit_at = Counter(st for s in exact_flights for sc, st, _, x in s['tut_steps'][-1:] if x in ('skip', 'crash'))
+            if quit_at:
+                print('Eğitimin bırakıldığı / kaza yapılan adım:', top(quit_at, 5))
     errs = Counter(e for s in real for e in s['errors'])
     if errs:
         print('Hatalar:', top(errs, 5))
