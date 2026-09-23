@@ -32,8 +32,8 @@ Menüyü atlamak için doğrudan bağlantı da kullanılabilir: `index.html?airc
 | W / S  ·  ↑ / ↓ | Burun aşağı / yukarı |
 | A / D  ·  ← / → | Sola / sağa yatış |
 | Q / E | Dümen sola / sağa (yerde burun tekerleği) |
-| Shift / Ctrl | Gaz artır / azalt (helikopterde kolektif) |
-| X / Z  ·  + / − | Gaz artır / azalt (Mac'te Ctrl + ok tuşları masaüstü değiştirdiği için bunlar önerilir) |
+| X / Z  ·  + / − | Gaz artır / azalt (helikopterde kolektif) |
+| Shift / Ctrl | Gaz artır / azalt. Ctrl yalnızca Mac'te: Windows ve Linux'ta Ctrl+W tarayıcı sekmesini kapattığı için orada gaz azaltma Z / − tuşlarıyla yapılır |
 | 1 … 9  ·  0 | Gaz %10 … %90  ·  %100 |
 | G | İniş takımı indir / topla |
 | F / V | Flap bir kademe indir / topla |
@@ -52,7 +52,7 @@ Menüyü atlamak için doğrudan bağlantı da kullanılabilir: `index.html?airc
 | F1 / ? | Yardım |
 | Tab | Ana menü |
 
-Savaş uçaklarında gaz kolu MIL'de durur. Afterburner için gaz artırma tuşuna bir kez daha bas. Kokpitte fareyle sürükleyerek etrafa bakılır, tekerlekle yakınlaştırılır, çift tıklamayla bakış ortalanır. Oyun kolu da desteklenir (standart eşleme).
+Savaş uçaklarında gaz kolu MIL'de durur. Afterburner için gaz artırma tuşuna bir kez daha bas. Uçuş sırasında sekme yanlışlıkla kapatılır veya yenilenirse tarayıcı önce onay ister (oyunun kendi "Ana menü" dönüşü sormaz). Kokpitte fareyle sürükleyerek etrafa bakılır, tekerlekle yakınlaştırılır, çift tıklamayla bakış ortalanır. Oyun kolu da desteklenir (standart eşleme).
 
 ## Proje yapısı
 
@@ -69,7 +69,7 @@ Savaş uçaklarında gaz kolu MIL'de durur. Afterburner için gaz artırma tuşu
 - Sesler: `.venv/bin/python tools/audio/build_all.py`
 - Arazi ve hava fotoğrafı: `tools/geo/terrain_*.py` ve `imagery_*.py` (ayrıntı: `assets/sf/terrain/README.md`)
 
-Testler: `node tests/fixedwing.test.mjs` (182), `node tests/helicopter.test.mjs` (46), `node tests/physics.test.mjs` (ada oyunu, 26).
+Testler: `node tests/fixedwing.test.mjs` (188), `node tests/helicopter.test.mjs` (50), `node tests/physics.test.mjs` (ada oyunu, 26).
 
 Veri kaynakları: USGS 3DEP ve NAIP (kamu malı), OpenStreetMap (© OpenStreetMap katkıcıları, ODbL), DataSF (açık veri).
 

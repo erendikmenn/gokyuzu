@@ -12,6 +12,7 @@ import { shared } from './shared.js';
 import { CAMERA_NAMES } from './camera.js';
 import { openSettings, openCredits, qualityHintSeen, markQualityHintSeen, qualityHintText } from './panels.js';
 import { loadSettings, saveSettings } from '../core/settings.js';
+import { goToMenu } from '../core/leave.js';
 
 const MONO = 'ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace';
 const SANS = '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif';
@@ -294,7 +295,7 @@ export function createHUD(container) {
   let pauseCode = 'KeyP', helpCode = 'F1';
   resumeBtn.addEventListener('click', () => pressKey(pauseCode));
   helpBtn.addEventListener('click', () => pressKey(helpCode));
-  menuBtn.addEventListener('click', () => { location.href = location.pathname; });
+  menuBtn.addEventListener('click', goToMenu);
   setBtn.addEventListener('click', () => openSettings(root));
   credLink.addEventListener('click', () => openCredits(root));
 

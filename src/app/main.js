@@ -12,6 +12,8 @@ import { createMenu, createLoadingScreen, createHUD, createCameraRig } from '../
 import { buildSpawns } from './spawns.js';
 import { loadSettings } from '../core/settings.js';
 import { QUALITY } from '../core/quality.js';
+import { IS_MAC } from '../core/platform.js';
+import { goToMenu, guardUnload } from '../core/leave.js';
 
 const params = new URLSearchParams(location.search);
 const app = document.getElementById('app');
@@ -169,7 +171,7 @@ function bindFlightEvents(flight) {
   // refused commands used to be silent (N with the lever above idle, e.g. after an autoland; G on the ground)
   flight.on('warning', (w) => {
     if (!w || !w.on) return;
-    if (w.type === 'reverserInhibit') hud.showMessage('Ters itki yalnızca yerde ve gaz rölantideyken (Ctrl / Z)', 2000);
+    if (w.type === 'reverserInhibit') hud.showMessage(`Ters itki yalnızca yerde ve gaz rölantideyken (${IS_MAC ? 'Ctrl / Z' : 'Z'})`, 2000);
     else if (w.type === 'gearLocked') hud.showMessage('Yerdeyken iniş takımı toplanamaz', 1500);
   });
 }
@@ -216,7 +218,9 @@ input.on('pause', () => { state.paused = !state.paused; hud.setPaused(state.paus
 input.on('hud', () => { if (hud.cycleMode) hud.cycleMode(); else { state.hudVisible = !state.hudVisible; hud.setVisible(state.hudVisible); } });   // full → compact → off
 input.on('mute', () => { state.userMuted = !state.userMuted; audio.setMuted(state.userMuted); hud.showMessage(state.userMuted ? 'Ses kapalı' : 'Ses açık', 900); });
 input.on('help', () => { state.helpVisible = !state.helpVisible; hud.showHelp(input.bindings, state.helpVisible); });
-input.on('menu', () => { location.href = location.pathname; });
+input.on('menu', goToMenu);
+// an accidental tab close / reload mid-flight (Ctrl+W on Windows, Cmd+W, F5) asks first instead of losing the flight
+guardUnload(() => !!state.flight);
 
 // ---- loop ----
 const timer = new THREE.Timer();

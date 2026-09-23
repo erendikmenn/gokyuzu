@@ -12,6 +12,7 @@
 // Throttle sync: when the flight model publishes `pendingThrottle` (after a reset or an autopilot disconnect) the lever
 // adopts it (window.__game.flight, or call setThrottle()).
 // No DOM access beyond addEventListener on `target`: safe to construct in Node with target = null.
+import { IS_MAC } from '../core/platform.js';
 
 // keyboard ramp rates (full deflection per second) per aircraft category: fighters ramp roll slower (their roll-rate
 // command reaches 240-310°/s), helicopters get a gentler cyclic
@@ -22,6 +23,7 @@ const PRESS_RATES = {
 };
 const AXIS_RELEASE_RATE = 7;
 const AXIS_REVERSE_RATE = 10;
+
 const THROTTLE_RATE = 0.45;          // lever travel per second (fixed wing)
 const COLLECTIVE_RATE = 0.35;        // helicopter collective travel per second
 const BRAKE_RATE = 4, BRAKE_RELEASE = 8;
@@ -36,7 +38,8 @@ const AXES = {
   yawLeft: ['KeyQ'],
   yawRight: ['KeyE'],
   throttleUp: ['ShiftLeft', 'ShiftRight', 'KeyX', 'Equal', 'NumpadAdd'],
-  throttleDown: ['ControlLeft', 'ControlRight', 'KeyZ', 'Minus', 'NumpadSubtract'],
+  // Ctrl only on macOS: on Windows/Linux Ctrl+W (with W = nose down) closes the tab (src/core/platform.js)
+  throttleDown: [...(IS_MAC ? ['ControlLeft', 'ControlRight'] : []), 'KeyZ', 'Minus', 'NumpadSubtract'],
   brake: ['KeyB', 'Space'],
 };
 
@@ -239,16 +242,26 @@ export function createInput(target = globalThis.window) {
       add('W / S  ·  ↑ / ↓', 'Cyclic ileri / geri (burun aşağı / yukarı)');
       add('A / D  ·  ← / →', 'Cyclic sola / sağa');
       add('Q / E', 'Pedal (kuyruk rotoru) sola / sağa');
-      add('Shift / Ctrl', 'Kolektif artır / azalt');
-      add('X / Z  ·  + / −', 'Kolektif artır / azalt (Mac için; Ctrl+ok tuşları masaüstü değiştirir)');
+      if (IS_MAC) {
+        add('Shift / Ctrl', 'Kolektif artır / azalt');
+        add('X / Z  ·  + / −', 'Kolektif artır / azalt (Ctrl+ok tuşları masaüstü değiştirdiği için bunlar önerilir)');
+      } else {
+        add('X / Z  ·  + / −', 'Kolektif artır / azalt');
+        add('Shift', 'Kolektif artır');
+      }
       add('1 … 9  ·  0', 'Kolektif %10 … %90  ·  %100');
       add('O', 'Otomatik havada asılı kalma (hover hold) aç / kapat');
     } else {
       add('W / S  ·  ↑ / ↓', ftr ? 'Burun aşağı / yukarı (g komutu)' : 'Burun aşağı / yukarı');
       add('A / D  ·  ← / →', 'Sola / sağa yatış');
       add('Q / E', 'Dümen sola / sağa (yerde burun tekerleği)');
-      add('Shift / Ctrl', 'Gaz artır / azalt');
-      add('X / Z  ·  + / −', 'Gaz artır / azalt (Mac için; Ctrl+ok tuşları masaüstü değiştirir)');
+      if (IS_MAC) {
+        add('Shift / Ctrl', 'Gaz artır / azalt');
+        add('X / Z  ·  + / −', 'Gaz artır / azalt (Ctrl+ok tuşları masaüstü değiştirdiği için bunlar önerilir)');
+      } else {
+        add('X / Z  ·  + / −', 'Gaz artır / azalt');
+        add('Shift', 'Gaz artır');
+      }
       if (ftr) {
         add('1 … 9  ·  0', 'Gaz ön ayarı (9 = MIL / askeri güç)  ·  0 = tam art yakıcı');
         add('Gaz tuşu MIL\'de', 'Art yakıcı: MIL kademesinde durur, bırakıp tekrar basınca art yakıcıya geçer');

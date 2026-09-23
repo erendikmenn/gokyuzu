@@ -1,5 +1,6 @@
 // Player-facing reference data (Turkish): aircraft facts for the menu cards, loading tips, airport and
 // landmark labels. Published figures (manufacturer / USAF / US Army fact sheets), rounded.
+import { IS_MAC, THROTTLE_KEYS } from '../core/platform.js';
 
 export const AIRCRAFT_INFO = {
   f16: {
@@ -109,7 +110,7 @@ export const TIPS = [
   'Y tuşuyla arkaya bakabilir, virgül ve nokta ile kameralar arasında geri / ileri geçebilirsin.',
   'H tuşu göstergeleri Tam → Sade → Kapalı arasında değiştirir.',
   'İnişe geçmeden önce G ile iniş takımlarını indir ve flapleri (F) kademe kademe aç.',
-  'Black Hawk’ta Shift / Ctrl kolektifi kontrol eder: havada asılı kalmak için küçük dokunuşlarla ayarla.',
+  `Black Hawk’ta ${THROTTLE_KEYS} kolektifi kontrol eder: havada asılı kalmak için küçük dokunuşlarla ayarla.`,
   'Yolcu uçaklarında yaklaşma hızı ağırlığa göre değişir; hız bandındaki VREF işaretini takip et.',
   '“PULL UP” uyarısını duyduğunda gazı aç ve burnu hemen kaldır.',
   'Golden Gate Köprüsü’nün kuleleri deniz seviyesinden 227 metre yükselir.',
@@ -128,13 +129,13 @@ export const MENU_CONTROLS = {
     ['W / S', 'Burun'],
     ['A / D', 'Yatış'],
     ['Q / E', 'Dümen'],
-    ['Shift / Ctrl', 'Gaz'],
+    [THROTTLE_KEYS, 'Gaz'],
     ['C', 'Kamera'],
     ['T', 'Kokpit'],
     ['P', 'Duraklat'],
     ['F1', 'Tüm kontroller'],
   ],
-  fighter: [['G', 'İniş takımı'], ['2× Shift', 'Art yakıcı']],
+  fighter: [['G', 'İniş takımı'], [IS_MAC ? '2× Shift' : '2× X', 'Art yakıcı']],
   airliner: [['G', 'İniş takımı'], ['F / V', 'Flap']],
-  helicopter: [['Shift / Ctrl', 'Kolektif'], ['Q / E', 'Pedal'], ['W A S D', 'Cyclic']],
+  helicopter: [[THROTTLE_KEYS, 'Kolektif'], ['Q / E', 'Pedal'], ['W A S D', 'Cyclic']],
 };
