@@ -1,14 +1,14 @@
-"""Voice warnings (macOS `say` + cockpit-audio processing) and synthetic cockpit alert tones.
+"""Voice warnings: one voice per real voice-warning system (wave 7), rendered with ElevenLabs (cached) and processed
+through a cockpit chain matched to real recordings.
 
-Only the standard macOS voices are installed on the build machine (no Premium/Enhanced/Siri voices), so the least
-robotic *concatenative* voices are used (recorded human speech units) instead of the formant synthesisers:
-  F-16 / F-22 / UH-60  'Bitching Betty'   Samantha (en_US female)  → headset/intercom chain
-  A320neo / 737-800    GPWS / FWC callouts Daniel (male)            → cockpit loudspeaker chain (+ small flight deck)
-Real voice-warning systems replay one recorded word, so repeated warnings ("pull up, pull up") are one rendering
-played twice with a fixed gap instead of two synthesised words with different intonation.
-Processing: trim → (pitch nudge) → syllable-levelling compressor → 300–3400 Hz band-limit + transducer EQ → light
-tanh saturation → small-room early reflections + short diffuse tail (speaker) → active-speech-level normalisation
-(-19 dBFS K-weighted active level) with a soft peak limit at -1 dBFS, so every callout has the same loudness.
+  A320 FWC        ElevenLabs Voice Design "FWC DesignB" (British RP male, no clone) → A320 loudspeaker EQ (A319 videos)
+  EGPWS           "Adam" (Honeywell voice; A320: A320 loudspeaker EQ, 737: P-8A loudspeaker EQ)
+  F-16 VMS        "Sarah" (female, headset);  F-22 ICAWS "Matilda" (female, headset)
+Voice choice: tools/audio/voicematch.py; references: tools/audio/real_clips.py; decisions: research/alerts.md.
+Real voice-warning systems replay one recorded word, so repeated warnings ("sink rate … sink rate") are one rendering
+played twice with a fixed gap (Honeywell standard pause 0.75 s). Each file ends at -19 dBFS active speech level.
+Usage: .venv/bin/python tools/audio/gen_voices.py [--only fwc,egpws,vms,icaws,uh60] [--provider say]
+The alert tones are in gen_alerts.py; the old tone functions below are kept for gen_apdisc.py (audition candidates).
 """
 import warnings
 
@@ -322,105 +322,264 @@ def ding_dong():
     return y
 
 
-# phrase table: key → (text, rate wpm, repeat twice?, gap s)
-BETTY_PHRASES = {
-    'v_warning': ('Warning', 170, True, 0.28), 'v_caution': ('Caution', 170, True, 0.28),
-    'v_pullup': ('Pull up', 175, True, 0.22), 'v_altitude': ('Altitude', 172, True, 0.25),
-    'v_bingo': ('Bingo', 168, True, 0.3), 'v_overg': ('Over G', 172, True, 0.25),
-    'v_lowspeed': ('Low speed', 172, True, 0.25), 'v_gear': ('Landing gear', 170, False, 0),
+
+
+# ================================================================================================ wave 7: per system
+# One voice per real voice-warning system (tools/audio/research/alerts.md):
+#   A320neo  FWC  (Airbus flight warning computer: radio-altitude callouts, RETARD, HUNDRED ABOVE, MINIMUM, STALL,
+#                  SPEED SPEED SPEED)                           → designed British RP male voice ('FWC DesignB')
+#            EGPWS (Honeywell: SINK RATE, PULL UP, TERRAIN…, TOO LOW…, DON'T SINK, GLIDE SLOPE; no Mode 6 on Airbus)
+#                                                                → Honeywell voice ('Adam'), A320 loudspeaker EQ
+#   737-800  EGPWS (Honeywell MK V: all voices incl. Mode 6 callouts, MINIMUMS, BANK ANGLE) → 'Adam', 737 EQ
+#   F-16C    VMS  (female, headset)                              → 'Sarah'
+#   F-22A    ICAWS voice (female, headset, different unit)        → see F22_* below
+#   UH-60M   see UH60_* below
+# The voice choice is evidence based (tools/audio/voicematch.py → research/voicematch.json: F0 and speaking rate of
+# the real recordings, documented accents). The loudspeaker colouration is matched to the long-term spectrum of the
+# real cockpit recordings (research/voice_refs.json): A319 FWC voice (Air France / Adria videos) and P-8A EGPWS voice.
+VOICE_ID = {
+    'fwc': ('WrWxGio5YUgz9Ahdti5R', 'FWC DesignB'),     # ElevenLabs Voice Design (text description, not a clone)
+    'egpws': ('pNInz6obpgDQGcFmaJgB', 'Adam'),
+    'vms': ('EXAVITQu4vr4xnSDxMaL', 'Sarah'),
+    'icaws': ('XrExE9yKIg1WjnnlVkGX', 'Matilda'),
+    'uh60': ('hpp4J3VqNfWAUOO0d1Us', 'Bella'),
+}
+EGPWS_PAUSE = 0.75           # Honeywell standard pause between paired phrases ([SPEC] 6.4.4 via FlightGear mk_viii)
+
+
+def _refs():
+    import json
+    import os
+    p = os.path.join(os.path.dirname(__file__), 'research', 'voice_refs.json')
+    return json.load(open(p)) if os.path.exists(p) else None
+
+
+def third_oct_ltas(x):
+    bands = 125 * 2 ** (np.arange(0, 6.01, 1 / 3))
+    f, P = signal.welch(x, SR, nperseg=2048)
+    e = np.array([P[(f >= c / 2 ** (1 / 6)) & (f < c * 2 ** (1 / 6))].mean() for c in bands])
+    L = 10 * np.log10(e + 1e-20)
+    return bands, L - L.max()
+
+
+def match_eq(x, target, strength=0.85, limit=15.0):
+    """Linear-phase EQ that moves the long-term third-octave spectrum of `x` toward `target` (dB re max)."""
+    bands, L = third_oct_ltas(x)
+    d = np.clip((np.asarray(target) - L) * strength, -limit, limit)
+    d = np.convolve(np.pad(d, 1, mode='edge'), [0.25, 0.5, 0.25], 'valid')      # smooth across bands
+    fr = np.concatenate([[0], bands, [SR / 2]])
+    gains = undb(np.concatenate([[d[0]], d, [d[-1] - 12]]))
+    taps = signal.firwin2(2047, fr / (SR / 2), gains)
+    return signal.fftconvolve(x, taps, 'same')
+
+
+def speaker_chain(x, rng, target=None, drive=1.6, pitch=1.0):
+    """Cockpit loudspeaker: matched EQ to the real recording, 250-4000 Hz band-limit, syllable compression, light
+    saturation, small flight-deck room, -19 dBFS active speech level."""
+    x = x - np.mean(x)
+    x = butter(x, 'highpass', 90, 2)
+    x = pitch_nudge(x, pitch)
+    x = x / (np.max(np.abs(x)) + 1e-12)
+    x = level_compress(x, ratio=3.0, range_db=12)
+    y = match_eq(x, target) if target is not None else bq(x, 'peak', 2300, 1.3, 3.5)
+    y = butter(y, 'highpass', 250, 4)
+    y = butter(y, 'lowpass', 4000, 4)
+    y = y / (np.max(np.abs(y)) + 1e-12)
+    y = np.tanh(drive * y) / np.tanh(drive)
+    y = butter(y, 'lowpass', 4500, 2)
+    y = np.concatenate([np.zeros(N(0.012)), y, np.zeros(N(0.08))])
+    y = small_room(y, rng, tail_db=-20, rt60=0.18)
+    y = y * undb(-19.0 - speech_level_db(y))
+    return fade(limit_peaks(y, -1.0, knee=0.6), 0.004, 0.04)
+
+
+def headset_chain(x, rng, drive=1.6, hiss_db=-40, pitch=1.0):
+    return cockpit_audio(x, rng, 'headset', pitch=pitch, drive=drive, hiss_db=hiss_db)
+
+
+def words(system, text, rate=195, takes=3):
+    """One recorded word/phrase of a system voice (cached ElevenLabs rendering, trimmed)."""
+    EL_VOICES['_' + system] = VOICE_ID[system]
+    return voice(text, '_' + system, rate, takes=takes)
+
+
+def seq(*parts):
+    """Concatenate renderings and silences (float = seconds of silence)."""
+    return np.concatenate([silence(p) if isinstance(p, (int, float)) else p for p in parts])
+
+
+# ---- Airbus FWC (A320neo) -------------------------------------------------------------------------------------
+FWC_WORDS = {
+    'v_2500': 'Two thousand five hundred', 'v_1000': 'One thousand', 'v_500': 'Five hundred', 'v_400': 'Four hundred',
+    'v_300': 'Three hundred', 'v_200': 'Two hundred', 'v_100': 'One hundred', 'v_50': 'Fifty', 'v_40': 'Forty',
+    'v_30': 'Thirty', 'v_20': 'Twenty', 'v_10': 'Ten', 'v_5': 'Five', 'v_hundredabove': 'Hundred above',
+    'v_minimum': 'Minimum', 'v_retard': 'Retard',
+}
+# intermediate callouts (FCOM: present height repeated every 4 s when the next callout is > 11 s away; below 410 ft)
+FWC_INTERMEDIATE = [h for h in range(60, 400, 10) if h % 100]
+NUM_WORDS = {1: 'one', 2: 'two', 3: 'three', 6: 'sixty', 7: 'seventy', 8: 'eighty', 9: 'ninety'}
+
+
+def say_height(h):
+    tens = {1: 'ten', 2: 'twenty', 3: 'thirty', 4: 'forty', 5: 'fifty', 6: 'sixty', 7: 'seventy', 8: 'eighty', 9: 'ninety'}
+    hund, rest = divmod(h, 100)
+    if not hund:
+        return tens[rest // 10].capitalize()
+    return f'{NUM_WORDS[hund].capitalize()} hundred and {tens[rest // 10]}'
+
+
+def gen_fwc(rng, target):
+    print('[voices] A320 FWC')
+    W = {}
+    for k, t in FWC_WORDS.items():
+        W[k] = words('fwc', t, 200 if k not in ('v_retard', 'v_hundredabove', 'v_minimum') else 190)
+    out = dict(W)
+    out['v_20_retard'] = seq(W['v_20'], 0.06, W['v_retard'])       # FWC sheet: "TWENTY… RETARD" as one call
+    out['v_10_retard'] = seq(W['v_10'], 0.06, W['v_retard'])       # autoland
+    sp = words('fwc', 'Speed', 200)
+    out['v_speed'] = seq(sp, max(0.05, 0.56 - len(sp) / SR), sp, max(0.05, 0.56 - len(sp) / SR), sp)
+    st = words('fwc', 'Stall', 190)
+    for k, y in out.items():
+        write_wav(f'a320neo/{k}.wav', speaker_chain(y, rng, target))
+    # stall: crickets + "STALL" (FCOM: permanent; the rule loops this file)
+    from gen_alerts import cricket, speaker as tone_speaker
+    cr = tone_speaker(cricket(1.0)[:N(0.48)])
+    cr = cr * undb(-19.0 - speech_level_db(cr)) * undb(-3)
+    stv = speaker_chain(st, rng, target)
+    write_wav('a320neo/v_stall.wav', limit_peaks(np.concatenate([cr, silence(0.06), stv]), -1.0, 0.6))
+    for h in FWC_INTERMEDIATE:
+        write_wav(f'a320neo/v_i{h}.wav', speaker_chain(words('fwc', say_height(h), 205), rng, target))
+
+
+# ---- Honeywell EGPWS (A320neo: modes 1-5; 737: modes 1-6) --------------------------------------------------------
+EGPWS_WORDS = {
+    'sinkrate': 'Sink rate', 'pullup': 'Pull up', 'terrain': 'Terrain', 'toolow_terrain': 'Too low, terrain',
+    'toolow_gear': 'Too low, gear', 'toolow_flaps': 'Too low, flaps', 'dontsink': "Don't sink", 'glideslope': 'Glide slope',
+    'terrainahead': 'Terrain ahead', 'bankangle': 'Bank angle',
+}
+EGPWS_737_CALLOUTS = {'v_2500': 'Twenty five hundred', 'v_1000': 'One thousand', 'v_500': 'Five hundred',
+                      'v_100': 'One hundred', 'v_50': 'Fifty', 'v_40': 'Forty', 'v_30': 'Thirty', 'v_20': 'Twenty',
+                      'v_10': 'Ten', 'v_apprmin': 'Approaching minimums', 'v_minimums': 'Minimums'}
+
+
+def gen_egpws(rng, aid, target, boeing):
+    print(f'[voices] EGPWS {aid}')
+    W = {k: words('egpws', t, 185) for k, t in EGPWS_WORDS.items()}
+    P = EGPWS_PAUSE
+    out = {
+        'v_sinkrate': seq(W['sinkrate'], P, W['sinkrate']),
+        'v_pullup': W['pullup'],
+        'v_terrain2': seq(W['terrain'], P, W['terrain']),
+        'v_terrain': W['terrain'],
+        'v_toolow_terrain': W['toolow_terrain'], 'v_toolow_gear': W['toolow_gear'], 'v_toolow_flaps': W['toolow_flaps'],
+        'v_dontsink': seq(W['dontsink'], P, W['dontsink']),
+        'v_glideslope': W['glideslope'], 'v_glideslope2': seq(W['glideslope'], 0.25, W['glideslope']),
+    }
+    if boeing:
+        out['v_terrain_pullup'] = seq(W['terrain'], P, W['terrain'], P, W['pullup'])     # look-ahead warning
+        out['v_bankangle'] = seq(W['bankangle'], P, W['bankangle'])
+        for k, t in EGPWS_737_CALLOUTS.items():
+            out[k] = words('egpws', t, 200 if len(t) < 14 else 190)
+    else:
+        out['v_terrainahead_pullup'] = seq(W['terrainahead'], 0.2, W['pullup'])           # Airbus TAD option
+    for k, y in out.items():
+        write_wav(f'{aid}/{k}.wav', speaker_chain(y, rng, target, drive=1.5))
+
+
+# ---- F-16 VMS (female voice, headset) -------------------------------------------------------------------------
+def gen_vms(rng):
+    print('[voices] F-16 VMS')
+    w = {k: words('vms', t, 175) for k, t in {'warning': 'Warning', 'caution': 'Caution', 'altitude': 'Altitude',
+                                              'bingo': 'Bingo', 'pullup': 'Pull up'}.items()}
+    g = 0.12                            # the VMS replays one stored word: identical intonation, short gap
+    out = {
+        'v_warning': seq(w['warning'], g, w['warning'], 0.45, w['warning'], g, w['warning']),   # WARNING-WARNING pause WARNING-WARNING
+        'v_caution': seq(w['caution'], g, w['caution']),
+        'v_altitude': seq(w['altitude'], g, w['altitude']),
+        'v_bingo': seq(w['bingo'], g, w['bingo']),
+        'v_pullup': seq(w['pullup'], g, w['pullup'], g, w['pullup'], g, w['pullup']),
+    }
+    for k, y in out.items():
+        write_wav(f'f16/{k}.wav', headset_chain(y, rng, drive=1.8, hiss_db=-38))
+
+
+# ---- F-22A ICAWS (no public word list: cautions are an aural tone (DoD IG 2013, 2010 AIB); warnings reach the
+#      headset and the jet has voice synthesis (AGARD AR-349, Avionics Handbook) — the words below are assumptions,
+#      kept few; a different female voice than the F-16 VMS) ------------------------------------------------------
+def gen_icaws(rng):
+    print('[voices] F-22 ICAWS')
+    w = {k: words('icaws', t, 180) for k, t in {'pullup': 'Pull up', 'gear': 'Landing gear', 'engfail_l': 'Left engine fail',
+                                               'engfail_r': 'Right engine fail'}.items()}
+    out = {'v_pullup': seq(w['pullup'], 0.15, w['pullup']), 'v_gear': w['gear'], 'v_engfail_l': w['engfail_l'],
+           'v_engfail_r': w['engfail_r']}
+    from gen_alerts import f22_warning, headset as tone_headset
+    tone = tone_headset(f22_warning())
+    for k, y in out.items():
+        y = headset_chain(y, rng, drive=1.3, hiss_db=None, pitch=1.0)
+        if k != 'v_pullup':                      # warnings: ICAW warning tone, then the voice
+            tt = tone * undb(-19.0 - speech_level_db(tone)) * undb(-2)
+            y = limit_peaks(np.concatenate([tt, silence(0.15), y]), -1.0, 0.6)
+        write_wav(f'f22/{k}.wav', y)
+
+
+# ---- UH-60M voice warning system -------------------------------------------------------------------------------
+# The UH-60M operator's manual (TM 1-1520-280-10) is not public. The closest documented Army H-60 voice warning
+# system is the MH-60K VWS (TM 1-1520-250-10, 1994, para 2-227 / table 2-6): priority 1 = 2 s intermittent 250 Hz tone,
+# priority 2 = 2 s continuous 250 Hz tone, then "message, 1 s, message"; priorities 3-10 = "message, 0.5 s, message,
+# 1 s, message"; 1 s gap before the cycle repeats (the gap is timed by src/audio/alertlogic.js uh60Vws). The UH-60A/L
+# manual calls the NR / Ng tone "a low steady tone" — the continuous 250 Hz tone that precedes LOW ROTOR / ENGINE OUT.
+UH60_VWS = {                     # file → (words, priority class)
+    'v_eng1out': ('Engine one out', 2), 'v_eng2out': ('Engine two out', 2), 'v_lowrotor': ('Low rotor', 2),
+    'v_altlow': ('Altitude low', 4),
 }
 
 
-def render(text, v, rate, rep=False, gap=0.25):
-    x = voice(text, v, rate)
-    return twice(x, gap) if rep else x
+def gen_uh60(rng):
+    print('[voices] UH-60M VWS (MH-60K format)')
+    from gen_alerts import headset as tone_headset, steady_tone
+    tone = steady_tone(250.0, 2.0)
+    n = np.arange(len(tone))
+    tone = tone * np.minimum(1, np.minimum(n / N(0.008), (len(tone) - n) / N(0.015)))
+    tone = tone_headset(tone)
+    for k, (t, prio) in UH60_VWS.items():
+        x = words('uh60', t, 178)
+        msg = seq(x, 1.0, x) if prio <= 2 else seq(x, 0.5, x, 1.0, x)
+        y = headset_chain(msg, rng, drive=2.0, hiss_db=-34)
+        if prio <= 2:
+            tt = tone * undb(-19.0 - speech_level_db(tone)) * undb(-3)      # tone ≈ 3 dB under the voice
+            y = limit_peaks(np.concatenate([tt, silence(0.5), y]), -1.0, 0.6)
+        write_wav(f'uh60/{k}.wav', y)
 
 
-def gen_betty(aid, rng, voice_name=BETTY, drive=1.6, pitch=1.0, hiss_db=-40):
-    for k, (txt, rate, rep, gap) in BETTY_PHRASES.items():
-        x = render(txt, voice_name, rate, rep, gap)
-        write_wav(f'{aid}/{k}.wav', cockpit_audio(x, rng, 'headset', pitch=pitch, drive=drive, hiss_db=hiss_db))
-
-
-def gen_gpws(aid, v, rng, airbus):
-    # GPWS / FWC phrases: warnings emphatic and even, radio-altitude numbers quick and flat (no trailing period)
-    P = {'v_sinkrate': ('Sink rate', 182, False, 0), 'v_pullup': ('Pull up', 180, False, 0),
-         'v_terrain': ('Terrain', 180, True, 0.2), 'v_toolow_gear': ('Too low, gear', 185, False, 0),
-         'v_toolow_flaps': ('Too low, flaps', 185, False, 0), 'v_toolow_terrain': ('Too low, terrain', 185, False, 0),
-         'v_bankangle': ('Bank angle', 182, True, 0.22), 'v_dontsink': ("Don't sink", 182, False, 0),
-         'v_glideslope': ('Glide slope', 182, False, 0), 'v_windshear': ('Windshear', 180, True, 0.22),
-         'v_1000': ('One thousand', 190, False, 0), 'v_500': ('Five hundred', 190, False, 0),
-         'v_100': ('One hundred', 195, False, 0), 'v_50': ('Fifty', 205, False, 0), 'v_40': ('Forty', 205, False, 0),
-         'v_30': ('Thirty', 205, False, 0), 'v_20': ('Twenty', 205, False, 0), 'v_10': ('Ten', 205, False, 0)}
-    if airbus:
-        P.update({'v_2500': ('Two thousand five hundred', 195, False, 0), 'v_400': ('Four hundred', 195, False, 0),
-                  'v_300': ('Three hundred', 195, False, 0), 'v_200': ('Two hundred', 195, False, 0),
-                  'v_5': ('Five', 205, False, 0), 'v_hundredabove': ('Hundred above', 180, False, 0),
-                  'v_minimums': ('Minimum', 175, False, 0), 'v_retard': ('Retard', 185, True, 0.3),
-                  'v_stall': ('Stall', 180, True, 0.2)})
-    else:
-        P.update({'v_2500': ('Twenty five hundred', 195, False, 0),
-                  'v_hundredabove': ('Approaching minimums', 182, False, 0), 'v_minimums': ('Minimums', 178, False, 0)})
-    # the Airbus FWC voice is a little deeper and more compressed than the Honeywell EGPWS voice
-    pitch, drive = ((0.95 if PROVIDER == 'say' else 1.0), 2.0) if airbus else (1.0, 1.6)
-    for k, (txt, rate, rep, gap) in P.items():
-        x = render(txt, v, rate, rep, gap)
-        if k == 'v_stall' and airbus:
-            cr = cricket(0.62)[:N(0.6)]
-            y = cockpit_audio(x, rng, 'speaker', pitch=pitch, drive=drive)
-            c = cockpit_audio(cr, rng, 'speaker', pitch=1.0, drive=1.2) * undb(-4)
-            out = np.concatenate([c, silence(0.05), y])
-            write_wav(f'{aid}/{k}.wav', limit_peaks(out, -1.0, 0.6))
-            continue
-        if k == 'v_pullup' and not airbus:
-            w = whoop()
-            y = cockpit_audio(x, rng, 'speaker', pitch=pitch, drive=drive)
-            ww = cockpit_audio(np.concatenate([w, silence(0.08), w]), rng, 'speaker', pitch=1.0, drive=1.3) * undb(-2)
-            write_wav(f'{aid}/{k}.wav', limit_peaks(np.concatenate([ww, silence(0.04), y]), -1.0, 0.6))
-            continue
-        write_wav(f'{aid}/{k}.wav', cockpit_audio(x, rng, 'speaker', pitch=pitch, drive=drive))
-
-
-def gen_helo(rng):
-    for k, (txt, rate, rep, gap) in {'v_lowrotor': ('Low rotor R.P.M.' if PROVIDER != 'say' else 'Low rotor R P M', 175, False, 0),
-                                     'v_altitude': ('Altitude', 172, True, 0.25), 'v_pullup': ('Pull up', 175, True, 0.22),
-                                     'v_bankangle': ('Bank angle', 175, False, 0)}.items():
-        x = render(txt, HELO, rate, rep, gap)
-        write_wav(f'uh60/{k}.wav', cockpit_audio(x, rng, 'headset', pitch=0.97 if PROVIDER == 'say' else 1.0, drive=2.2,
-                                                 hiss_db=-34))
-
-
-def main_voices():
+def main_voices(systems=None):
     rng = np.random.default_rng(99)
-    print('[voices]')
-    gen_betty('f16', rng, BETTY, drive=1.8, pitch=1.0, hiss_db=-38)
-    gen_betty('f22', rng, BETTY, drive=1.3, pitch=1.02, hiss_db=None)    # F-22: cleaner digital audio
-    gen_gpws('a320neo', 'airbus', rng, True)
-    gen_gpws('b737', 'boeing', rng, False)
-    gen_helo(rng)
+    R = _refs() or {'systems': {}}
+    fwc_t = R['systems'].get('airbus_fwc', {}).get('ltas')
+    egp_t = R['systems'].get('honeywell_egpws', {}).get('ltas')
+    todo = systems or ['fwc', 'egpws', 'vms', 'icaws', 'uh60']
+    if 'fwc' in todo:
+        gen_fwc(rng, fwc_t)
+    if 'egpws' in todo:
+        gen_egpws(rng, 'a320neo', fwc_t, boeing=False)        # plays through the A320 loudspeakers
+        gen_egpws(rng, 'b737', egp_t, boeing=True)
+    if 'vms' in todo:
+        gen_vms(rng)
+    if 'icaws' in todo and 'gen_icaws' in globals():
+        globals()['gen_icaws'](rng)
+    if 'uh60' in todo and 'gen_uh60' in globals():
+        globals()['gen_uh60'](rng)
 
 
-def main(voices_only=False):
+def main():
     main_voices()
-    if voices_only:
-        return
-    rng = np.random.default_rng(99)
-    print('[alerts]')   # A/P-disconnect sounds come from real recordings: gen_fgsounds.py
-    write_wav('a320neo/single_chime.wav', chime(), target_lufs=-18)
-    write_wav('a320neo/crc.wav', crc(), target_lufs=-18, loop=True)
-    write_wav('a320neo/cricket.wav', cricket(), target_lufs=-18, loop=True)
-    write_wav('a320neo/c_chord.wav', c_chord(), target_lufs=-20)
-    write_wav('b737/shaker.wav', stick_shaker(rng), target_lufs=-17, loop=True)
-    write_wav('b737/clacker.wav', clacker(rng), target_lufs=-18, loop=True)
-    write_wav('b737/chime.wav', ding_dong(), target_lufs=-19)
-    write_wav('b737/c_chord.wav', c_chord(), target_lufs=-20)
 
 
 if __name__ == '__main__':
     import sys
     if '--provider' in sys.argv:
         PROVIDER = sys.argv[sys.argv.index('--provider') + 1]
-    main(voices_only='--voices-only' in sys.argv)
+    only = sys.argv[sys.argv.index('--only') + 1].split(',') if '--only' in sys.argv else None
+    main_voices(only)
     if PROVIDER == 'elevenlabs':
         import elevenlabs as el
         print(f'ElevenLabs characters used this run (uncached): {el.chars_used()}')

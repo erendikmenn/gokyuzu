@@ -1,0 +1,221 @@
+{
+ "method": "References (tools/audio/research/voice_refs.json, from tools/audio/real_clips.py): median F0 and word durations of the real Airbus FWC voice (A319 cockpit recordings) and Honeywell EGPWS voice (P-8A recording). Documented character (Wikipedia 'Voice warning system', non-primary): Airbus = male, British RP accent on recent builds; Boeing/Honeywell = male, American. Military (F-16 VMS, F-22, UH-60) = female voice, no real recording available.",
+ "systems": {
+  "airbus_fwc": {
+   "reference_f0_hz": 109.8,
+   "accent": "british",
+   "ranking": [
+    {
+     "voice": "DesignB",
+     "id": "WrWxGio5YUgz9Ahdti5R",
+     "accent": "british",
+     "f0_hz": 115.9,
+     "f0_spread_st": 1.91,
+     "df0_st": 0.94,
+     "dur_log2": 0.36,
+     "score": 3.1
+    },
+    {
+     "voice": "DesignA",
+     "id": "1aHz9yvm2tzigCRZ6LR6",
+     "accent": "british",
+     "f0_hz": 129.4,
+     "f0_spread_st": 1.15,
+     "df0_st": 2.84,
+     "dur_log2": 0.437,
+     "score": 5.46
+    },
+    {
+     "voice": "Daniel",
+     "id": "onwK4e9ZLuTAKqWW03F9",
+     "accent": "british",
+     "f0_hz": 143.3,
+     "f0_spread_st": 3.27,
+     "df0_st": 4.61,
+     "dur_log2": 0.327,
+     "score": 6.57
+    },
+    {
+     "voice": "George",
+     "id": "JBFqnCBsd6RMkjVDRZzb",
+     "accent": "british",
+     "f0_hz": 144.1,
+     "f0_spread_st": 2.53,
+     "df0_st": 4.71,
+     "dur_log2": 0.383,
+     "score": 7.01
+    },
+    {
+     "voice": "Brian",
+     "id": "nPczCjzI2devNBz1zQrb",
+     "accent": "american",
+     "f0_hz": 117.6,
+     "f0_spread_st": 2.16,
+     "df0_st": 1.2,
+     "dur_log2": 0.378,
+     "score": 7.47
+    },
+    {
+     "voice": "Chris",
+     "id": "iP95p4xoKVk53GoZ742B",
+     "accent": "american",
+     "f0_hz": 117.5,
+     "f0_spread_st": 1.94,
+     "df0_st": 1.18,
+     "dur_log2": 0.424,
+     "score": 7.72
+    },
+    {
+     "voice": "Adam",
+     "id": "pNInz6obpgDQGcFmaJgB",
+     "accent": "american",
+     "f0_hz": 120.3,
+     "f0_spread_st": 2.1,
+     "df0_st": 1.58,
+     "dur_log2": 0.389,
+     "score": 7.91
+    },
+    {
+     "voice": "Bill",
+     "id": "pqHfZKP75CvOlQylNhV4",
+     "accent": "american",
+     "f0_hz": 131.5,
+     "f0_spread_st": 3.23,
+     "df0_st": 3.12,
+     "dur_log2": 0.292,
+     "score": 8.87
+    },
+    {
+     "voice": "Roger",
+     "id": "CwhRBWXzGAHq8TQ4Fs17",
+     "accent": "american",
+     "f0_hz": 139.5,
+     "f0_spread_st": 2.55,
+     "df0_st": 4.15,
+     "dur_log2": 0.337,
+     "score": 10.17
+    },
+    {
+     "voice": "Eric",
+     "id": "cjVigY5qzO86Huf0OWal",
+     "accent": "american",
+     "f0_hz": 149.1,
+     "f0_spread_st": 2.9,
+     "df0_st": 5.29,
+     "dur_log2": 0.402,
+     "score": 11.71
+    }
+   ],
+   "chosen": "DesignB",
+   "chosen_id": "WrWxGio5YUgz9Ahdti5R"
+  },
+  "honeywell_egpws": {
+   "reference_f0_hz": 124.0,
+   "accent": "american",
+   "ranking": [
+    {
+     "voice": "Adam",
+     "id": "pNInz6obpgDQGcFmaJgB",
+     "accent": "american",
+     "f0_hz": 128.7,
+     "f0_spread_st": 1.45,
+     "df0_st": 0.64,
+     "dur_log2": 0.553,
+     "score": 3.96
+    },
+    {
+     "voice": "Roger",
+     "id": "CwhRBWXzGAHq8TQ4Fs17",
+     "accent": "american",
+     "f0_hz": 139.5,
+     "f0_spread_st": 2.32,
+     "df0_st": 2.04,
+     "dur_log2": 0.445,
+     "score": 4.71
+    },
+    {
+     "voice": "Brian",
+     "id": "nPczCjzI2devNBz1zQrb",
+     "accent": "american",
+     "f0_hz": 108.4,
+     "f0_spread_st": 1.71,
+     "df0_st": 2.33,
+     "dur_log2": 0.597,
+     "score": 5.92
+    },
+    {
+     "voice": "DesignA",
+     "id": "1aHz9yvm2tzigCRZ6LR6",
+     "accent": "british",
+     "f0_hz": 125.8,
+     "f0_spread_st": 1.34,
+     "df0_st": 0.25,
+     "dur_log2": 0.364,
+     "score": 6.44
+    },
+    {
+     "voice": "Eric",
+     "id": "cjVigY5qzO86Huf0OWal",
+     "accent": "american",
+     "f0_hz": 155.3,
+     "f0_spread_st": 2.75,
+     "df0_st": 3.9,
+     "dur_log2": 0.502,
+     "score": 6.91
+    },
+    {
+     "voice": "Bill",
+     "id": "pqHfZKP75CvOlQylNhV4",
+     "accent": "american",
+     "f0_hz": 157.9,
+     "f0_spread_st": 3.08,
+     "df0_st": 4.19,
+     "dur_log2": 0.516,
+     "score": 7.28
+    },
+    {
+     "voice": "DesignB",
+     "id": "WrWxGio5YUgz9Ahdti5R",
+     "accent": "british",
+     "f0_hz": 115.9,
+     "f0_spread_st": 1.47,
+     "df0_st": 1.16,
+     "dur_log2": 0.426,
+     "score": 7.72
+    },
+    {
+     "voice": "Chris",
+     "id": "iP95p4xoKVk53GoZ742B",
+     "accent": "american",
+     "f0_hz": 100.4,
+     "f0_spread_st": 1.25,
+     "df0_st": 3.65,
+     "dur_log2": 0.748,
+     "score": 8.14
+    },
+    {
+     "voice": "George",
+     "id": "JBFqnCBsd6RMkjVDRZzb",
+     "accent": "british",
+     "f0_hz": 144.1,
+     "f0_spread_st": 2.13,
+     "df0_st": 2.61,
+     "dur_log2": 0.486,
+     "score": 9.52
+    },
+    {
+     "voice": "Daniel",
+     "id": "onwK4e9ZLuTAKqWW03F9",
+     "accent": "british",
+     "f0_hz": 149.1,
+     "f0_spread_st": 2.93,
+     "df0_st": 3.2,
+     "dur_log2": 0.445,
+     "score": 9.87
+    }
+   ],
+   "chosen": "Adam",
+   "chosen_id": "pNInz6obpgDQGcFmaJgB"
+  }
+ }
+}

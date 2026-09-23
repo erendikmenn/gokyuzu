@@ -1,6 +1,7 @@
 // F-16C Block 50 (F110-GE-129) sound profile.
 import { clamp, db, lin, linDb, xfade } from '../util.js';
-import { airframeLayers, bettyAlerts, COMMON_SHOTS } from './common.js';
+import { airframeLayers, COMMON_SHOTS } from './common.js';
+import { f16Vms } from '../alertlogic.js';
 
 export const WHINE_REFS = [0.30, 0.62, 0.95];   // N1 (sound scale) at which whine_lo/mid/hi were synthesised
 const ROAR_REFS = [0.30, 0.95];
@@ -47,6 +48,7 @@ export default {
       flapMotorDb: -22, canopy: true, transonicBuffet: 0.4, gBuffet: 0.45, gearMotorDb: -14, rollDb: -11, gearDragDb: -10 }),
   ],
   shots: { ...COMMON_SHOTS, abLightoff: 'f16/ab_lightoff', abOut: 'f16/ab_out' },
-  alerts: bettyAlerts('f16', { stallVoice: 'v_warning' }),
+  // voice message system (WARNING, CAUTION, ALTITUDE, BINGO, PULLUP) + LG warning horn + low-speed warning tone
+  alerts: { style: 'betty', chime: null, apDisconnect: null, systems: [() => f16Vms('f16')] },
   mech: { flapLever: false, reverser: false, spoilers: false, canopy: true, gearSeconds: 5 },
 };

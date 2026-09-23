@@ -46,6 +46,7 @@ def _request(method, path, body=None, accept='application/json', retries=4):
         req = urllib.request.Request(API + path, data=data, method=method)
         req.add_header('xi-api-key', _key())
         req.add_header('Accept', accept)
+        req.add_header('User-Agent', 'GokyuzuSF-audio/1.0 (https://fs.erenailab.com)')   # generic, no personal data
         if data is not None:
             req.add_header('Content-Type', 'application/json')
         try:

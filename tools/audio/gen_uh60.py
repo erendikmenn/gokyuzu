@@ -146,7 +146,8 @@ def wash(seed=65):
 
 
 def low_rotor(L=2.0):
-    """Low rotor RPM warning: a pulsed warbling tone (continuous while active)."""
+    """OLD low-rotor warning (4 Hz 700/850 Hz warble) — not real: the UH-60 tone is steady (TM 1-1520-237-10). Kept only for
+    the listening page ("eskiden oyunda"); the shipped warnings are the VWS cycles (gen_voices.gen_uh60)."""
     n = N(L)
     t = tvec(n)
     f = 700 + 150 * np.sign(np.sin(TAU * 4 * t))
@@ -163,7 +164,7 @@ def main():
     write_wav('uh60/turbine.wav', turbines(), target_lufs=-20, loop=True)
     write_wav('uh60/gearbox.wav', gearbox(), target_lufs=-20, loop=True)
     write_wav('uh60/wash.wav', wash(), target_lufs=-20, loop=True)
-    write_wav('uh60/low_rotor.wav', low_rotor(), target_lufs=-20, loop=True)
+    write_wav('candidates/old/uh60/low_rotor.wav', low_rotor(), target_lufs=-20, loop=True)   # old sound, page only
 
 
 if __name__ == '__main__':

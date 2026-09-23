@@ -1,5 +1,6 @@
-// Boeing 737-800 (2 × CFM56-7B26) sound profile: the classic buzz-saw on takeoff, stick shaker, clacker.
-import { airframeLayers, airlinerAlerts, COMMON_SHOTS } from './common.js';
+// Boeing 737-800 (2 × CFM56-7B26) sound profile: the classic buzz-saw on takeoff, stick shaker, clacker, horns.
+import { airframeLayers, COMMON_SHOTS } from './common.js';
+import { boeing737, egpws } from '../alertlogic.js';
 import { airlinerEngineLayers } from './a320neo.js';
 
 export default {
@@ -19,6 +20,13 @@ export default {
       gearDragDb: -8, buffetDb: -3 }),
   ],
   shots: { ...COMMON_SHOTS },
-  alerts: airlinerAlerts('b737', false),
+  // Boeing aural warning module (horns, clacker, stick shaker, altitude alert) + Honeywell MK V EGPWS incl. mode 6
+  // (FCOM typical callouts, APPROACHING MINIMUMS / MINIMUMS at DH 200 ft, BANK ANGLE); A/P disconnect wailer
+  alerts: {
+    style: 'boeing', chime: null, apDisconnect: 'b737/wailer', apDisconnectLoop: 'b737/wailer',
+    systems: [() => boeing737('b737'), () => egpws('b737', { mode6: true, tad: 'v_terrain_pullup',
+      callouts: [[2500, 'v_2500'], [1000, 'v_1000'], [500, 'v_500'], [100, 'v_100'], [50, 'v_50'], [40, 'v_40'], [30, 'v_30'],
+        [20, 'v_20'], [10, 'v_10']] })],
+  },
   mech: { gearClunkInt: 0.45, flapLever: true, reverser: true, spoilers: true, canopy: false, gearSeconds: 8 },
 };

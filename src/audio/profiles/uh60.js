@@ -1,6 +1,7 @@
 // UH-60M Black Hawk sound profile: main rotor thump + blade slap, tail rotor buzz, twin T700 whine, gearbox, wash.
 import { band, clamp, db, lin, linDb, sstep } from '../util.js';
-import { airframeLayers, COMMON_SHOTS, heloAlerts } from './common.js';
+import { airframeLayers, COMMON_SHOTS } from './common.js';
+import { uh60Vws } from '../alertlogic.js';
 
 /** Blade-vortex interaction: descents of ~1-3 m/s at 15-45 m/s, loaded turns, and high-speed (advancing tip). */
 export function slapAmount(s) {
@@ -41,6 +42,8 @@ export default {
       transonicBuffet: 0, buffetDb: -6 }),
   ],
   shots: { ...COMMON_SHOTS },
-  alerts: heloAlerts('uh60'),
+  // voice warning system in the documented Army H-60 (MH-60K VWS) format: ENGINE 1/2 OUT and LOW ROTOR after a 2 s
+  // steady 250 Hz tone, ALTITUDE LOW at the radar-altimeter low bug; nothing for rotor overspeed (see alertlogic.js)
+  alerts: { style: 'helo', chime: 'common/click_soft', apDisconnect: null, systems: [() => uh60Vws('uh60')] },
   mech: { flapLever: false, reverser: false, spoilers: false, canopy: false, gear: false, helicopter: true },
 };

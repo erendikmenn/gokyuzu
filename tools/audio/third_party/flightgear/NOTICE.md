@@ -1,6 +1,6 @@
 # Third-party sounds (FlightGear aircraft, GPL-2.0)
 
-These four recordings are unmodified copies of files from two open-source FlightGear aircraft. Both repositories are
+These four sound files (the A320 cavalry charge is a re-synthesis from an Airbus waveform diagram, not a recording) are unmodified copies of files from two open-source FlightGear aircraft. Both repositories are
 licensed under the **GNU General Public License, version 2** (full text: `LICENSE-GPL-2.0.txt`, copied from the
 repositories). `tools/audio/gen_fgsounds.py` derives the game assets from them (resampling to 48 kHz, level matching,
 an 80 Hz high-pass, and for the 737 wailer a seamless loop cut); the derived files are therefore also GPL-2.0.

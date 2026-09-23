@@ -1,0 +1,261 @@
+{
+ "bands_hz": [
+  125.0,
+  157.5,
+  198.4,
+  250.0,
+  315.0,
+  396.9,
+  500.0,
+  630.0,
+  793.7,
+  1000.0,
+  1259.9,
+  1587.4,
+  2000.0,
+  2519.8,
+  3174.8,
+  4000.0,
+  5039.7,
+  6349.6,
+  8000.0
+ ],
+ "systems": {
+  "airbus_fwc": {
+   "words": {
+    "500": {
+     "dur": 0.63,
+     "f0": 110.5
+    },
+    "400": {
+     "dur": 0.66,
+     "f0": 116.0
+    },
+    "300": {
+     "dur": 0.68,
+     "f0": 109.0
+    },
+    "hundredabove": {
+     "dur": 0.86,
+     "f0": 118.5
+    },
+    "200": {
+     "dur": 0.83,
+     "f0": 126.0
+    },
+    "minimum": {
+     "dur": 0.88,
+     "f0": 106.5
+    },
+    "100": {
+     "dur": 0.85,
+     "f0": 107.2
+    },
+    "50": {
+     "dur": 0.64,
+     "f0": 102.2
+    },
+    "40": {
+     "dur": 0.44,
+     "f0": 96.5
+    },
+    "30": {
+     "dur": 0.79,
+     "f0": 98.8
+    },
+    "20": {
+     "dur": 0.79,
+     "f0": 131.0
+    },
+    "retard": {
+     "dur": 1.07,
+     "f0": 126.2
+    }
+   },
+   "ltas": [
+    -23.6,
+    -20.4,
+    -10.6,
+    -8.2,
+    -1.0,
+    0.0,
+    -5.6,
+    -11.7,
+    -9.2,
+    -14.5,
+    -14.9,
+    -21.4,
+    -30.4,
+    -31.9,
+    -39.5,
+    -46.2,
+    -48.3,
+    -49.3,
+    -56.7
+   ],
+   "f0_median": 109.8
+  },
+  "honeywell_egpws": {
+   "words": {
+    "500": {
+     "dur": 1.04,
+     "f0": 147.5
+    },
+    "apprmin": {
+     "dur": 1.44,
+     "f0": 113.0
+    },
+    "50": {
+     "dur": 0.84,
+     "f0": 151.2
+    },
+    "40": {
+     "dur": 0.74,
+     "f0": 108.0
+    },
+    "30": {
+     "dur": 0.72,
+     "f0": 116.5
+    },
+    "20": {
+     "dur": 0.74,
+     "f0": 143.5
+    },
+    "10": {
+     "dur": 0.74,
+     "f0": 124.0
+    }
+   },
+   "ltas": [
+    -10.8,
+    -9.0,
+    -10.3,
+    -6.6,
+    -2.4,
+    -11.1,
+    -7.0,
+    0.0,
+    -7.3,
+    -5.7,
+    -12.3,
+    -6.8,
+    -14.7,
+    -14.6,
+    -22.9,
+    -33.6,
+    -37.0,
+    -37.5,
+    -40.8
+   ],
+   "f0_median": 124.0
+  }
+ },
+ "timing": {
+  "a320_retard_x4": {
+   "onsets_s": [
+    0.55,
+    1.62,
+    2.85,
+    4.08
+   ],
+   "intervals_s": [
+    1.07,
+    1.23,
+    1.23
+   ]
+  },
+  "a320_flare_50_to_retard": {
+   "onsets_s": [
+    0.2,
+    1.21,
+    2.41,
+    3.35,
+    3.95,
+    4.47,
+    4.79,
+    5.17,
+    5.5,
+    5.89,
+    6.2,
+    6.77,
+    7.29,
+    7.69,
+    8.0,
+    8.33,
+    8.69
+   ],
+   "intervals_s": [
+    1.01,
+    1.2,
+    0.94,
+    0.6,
+    0.52,
+    0.32,
+    0.38,
+    0.33,
+    0.39,
+    0.31,
+    0.57,
+    0.52,
+    0.4,
+    0.31,
+    0.33,
+    0.36
+   ]
+  },
+  "b737_flare_50_to_10": {
+   "onsets_s": [
+    0.21,
+    1.21,
+    2.48,
+    3.86,
+    5.14
+   ],
+   "intervals_s": [
+    1.0,
+    1.27,
+    1.38,
+    1.28
+   ]
+  },
+  "b737_config_horn": {
+   "onsets_s": [
+    0.22,
+    0.74,
+    1.26,
+    1.78,
+    2.31,
+    2.83
+   ],
+   "intervals_s": [
+    0.52,
+    0.52,
+    0.52,
+    0.53,
+    0.52
+   ]
+  }
+ },
+ "licences": {
+  "bcdg": {
+   "credit": "Sygoletto / Wikimedia Commons \u2014 Air France A319 F-GRXM, CDG 26R (2010)",
+   "licence": "CC BY-SA 3.0",
+   "url": "https://commons.wikimedia.org/wiki/File:Ba%C3%AFonnette_CDG.ogv"
+  },
+  "adria1": {
+   "credit": "jan tisler (YouTube \"aircraft16\") via Wikimedia Commons \u2014 Adria A319 S5-AAP",
+   "licence": "CC BY 3.0",
+   "url": "https://commons.wikimedia.org/wiki/File:Adria_Airways_A319_Night_landing_takeoff_Frankfurt_%2B_Landing_at_Ljubljana_(cockpit).ogv"
+  },
+  "p8": {
+   "credit": "U.S. Navy video by MC2 Jacquelin Frost / DVIDS 910648 \u2014 P-8A Poseidon night approach (2024)",
+   "licence": "Public domain (U.S. Navy)",
+   "url": "https://www.dvidshub.net/video/910648/p-8a-poseidon-night-approach"
+  },
+  "adria2": {
+   "credit": "jan tisler (YouTube \"aircraft16\") via Wikimedia Commons \u2014 Adria A319 S5-AAP",
+   "licence": "CC BY 3.0",
+   "url": "https://commons.wikimedia.org/wiki/File:Adria_Airways_A319_Night_landing_takeoff_Frankfurt_%2B_Landing_at_Ljubljana_(cockpit).ogv"
+  }
+ }
+}

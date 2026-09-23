@@ -1,25 +1,52 @@
 Gökyüzü SF — audio credits
 ==========================
 
-Autopilot-disconnect sounds (a320neo/cavalry, a320neo/cavalry_loop, a320neo/ap_button, b737/wailer) are derived
-(resampled to 48 kHz, level-matched, 80 Hz high-pass, 737 wailer cut to a seamless loop) from recordings in two
-open-source FlightGear aircraft, licensed under the GNU General Public License v2.0 (GPL-2.0):
+1. Autopilot-disconnect alerts — GNU General Public License v2.0 (GPL-2.0)
+   Derived (resampled to 48 kHz, level-matched, 80 Hz high-pass, 737 wailer cut to a seamless loop) from two open-source
+   FlightGear aircraft:
+   * a320neo/cavalry, a320neo/cavalry_loop, a320neo/ap_button — A320-family for FlightGear, Josh Davidson (Octal450),
+     Jonathan Redpath (legoboyvdlp) and contributors, https://github.com/legoboyvdlp/A320-family (GPL-2.0).
+     The "cavalry charge" is NOT a recording: it was re-synthesised in A320-family PR #364 (2025) from an Airbus waveform
+     diagram (1660 Hz / 830 Hz square waves alternating every 40 ms, 200 ms bursts). A real A319 cockpit recording
+     (Adria S5-AAP, see 3.) shows the same waveform.
+   * b737/wailer — Boeing 737-800YV for FlightGear, YV3399 and contributors, https://github.com/YV3399/737-800YV
+     (Sounds/Apdisco.wav, GPL-2.0; its origin is not stated in that repository).
+   The derived files are distributed under GPL-2.0 as well. Unmodified originals, the licence text and SHA-256 sums are in
+   tools/audio/third_party/flightgear/ of the source repository.
 
-  * A320-family for FlightGear — legoboyvdlp, Octal450 and contributors
-    https://github.com/legoboyvdlp/A320-family  (Sounds/Cockpit/cavalry-charge-once.wav, cavalry-charge-loop.wav,
-    autopilot-disconnect pushbutton sound) — GPL-2.0
-  * Boeing 737-800YV for FlightGear — YV3399 and contributors
-    https://github.com/YV3399/737-800YV  (Sounds/Apdisco.wav) — GPL-2.0
+2. Voice warnings — generated with ElevenLabs text-to-speech under the project's ElevenLabs licence; no voice of a real
+   person was cloned. A320 FWC voice: an ElevenLabs Voice Design voice made from a text description ("deep British RP
+   male, flat automated cockpit announcement"); Honeywell EGPWS voice (A320, 737): "Adam"; F-16 VMS: "Sarah"; F-22 ICAWS:
+   "Matilda". The voices were chosen and equalised by measuring real cockpit recordings (3.).
 
-The derived files are distributed under GPL-2.0 as well. Unmodified originals, the licence text and SHA-256 sums are
-in tools/audio/third_party/flightgear/ of the source repository.
+3. Real cockpit recordings used as references (measured; cleaned excerpts are only on the local listening page
+   dev/sesler.html and are not distributed with the game):
+   * "Baïonnette CDG" — Air France A319 F-GRXM cockpit video, Sygoletto / Wikimedia Commons, CC BY-SA 3.0
+     (https://creativecommons.org/licenses/by-sa/3.0/), https://commons.wikimedia.org/wiki/File:Ba%C3%AFonnette_CDG.ogv.
+     Modified: excerpts cut, noise-reduced (spectral gating), band-limited, level-normalised; the modified excerpts are
+     themselves licensed CC BY-SA 3.0.
+   * "Adria Airways A319 Night landing takeoff Frankfurt + Landing at Ljubljana (cockpit)" — jan tisler (YouTube
+     "aircraft16") via Wikimedia Commons, CC BY 3.0 (https://creativecommons.org/licenses/by/3.0/). Modified: excerpts
+     cut, noise-reduced, band-limited, level-normalised.
+   * "P-8A Poseidon Night Approach" — U.S. Navy video by MC2 Jacquelin Frost, DVIDS 910648 (public domain; no DoD
+     endorsement implied). Its intermittent configuration horn was measured (202 Hz harmonic series, 0.21 s / 0.52 s)
+     and re-synthesised for b737/horn_int and b737/horn.
+   * "Auto-GCAS Saves Unconscious F-16 Pilot — Declassified USAF Footage" — U.S. Air Force, via Wikimedia Commons (public
+     domain). The spectrum of its 241 Hz square-wave tone shaped f16/lg_horn and f16/low_speed.
+   * Transaero 737NG Irkutsk landing (2015, YouTube channel Vnebelaynery, Internet Archive mirror; licence not verified):
+     analysis only — the frequencies and length of its altitude-alert chord (503.9 / 629.9 / 755.9 Hz, 1.13 s) were
+     measured for b737/alt_alert; no audio from it is used anywhere.
 
-Voice callouts: generated with ElevenLabs text-to-speech (voices Sarah, Bill, Eric) under the project's ElevenLabs
-licence. All other sounds (engines, rotors, wind, mechanical sounds, chimes, warning tones) are synthesised by the
-project's own scripts in tools/audio/.
+4. Everything else (engines, rotors, wind, mechanical sounds, chimes, horns and warning tones) is synthesised by the
+   project's own scripts in tools/audio/ (numpy), following published specifications where they exist
+   (tools/audio/research/alerts.md).
 
-Türkçe:
-Otopilot ayırma sesleri, FlightGear açık kaynak uçaklarından türetilmiştir: A320-family (legoboyvdlp, Octal450 ve
-katkıda bulunanlar — github.com/legoboyvdlp/A320-family) ve Boeing 737-800YV (YV3399 ve katkıda bulunanlar —
-github.com/YV3399/737-800YV); lisans: GNU GPL-2.0. Anons sesleri ElevenLabs ile üretilmiştir; diğer tüm sesler
-projenin kendi sentez betikleriyle oluşturulmuştur.
+Türkçe
+------
+Otopilot ayırma sesleri FlightGear açık kaynak uçaklarından türetilmiştir (GNU GPL-2.0): A320 "cavalry charge" bir kayıt
+değil, A320-family projesinde (Josh Davidson, Jonathan Redpath ve katkıda bulunanlar) Airbus dalga şemasından yeniden
+sentezlenmiştir; 737 wailer'ı Boeing 737-800YV'den (YV3399 ve katkıda bulunanlar). Sesli uyarılar ElevenLabs ile
+üretilmiştir (gerçek kişi sesi klonlanmadı). Sesleri seçmek ve ölçmek için gerçek kokpit kayıtları kullanıldı:
+Sygoletto (Air France A319, CC BY-SA 3.0, değiştirildi), jan tisler (Adria A319, CC BY 3.0, değiştirildi), ABD Donanması
+(P-8A, DVIDS, kamu malı), ABD Hava Kuvvetleri (F-16 Auto-GCAS kaydı, kamu malı). Diğer tüm sesler projenin kendi sentez
+betikleriyle oluşturulmuştur.

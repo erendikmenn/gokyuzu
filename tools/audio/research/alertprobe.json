@@ -1,0 +1,823 @@
+{
+ "b737": [
+  {
+   "scenario": "autoland callouts",
+   "pass": true,
+   "checks": [
+    {
+     "name": "1000",
+     "ok": true,
+     "got": 1
+    },
+    {
+     "name": "500",
+     "ok": true,
+     "got": 1
+    },
+    {
+     "name": "APPROACHING MINIMUMS",
+     "ok": true,
+     "got": 1
+    },
+    {
+     "name": "MINIMUMS",
+     "ok": true,
+     "got": 1
+    },
+    {
+     "name": "100 50 40 30 20 10",
+     "ok": true,
+     "got": 6
+    },
+    {
+     "name": "no warning voices",
+     "ok": true,
+     "got": 0
+    },
+    {
+     "name": "no horn",
+     "ok": true,
+     "got": 0
+    }
+   ]
+  },
+  {
+   "scenario": "gear up on approach",
+   "pass": true,
+   "checks": [
+    {
+     "name": "steady gear horn on",
+     "ok": true,
+     "got": 1
+    },
+    {
+     "name": "TOO LOW, GEAR",
+     "ok": true,
+     "got": 1
+    },
+    {
+     "name": "horn off after gear down",
+     "ok": true,
+     "got": 1
+    }
+   ]
+  },
+  {
+   "scenario": "sink rate then pull up",
+   "pass": true,
+   "checks": [
+    {
+     "name": "SINK RATE",
+     "ok": true,
+     "got": 1
+    },
+    {
+     "name": "PULL UP repeating",
+     "ok": true,
+     "got": 11
+    },
+    {
+     "name": "SINK RATE before PULL UP",
+     "ok": true,
+     "got": [
+      2.32,
+      4.48
+     ]
+    }
+   ]
+  },
+  {
+   "scenario": "overspeed",
+   "pass": true,
+   "checks": [
+    {
+     "name": "clacker",
+     "ok": true,
+     "got": 1
+    }
+   ]
+  },
+  {
+   "scenario": "takeoff configuration",
+   "pass": true,
+   "checks": [
+    {
+     "name": "intermittent horn with flaps UP",
+     "ok": true,
+     "got": 1
+    },
+    {
+     "name": "horn off with flaps 5",
+     "ok": true,
+     "got": 1
+    }
+   ]
+  },
+  {
+   "scenario": "stick shaker",
+   "pass": true,
+   "checks": [
+    {
+     "name": "shaker",
+     "ok": true,
+     "got": 1
+    }
+   ]
+  },
+  {
+   "scenario": "bank angle",
+   "pass": true,
+   "checks": [
+    {
+     "name": "BANK ANGLE once for 35+40",
+     "ok": true,
+     "got": 1
+    }
+   ]
+  },
+  {
+   "scenario": "altitude alert (MCP +1200 ft)",
+   "pass": true,
+   "checks": [
+    {
+     "name": "alt alert tone 900 ft before",
+     "ok": true,
+     "got": 1
+    }
+   ]
+  },
+  {
+   "scenario": "cruise: no false alerts",
+   "pass": true,
+   "checks": [
+    {
+     "name": "silence",
+     "ok": true,
+     "got": 0
+    }
+   ]
+  },
+  {
+   "scenario": "owner report: after takeoff, throttle to idle, hands off",
+   "pass": true,
+   "checks": [
+    {
+     "name": "DON'T SINK (altitude loss after take-off)",
+     "ok": true,
+     "got": 3
+    },
+    {
+     "name": "stick shaker when the AOA reaches the shaker",
+     "ok": true,
+     "got": 1
+    }
+   ]
+  },
+  {
+   "scenario": "crash silences everything (A/P disconnect loop, gear alert)",
+   "pass": true,
+   "checks": [
+    {
+     "name": "involuntary A/P disconnect alert",
+     "ok": true,
+     "got": 1
+    },
+    {
+     "name": "A/P disconnect alert stopped by the crash",
+     "ok": true,
+     "got": 1
+    },
+    {
+     "name": "nothing starts after the crash",
+     "ok": true,
+     "got": []
+    },
+    {
+     "name": "no alert loop left running",
+     "ok": true,
+     "got": []
+    }
+   ]
+  }
+ ],
+ "_consoleErrors": {
+  "b737": 0,
+  "a320neo": 0,
+  "f22": 0,
+  "f16": 0,
+  "uh60": 0
+ },
+ "a320neo": [
+  {
+   "scenario": "autoland callouts",
+   "pass": true,
+   "checks": [
+    {
+     "name": "1000",
+     "ok": true,
+     "got": 1
+    },
+    {
+     "name": "500",
+     "ok": true,
+     "got": 1
+    },
+    {
+     "name": "400",
+     "ok": true,
+     "got": 1
+    },
+    {
+     "name": "HUNDRED ABOVE",
+     "ok": true,
+     "got": 1
+    },
+    {
+     "name": "MINIMUM",
+     "ok": true,
+     "got": 1
+    },
+    {
+     "name": "no THREE/TWO HUNDRED (DH calls win)",
+     "ok": true,
+     "got": 0
+    },
+    {
+     "name": "100",
+     "ok": true,
+     "got": 1
+    },
+    {
+     "name": "50 40 30",
+     "ok": true,
+     "got": 3
+    },
+    {
+     "name": "TEN, RETARD (autoland)",
+     "ok": true,
+     "got": 1
+    },
+    {
+     "name": "no EGPWS alert",
+     "ok": true,
+     "got": 0
+    },
+    {
+     "name": "no CRC",
+     "ok": true,
+     "got": 0
+    }
+   ]
+  },
+  {
+   "scenario": "manual landing RETARD until idle",
+   "pass": true,
+   "checks": [
+    {
+     "name": "TWENTY, RETARD once",
+     "ok": true,
+     "got": 1
+    },
+    {
+     "name": "RETARD repeats while above idle",
+     "ok": true,
+     "got": 2
+    },
+    {
+     "name": "RETARD period 1.0-1.3 s",
+     "ok": true,
+     "got": [
+      1.05
+     ]
+    },
+    {
+     "name": "RETARD stops after idle",
+     "ok": true,
+     "got": 0
+    },
+    {
+     "name": "no TEN/FIVE while RETARD",
+     "ok": true,
+     "got": 0
+    }
+   ]
+  },
+  {
+   "scenario": "gear up on approach",
+   "pass": true,
+   "checks": [
+    {
+     "name": "CRC (L/G GEAR NOT DOWN) on",
+     "ok": true,
+     "got": 1
+    },
+    {
+     "name": "TOO LOW, GEAR",
+     "ok": true,
+     "got": 1
+    },
+    {
+     "name": "CRC off after gear down",
+     "ok": true,
+     "got": 1
+    },
+    {
+     "name": "no TOO LOW GEAR after gear down",
+     "ok": true,
+     "got": 0
+    }
+   ]
+  },
+  {
+   "scenario": "sink rate then pull up",
+   "pass": true,
+   "checks": [
+    {
+     "name": "SINK RATE",
+     "ok": true,
+     "got": 1
+    },
+    {
+     "name": "PULL UP repeating",
+     "ok": true,
+     "got": 11
+    },
+    {
+     "name": "SINK RATE before PULL UP",
+     "ok": true,
+     "got": [
+      2.33,
+      4.44
+     ]
+    }
+   ]
+  },
+  {
+   "scenario": "overspeed",
+   "pass": true,
+   "checks": [
+    {
+     "name": "CRC (OVERSPEED)",
+     "ok": true,
+     "got": 1
+    }
+   ]
+  },
+  {
+   "scenario": "takeoff configuration",
+   "pass": true,
+   "checks": [
+    {
+     "name": "CRC (T.O CONFIG) with flaps 0",
+     "ok": true,
+     "got": 1
+    },
+    {
+     "name": "CRC off with flaps 1+F",
+     "ok": true,
+     "got": 1
+    }
+   ]
+  },
+  {
+   "scenario": "SPEED SPEED SPEED, A.FLOOR, levers out of TOGA LK → A/THR OFF chime",
+   "pass": true,
+   "checks": [
+    {
+     "name": "SPEED SPEED SPEED",
+     "ok": true,
+     "got": 2
+    },
+    {
+     "name": "repeated every 5 s",
+     "ok": true,
+     "got": [
+      5.01
+     ]
+    },
+    {
+     "name": "single chime (A/THR OFF) after leaving TOGA LK",
+     "ok": true,
+     "got": 1
+    }
+   ]
+  },
+  {
+   "scenario": "A/P off: cavalry + A/THR OFF chime, C-chord on deviation",
+   "pass": true,
+   "checks": [
+    {
+     "name": "cavalry charge",
+     "ok": true,
+     "got": 1
+    },
+    {
+     "name": "single chime (A/THR OFF)",
+     "ok": true,
+     "got": 1
+    },
+    {
+     "name": "continuous C-chord on 250 ft deviation",
+     "ok": true,
+     "got": 1
+    }
+   ]
+  },
+  {
+   "scenario": "cruise: no false alerts",
+   "pass": true,
+   "checks": [
+    {
+     "name": "silence",
+     "ok": true,
+     "got": 0
+    }
+   ]
+  },
+  {
+   "scenario": "owner report: after takeoff, throttle to idle, hands off",
+   "pass": true,
+   "checks": [
+    {
+     "name": "SPEED SPEED SPEED (low energy)",
+     "ok": true,
+     "got": 1
+    },
+    {
+     "name": "no L/G NOT DOWN CRC in the take-off phase",
+     "ok": true,
+     "got": 0
+    }
+   ]
+  },
+  {
+   "scenario": "crash silences everything (A/P disconnect loop, gear alert)",
+   "pass": true,
+   "checks": [
+    {
+     "name": "involuntary A/P disconnect alert",
+     "ok": true,
+     "got": 1
+    },
+    {
+     "name": "A/P disconnect alert stopped by the crash",
+     "ok": true,
+     "got": 1
+    },
+    {
+     "name": "nothing starts after the crash",
+     "ok": true,
+     "got": []
+    },
+    {
+     "name": "no alert loop left running",
+     "ok": true,
+     "got": []
+    }
+   ]
+  }
+ ],
+ "f22": [
+  {
+   "scenario": "gear up, slow, descending (TO/LDG CONFIG)",
+   "pass": true,
+   "checks": [
+    {
+     "name": "warning tone + LANDING GEAR",
+     "ok": true,
+     "got": 3
+    },
+    {
+     "name": "no F-16 VMS words",
+     "ok": true,
+     "got": 0
+    }
+   ]
+  },
+  {
+   "scenario": "pull up",
+   "pass": true,
+   "checks": [
+    {
+     "name": "PULL UP repeating",
+     "ok": true,
+     "got": 3
+    }
+   ]
+  },
+  {
+   "scenario": "fuel low caution tone",
+   "pass": true,
+   "checks": [
+    {
+     "name": "caution tone",
+     "ok": true,
+     "got": 1
+    }
+   ]
+  },
+  {
+   "scenario": "cruise: no false alerts",
+   "pass": true,
+   "checks": [
+    {
+     "name": "silence",
+     "ok": true,
+     "got": 0
+    }
+   ]
+  },
+  {
+   "scenario": "owner report: after takeoff, throttle to idle, hands off",
+   "pass": true,
+   "checks": [
+    {
+     "name": "LANDING GEAR warning before PULL UP",
+     "ok": true,
+     "got": [
+      26.14,
+      38.24
+     ]
+    }
+   ]
+  },
+  {
+   "scenario": "crash silences everything",
+   "pass": true,
+   "checks": [
+    {
+     "name": "alert before the crash",
+     "ok": true,
+     "got": 1
+    },
+    {
+     "name": "nothing starts after the crash",
+     "ok": true,
+     "got": []
+    },
+    {
+     "name": "nothing playing at the end",
+     "ok": true,
+     "got": []
+    }
+   ]
+  }
+ ],
+ "f16": [
+  {
+   "scenario": "gear up, slow, descending (TO/LDG CONFIG)",
+   "pass": true,
+   "checks": [
+    {
+     "name": "LG warning horn on",
+     "ok": true,
+     "got": 1
+    },
+    {
+     "name": "WARNING WARNING 1.5 s after the light",
+     "ok": true,
+     "got": 1
+    },
+    {
+     "name": "LG horn muted while the voice speaks",
+     "ok": true,
+     "got": 1
+    },
+    {
+     "name": "horn off after gear down",
+     "ok": true,
+     "got": 1
+    },
+    {
+     "name": "no LANDING GEAR / OVER G voice",
+     "ok": true,
+     "got": 0
+    }
+   ]
+  },
+  {
+   "scenario": "pull up",
+   "pass": true,
+   "checks": [
+    {
+     "name": "PULL UP repeating",
+     "ok": true,
+     "got": 2
+    }
+   ]
+  },
+  {
+   "scenario": "ALTITUDE below ALOW (gear up)",
+   "pass": true,
+   "checks": [
+    {
+     "name": "ALTITUDE ALTITUDE once",
+     "ok": true,
+     "got": 1
+    }
+   ]
+  },
+  {
+   "scenario": "BINGO + FUEL LOW caution",
+   "pass": true,
+   "checks": [
+    {
+     "name": "BINGO once",
+     "ok": true,
+     "got": 1
+    },
+    {
+     "name": "CAUTION 7 s after the light",
+     "ok": true,
+     "got": 1
+    }
+   ]
+  },
+  {
+   "scenario": "low-speed tone (gear down, AOA >= 15)",
+   "pass": true,
+   "checks": [
+    {
+     "name": "low-speed tone",
+     "ok": true,
+     "got": 1
+    }
+   ]
+  },
+  {
+   "scenario": "slow flight 53 m/s gear up (lead repro) → TO/LDG CONFIG: LG horn + WARNING WARNING (no gear-up low-speed tone at level pitch)",
+   "pass": true,
+   "checks": [
+    {
+     "name": "LG warning horn (gear up, < 190 kt, descending)",
+     "ok": true,
+     "got": 1
+    },
+    {
+     "name": "WARNING WARNING (TO/LDG CONFIG light)",
+     "ok": true,
+     "got": 1
+    },
+    {
+     "name": "no low-speed tone at level pitch, gear up",
+     "ok": true,
+     "got": 0
+    },
+    {
+     "name": "no LOW SPEED / OVER G voice",
+     "ok": true,
+     "got": 0
+    }
+   ]
+  },
+  {
+   "scenario": "VMS silent with weight on wheels",
+   "pass": true,
+   "checks": [
+    {
+     "name": "no VMS voice on the ground",
+     "ok": true,
+     "got": 0
+    }
+   ]
+  },
+  {
+   "scenario": "cruise: no false alerts",
+   "pass": true,
+   "checks": [
+    {
+     "name": "silence",
+     "ok": true,
+     "got": 0
+    }
+   ]
+  },
+  {
+   "scenario": "owner report: after takeoff, throttle to idle, hands off",
+   "pass": true,
+   "checks": [
+    {
+     "name": "a VMS / tone warning before PULLUP",
+     "ok": true,
+     "got": [
+      26.2,
+      39.96
+     ]
+    }
+   ]
+  },
+  {
+   "scenario": "crash silences everything",
+   "pass": true,
+   "checks": [
+    {
+     "name": "alert before the crash",
+     "ok": true,
+     "got": 2
+    },
+    {
+     "name": "nothing starts after the crash",
+     "ok": true,
+     "got": []
+    },
+    {
+     "name": "nothing playing at the end",
+     "ok": true,
+     "got": []
+    }
+   ]
+  }
+ ],
+ "uh60": [
+  {
+   "scenario": "cruise: no false alerts",
+   "pass": true,
+   "checks": [
+    {
+     "name": "silence",
+     "ok": true,
+     "got": 0
+    }
+   ]
+  },
+  {
+   "scenario": "both engines out → ENGINE 1/2 OUT + LOW ROTOR (VWS), cut when restored",
+   "pass": true,
+   "checks": [
+    {
+     "name": "ENGINE 1 OUT",
+     "ok": true,
+     "got": 1
+    },
+    {
+     "name": "ENGINE 2 OUT",
+     "ok": true,
+     "got": 1
+    },
+    {
+     "name": "LOW ROTOR",
+     "ok": true,
+     "got": 2
+    },
+    {
+     "name": "no tone loop (the tone is part of the VWS cycle)",
+     "ok": true,
+     "got": 0
+    },
+    {
+     "name": "VWS quiet after the engines recover",
+     "ok": true,
+     "got": 0
+    }
+   ]
+  },
+  {
+   "scenario": "owner report: collective down (rotor overspeed) → no rotor warning",
+   "pass": true,
+   "checks": [
+    {
+     "name": "no LOW ROTOR / ENGINE OUT on overspeed",
+     "ok": true,
+     "got": 0
+    },
+    {
+     "name": "no loop",
+     "ok": true,
+     "got": 0
+    }
+   ]
+  },
+  {
+   "scenario": "descending fast through the low bug (50 ft) → ALTITUDE LOW once",
+   "pass": true,
+   "checks": [
+    {
+     "name": "ALTITUDE LOW once",
+     "ok": true,
+     "got": 1
+    }
+   ]
+  },
+  {
+   "scenario": "crash cuts the VWS",
+   "pass": true,
+   "checks": [
+    {
+     "name": "VWS before the crash",
+     "ok": true,
+     "got": 1
+    },
+    {
+     "name": "nothing starts after the crash",
+     "ok": true,
+     "got": []
+    },
+    {
+     "name": "nothing playing at the end",
+     "ok": true,
+     "got": []
+    }
+   ]
+  }
+ ]
+}

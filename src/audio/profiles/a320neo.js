@@ -1,6 +1,7 @@
 // Airbus A320neo (2 × CFM LEAP-1A) sound profile.
 import { clamp, db, linDb, sstep, xfade } from '../util.js';
-import { airframeLayers, airlinerAlerts, COMMON_SHOTS } from './common.js';
+import { airframeLayers, COMMON_SHOTS } from './common.js';
+import { egpws, fwcA320 } from '../alertlogic.js';
 
 export const FAN_REFS = [0.25, 0.58, 0.92];
 const JET_REFS = [0.25, 0.92];
@@ -47,6 +48,13 @@ export default {
       gearDragDb: -9, buffetDb: -4 }),
   ],
   shots: { ...COMMON_SHOTS },
-  alerts: airlinerAlerts('a320neo', true),
+  // FWC (callouts, RETARD, chimes, C-chord, STALL, SPEED SPEED SPEED) + Honeywell EGPWS modes 1-5; cavalry charge on
+  // A/P disconnect (once with the pushbutton click, looped until acknowledged when involuntary)
+  alerts: {
+    style: 'airbus', chime: 'a320neo/single_chime',
+    apDisconnect: 'a320neo/cavalry', apDisconnectLoop: 'a320neo/cavalry_loop', apButton: 'a320neo/ap_button',
+    systems: [() => fwcA320('a320neo'), () => egpws('a320neo', { tad: 'v_terrainahead_pullup' })],
+  },
+  gpwsLandIdx: 4,                 // EGPWS landing flaps: CONF 3 or FULL
   mech: { gearClunkInt: 0.45, flapLever: true, reverser: true, spoilers: true, canopy: false, gearSeconds: 9 },
 };

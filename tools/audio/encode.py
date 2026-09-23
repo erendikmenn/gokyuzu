@@ -33,8 +33,9 @@ LOOPS |= {f'{a}/{n}' for a in ('f16', 'f22') for n in ('whine_lo', 'whine_mid', 
                                                        'rumble', 'ecs', 'breath')}
 LOOPS |= {f'{a}/{n}' for a in ('a320neo', 'b737') for n in ('fan_lo', 'fan_mid', 'fan_hi', 'buzzsaw', 'jet_lo', 'jet_hi',
                                                            'reverse', 'apu')}
-LOOPS |= {f'uh60/{n}' for n in ('rotor', 'slap', 'tail', 'turbine', 'gearbox', 'wash', 'low_rotor')}
-LOOPS |= {'a320neo/crc', 'a320neo/cricket', 'b737/shaker', 'b737/clacker', 'a320neo/cavalry_loop', 'b737/wailer'}
+LOOPS |= {f'uh60/{n}' for n in ('rotor', 'slap', 'tail', 'turbine', 'gearbox', 'wash')}
+LOOPS |= {'a320neo/crc', 'a320neo/c_chord_loop', 'b737/shaker', 'b737/clacker', 'b737/horn', 'b737/horn_int',
+          'a320neo/cavalry_loop', 'b737/wailer', 'b737/fire_bell', 'f16/lg_horn', 'f16/low_speed'}
 
 
 def bitrate(rel):

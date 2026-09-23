@@ -1,0 +1,3696 @@
+{
+ "found": [
+  {
+   "aircraft": "F-16C (Arizona ANG F-16, block not stated)",
+   "sound": "other_unidentified_tone",
+   "title": "Auto-GCAS Saves Unconscious F-16 Pilot — Declassified USAF Footage (HUD tape audio)",
+   "orig": "assets/audio/candidates/f16/other_unidentified_tone/orig/mil_commons_autogcas_242hz_32.98-40.38.wav",
+   "source": "assets/audio/candidates/f16/_sources/commons_autogcas_f16_hud.ogg",
+   "page_url": "https://commons.wikimedia.org/wiki/File:Auto-GCAS_Saves_Unconscious_F-16_Pilot%E2%80%94Declassified_USAF_Footage.webm",
+   "media_url": "https://upload.wikimedia.org/wikipedia/commons/5/52/Auto-GCAS_Saves_Unconscious_F-16_Pilot%E2%80%94Declassified_USAF_Footage.webm",
+   "license": "PD-USGov-Military-Air Force (per Commons review)",
+   "license_evidence": "https://commons.wikimedia.org/wiki/File:Auto-GCAS_Saves_Unconscious_F-16_Pilot%E2%80%94Declassified_USAF_Footage.webm -- Commons API extmetadata: LicenseShortName 'Public domain', License 'pd', UsageTerms 'Public domain', Categories include 'PD US Air Force' and 'Files from external sources with reviewed licenses'; Artist 'AviationWeek'; Credit 'YouTube: Auto-GCAS Saves Unconscious F-16 Pilot—Declassified USAF Footage'",
+   "credit": "U.S. Air Force (HUD footage); uploaded to YouTube by Aviation Week; Wikimedia Commons",
+   "provenance": "real",
+   "provenance_note": "ImageDescription: 'This newly declassified video footage from the head-up-display of a U.S. Air Force Arizona Air National Guard F-16 records the dramatic moment when its unconscious pilot is saved from certain death by the aircraft's Automatic Ground Collision Avoidance System.' DateTimeOriginal 2016-09-13",
+   "aircraft_variant": "F-16 (Arizona ANG; 2016 incident; exact block not stated)",
+   "segment": [
+    1.0,
+    6.4
+   ],
+   "transcript": null,
+   "confidence": "low",
+   "quality": {
+    "sr": 44100,
+    "channels": 2,
+    "codec": "vorbis (source, 192 kb/s nominal) -> excerpt pcm_s16le",
+    "bitrate": "~94 kb/s actual stream",
+    "duration": 7.4,
+    "noise": "loud steady tone over wind/breathing; tone is ~-4 dBFS",
+    "clipping": "0.0 dBFS peak; ~8.5k samples at full scale (source clipped)"
+   },
+   "notes": "Steady synthetic tone, fundamental ~242 Hz with odd harmonics 721/1200/1685/2164/2649 Hz (square-wave-like), on 33.98-37.45 s and 37.7-39.3 s of the source (short ~0.25 s gap). Spectrally matches a ~250 Hz square-wave F-16 warning tone (FlightGear F-16 models its gear-horn/low-speed tone as 250 Hz square: f16nvc__250hz-square*.wav); the -3% offset could be HUD-tape speed error. Occurs seconds after the Auto-GCAS fly-up at very high airspeed, so a low-speed/gear-horn trigger is implausible; identity unknown. Cannot listen: evidence is spectral only. Alternative explanation: a radio heterodyne/squeal (two UHF transmitters keyed together right after the instructor's \"recover\" calls) that became square-like through the heavy clipping of this recording (symmetric clipping produces exactly these odd harmonics). Treat as unidentified; do NOT label it as an F-16 warning without listening. Harmonic analysis (37.8-39.0 s of source): f0 240.8 Hz; odd harmonics h3 -9.5 dB, h5 -16.0, h7 -20.3, h9 -25.4, h11 -28.3 dB re h1; even harmonics -37 to -50 dB — i.e. a near-ideal square wave (ideal h3 = -9.54 dB). The tone sits at ~-3.7 dBFS RMS, i.e. it is NOT clipped in this file, which argues for a synthetic tone-generator source (aircraft aural tone) rather than clipping of a radio heterodyne. Confidence that it is an F-16 aural warning tone: low-to-medium; which warning: unknown."
+  },
+  {
+   "aircraft": "F-16C",
+   "sound": "other_unidentified_tone",
+   "title": "Auto-GCAS Saves Unconscious F-16 Pilot — first second of HUD audio",
+   "orig": "assets/audio/candidates/f16/other_unidentified_tone/orig/mil_commons_autogcas_alarm_5.64-8.69.wav",
+   "source": "assets/audio/candidates/f16/_sources/commons_autogcas_f16_hud.ogg",
+   "page_url": "https://commons.wikimedia.org/wiki/File:Auto-GCAS_Saves_Unconscious_F-16_Pilot%E2%80%94Declassified_USAF_Footage.webm",
+   "media_url": "https://upload.wikimedia.org/wikipedia/commons/5/52/Auto-GCAS_Saves_Unconscious_F-16_Pilot%E2%80%94Declassified_USAF_Footage.webm",
+   "license": "PD-USGov-Military-Air Force (per Commons review)",
+   "license_evidence": "https://commons.wikimedia.org/wiki/File:Auto-GCAS_Saves_Unconscious_F-16_Pilot%E2%80%94Declassified_USAF_Footage.webm -- Commons API extmetadata: LicenseShortName 'Public domain', License 'pd', UsageTerms 'Public domain', Categories include 'PD US Air Force' and 'Files from external sources with reviewed licenses'; Artist 'AviationWeek'; Credit 'YouTube: Auto-GCAS Saves Unconscious F-16 Pilot—Declassified USAF Footage'",
+   "credit": "U.S. Air Force (HUD footage); Aviation Week; Wikimedia Commons",
+   "provenance": "unknown",
+   "provenance_note": "Audio is silent 0-6.5 s, then this buzz starts exactly where the HUD audio starts; could be an aircraft tone or an edit artefact. ImageDescription: 'This newly declassified video footage from the head-up-display of a U.S. Air Force Arizona Air National Guard F-16 records the dramatic moment when its unconscious pilot is saved from certain death by the aircraft's Automatic Ground Collision Avoidance System.' DateTimeOriginal 2016-09-13",
+   "aircraft_variant": "F-16 (Arizona ANG)",
+   "segment": [
+    1.0,
+    2.05
+   ],
+   "transcript": "whisper tag: (alarm)",
+   "confidence": "low",
+   "quality": {
+    "sr": 44100,
+    "channels": 2,
+    "codec": "vorbis (source, 192 kb/s nominal) -> excerpt pcm_s16le",
+    "bitrate": "~94 kb/s actual stream",
+    "duration": 3.05,
+    "noise": "buzz over wind noise",
+    "clipping": "~0 dBFS peak, 8 samples at full scale"
+   },
+   "notes": "~1.05 s harmonic buzz: comb of partials spaced ~124 Hz, strongest 1378/1502/1631 Hz, band-limited to ~4 kHz (HUD tape bandwidth). Not identified."
+  },
+  {
+   "aircraft": "F-16C",
+   "sound": "other_ip_recover_call",
+   "title": "Auto-GCAS Saves Unconscious F-16 Pilot — instructor radio call \"Two, recover\" x4",
+   "orig": "assets/audio/candidates/f16/other_ip_recover_call/orig/mil_commons_autogcas_recover_28.0-36.0.wav",
+   "source": "assets/audio/candidates/f16/_sources/commons_autogcas_f16_hud.ogg",
+   "page_url": "https://commons.wikimedia.org/wiki/File:Auto-GCAS_Saves_Unconscious_F-16_Pilot%E2%80%94Declassified_USAF_Footage.webm",
+   "media_url": "https://upload.wikimedia.org/wikipedia/commons/5/52/Auto-GCAS_Saves_Unconscious_F-16_Pilot%E2%80%94Declassified_USAF_Footage.webm",
+   "license": "PD-USGov-Military-Air Force (per Commons review)",
+   "license_evidence": "https://commons.wikimedia.org/wiki/File:Auto-GCAS_Saves_Unconscious_F-16_Pilot%E2%80%94Declassified_USAF_Footage.webm -- Commons API extmetadata: LicenseShortName 'Public domain', License 'pd', UsageTerms 'Public domain', Categories include 'PD US Air Force' and 'Files from external sources with reviewed licenses'; Artist 'AviationWeek'; Credit 'YouTube: Auto-GCAS Saves Unconscious F-16 Pilot—Declassified USAF Footage'",
+   "credit": "U.S. Air Force (HUD footage); Aviation Week; Wikimedia Commons",
+   "provenance": "real",
+   "provenance_note": "ImageDescription: 'This newly declassified video footage from the head-up-display of a U.S. Air Force Arizona Air National Guard F-16 records the dramatic moment when its unconscious pilot is saved from certain death by the aircraft's Automatic Ground Collision Avoidance System.' DateTimeOriginal 2016-09-13",
+   "aircraft_variant": "F-16 (Arizona ANG)",
+   "segment": [
+    1.0,
+    7.0
+   ],
+   "transcript": "whisper: \"Fuel recover. Fuel recover. Fuel recover. Fuel recover.\" (the IP shouting \"Two, recover\" over the radio)",
+   "confidence": "high",
+   "quality": {
+    "sr": 44100,
+    "channels": 2,
+    "codec": "vorbis (source, 192 kb/s nominal) -> excerpt pcm_s16le",
+    "bitrate": "~94 kb/s actual stream",
+    "duration": 8.0,
+    "noise": "radio voice, clipped",
+    "clipping": "0 dBFS, ~15k samples at full scale (heavily clipped shouting)"
+   },
+   "notes": "NOT an aural warning — a human radio call. Kept only as atmosphere/reference. No VMS words (PULL UP / ALTITUDE / WARNING) were detected anywhere in this 80 s clip by whisper-small (also tried band-passed + prompted)."
+  },
+  {
+   "aircraft": "F-16D (Thunderbirds)",
+   "sound": "bingo",
+   "title": "Gerard Butler Flies with the Thunderbirds (DVIDS 454188) — in-cockpit ICS audio, \"Bingo. Bingo.\" during a G-maneuver",
+   "orig": "assets/audio/candidates/f16/bingo/orig/mil_dvids454188_bingo_uncertain_188.7-193.6.wav",
+   "source": "assets/audio/candidates/f16/_sources/dvids454188_thunderbirds_f16d_ics.m4a",
+   "page_url": "https://www.dvidshub.net/video/454188/gerard-butler-flies-with-thunderbirds",
+   "media_url": "https://<cloudfront-host>.cloudfront.net/video/1603/DOD_103124649/DOD_103124649-1024x576-1769k-hls.m3u8",
+   "license": "PD-USGov (DVIDS \"PUBLIC DOMAIN\")",
+   "license_evidence": "https://www.dvidshub.net/video/454188 -- credit line \"Video by Senior Airman Rachel Maxwell, Air Force Thunderbirds\"; license block \"PUBLIC DOMAIN — This work, Gerard Butler Flies with the Thunderbirds, by TSgt Rachel Maxwell, identified by DVIDS, must comply with the restrictions shown on https://www.dvidshub.net/about/copyright.\"",
+   "credit": "U.S. Air Force video by Senior Airman Rachel Maxwell, Air Force Thunderbirds (DVIDS)",
+   "provenance": "real",
+   "provenance_note": "Page description: \"In-cockpit footage and audio of Gerard Butler's flight with the U.S. Air Force Thunderbirds\" (VIRIN 160305-F-AN818-001, 03.05.2016, Nevada)",
+   "aircraft_variant": "F-16D Block 52 (Thunderbirds, #7/#8 two-seater; block not stated on page)",
+   "segment": [
+    1.0,
+    3.9
+   ],
+   "transcript": "whisper word-level: \"... Good G strain. Bingo. Bingo. There's six. Keep hanging in. Good G strain.\"",
+   "confidence": "low",
+   "quality": {
+    "sr": 48000,
+    "channels": 2,
+    "codec": "AAC-LC 109 kb/s (source) -> pcm_s16le excerpt",
+    "bitrate": "109 kb/s",
+    "duration": 4.9,
+    "noise": "intercom: breathing, engine, G-strain grunts",
+    "clipping": "-8.0 dBFS peak, no clipping"
+   },
+   "notes": "Probably the PILOT speaking, not the VMS: the two \"Bingo\"s have different pitch contours (f0 rising ~240->300 Hz, then different shape) and the VMS would replay an identical sample; no fuel-state context. Kept only so a human can listen and reject/confirm. The clip also contains the voice of actor Gerard Butler elsewhere (publicity-rights concern if reused)."
+  }
+ ],
+ "references": [
+  {
+   "url": "https://www.digitalcombatsimulator.com/ (DCS F-16C Viper module)",
+   "contains": "F-16C VMS voice set and tones",
+   "why_not_usable": "commercial simulator, proprietary assets"
+  },
+  {
+   "url": "https://www.falcon-bms.com/",
+   "contains": "F-16 VMS/RWR sound set",
+   "why_not_usable": "mod of commercial Falcon 4.0; assets not licensed for redistribution"
+  },
+  {
+   "url": "https://www.flightsimulator.com/ (MSFS F-22/F-16/UH-60 add-ons)",
+   "contains": "aircraft alert sounds",
+   "why_not_usable": "commercial"
+  },
+  {
+   "url": "YouTube cockpit videos (e.g. \"F-16 Bitching Betty\", \"F-22 cockpit warnings\", \"UH-60M low rotor\")",
+   "contains": "real and sim alerts",
+   "why_not_usable": "YouTube rips; uploader rights unclear"
+  },
+  {
+   "url": "https://commons.wikimedia.org/wiki/File:%E9%A3%9B%E8%A1%8C%E6%A9%9F%E3%81%AEPull_up%E3%81%AE%E9%9F%B3%E5%A3%B0.wav",
+   "contains": "4.8 s \"Pull up\" GPWS voice, CC0, \"Own work\" by Okomedayo-13, described as \"the glide-slope warning (pull up) voice of some airplane\"",
+   "why_not_usable": "not downloaded (Wikimedia 429 rate limits); unknown aircraft, likely civil GPWS or a re-recording of copyrighted audio despite CC0 claim — not F-16/F-22/UH-60 provenance"
+  },
+  {
+   "url": "https://commons.wikimedia.org/wiki/File:F-16_Strafing_Maneuver.ogv",
+   "contains": "ground video of an F-16 strafing pass, CC BY-SA 3.0",
+   "why_not_usable": "exterior footage, no cockpit alerts"
+  },
+  {
+   "url": "https://archive.org/details/CalGuardUH60MBlackHawkDropsWaterOnCampFireNovember142018",
+   "contains": "UH-60M (Cal Guard) cockpit/intercom audio, Public Domain Mark 1.0; identical (51.46 s) to DVIDS 640688",
+   "why_not_usable": "licence fine, but no alert tone/voice found (only crew calls \"Water's away\", radio; no narrow-band warning tone detected)"
+  },
+  {
+   "url": "https://www.dvidshub.net/video/641435/black-hawk-fighting-camp-fire-picks-up-water-icy-pond",
+   "contains": "UH-60 ICS audio during bucket dip (torque calls)",
+   "why_not_usable": "PD, but no alerts detected"
+  },
+  {
+   "url": "https://www.dvidshub.net/video/743290/f-35a-demo-team-avionics-member-flies-f-16",
+   "contains": "8 min F-16D incentive ride with full ICS + ATC audio (9 G turn, supersonic run)",
+   "why_not_usable": "PD, but no VMS words detected; the only steady tones are radio-squelch carrier lines (441/2805/4800 Hz) during ATC transmissions"
+  },
+  {
+   "url": "https://www.dvidshub.net/video/299001/f-16d-fighting-falcon-cockpit-wesp-exercise-2",
+   "contains": "F-16D WSEP cockpit video with radio audio (5:37)",
+   "why_not_usable": "PD, radio chatter only; no VMS detected"
+  },
+  {
+   "url": "https://www.dvidshub.net/video/520084/flight-simulators-tests-iowa-chopper-pilots",
+   "contains": "UH-60 Black Hawk Aircrew Trainer (simulator) with crew saying \"missile\"",
+   "why_not_usable": "simulator; no identifiable alert audio (steady 684/1147 Hz lines are sim-bay hum)"
+  },
+  {
+   "url": "https://www.dvidshub.net/video/956938/microsoft-flight-simulator-f-16c-audio-recordings-captured-177th-fighter-wing",
+   "contains": "DVIDS b-roll of Microsoft/Asobo recording a real F-16C (engine run)",
+   "why_not_usable": "PD video but only engine/interview audio; the Microsoft recordings themselves are commercial"
+  },
+  {
+   "url": "DVIDS F-22 Demo Team cockpit footage (e.g. 992985, 1013531-1013541, 1012981-1012987, 986710-986716, 976134, 681055, 707022, 759958)",
+   "contains": "real F-22A cockpit GoPro footage",
+   "why_not_usable": "PD, but audio is ambient camera mic (engine/wind) or music; no ICS, so no ICAWS voice/tones"
+  },
+  {
+   "url": "DVIDS HH-60W / HH-60M ambient-mic clips (955590, 1018491)",
+   "contains": "cabin audio with steady ~990 Hz / ~2 kHz lines",
+   "why_not_usable": "lines are almost certainly main-gearbox mesh tones (continuous, ambient mic, no ICS), not warnings"
+  },
+  {
+   "url": "https://www.dvidshub.net/video/723256",
+   "contains": "F-16 Mission Training Center simulator b-roll (88th ABW)",
+   "why_not_usable": "page states \"*Audio was not cleared for release*\" — the audio track is digital silence (-91 dB)"
+  },
+  {
+   "url": "https://www.dvidshub.net/video/812635 ; https://www.dvidshub.net/video/627793 ; https://www.dvidshub.net/video/626002 ; https://www.dvidshub.net/video/421990",
+   "contains": "UH-60 (SC-HART / PA-HART / Ohio ARNG) hoist rescues with intercom + radio audio (PD)",
+   "why_not_usable": "licence fine, but no warning tone/voice found; the steady 1/2/3/4 kHz harmonic lines are main-gearbox mesh noise present in all UH-60 cabin recordings"
+  },
+  {
+   "url": "https://www.dvidshub.net/video/996359 ; https://www.dvidshub.net/video/1001736 ; https://www.dvidshub.net/video/941477",
+   "contains": "USCG MH-60T Jayhawk hoist rescues (H-60 family, PD, \"Courtesy Video / U.S. Coast Guard ...\")",
+   "why_not_usable": "not UH-60M; no alerts detected"
+  },
+  {
+   "url": "https://www.dvidshub.net/video/299001",
+   "contains": "F-16D WSEP cockpit video: radio \"Fox\" shot calls and an unidentified steady ~2.41 kHz line (201.9-203.5 s, 221.7-237.8 s) under the radio audio",
+   "why_not_usable": "PD, but the tone is most likely a radio/intercom artefact; could not be tied to any F-16 aural warning — left out of found[]"
+  },
+  {
+   "url": "https://www.dvidshub.net/video/975726",
+   "contains": "F-16 BFM gun engagement vs Egyptian F-16, \"natural recording\" (Bright Star 25)",
+   "why_not_usable": "ambient cockpit mic only (engine whine, gun/clicks), no VMS"
+  },
+  {
+   "url": "https://commons.wikimedia.org/wiki/File:Operation_Breaking_Dawn,_August_2022._XX.webm ; https://commons.wikimedia.org/wiki/File:IDF_2024-04-14_06-02.webm",
+   "contains": "IDF Spokesperson Unit strike videos (CC BY-SA 3.0)",
+   "why_not_usable": "foreign F-16I (not F-16C VMS), not downloaded (HTTP 429); likely no cockpit audio"
+  },
+  {
+   "url": "https://commons.wikimedia.org/wiki/File:Dutch_F-16_operations_at_the_Siauliai_military_base_in_Lithuania.webm",
+   "contains": "Dutch MoD F-16AM b-roll (CC BY-SA 4.0; source mp4 on rovid.nl)",
+   "why_not_usable": "exterior b-roll; foreign MLU jet"
+  },
+  {
+   "url": "https://commons.wikimedia.org/wiki/File:Ukrainian_f16_destroys_shahed_type_drone.webm",
+   "contains": "32 s Ukrainian Air Force F-16 (MLU) HUD gun kill on a Shahed, CC BY 4.0 (Artist \"Ukrainian Air Force\", credit https://www.facebook.com/kpszsu/), audio Opus 48 kHz stereo. Downloaded and analysed: two pure 1001 Hz censor \"bleeps\" (2.24-3.39 s, ~21.2-22.1 s), a harmonic comb at ~244 Hz (3.5-12.8 s, strong 2nd harmonic, pitch slowly rising — likely engine/airframe, not a square-wave warning tone), voices (whisper: Russian-language exclamations, possibly hallucinated)",
+   "why_not_usable": "no identifiable VMS word or warning tone; licence is a foreign-government CC BY 4.0 taken from Commons review. Kept only in scratch (not copied to candidates)."
+  }
+ ],
+ "real_messages": [
+  {
+   "fact": "The F-16 Fighting Falcon voice warning system uses a female voice (\"Bitching Betty\"); Wikipedia also claims (flagged \"non-primary source needed\") that Erica Lane voiced the F-16 and AH-64 systems.",
+   "source_url": "https://en.wikipedia.org/wiki/Voice_warning_system"
+  },
+  {
+   "fact": "F-16 Auto-GCAS (fielded fleet-wide from 2013) executes an automatic recovery when terrain impact is imminent, based on a continuous comparison of a predicted trajectory with an onboard terrain-elevation profile; developed by NASA Armstrong, Lockheed Martin and AFRL. (No aural cue described in the article.)",
+   "source_url": "https://www.dvidshub.net/news/218474/416th-flts-testers-meet-with-auto-gcas-survivor"
+  },
+  {
+   "fact": "Real 2016 Arizona ANG F-16 Auto-GCAS save HUD tape: audio shows pilot breathing, instructor radio calls \"Two, recover\" (x4) and \"knock it off\", plus a ~242 Hz square-wave tone after the fly-up; no voice \"PULL UP\"/\"ALTITUDE\" was detectable in the released cut.",
+   "source_url": "https://commons.wikimedia.org/wiki/File:Auto-GCAS_Saves_Unconscious_F-16_Pilot%E2%80%94Declassified_USAF_Footage.webm"
+  },
+  {
+   "fact": "UH-60M/HH-60M crews train high-altitude/degraded-visual-environment (dust) landings at HAMETS; the aircraft is described as \"the HH-60 Mike and the UH-60 Mike model\" (no alert list given).",
+   "source_url": "https://www.dvidshub.net/video/675567"
+  },
+  {
+   "fact": "USAARL airworthiness test reports for medical equipment on the UH-60 list the UH-60 warning systems checked for interference: \"Low rotor RPM. X. Master caution. X. Caution advisory. X. Fire warning. X. AFCS. X.\" (UH-60A/L era; reference TM 55-1520-237-10). Quoted from DTIC search-result snippet; PDF not retrievable during research (DTIC maintenance page).",
+   "source_url": "https://apps.dtic.mil/sti/pdf/ADA248538.pdf"
+  },
+  {
+   "fact": "Same warning-system list (\"Low rotor RPM ... Master caution ... Caution advisory ... Fire warning ... AFCS\") in the USAARL test of a defibrillator in the \"UH-60 and EH-60 helicopter\", citing TM 55-1520-237-10 with changes 1-5 (DTIC snippet).",
+   "source_url": "https://apps.dtic.mil/sti/pdfs/ADA234593.pdf"
+  },
+  {
+   "fact": "Army Flightfax (April 2001) mishap narrative: \"As the Low Rotor RPM continued to sound, CW3 ... took command of the flight controls and executed a descending right turn\" — i.e. the low-rotor-RPM warning is an aural (sounding) alert (DTIC snippet).",
+   "source_url": "https://apps.dtic.mil/sti/pdf/ADA388731.pdf"
+  },
+  {
+   "fact": "USAARL \"Communication and Noise Hazard Survey of CH-47D Crewmembers\" compares to UH-60 cockpit noise and names aural \"warning signals (e.g., low rotor RPM)\" (DTIC snippet).",
+   "source_url": "https://apps.dtic.mil/sti/pdf/ADA302172.pdf"
+  },
+  {
+   "fact": "AH-1S external-fuel study: \"the low rotor rpm warning system provided an audio cue approximately 1 second following the power loss\" (Army helicopter low-rotor audio cue timing; not UH-60, DTIC snippet).",
+   "source_url": "https://apps.dtic.mil/sti/pdf/ADA148091.pdf"
+  }
+ ],
+ "search_log": {
+  "dvids_queries": [
+   "F-16 cockpit",
+   "Auto-GCAS",
+   "F-16 HUD",
+   "F-22 cockpit",
+   "Viper demo cockpit",
+   "F-16 cockpit footage",
+   "F-16 GoPro",
+   "Thunderbirds cockpit",
+   "Thunderbirds media flight",
+   "F-16 incentive flight",
+   "F-16 orientation flight",
+   "ground collision avoidance",
+   "F-16 HUD footage",
+   "F-16 pilot POV",
+   "F-22 POV",
+   "F-22 GoPro",
+   "F-22 in-flight",
+   "F-22 helmet",
+   "Raptor cockpit footage",
+   "F-22 demo team cockpit",
+   "UH-60 cockpit",
+   "Black Hawk cockpit",
+   "HH-60 cockpit",
+   "UH-60M cockpit",
+   "Black Hawk POV",
+   "Black Hawk GoPro",
+   "UH-60 emergency procedures",
+   "HH-60W cockpit",
+   "Black Hawk night vision cockpit",
+   "GCAS",
+   "unconscious pilot",
+   "G-LOC",
+   "head-up display",
+   "HUD video",
+   "F-16 media flight",
+   "F-16D ride",
+   "Wild Weasel cockpit",
+   "F-16 aggressor cockpit",
+   "F-16 air refueling cockpit",
+   "F-16 backseat",
+   "F-16 heritage flight",
+   "Black Hawk flight",
+   "UH-60 flight",
+   "Black Hawk simulator",
+   "UH-60 simulator",
+   "HH-60M",
+   "UH-60V",
+   "Pave Hawk cockpit",
+   "HH-60G cockpit",
+   "Black Hawk crew chief",
+   "Black Hawk emergency",
+   "Black Hawk hoist",
+   "UH-60 aircrew training",
+   "Black Hawk maintenance test flight",
+   "Black Hawk pilot",
+   "F-16 simulator",
+   "F-22 simulator",
+   "helicopter simulator",
+   "F-16 night vision",
+   "F-16 audio",
+   "Black Hawk audio",
+   "F-22 audio",
+   "cockpit audio",
+   "F-16 intercept",
+   "F-22 intercept",
+   "HAATS",
+   "mountain flying Black Hawk",
+   "brownout",
+   "dust landing Black Hawk",
+   "Black Hawk NVG",
+   "GCAS save",
+   "F-16 gun camera",
+   "F-16 strafe",
+   "F-22 HUD",
+   "F-22 AIM-9",
+   "Weapons School F-16",
+   "F-16 Red Flag cockpit",
+   "Bitching Betty",
+   "voice warning",
+   "aural warning",
+   "UH-60 APU",
+   "Black Hawk run-up",
+   "maintenance test pilot",
+   "flies with Thunderbirds",
+   "hometown hero Thunderbirds",
+   "F-16 familiarization flight",
+   "honorary commander F-16",
+   "Viper demo practice",
+   "flies F-16",
+   "F-16 BFM",
+   "UH-60 GoPro",
+   "Black Hawk cockpit view",
+   "UH-60 pilot view",
+   "Black Hawk ride along",
+   "HH-60M MEDEVAC flight",
+   "UH-60M flight",
+   "F-22 Raptor flight cockpit",
+   "Raptor demo practice",
+   "F-22 pilot view",
+   "F-22 in flight footage",
+   "test flight Black Hawk",
+   "UH-60 test pilot",
+   "Black Hawk phase",
+   "UH-60 start up",
+   "UH-60 shutdown",
+   "Helene rescue Black Hawk",
+   "flood rescue Black Hawk hoist",
+   "National Guard hoist rescue",
+   "Black Hawk rescue hoist video",
+   "MEDEVAC hoist rescue mountain",
+   "MH-60T hoist rescue",
+   "Jayhawk rescue",
+   "HUD tape",
+   "HUD recording",
+   "F-16 shoots down drone",
+   "gun camera footage",
+   "Viper West demo",
+   "Viper East demo",
+   "F-16 close air support cockpit",
+   "(DVIDS audio type) F-16 / cockpit / Black Hawk / F-22",
+   "(DVIDS news) Auto GCAS / Bitching Betty / low rotor rpm",
+   "inadvertent IMC",
+   "IIMC",
+   "aviation safety UH-60",
+   "Combat Readiness Center aviation",
+   "Black Hawk simulator emergency",
+   "flight school XXI simulator",
+   "UH-60M simulator",
+   "F-16 shoots down drone (731362/731345: audio stripped)"
+  ],
+  "other_sources": [
+   "Wikimedia Commons API (search + categories; heavily rate-limited, HTTP 429)",
+   "NASA images-api (no relevant video)",
+   "NASA NTRS (only 1980s voice-warning research abstracts)",
+   "Internet Archive advancedsearch (only the CalGuard UH-60M PD clips)",
+   "af.mil AIB reports (HTTP 403 to curl)",
+   "DTIC discover search (Google-backed; apps.dtic.mil PDFs in maintenance)",
+   "NARA catalog proxy search (modern DoD video not digitized/online)",
+   "DTIC discover search (Google-backed; apps.dtic.mil PDFs in maintenance)",
+   "NARA catalog proxy search (modern DoD video not digitized/online)"
+  ],
+  "method": "DVIDS page probe (Playwright) -> HLS audio stream-copy (lowest rendition; audio identical across renditions, verified by md5) -> whisper-small transcript + keyword grep -> narrow-band tonal-track detector -> spectrogram inspection",
+  "dvids_videos_checked": [
+   {
+    "id": "329305",
+    "url": "https://www.dvidshub.net/video/329305",
+    "title": "F-16 Trim Run",
+    "credit": "Video by Senior Airman Anthony Hetlage / 455th Air Expeditionary Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 16
+   },
+   {
+    "id": "817126",
+    "url": "https://www.dvidshub.net/video/817126",
+    "title": "F-16 Hot Pit",
+    "credit": "Video by Master Sgt. Traci Keller / 332d Air Expeditionary Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "746997",
+    "url": "https://www.dvidshub.net/video/746997",
+    "title": "F-22 Hot-Pit Refueling",
+    "credit": "Video by Senior Airman Adriana Barrientos / Joint Base Elmendorf-Richardson",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "976217",
+    "url": "https://www.dvidshub.net/video/976217",
+    "title": "169th Maintenance Squadron conducts engine test",
+    "credit": "Video by Airman 1st Class Alexis Goodman / 169th Fighter Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 1
+   },
+   {
+    "id": "975275",
+    "url": "https://www.dvidshub.net/video/975275",
+    "title": "South Carolina Air National Guard engine test",
+    "credit": "Video by Airman 1st Class Alexis Goodman / 169th Fighter Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 1
+   },
+   {
+    "id": "894677",
+    "url": "https://www.dvidshub.net/video/894677",
+    "title": "AFN TV In Focus: F-16 Burner Run",
+    "credit": "Video by Senior Airman Elijah Dority / AFN Aviano",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 7
+   },
+   {
+    "id": "833989",
+    "url": "https://www.dvidshub.net/video/833989",
+    "title": "8th MXG Engine Run Class",
+    "credit": "Video by Staff Sgt. Gabrielle Spalding / 8th Fighter Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 13
+   },
+   {
+    "id": "761127",
+    "url": "https://www.dvidshub.net/video/761127",
+    "title": "Hot refuel",
+    "credit": "Video by Capt. Travis Mueller / 28th Expeditionary Combat Aviation Brigade",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 1
+   },
+   {
+    "id": "859712",
+    "url": "https://www.dvidshub.net/video/859712",
+    "title": "F-16 Fighting Falcon pilots step and preform preflight check",
+    "credit": "Video by Senior Airman Shannon Braaten / 8th Fighter Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 14
+   },
+   {
+    "id": "141103",
+    "url": "https://www.dvidshub.net/video/141103",
+    "title": "Video Player is loading.",
+    "credit": "Video by Tech. Sgt. Tonia Morgan / United States Air Forces Central",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 6
+   },
+   {
+    "id": "140067",
+    "url": "https://www.dvidshub.net/video/140067",
+    "title": "Osan F-16 Preflight Inspections and Take Offs",
+    "credit": "Video by Staff Sgt. Genevieve Armstrong / 51st Fighter Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "925066",
+    "url": "https://www.dvidshub.net/video/925066",
+    "title": "Preparing F-16s for flight",
+    "credit": "Video by Airman 1st Class Halley Clark / 122nd Fighter Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "961972",
+    "url": "https://www.dvidshub.net/video/961972",
+    "title": "Crew chiefs mobilize F-16s during CKF 25-2",
+    "credit": "Video by Airman 1st Class Zeeshan Naeem / 325th Fighter Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 4
+   },
+   {
+    "id": "971590",
+    "url": "https://www.dvidshub.net/video/971590",
+    "title": "F-22 support during Talisman Sabre 25",
+    "credit": "Video by Staff Sgt. Daniel Brosam / Pacific Air Forces",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "1020895",
+    "url": "https://www.dvidshub.net/video/1020895",
+    "title": "B-Roll: 3rd AMXS conduct preflight checks on F-22 Raptors during RED FLAG-Alaska 26-3",
+    "credit": "Video by Airman 1st Class Xavier Romero / Joint Base Elmendorf-Richardson",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "955052",
+    "url": "https://www.dvidshub.net/video/955052",
+    "title": "First-person view of a hot pit refueling",
+    "credit": "Video by Senior Airman Halley Clark / 122nd Fighter Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "681055",
+    "url": "https://www.dvidshub.net/video/681055",
+    "title": "F-22 Raptor: Inside the Cockpit",
+    "credit": "Video by 2nd Lt. Sam Eckholm / Joint Base Langley-Eustis",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 16
+   },
+   {
+    "id": "759958",
+    "url": "https://www.dvidshub.net/video/759958",
+    "title": "F-22 Cockpit Max Vertical Climb",
+    "credit": "Video by 1st Lt. Sam Eckholm / Joint Base Langley-Eustis",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "707022",
+    "url": "https://www.dvidshub.net/video/707022",
+    "title": "F-22 Demo Cockpit Hyperlapse",
+    "credit": "Video by 2nd Lt. Sam Eckholm / Joint Base Langley-Eustis",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "992985",
+    "url": "https://www.dvidshub.net/video/992985",
+    "title": "F-22 Raptor Aerial Demonstration Team Cockpit B-Roll",
+    "credit": "Video by Staff Sgt. Michael Bowman / 1st Fighter Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "992308",
+    "url": "https://www.dvidshub.net/video/992308",
+    "title": "F-22 Raptor Aerial Demonstration Team Cockpit Footage - Vapor over Oshkosh",
+    "credit": "Video by Staff Sgt. Michael Bowman / 1st Fighter Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 1
+   },
+   {
+    "id": "992307",
+    "url": "https://www.dvidshub.net/video/992307",
+    "title": "F-22 Raptor Aerial Demonstration Team Cockpit Footage - Vapor over Australia",
+    "credit": "Video by Staff Sgt. Michael Bowman / 1st Fighter Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "986715",
+    "url": "https://www.dvidshub.net/video/986715",
+    "title": "Cockpit Footage: F-22 Raptor Demonstration at Miami Beach",
+    "credit": "Video by Staff Sgt. Lauren Diaz / 1st Fighter Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "986712",
+    "url": "https://www.dvidshub.net/video/986712",
+    "title": "Video Player is loading.",
+    "credit": "Video by Staff Sgt. Lauren Diaz / 1st Fighter Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": false,
+    "speech_segments": null
+   },
+   {
+    "id": "986716",
+    "url": "https://www.dvidshub.net/video/986716",
+    "title": "Cockpit Footage: F-22 Raptor Slow Speed Pass at Miami Beach",
+    "credit": "Video by Staff Sgt. Lauren Diaz / 1st Fighter Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "987232",
+    "url": "https://www.dvidshub.net/video/987232",
+    "title": "Cockpit Footage: F-22 Raptor Performs at the National Cherry Festival Air Show",
+    "credit": "Video by Staff Sgt. Lauren Diaz / 1st Fighter Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "987120",
+    "url": "https://www.dvidshub.net/video/987120",
+    "title": "Cockpit Footage: F-22 Raptor Performs at Wings of Pride Airshow at Branson, Missouri",
+    "credit": "Video by Staff Sgt. Lauren Diaz / 1st Fighter Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "976399",
+    "url": "https://www.dvidshub.net/video/976399",
+    "title": "Cockpit Footage: F-22 Raptor Demo Team Flies Over Statue of Liberty in New York City",
+    "credit": "Video by Staff Sgt. Lauren Diaz / 1st Fighter Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "976134",
+    "url": "https://www.dvidshub.net/video/976134",
+    "title": "Inside the F-22: Footage Captures Oshkosh Demo and Heritage Flight",
+    "credit": "Video by Staff Sgt. Lauren Diaz / 1st Fighter Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "845172",
+    "url": "https://www.dvidshub.net/video/845172",
+    "title": "F-22 Raptor Demo Team Cockpit B-Roll",
+    "credit": "Video by Staff Sgt. Donald Hudson / Joint Base Langley-Eustis",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "1013541",
+    "url": "https://www.dvidshub.net/video/1013541",
+    "title": "Salute to America 250 from the F-22 Demonstration Team cockpit",
+    "credit": "Video by Staff Sgt. Mary Bowers / 1st Fighter Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "1013535",
+    "url": "https://www.dvidshub.net/video/1013535",
+    "title": "Salute to America 250 from the F-22 Demonstration Team cockpit",
+    "credit": "Video by Staff Sgt. Mary Bowers / 1st Fighter Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "1012987",
+    "url": "https://www.dvidshub.net/video/1012987",
+    "title": "The Great Texas Air Show from the F-22 Cockpit",
+    "credit": "Video by Staff Sgt. Lauren Diaz / 1st Fighter Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "1012981",
+    "url": "https://www.dvidshub.net/video/1012981",
+    "title": "The Great Texas Air Show from the F-22 Cockpit",
+    "credit": "Video by Staff Sgt. Lauren Diaz / 1st Fighter Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "562058",
+    "url": "https://www.dvidshub.net/video/562058",
+    "title": "F-22 Air Refueling over Iraq (Detach with Cockpit Close Up)",
+    "credit": "Video by Senior Airman Brandon Gifford / 380th Air Expeditionary Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 8
+   },
+   {
+    "id": "351142",
+    "url": "https://www.dvidshub.net/video/351142",
+    "title": "F-22 Pilot Reaches 1,000 Flight Hours",
+    "credit": "Video by Staff Sgt. Anthony Kuhn and Tech. Sgt. Colleen Urban / Nellis Air Force Base",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 19
+   },
+   {
+    "id": "907714",
+    "url": "https://www.dvidshub.net/video/907714",
+    "title": "F-22 Raptor Demo - Field of Flight- night show",
+    "credit": "Video by Staff Sgt. Michael Bowman / 1st Fighter Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "907660",
+    "url": "https://www.dvidshub.net/video/907660",
+    "title": "F-22 Raptor Demo - Field of Flight Reel",
+    "credit": "Video by Staff Sgt. Michael Bowman / 1st Fighter Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "111472",
+    "url": "https://www.dvidshub.net/video/111472",
+    "title": "Biofuel Test Flight for F-22",
+    "credit": "Courtesy Video / Defense Media Activity - Proper",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 16
+   },
+   {
+    "id": "100805",
+    "url": "https://www.dvidshub.net/video/100805",
+    "title": "F-22 Incident",
+    "credit": "Video by Staff Sgt. Daniel Delgado / 920th Rescue Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "126199",
+    "url": "https://www.dvidshub.net/video/126199",
+    "title": "Video Player is loading.",
+    "credit": "Video by Senior Airman Aaron Johnson / Joint Base Elmendorf-Richardson",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 77
+   },
+   {
+    "id": "941477",
+    "url": "https://www.dvidshub.net/video/941477",
+    "title": "Coast Guard MH-60 Jayhawk crew conducts rescue hoist",
+    "credit": "Video by Petty Officer 3rd Class Cameron Snell / U.S. Coast Guard Arctic",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "996359",
+    "url": "https://www.dvidshub.net/video/996359",
+    "title": "Air Station Astoria Hoist Feb 15 2026",
+    "credit": "Courtesy Video / U.S. Coast Guard Northwest",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 24
+   },
+   {
+    "id": "1001736",
+    "url": "https://www.dvidshub.net/video/1001736",
+    "title": "Coast Guard rescues 4 people from disabled vessel off Moriches Inlet, New York",
+    "credit": "Courtesy Video / U.S. Coast Guard PADET New York",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "787034",
+    "url": "https://www.dvidshub.net/video/787034",
+    "title": "Aircrew from Air Station Traverse City conducts hoist training in Michigan's Upper Peninsula",
+    "credit": "Video by Chief Petty Officer John Masson / U.S. Coast Guard Great Lakes",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "529220",
+    "url": "https://www.dvidshub.net/video/529220",
+    "title": "Colorado National Guard and Rocky Mountain Fire Rescue Conduct Helicopter Hoist Training",
+    "credit": "Video by Sgt. Richard McMullen / Colorado National Guard",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 15
+   },
+   {
+    "id": "987355",
+    "url": "https://www.dvidshub.net/video/987355",
+    "title": "South Carolina National Guard Helicopter Aquatic Rescue Team hoist training B-Roll",
+    "credit": "Video by Sgt. Ana-Grace Catoe / South Carolina National Guard",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "865256",
+    "url": "https://www.dvidshub.net/video/865256",
+    "title": "Idaho National Guard, Boise Fire Department train on helicopter hoist rescues",
+    "credit": "Video by Master Sgt. Becky Vanshur / Idaho Army National Guard",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "546881",
+    "url": "https://www.dvidshub.net/video/546881",
+    "title": "New Jersey deploys joint rescue team to Texas",
+    "credit": "Video by Master Sgt. Matthew Hecht / New Jersey National Guard",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 17
+   },
+   {
+    "id": "547101",
+    "url": "https://www.dvidshub.net/video/547101",
+    "title": "New Jersey National Guard deploys joint rescue team to Texas",
+    "credit": "Video by Master Sgt. Matthew Hecht / New Jersey National Guard",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 8
+   },
+   {
+    "id": "625251",
+    "url": "https://www.dvidshub.net/video/625251",
+    "title": "Pennsylvania National Guard sends crews, aircraft to support Hurricane Florence response.",
+    "credit": "Video by Master Sgt. George Roach / Joint Force Headquarters - Pennsylvania National Guard",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 1
+   },
+   {
+    "id": "893239",
+    "url": "https://www.dvidshub.net/video/893239",
+    "title": "Officer candidate school instructors fly in UH-60 Black Hawk",
+    "credit": "Video by 1st Lt. Samantha Gabriel / 109th Mobile Public Affairs Detachment",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "806793",
+    "url": "https://www.dvidshub.net/video/806793",
+    "title": "HH-60L Black Hawks supports Forager 2021",
+    "credit": "Video by Cpl. Carlie Stonebraker / U.S. Army Pacific Public Affairs Office",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "70199",
+    "url": "https://www.dvidshub.net/video/70199",
+    "title": "Test Pilots of Tallil",
+    "credit": "Video by Sgt. 1st Class Ben Houtkooper / 34th Red Bull Infantry Division",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 28
+   },
+   {
+    "id": "70198",
+    "url": "https://www.dvidshub.net/video/70198",
+    "title": "Test Pilots of Tallil - Package",
+    "credit": "Video by Sgt. 1st Class Ben Houtkooper / 34th Red Bull Infantry Division",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 32
+   },
+   {
+    "id": "5582",
+    "url": "https://www.dvidshub.net/video/5582",
+    "title": "Video Player is loading.",
+    "credit": "Courtesy Video / DVIDS Hub",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 18
+   },
+   {
+    "id": "136214",
+    "url": "https://www.dvidshub.net/video/136214",
+    "title": "Video Player is loading.",
+    "credit": "Video by Spc. David Innes / AFN Afghanistan",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 12
+   },
+   {
+    "id": "148058",
+    "url": "https://www.dvidshub.net/video/148058",
+    "title": "Video Player is loading.",
+    "credit": "Video by Sgt. 1st Class Daniel Griego / 36th Combat Aviation Brigade (36th ID, TXARNG)",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 22
+   },
+   {
+    "id": "136046",
+    "url": "https://www.dvidshub.net/video/136046",
+    "title": "Video Player is loading.",
+    "credit": "Video by Spc. David Innes / AFN Afghanistan",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 55
+   },
+   {
+    "id": "279777",
+    "url": "https://www.dvidshub.net/video/279777",
+    "title": "Arctic live MEDEVAC Training",
+    "credit": "Video by Sgt. Sean Callahan / 1st Brigade, 11th Airborne Division",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 24
+   },
+   {
+    "id": "22223",
+    "url": "https://www.dvidshub.net/video/22223",
+    "title": "Medical Evacuation Helicopter",
+    "credit": "Courtesy Video / DVIDS Hub",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": false,
+    "speech_segments": null
+   },
+   {
+    "id": "295510",
+    "url": "https://www.dvidshub.net/video/295510",
+    "title": "CW2 Tyson Phillips Interview",
+    "credit": "Video by Sgt. Christopher Bruce / 145th Mobile Public Affairs Detachment",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 163
+   },
+   {
+    "id": "871466",
+    "url": "https://www.dvidshub.net/video/871466",
+    "title": "Montana National Guard Begins Full Time Helicopter Operations in Billings",
+    "credit": "Video by Sgt. Billy Topaz / Montana National Guard Public Affairs Office",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 3
+   },
+   {
+    "id": "956938",
+    "url": "https://www.dvidshub.net/video/956938",
+    "title": "Microsoft Flight Simulator F-16C Audio Recordings Captured at the 177th Fighter Wing",
+    "credit": "Video by Senior Airman Connor Taggart / 177th Fighter Wing - NJ Air National Guard",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 19
+   },
+   {
+    "id": "723256",
+    "url": "https://www.dvidshub.net/video/723256",
+    "title": "F-16 Simulator Broll",
+    "credit": "Video by Ryan J Law / 88th Air Base Wing",
+    "pd": true,
+    "audio_not_cleared": true,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "975726",
+    "url": "https://www.dvidshub.net/video/975726",
+    "title": "BRIGHT STAR 25 USAF cockpit simulated air-to-air encounter",
+    "credit": "Video by Staff Sgt. Kevin Dunkleberger / United States Air Forces Central",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "700790",
+    "url": "https://www.dvidshub.net/video/700790",
+    "title": "F-22 Intercept and Escort Training",
+    "credit": "Video by Senior Airman Johnathon Wines / Joint Base Elmendorf-Richardson",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "543336",
+    "url": "https://www.dvidshub.net/video/543336",
+    "title": "F-22: Air to Air Master (Interactive Video)",
+    "credit": "Video by Senior Airman Nicolas Myers / Joint Base Langley-Eustis",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "100804",
+    "url": "https://www.dvidshub.net/video/100804",
+    "title": "F-22 Incident - Package",
+    "credit": "Video by Staff Sgt. Daniel Delgado / 920th Rescue Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 23
+   },
+   {
+    "id": "520084",
+    "url": "https://www.dvidshub.net/video/520084",
+    "title": "Flight Simulators Tests Iowa Chopper Pilots",
+    "credit": "Video by Staff Sgt. David Brucher / 135th Mobile Public Affairs Detachment",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 14
+   },
+   {
+    "id": "520088",
+    "url": "https://www.dvidshub.net/video/520088",
+    "title": "'BAT' Simulator Tests Iowa Chopper Pilots",
+    "credit": "Video by Staff Sgt. David Brucher / 135th Mobile Public Affairs Detachment",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 39
+   },
+   {
+    "id": "141771",
+    "url": "https://www.dvidshub.net/video/141771",
+    "title": "Video Player is loading.",
+    "credit": "Video by Sgt. 1st Class Eric Pahon / 82nd Combat Aviation Brigade",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 17
+   },
+   {
+    "id": "978462",
+    "url": "https://www.dvidshub.net/video/978462",
+    "title": "706th AGRS F-16 Footage",
+    "credit": "Video by Senior Airman Isaiah Pedrazzini / 926th Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "841291",
+    "url": "https://www.dvidshub.net/video/841291",
+    "title": "Night Vision, Night Flying",
+    "credit": "Video by Staff Sgt. Jesenia Landaverde / 8th Fighter Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 6
+   },
+   {
+    "id": "612752",
+    "url": "https://www.dvidshub.net/video/612752",
+    "title": "Jersey Devil Night Flying",
+    "credit": "Video by Senior Airman Kenneth Brown / 177th Fighter Wing - NJ Air National Guard",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 17
+   },
+   {
+    "id": "141552",
+    "url": "https://www.dvidshub.net/video/141552",
+    "title": "Video Player is loading.",
+    "credit": "Video by Senior Master Sgt. Edward Snyder / 169th Fighter Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "938639",
+    "url": "https://www.dvidshub.net/video/938639",
+    "title": "LTU at Black Hawk simulator",
+    "credit": "Video by Maj. Travis Mueller / Joint Force Headquarters - Pennsylvania National Guard",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "345943",
+    "url": "https://www.dvidshub.net/video/345943",
+    "title": "Helicopter Simulator Demonstration",
+    "credit": "Video by Sgt. 1st Class Robert Freese / Arizona National Guard Public Affairs",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 17
+   },
+   {
+    "id": "290439",
+    "url": "https://www.dvidshub.net/video/290439",
+    "title": "Minuteman Report: Indiana Guardsmen Utilize Aviation Simulator",
+    "credit": "Video by Staff Sgt. Michael Davis / I.G. Brown Training and Education Center",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 13
+   },
+   {
+    "id": "724962",
+    "url": "https://www.dvidshub.net/video/724962",
+    "title": "Auto GCAS team presented with Collier Trophy",
+    "credit": "Video by Giancarlo Casem / 412th Test Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 27
+   },
+   {
+    "id": "699866",
+    "url": "https://www.dvidshub.net/video/699866",
+    "title": "Auto GCAS team presented with Collier Trophy",
+    "credit": "Video by Staff Sgt. Christopher Dyer / 412th Test Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 27
+   },
+   {
+    "id": "911718",
+    "url": "https://www.dvidshub.net/video/911718",
+    "title": "Crewed/uncrewed teaming made safer with defense aviation's new avoidance tech",
+    "credit": "Video by Timothy Boulay, Brittany Dickerson, Corinne Milligan and Charles Regner / Naval Air Warfare Center Aircraft Division",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 31
+   },
+   {
+    "id": "768106",
+    "url": "https://www.dvidshub.net/video/768106",
+    "title": "Digital Interface UH-60V Black Hawk Released",
+    "credit": "Video by Jerry Duenes / Corpus Christi Army Depot",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 7
+   },
+   {
+    "id": "53466",
+    "url": "https://www.dvidshub.net/video/53466",
+    "title": "UH-60M",
+    "credit": "Courtesy Video / AFN Afghanistan",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 39
+   },
+   {
+    "id": "543940",
+    "url": "https://www.dvidshub.net/video/543940",
+    "title": "Ceremony Debuts UH-60M Black Hawk",
+    "credit": "Video by Sgt. Andrew Kuhn / Ohio National Guard Public Affairs",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 25
+   },
+   {
+    "id": "510854",
+    "url": "https://www.dvidshub.net/video/510854",
+    "title": "UH-60M Black Hawk Helicopter Promotional",
+    "credit": "Video by Sgt. Andrew Kuhn / Ohio National Guard Public Affairs",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "1023394",
+    "url": "https://www.dvidshub.net/video/1023394",
+    "title": "UH-60 Black Hawk Rescue Hoist Training",
+    "credit": "Video by Rusty Rehl / Joint Force Headquarters - Idaho National Guard",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 4
+   },
+   {
+    "id": "962948",
+    "url": "https://www.dvidshub.net/video/962948",
+    "title": "PA HART hoist mission",
+    "credit": "Video by Sgt. Jessica Barb / 28th Expeditionary Combat Aviation Brigade",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "894930",
+    "url": "https://www.dvidshub.net/video/894930",
+    "title": "28th ECAB hoist training in Pittsburgh",
+    "credit": "Video by 2nd Lt. Kate McNelis / Joint Force Headquarters - Pennsylvania National Guard",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "777113",
+    "url": "https://www.dvidshub.net/video/777113",
+    "title": "F-22 AIM-9M WSEP Missile Shoot",
+    "credit": "Video by 1st Lt. Savanah Bray / 53rd Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "279714",
+    "url": "https://www.dvidshub.net/video/279714",
+    "title": "124th ASOS JTAC’s Take a Familiarization Flight on an F-16",
+    "credit": "Video by Staff Sgt. Robert Barney / 124th Fighter Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 36
+   },
+   {
+    "id": "279715",
+    "url": "https://www.dvidshub.net/video/279715",
+    "title": "Interview with 310th F-16 Pilot After Conducting a Familiarization Flight with a JTAC",
+    "credit": "Video by Staff Sgt. Robert Barney / 124th Fighter Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 23
+   },
+   {
+    "id": "360287",
+    "url": "https://www.dvidshub.net/video/360287",
+    "title": "Warren Grove Range Training",
+    "credit": "Video by Tech. Sgt. Matthew Hecht / 177th Fighter Wing - NJ Air National Guard",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 4
+   },
+   {
+    "id": "675567",
+    "url": "https://www.dvidshub.net/video/675567",
+    "title": "High-Altitude Mountain Environmental Training Strategy (HAMETS) Degraded Visual Environment (DVE) Training",
+    "credit": "Video by Sgt. Keegan Costello / 10th Combat Aviation Brigade",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 19
+   },
+   {
+    "id": "903219",
+    "url": "https://www.dvidshub.net/video/903219",
+    "title": "Dust Landing JPMRC 24-01",
+    "credit": "Video by Spc. Kevin Reece / 28th Public Affairs Detachment",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "732855",
+    "url": "https://www.dvidshub.net/video/732855",
+    "title": "HAATS Off!",
+    "credit": "Video by Staff Sgt. Moses Ward / Defense Media Activity - Army Productions",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 37
+   },
+   {
+    "id": "837190",
+    "url": "https://www.dvidshub.net/video/837190",
+    "title": "WSEP-E 22.06",
+    "credit": "Video by Staff Sgt. Betty Chevalier / 325th Fighter Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "521516",
+    "url": "https://www.dvidshub.net/video/521516",
+    "title": "F-22 Upgraded Missiles",
+    "credit": "Video by Airman 1st Class Amanda Dole / Joint Base Langley-Eustis",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 16
+   },
+   {
+    "id": "544632",
+    "url": "https://www.dvidshub.net/video/544632",
+    "title": "Night Operations Training - Arkansas Guardsmen in Flight",
+    "credit": "Video by Spc. Stephen Wright / Arkansas National Guard Public Affairs Office",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "681381",
+    "url": "https://www.dvidshub.net/video/681381",
+    "title": "Gunsmoke Competition",
+    "credit": "Video by Airman 1st Class Olivia Grooms and Airman 1st Class Dylan Murakami / Nellis Air Force Base",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "829719",
+    "url": "https://www.dvidshub.net/video/829719",
+    "title": "64th Aggressor Point of View at RED FLAG 22-1",
+    "credit": "Video by Tech. Sgt. Alexandre Montes / Nellis Air Force Base",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "942412",
+    "url": "https://www.dvidshub.net/video/942412",
+    "title": "B-Roll: Maryland Helicopter Aquatic Response Team conducts rescue missions in Western North Carolina after Hurricane Helene (vertical video)",
+    "credit": "Video by Staff Sgt. Julian Kemper / 175th Wing, Maryland Air National Guard",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "627793",
+    "url": "https://www.dvidshub.net/video/627793",
+    "title": "Pa. Guard rescues two S.C. flood survivors",
+    "credit": "Video by Capt. Travis Mueller / Joint Force Headquarters - Pennsylvania National Guard",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 55
+   },
+   {
+    "id": "619249",
+    "url": "https://www.dvidshub.net/video/619249",
+    "title": "Pa. Guardsmen Rescue Pennsylvanians",
+    "credit": "Video by Capt. Travis Mueller / 28th Expeditionary Combat Aviation Brigade",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "626002",
+    "url": "https://www.dvidshub.net/video/626002",
+    "title": "Pa. Guard flies search and rescue mission",
+    "credit": "Video by Capt. Travis Mueller / Joint Force Headquarters - Pennsylvania National Guard",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 6
+   },
+   {
+    "id": "929797",
+    "url": "https://www.dvidshub.net/video/929797",
+    "title": "Iowa National Guard MEDEVAC Rescue",
+    "credit": "Video by Spc. Armani Wilson / Joint Force Headquarters - Iowa National Guard",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 24
+   },
+   {
+    "id": "969532",
+    "url": "https://www.dvidshub.net/video/969532",
+    "title": "Idaho National Guard conducts 2 rescues in 9 days",
+    "credit": "Video by Mike Freeman / Idaho Army National Guard",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "781688",
+    "url": "https://www.dvidshub.net/video/781688",
+    "title": "Arizona National Guard Rescues Stranded Climbers in Sedona",
+    "credit": "Video by Maj. Kyle Key / Arizona National Guard Public Affairs",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "1015641",
+    "url": "https://www.dvidshub.net/video/1015641",
+    "title": "Idaho Army National Guard conducts search and rescue mission on Mount Idaho",
+    "credit": "Courtesy Video / Idaho Army National Guard",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "812635",
+    "url": "https://www.dvidshub.net/video/812635",
+    "title": "- South Carolina Helicopter Aquatic Rescue Team rescue at Big Ben Falls",
+    "credit": "Video by Sgt. 1st Class Roberto Di Giovine / South Carolina National Guard",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 60
+   },
+   {
+    "id": "569198",
+    "url": "https://www.dvidshub.net/video/569198",
+    "title": "Pennsylvania Guard members accomplish life-saving operation, rescue injured hunter in civilian-military mission",
+    "credit": "Courtesy Video / Joint Force Headquarters - Pennsylvania National Guard",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "887509",
+    "url": "https://www.dvidshub.net/video/887509",
+    "title": "Helicopter rescue training has Iowa Army and Air Guard training together",
+    "credit": "Video by Senior Master Sgt. Vincent De Groot / 185th Air Refueling Wing, Iowa Air National Guard",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 11
+   },
+   {
+    "id": "547677",
+    "url": "https://www.dvidshub.net/video/547677",
+    "title": "B-Roll footage of TXARNG conducting hoist rescue",
+    "credit": "Video by Malcolm McClendon / Texas Military Department",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 4
+   },
+   {
+    "id": "546668",
+    "url": "https://www.dvidshub.net/video/546668",
+    "title": "Oklahoma National Guardsmen ready the hoist",
+    "credit": "Video by Staff Sgt. Christopher Bruce / Oklahoma National Guard",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "192349",
+    "url": "https://www.dvidshub.net/video/192349",
+    "title": "Rescue Operation",
+    "credit": "Video by Tech. Sgt. Ray Aquino / 129th Rescue Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "805565",
+    "url": "https://www.dvidshub.net/video/805565",
+    "title": "MDNG Conducts Helicopter Hoist Rescue Training with HART",
+    "credit": "Video by Sgt. Chazz Kibler / 29th Mobile Public Affairs Detachment",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 12
+   },
+   {
+    "id": "938193",
+    "url": "https://www.dvidshub.net/video/938193",
+    "title": "Florida National Guard departs for search and rescue operations",
+    "credit": "Video by Staff Sgt. Christopher Vann / Florida National Guard Public Affairs Office",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "1015162",
+    "url": "https://www.dvidshub.net/video/1015162",
+    "title": "2026 Sioux Falls Air Show – Power on the Prairie - Hometown Hero Pre & Post Flight",
+    "credit": "Video by Senior Airman Drew Cyburt / 114th Fighter Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 30
+   },
+   {
+    "id": "324032",
+    "url": "https://www.dvidshub.net/video/324032",
+    "title": "Vincent Jackson Flies with Thunderbirds",
+    "credit": "Video by Airman 1st Class Carly Thompson / 6th Air Refueling Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "848295",
+    "url": "https://www.dvidshub.net/video/848295",
+    "title": "Michael Lents receives Hometown Hero Flight with Thunderbirds",
+    "credit": "Video by Senior Airman Dakota Carter / Grand Forks Air Force Base",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 15
+   },
+   {
+    "id": "958339",
+    "url": "https://www.dvidshub.net/video/958339",
+    "title": "Hometown Hero 2025",
+    "credit": "Video by Staff Sgt. Sean Hetz / Nellis Air Force Base",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 27
+   },
+   {
+    "id": "960316",
+    "url": "https://www.dvidshub.net/video/960316",
+    "title": "Texas nurse receives USAF Thunderbirds Hometown Hero flight",
+    "credit": "Video by Airman Caleb Schellenberg / 7th Bomb Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 11
+   },
+   {
+    "id": "965724",
+    "url": "https://www.dvidshub.net/video/965724",
+    "title": "Beale Hometown Hero",
+    "credit": "Video by Airman 1st Class Chelsea Arana / 9th Reconnaissance Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 29
+   },
+   {
+    "id": "969661",
+    "url": "https://www.dvidshub.net/video/969661",
+    "title": "Soaring into Retirement: Superintendent Honored with Thunderbird Flight",
+    "credit": "Video by Breonna Summers / 72nd Air Base Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "976754",
+    "url": "https://www.dvidshub.net/video/976754",
+    "title": "Dr. Barbara Gruber suits up as the 2025 Joint Base Andrews Air Show Hometown Hero",
+    "credit": "Video by Staff Sgt. Demond Mcghee / 316th Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 4
+   },
+   {
+    "id": "937307",
+    "url": "https://www.dvidshub.net/video/937307",
+    "title": "D.C. National Guard Commanding General takes to the sky in F-16 during familiarization flight",
+    "credit": "Video by Master Sgt. Arthur Wright / DC National Guard",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 5
+   },
+   {
+    "id": "978065",
+    "url": "https://www.dvidshub.net/video/978065",
+    "title": "D.C. National Guard Commanding General receives familiarization flight in an F-16D",
+    "credit": "Video by Master Sgt. Arthur Wright / DC National Guard",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "978066",
+    "url": "https://www.dvidshub.net/video/978066",
+    "title": "D.C. National Guard Commanding General receives familiarization flight in an F-16D",
+    "credit": "Video by Master Sgt. Arthur Wright / DC National Guard",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 19
+   },
+   {
+    "id": "993426",
+    "url": "https://www.dvidshub.net/video/993426",
+    "title": "57th Wing Commander Brig. Gen. Lawrence Sullivan flies F-16 sortie",
+    "credit": "Video by Airman 1st Class Heather Amador Paulino / Nellis Air Force Base",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "968806",
+    "url": "https://www.dvidshub.net/video/968806",
+    "title": "64th AGRS commander fini flight",
+    "credit": "Video by Staff Sgt. Jose Miguel Tamondong / Nellis Air Force Base",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "809567",
+    "url": "https://www.dvidshub.net/video/809567",
+    "title": "NHL player trains like an F-16 pilot",
+    "credit": "Video by Airman 1st Class Adrian Salazar / 49th Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "744862",
+    "url": "https://www.dvidshub.net/video/744862",
+    "title": "Blue Angel and Thunderbird fly backseat in pilot swap",
+    "credit": "Video by Petty Officer 2nd Class Christopher Gordon / Navy Flight Demonstration Squadron",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "751838",
+    "url": "https://www.dvidshub.net/video/751838",
+    "title": "140th Wing Colorado Air National Guard Flyover - Cockpit Views",
+    "credit": "Video by 2nd Lt. Benjamin Kimball / 140th Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "696836",
+    "url": "https://www.dvidshub.net/video/696836",
+    "title": "Crew Chief Black Hawk Ride",
+    "credit": "Video by Senior Airman Frederick Brown and Sgt. Deion Collins / AFN Humphreys",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 5
+   },
+   {
+    "id": "478356",
+    "url": "https://www.dvidshub.net/video/478356",
+    "title": "UH 60 Pilot in Romania",
+    "credit": "Video by Staff Sgt. Edward Omelina / 115th Mobile Public Affairs Detachment",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 16
+   },
+   {
+    "id": "118534",
+    "url": "https://www.dvidshub.net/video/118534",
+    "title": "Video Player is loading.",
+    "credit": "Video by Cpl. Clayton Rogers / AFN Afghanistan",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 31
+   },
+   {
+    "id": "118535",
+    "url": "https://www.dvidshub.net/video/118535",
+    "title": "Video Player is loading.",
+    "credit": "Video by Cpl. Clayton Rogers / AFN Afghanistan",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 9
+   },
+   {
+    "id": "862470",
+    "url": "https://www.dvidshub.net/video/862470",
+    "title": "UH-60 Flight Over Romania Oct. 26, 2022",
+    "credit": "Video by Maj. Brett Sullenger / 2nd Brigade Combat Team, 101st Airborne Division (AA) Public Affairs",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "387454",
+    "url": "https://www.dvidshub.net/video/387454",
+    "title": "UH-60L Flight with A. Company",
+    "credit": "Video by Tech. Sgt. Matthew Pardini / 1st Combat Camera Squadron",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 18
+   },
+   {
+    "id": "968021",
+    "url": "https://www.dvidshub.net/video/968021",
+    "title": "RC25 UH-60 helicopter familiarization",
+    "credit": "Video by Sgt. James Toohey / U.S. Central Command Public Affairs",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 12
+   },
+   {
+    "id": "954604",
+    "url": "https://www.dvidshub.net/video/954604",
+    "title": "U.S. Army pilots and gunners train on the Sikorsky UH-60 Black Hawk",
+    "credit": "Video by Pfc. Jolene Cintron / 5th Mobile Public Affairs Detachment",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "954603",
+    "url": "https://www.dvidshub.net/video/954603",
+    "title": "U.S. Army pilots and gunners train on the Sikorsky UH-60 Black Hawk",
+    "credit": "Video by Pfc. Jolene Cintron / 5th Mobile Public Affairs Detachment",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 3
+   },
+   {
+    "id": "867058",
+    "url": "https://www.dvidshub.net/video/867058",
+    "title": "HH 60M Hoist Operations",
+    "credit": "Video by Sgt. 1st Class Jason Alvarez / Joint Force Headquarters - Vermont National Guard Public Affairs",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "867064",
+    "url": "https://www.dvidshub.net/video/867064",
+    "title": "HH 60M Blackhawk Hoist Operations",
+    "credit": "Video by Sgt. 1st Class Jason Alvarez / Joint Force Headquarters - Vermont National Guard Public Affairs",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "621009",
+    "url": "https://www.dvidshub.net/video/621009",
+    "title": "HH-60M Blackhawk B-Roll",
+    "credit": "Video by Pfc. Matthew Marcellus / 24th Theater Public Affairs Support Element",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "1001390",
+    "url": "https://www.dvidshub.net/video/1001390",
+    "title": "3rd Combat Aviation Brigade Soldiers operate HH-60M Black Hawk near Mihail Kogălniceanu Air Base",
+    "credit": "Video by Sgt. Alex Romanack / 366th Mobile Public Affairs Detachment",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 2
+   },
+   {
+    "id": "593176",
+    "url": "https://www.dvidshub.net/video/593176",
+    "title": "UH-60M Black Hawk Helicopter",
+    "credit": "Video by Sgt. Andrew Kuhn / Ohio National Guard Public Affairs",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "973119",
+    "url": "https://www.dvidshub.net/video/973119",
+    "title": "UH-60V Black Hawk Tour",
+    "credit": "Video by Sgt. Jamie Robinson / 12th Combat Aviation Brigade",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 20
+   },
+   {
+    "id": "867049",
+    "url": "https://www.dvidshub.net/video/867049",
+    "title": "HH 60M Hoist Operations",
+    "credit": "Video by Sgt. 1st Class Jason Alvarez / Joint Force Headquarters - Vermont National Guard Public Affairs",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "867063",
+    "url": "https://www.dvidshub.net/video/867063",
+    "title": "HH 60M Blackhawk Hoist Operations",
+    "credit": "Video by Sgt. 1st Class Jason Alvarez / Joint Force Headquarters - Vermont National Guard Public Affairs",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "414581",
+    "url": "https://www.dvidshub.net/video/414581",
+    "title": "Black Hawk Hoist Training in Kosovo",
+    "credit": "Video by Sgt. David Marquis / KFOR Regional Command East",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 17
+   },
+   {
+    "id": "409428",
+    "url": "https://www.dvidshub.net/video/409428",
+    "title": "Patriot Warrior 2015: UH-60 Black Hawk Medevac Hoist",
+    "credit": "Video by Airman 1st Class Natalie O'Dell / 1st Combat Camera Squadron",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "1001171",
+    "url": "https://www.dvidshub.net/video/1001171",
+    "title": "Wisconsin Army National Guard Conducts Hoist Training",
+    "credit": "Video by Staff Sgt. Cesar Salazar Jr. / 112th Mobile Public Affairs Detachment",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 54
+   },
+   {
+    "id": "1001352",
+    "url": "https://www.dvidshub.net/video/1001352",
+    "title": "Wisconsin Army National Guard Conducts Hoist Training",
+    "credit": "Video by Staff Sgt. Alex Soliday / 112th Mobile Public Affairs Detachment",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 3
+   },
+   {
+    "id": "874435",
+    "url": "https://www.dvidshub.net/video/874435",
+    "title": "Hoist training",
+    "credit": "Video by 2nd Lt. Kate McNelis / 28th Expeditionary Combat Aviation Brigade",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "779896",
+    "url": "https://www.dvidshub.net/video/779896",
+    "title": "Hoist",
+    "credit": "Video by Capt. Travis Mueller / 28th Expeditionary Combat Aviation Brigade",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "846325",
+    "url": "https://www.dvidshub.net/video/846325",
+    "title": "Live UH-60 Black Hawk hoist training at Fort McCoy's Big Sandy Lake, Part I",
+    "credit": "Video by Scott Sturkol / Fort McCoy Public Affairs Office",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "846332",
+    "url": "https://www.dvidshub.net/video/846332",
+    "title": "Live UH-60 Black Hawk hoist training at Fort McCoy's Big Sandy Lake, Part III",
+    "credit": "Video by Scott Sturkol / Fort McCoy Public Affairs Office",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "848023",
+    "url": "https://www.dvidshub.net/video/848023",
+    "title": "UH-60 Black Hawk live-hoist training at Fort McCoy's Big Sandy Lake, Part VI",
+    "credit": "Video by Scott Sturkol / Fort McCoy Public Affairs Office",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "851150",
+    "url": "https://www.dvidshub.net/video/851150",
+    "title": "UH-60 Black Hawk hoist training at Fort McCoy's Big Sandy Lake",
+    "credit": "Video by Greg Mason / Fort McCoy Multimedia Visual Information Branch",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "847106",
+    "url": "https://www.dvidshub.net/video/847106",
+    "title": "UH-60 Black Hawk hoist training at Fort McCoy's Big Sandy Lake",
+    "credit": "Video by Greg Mason / Fort McCoy Multimedia Visual Information Branch",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 4
+   },
+   {
+    "id": "674733",
+    "url": "https://www.dvidshub.net/video/674733",
+    "title": "F-16 VDT Provides Media Ride (B-Roll)",
+    "credit": "Video by Senior Airman Kathryn Reaves / 20th Fighter Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "512220",
+    "url": "https://www.dvidshub.net/video/512220",
+    "title": "F-16 Viper Demo Team Media Kit",
+    "credit": "Video by Airman 1st Class Sean Sweeney / 20th Fighter Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 8
+   },
+   {
+    "id": "742411",
+    "url": "https://www.dvidshub.net/video/742411",
+    "title": "F-16 Viper Demo Team Media Kit 2020",
+    "credit": "Video by Senior Airman Benjamin Ingold / 20th Fighter Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 15
+   },
+   {
+    "id": "994505",
+    "url": "https://www.dvidshub.net/video/994505",
+    "title": "Experiencing the Backseat",
+    "credit": "Video by Jamie Chapman, Airman 1st Class Anisha Deaton, Samuel Morse and Airman 1st Class Caitlyn Simmons / 2D Audiovisual Squadron",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 30
+   },
+   {
+    "id": "994488",
+    "url": "https://www.dvidshub.net/video/994488",
+    "title": "Experiencing the Backseat (Broadcast Edit)",
+    "credit": "Video by Jamie Chapman, Airman 1st Class Anisha Deaton, Samuel Morse and Airman 1st Class Caitlyn Simmons / 2D Audiovisual Squadron",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 21
+   },
+   {
+    "id": "938143",
+    "url": "https://www.dvidshub.net/video/938143",
+    "title": "Reel of F-16 Fighting Falcon flight with Bulgarian President",
+    "credit": "Video by Airman Synsere Howard / 31st Fighter Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "857696",
+    "url": "https://www.dvidshub.net/video/857696",
+    "title": "HUD Video - 19 SEPT 2021",
+    "credit": "Courtesy Video / Chief of Naval Air Training",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 12
+   },
+   {
+    "id": "459074",
+    "url": "https://www.dvidshub.net/video/459074",
+    "title": "F-16 GBU39 Munitions Drop",
+    "credit": "Video by Staff Sgt. Erin Mills / 2D Audiovisual Squadron",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "108764",
+    "url": "https://www.dvidshub.net/video/108764",
+    "title": "Video Player is loading.",
+    "credit": "Video by Tech. Sgt. Timothy Kinnan / Joint Force Headquarters - Iowa National Guard",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 32
+   },
+   {
+    "id": "30861",
+    "url": "https://www.dvidshub.net/video/30861",
+    "title": "Air Force Report: Reporter Rides F-16",
+    "credit": "Courtesy Video / Defense Media Activity - Air Force",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 14
+   },
+   {
+    "id": "300288",
+    "url": "https://www.dvidshub.net/video/300288",
+    "title": "F-16D Fighting Falcon, B-Roll",
+    "credit": "Video by Tech. Sgt. Matthew Hecht / 177th Fighter Wing - NJ Air National Guard",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "288174",
+    "url": "https://www.dvidshub.net/video/288174",
+    "title": "Eric Bass of Shinedown Flies with the Thunderbirds",
+    "credit": "Video by Staff Sgt. Jarid Watson / Air Force Thunderbirds",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 38
+   },
+   {
+    "id": "847329",
+    "url": "https://www.dvidshub.net/video/847329",
+    "title": "Chief Challenged by Final Flight",
+    "credit": "Video by Staff Sgt. Matthew Kakaris and Airman 1st Class Leon Redfern / 35th Fighter Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 20
+   },
+   {
+    "id": "479320",
+    "url": "https://www.dvidshub.net/video/479320",
+    "title": "New Jersey F-16 Maintainers and Pilot Checks Part 1",
+    "credit": "Video by Airman 1st Class Christina Ensley / Nellis Air Force Base",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "960336",
+    "url": "https://www.dvidshub.net/video/960336",
+    "title": "F-16 Viper Demonstration Team takes on the Heritage Flight Training Course 2025",
+    "credit": "Video by Senior Airman Steven Cardo / 20th Fighter Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "694540",
+    "url": "https://www.dvidshub.net/video/694540",
+    "title": "UH-60 Black Hawk Experience",
+    "credit": "Video by Senior Airman Frederick Brown and Sgt. Deion Collins / AFN Humphreys",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 15
+   },
+   {
+    "id": "890808",
+    "url": "https://www.dvidshub.net/video/890808",
+    "title": "UH-60M Black Hawk Nap of the Earth",
+    "credit": "Video by Capt. Kyle Abraham / 16th Combat Aviation Brigade",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "893311",
+    "url": "https://www.dvidshub.net/video/893311",
+    "title": "28th ECAB pilots conduct Black Hawk flight training",
+    "credit": "Video by Spc. David Thomson / 109th Mobile Public Affairs Detachment",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 1
+   },
+   {
+    "id": "809373",
+    "url": "https://www.dvidshub.net/video/809373",
+    "title": "UH-60 Black Hawk helicopters at Fort Rucker, Alabama.",
+    "credit": "Video by Lt. Col. Andy Thaggard / Aviation Center of Excellence",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "872805",
+    "url": "https://www.dvidshub.net/video/872805",
+    "title": "People Like Us: UH-60 Black Hawk Instructor Pilot",
+    "credit": "Video by Staff Sgt. Terry Rajsombath / Joint Force Headquarters - Rhode Island National Guard",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 1
+   },
+   {
+    "id": "865244",
+    "url": "https://www.dvidshub.net/video/865244",
+    "title": "Inside the mind of a Black Hawk pilot (IT)",
+    "credit": "Courtesy Video / Natochannel",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 15
+   },
+   {
+    "id": "956670",
+    "url": "https://www.dvidshub.net/video/956670",
+    "title": "Army Adventure Semi 3: Aviation Simulator",
+    "credit": "Video by Zoran Raduka / U.S. Army Marketing and Engagement Brigade",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 23
+   },
+   {
+    "id": "709752",
+    "url": "https://www.dvidshub.net/video/709752",
+    "title": "Black Hawk Aircrew Trainer",
+    "credit": "Video by Joseph Mendiola / U.S. Army Combat Capabilities Development Command Aviation and Missile Center",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 50
+   },
+   {
+    "id": "938640",
+    "url": "https://www.dvidshub.net/video/938640",
+    "title": "LTU at Black Hawk simulator",
+    "credit": "Video by Maj. Travis Mueller / Joint Force Headquarters - Pennsylvania National Guard",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 12
+   },
+   {
+    "id": "643437",
+    "url": "https://www.dvidshub.net/video/643437",
+    "title": "UH-60 Flight Simulator Routine Check",
+    "credit": "Video by Eugen Warkentin / Training Support Activity Europe",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "390750",
+    "url": "https://www.dvidshub.net/video/390750",
+    "title": "Pre-Flight Checks of a UH-60 Black Hawk",
+    "credit": "Video by Pascal Demeuldre / Training Support Activity Europe",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "513310",
+    "url": "https://www.dvidshub.net/video/513310",
+    "title": "UH-60 Black Hawk Helicopter Traffic Pattern Training Flight",
+    "credit": "Video by Charles Rosemond / Training Support Activity Europe",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "521312",
+    "url": "https://www.dvidshub.net/video/521312",
+    "title": "UH-60 Black Hawk Helicopter Traffic Pattern Training Flight",
+    "credit": "Video by Charles Rosemond / Training Support Activity Europe",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "519477",
+    "url": "https://www.dvidshub.net/video/519477",
+    "title": "UH-60 Black Hawk Helicopter Maintenance Test Flight",
+    "credit": "Video by Charles Rosemond / Training Support Activity Europe",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "866113",
+    "url": "https://www.dvidshub.net/video/866113",
+    "title": "UH-60M Blackhawk Pre-Flight",
+    "credit": "Video by Angela Grice / U.S. Army Combat Readiness Center",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 36
+   },
+   {
+    "id": "808533",
+    "url": "https://www.dvidshub.net/video/808533",
+    "title": "UH-60M Black Hawk Helicopter APU Start",
+    "credit": "Video by Lt. Col. Andy Thaggard / Aviation Center of Excellence",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 1
+   },
+   {
+    "id": "643596",
+    "url": "https://www.dvidshub.net/video/643596",
+    "title": "F-22 Simulator Install",
+    "credit": "Video by Airman 1st Class Stephanie Gelardo / Nellis Air Force Base",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "341979",
+    "url": "https://www.dvidshub.net/video/341979",
+    "title": "Retired Service Member Builds F-16 Simulator",
+    "credit": "Video by Senior Airman Tory Patterson / Joint Base Langley-Eustis",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 19
+   },
+   {
+    "id": "842389",
+    "url": "https://www.dvidshub.net/video/842389",
+    "title": "8CES Respond to Simulated F-16 Fire Emergency",
+    "credit": "Video by Tech. Sgt. James Cason / 8th Fighter Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 6
+   },
+   {
+    "id": "688450",
+    "url": "https://www.dvidshub.net/video/688450",
+    "title": "Two PTN Graduates Finish F-16 Training",
+    "credit": "Video by Master Sgt. Mindy Bloem / 149th Fighter Wing (Texas Air National Guard)",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 36
+   },
+   {
+    "id": "769192",
+    "url": "https://www.dvidshub.net/video/769192",
+    "title": "Black Hawk flight",
+    "credit": "Video by Capt. Travis Mueller / 28th Expeditionary Combat Aviation Brigade",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "408784",
+    "url": "https://www.dvidshub.net/video/408784",
+    "title": null,
+    "credit": "Video by Spc. Lisa Lariscy / 117th Mobile Public Affairs Detachment (Hawaii)",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "554615",
+    "url": "https://www.dvidshub.net/video/554615",
+    "title": null,
+    "credit": "Video by Staff Sgt. Balinda ONeal / 134th Public Affairs Detachment",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "809003",
+    "url": "https://www.dvidshub.net/video/809003",
+    "title": "Black Hawk Training",
+    "credit": "Video by Lt. Col. Andy Thaggard / Aviation Center of Excellence",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "921867",
+    "url": "https://www.dvidshub.net/video/921867",
+    "title": "UH-60 Black Hawk Training",
+    "credit": "Video by Lt. Col. Andy Thaggard / Aviation Center of Excellence",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "921866",
+    "url": "https://www.dvidshub.net/video/921866",
+    "title": "UH-60 Black Hawk Training",
+    "credit": "Video by Lt. Col. Andy Thaggard / Aviation Center of Excellence",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "978476",
+    "url": "https://www.dvidshub.net/video/978476",
+    "title": "BROLL: UH60 flight during Enduring Partners in Thailand",
+    "credit": "Video by Master Sgt. Brandy Burke / Washington Air National Guard",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "975937",
+    "url": "https://www.dvidshub.net/video/975937",
+    "title": "BROLL: UH60 flight during Enduring Partners in Thailand",
+    "credit": "Video by Sgt. Matthew Sprowl / Washington Air National Guard",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "843894",
+    "url": "https://www.dvidshub.net/video/843894",
+    "title": "UH-60M Blackhawk helicopter B-roll over river flight Korea",
+    "credit": "Video by Capt. Frank Spatt / 2nd Combat Aviation Brigade",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "969484",
+    "url": "https://www.dvidshub.net/video/969484",
+    "title": "Civil Air Patrol ORARNG Orientation Flights",
+    "credit": "Video by Staff Sgt. Emily Simonson / Oregon National Guard Public Affairs Office",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 3
+   },
+   {
+    "id": "139070",
+    "url": "https://www.dvidshub.net/video/139070",
+    "title": "Video Player is loading.",
+    "credit": "Video by Petty Officer 2nd Class Zulema Sotelo / AFN Afghanistan",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 15
+   },
+   {
+    "id": "139074",
+    "url": "https://www.dvidshub.net/video/139074",
+    "title": "Video Player is loading.",
+    "credit": "Video by Petty Officer 2nd Class Zulema Sotelo / AFN Afghanistan",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 103
+   },
+   {
+    "id": "812913",
+    "url": "https://www.dvidshub.net/video/812913",
+    "title": "Members of the U.S. Women's Olympic Soccer Team visit an all female flight crew with the 12th Combat Aviation Brigade",
+    "credit": "Video by Pfc. Kylee Marshall and Sgt. Brian Moody / AFN Bavaria",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 12
+   },
+   {
+    "id": "842586",
+    "url": "https://www.dvidshub.net/video/842586",
+    "title": "Soldiers fold Black Hawks for transport to Norway for Swift Response 22",
+    "credit": "Video by Staff Sgt. Thomas Mort / 12th Combat Aviation Brigade",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "330709",
+    "url": "https://www.dvidshub.net/video/330709",
+    "title": "Air Force Report: Hometown Hero",
+    "credit": "Video by Staff Sgt. Holly Patterson / Defense Media Activity - Proper",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 23
+   },
+   {
+    "id": "773668",
+    "url": "https://www.dvidshub.net/video/773668",
+    "title": "F-16s fly over U.S. Central Command area of responsibility",
+    "credit": "Video by Senior Airman Roslyn Ward / United States Air Forces Central",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "890361",
+    "url": "https://www.dvidshub.net/video/890361",
+    "title": "F-16 Viper Demonstration Team Aerial Cockpit Footage",
+    "credit": "Video by Staff Sgt. Dallin Wrye / 20th Fighter Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "818343",
+    "url": "https://www.dvidshub.net/video/818343",
+    "title": "Inside Cockpit view of F-16 landing at BTV",
+    "credit": "Video by Senior Master Sgt. Michael Davis / 158th Fighter Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "750800",
+    "url": "https://www.dvidshub.net/video/750800",
+    "title": "Luke, Arizona ANG salute Phoenix (Cockpit view)",
+    "credit": "Video by Senior Airman Alexander Cook / 56th Fighter Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "1003538",
+    "url": "https://www.dvidshub.net/video/1003538",
+    "title": "B-Roll and Cockpit Footage of F-35 and F-16's at Luke AFB",
+    "credit": "Video by Senior Airman Belinda Guachun-Chichay / 56th Fighter Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "966060",
+    "url": "https://www.dvidshub.net/video/966060",
+    "title": "F-16 Pilot B-Roll",
+    "credit": "Video by Airman 1st Class Addie Peterson / 148th Fighter Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "669814",
+    "url": "https://www.dvidshub.net/video/669814",
+    "title": "158th FW Aerial F-16 Footage",
+    "credit": "Courtesy Video / 158th Fighter Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "299001",
+    "url": "https://www.dvidshub.net/video/299001",
+    "title": "F-16D Fighting Falcon Cockpit WESP Exercise 2",
+    "credit": "Video by Staff Sgt. Robert Harnden / 2D Audiovisual Squadron",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 18
+   },
+   {
+    "id": "298997",
+    "url": "https://www.dvidshub.net/video/298997",
+    "title": "F-16D Fighting Falcon Cockpit WSEP Exercise 1",
+    "credit": "Video by Staff Sgt. Robert Harnden / 2D Audiovisual Squadron",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "450824",
+    "url": "https://www.dvidshub.net/video/450824",
+    "title": "Hugh Jackman Soars in Texas F-16",
+    "credit": "Video by Senior Airman Benedick Calantas / 301st Fighter Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 6
+   },
+   {
+    "id": "440748",
+    "url": "https://www.dvidshub.net/video/440748",
+    "title": "Go Pro Cockpit footage",
+    "credit": "Video by Staff Sgt. Thomas Abreu / 173rd Fighter Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "743290",
+    "url": "https://www.dvidshub.net/video/743290",
+    "title": "F-35A Demo Team Avionics Member flies in an F-16",
+    "credit": "Video by Capt. Kippun Sumner / F-35A Demo Team",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 69
+   },
+   {
+    "id": "841758",
+    "url": "https://www.dvidshub.net/video/841758",
+    "title": "Thunderbirds Beach Cockpit Footage",
+    "credit": "Video by Tech. Sgt. Nicolas Myers / Air Force Thunderbirds",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "814847",
+    "url": "https://www.dvidshub.net/video/814847",
+    "title": "Thunderbirds Diamond Cockpit Footage",
+    "credit": "Video by Tech. Sgt. Nicolas Myers / Air Force Thunderbirds",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "814866",
+    "url": "https://www.dvidshub.net/video/814866",
+    "title": "Thunderbirds Diamond Cockpit Footage",
+    "credit": "Video by Tech. Sgt. Nicolas Myers / Air Force Thunderbirds",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "821826",
+    "url": "https://www.dvidshub.net/video/821826",
+    "title": "Thunderbirds 2021 Final Show Cockpit Footage",
+    "credit": "Video by Tech. Sgt. Nicolas Myers / Air Force Thunderbirds",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "823593",
+    "url": "https://www.dvidshub.net/video/823593",
+    "title": "Thunderbirds Practice Cockpit Footage (Left Wing Perspective)",
+    "credit": "Video by Tech. Sgt. Nicolas Myers / Air Force Thunderbirds",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "594586",
+    "url": "https://www.dvidshub.net/video/594586",
+    "title": "2018 F-22 Raptor Demo Team Media Kit",
+    "credit": "Video by Airman 1st Class Amanda Dole / Joint Base Langley-Eustis",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 94
+   },
+   {
+    "id": "594588",
+    "url": "https://www.dvidshub.net/video/594588",
+    "title": "2018 F-22 Raptor Demo Team Media Kit",
+    "credit": "Video by Airman 1st Class Amanda Dole / Joint Base Langley-Eustis",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "594591",
+    "url": "https://www.dvidshub.net/video/594591",
+    "title": "2018 F-22 Raptor Demo Team Media Kit",
+    "credit": "Video by Airman 1st Class Amanda Dole / Joint Base Langley-Eustis",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 48
+   },
+   {
+    "id": "594593",
+    "url": "https://www.dvidshub.net/video/594593",
+    "title": "2018 F-22 Raptor Demo Team Media Kit",
+    "credit": "Video by Airman 1st Class Amanda Dole / Joint Base Langley-Eustis",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 13
+   },
+   {
+    "id": "594595",
+    "url": "https://www.dvidshub.net/video/594595",
+    "title": "2018 F-22 Raptor Demo Team Media Kit",
+    "credit": "Video by Airman 1st Class Amanda Dole / Joint Base Langley-Eustis",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": false,
+    "speech_segments": null
+   },
+   {
+    "id": "594596",
+    "url": "https://www.dvidshub.net/video/594596",
+    "title": "2018 F-22 Raptor Demo Team Media Kit",
+    "credit": "Video by Airman 1st Class Amanda Dole / Joint Base Langley-Eustis",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 27
+   },
+   {
+    "id": "993009",
+    "url": "https://www.dvidshub.net/video/993009",
+    "title": "F-22 Raptor Aerial Demonstration Team Cockpit B-Roll",
+    "credit": "Video by Staff Sgt. Michael Bowman / 1st Fighter Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "993006",
+    "url": "https://www.dvidshub.net/video/993006",
+    "title": "F-22 Raptor Aerial Demonstration Team Cockpit B-Roll",
+    "credit": "Video by Staff Sgt. Michael Bowman / 1st Fighter Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "993003",
+    "url": "https://www.dvidshub.net/video/993003",
+    "title": "F-22 Raptor Aerial Demonstration Team Cockpit B-Roll",
+    "credit": "Video by Staff Sgt. Michael Bowman / 1st Fighter Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "1012986",
+    "url": "https://www.dvidshub.net/video/1012986",
+    "title": "The Great Texas Air Show from the F-22 Cockpit",
+    "credit": "Video by Staff Sgt. Lauren Diaz / 1st Fighter Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "1012985",
+    "url": "https://www.dvidshub.net/video/1012985",
+    "title": "The Great Texas Air Show from the F-22 Cockpit",
+    "credit": "Video by Staff Sgt. Lauren Diaz / 1st Fighter Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "986713",
+    "url": "https://www.dvidshub.net/video/986713",
+    "title": "Cockpit Footage: F-22 Raptor Demonstration at Miami Beach",
+    "credit": "Video by Staff Sgt. Lauren Diaz / 1st Fighter Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "986710",
+    "url": "https://www.dvidshub.net/video/986710",
+    "title": "Cockpit Footage: F-22 Raptor Demonstration at Miami Beach",
+    "credit": "Video by Staff Sgt. Lauren Diaz / 1st Fighter Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "1013540",
+    "url": "https://www.dvidshub.net/video/1013540",
+    "title": "Salute to America 250 from the F-22 Demonstration Team cockpit",
+    "credit": "Video by Staff Sgt. Mary Bowers / 1st Fighter Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "1013538",
+    "url": "https://www.dvidshub.net/video/1013538",
+    "title": "Salute to America 250 from the F-22 Demonstration Team cockpit",
+    "credit": "Video by Staff Sgt. Mary Bowers / 1st Fighter Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "1013533",
+    "url": "https://www.dvidshub.net/video/1013533",
+    "title": "Salute to America 250 from the F-22 Demonstration Team cockpit",
+    "credit": "Video by Staff Sgt. Mary Bowers / 1st Fighter Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "450838",
+    "url": "https://www.dvidshub.net/video/450838",
+    "title": "Hugh Jackman F-16 Flight",
+    "credit": "Video by Petty Officer 2nd Class Jason Howard / Naval Air Station Fort Worth Joint Reserve Base",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 13
+   },
+   {
+    "id": "582823",
+    "url": "https://www.dvidshub.net/video/582823",
+    "title": "Reggie Wayne flies with Viper Demo",
+    "credit": "Video by Senior Airman Sean Sweeney / Air Combat Command",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "583087",
+    "url": "https://www.dvidshub.net/video/583087",
+    "title": "Elizabeth Banks flies with the Viper Demo Team",
+    "credit": "Video by Senior Airman Sean Sweeney / Air Combat Command",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 7
+   },
+   {
+    "id": "628755",
+    "url": "https://www.dvidshub.net/video/628755",
+    "title": "Brian Marshall: Fam Flight",
+    "credit": "Video by Airman 1st Class Daniella Pena-Pavao / 33rd Fighter Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 8
+   },
+   {
+    "id": "691139",
+    "url": "https://www.dvidshub.net/video/691139",
+    "title": "A Unique Fam Flight",
+    "credit": "Video by Airman 1st Class Jacob Wongwai / 56th Fighter Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 17
+   },
+   {
+    "id": "698731",
+    "url": "https://www.dvidshub.net/video/698731",
+    "title": "SCANG Flies U.S. Ambassador to Colombia",
+    "credit": "Video by Master Sgt. Carl Clegg / 169th Fighter Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 19
+   },
+   {
+    "id": "732178",
+    "url": "https://www.dvidshub.net/video/732178",
+    "title": "Georgia Teacher of the Year Thunderbirds Flight",
+    "credit": "Video by Senior Airman Joshua Kincaid / 94th Airlift Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 50
+   },
+   {
+    "id": "547360",
+    "url": "https://www.dvidshub.net/video/547360",
+    "title": "Hometown Hero Takes A Ride With USAF Thunderbirds",
+    "credit": "Video by Tech. Sgt. Rachel Barton / 127th Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 24
+   },
+   {
+    "id": "560308",
+    "url": "https://www.dvidshub.net/video/560308",
+    "title": "Dr. Brian Smith's Hometown Hero Flight with the USAF Thunderbirds",
+    "credit": "Video by Tech. Sgt. Rachel Barton / 127th Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 24
+   },
+   {
+    "id": "466097",
+    "url": "https://www.dvidshub.net/video/466097",
+    "title": "2016 Cannon Air Force Base Air Show Hometown Hero Flight with Thunderbirds.",
+    "credit": "Video by Airman 1st Class Brendan Miller / 27th Special Operations Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 11
+   },
+   {
+    "id": "361896",
+    "url": "https://www.dvidshub.net/video/361896",
+    "title": "USAF Thunderbirds - Hometown Hero Flight",
+    "credit": "Video by Senior Airman Jaye Legate / 366th Fighter Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 79
+   },
+   {
+    "id": "667352",
+    "url": "https://www.dvidshub.net/video/667352",
+    "title": "Thunderbirds Hometown Hero Flight",
+    "credit": "Video by Airman 1st Class Christina Graves / 355th Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "668884",
+    "url": "https://www.dvidshub.net/video/668884",
+    "title": "Hometown Hero Flies with Thunderbirds",
+    "credit": "Video by Tech. Sgt. Traci Keller / 60th Air Mobility Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 46
+   },
+   {
+    "id": "668889",
+    "url": "https://www.dvidshub.net/video/668889",
+    "title": "Hometown Hero Flies with Thunderbirds",
+    "credit": "Video by Tech. Sgt. Traci Keller / 60th Air Mobility Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 107
+   },
+   {
+    "id": "721719",
+    "url": "https://www.dvidshub.net/video/721719",
+    "title": "Hometown Hero Flight",
+    "credit": "Video by Senior Airman Ilyana Escalona / 82nd Training Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 41
+   },
+   {
+    "id": "922508",
+    "url": "https://www.dvidshub.net/video/922508",
+    "title": "Hometown Hero USAF Thunderbirds",
+    "credit": "Video by Benjamin Remmert / 82nd Training Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 22
+   },
+   {
+    "id": "954685",
+    "url": "https://www.dvidshub.net/video/954685",
+    "title": "Through the cockpit of a Black Hawk helicopter",
+    "credit": "Video by Maj. Karla Evans / South Carolina National Guard",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "508618",
+    "url": "https://www.dvidshub.net/video/508618",
+    "title": "UH-60 Flight Simulator",
+    "credit": "Video by Georgios Moumoulidis / Training Support Activity Europe",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 7
+   },
+   {
+    "id": "1004238",
+    "url": "https://www.dvidshub.net/video/1004238",
+    "title": "Georgia Army National Guard - Wildfire Suppression Operations (POV B-Roll)",
+    "credit": "Video by Pfc. Emerson Sneary / 124th Mobile Public Affairs Detachment",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "640688",
+    "url": "https://www.dvidshub.net/video/640688",
+    "title": "Cal Guard UH-60M Black Hawk drops water on Camp Fire",
+    "credit": "Courtesy Video / California National Guard Primary",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 5
+   },
+   {
+    "id": "641435",
+    "url": "https://www.dvidshub.net/video/641435",
+    "title": "Black Hawk fighting Camp Fire picks up water from icy pond",
+    "credit": "Courtesy Video / California National Guard Primary",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 4
+   },
+   {
+    "id": "1018491",
+    "url": "https://www.dvidshub.net/video/1018491",
+    "title": "Oregon Guard HH-60 crew drops water on Hagen Fire",
+    "credit": "Video by Maj. Wayne Clyne / Oregon National Guard Public Affairs Office",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "955590",
+    "url": "https://www.dvidshub.net/video/955590",
+    "title": "88 TES HH-60W b-roll",
+    "credit": "Video by Senior Airman Josey Blades / Nellis Air Force Base",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 6
+   },
+   {
+    "id": "709144",
+    "url": "https://www.dvidshub.net/video/709144",
+    "title": "Pittsburgh Steelers Flyover- Cockpit",
+    "credit": "Video by Capt. Travis Mueller / 28th Expeditionary Combat Aviation Brigade",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "653843",
+    "url": "https://www.dvidshub.net/video/653843",
+    "title": "Illinois National Guard flyover of Soldier Field, January 6, 2019",
+    "credit": "Video by Sgt. Stephen Gifford / 139th Mobile Public Affairs Detachment",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "468782",
+    "url": "https://www.dvidshub.net/video/468782",
+    "title": "Riding the hoist",
+    "credit": "Video by Capt. Brian Harris / 16th Combat Aviation Brigade",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "954370",
+    "url": "https://www.dvidshub.net/video/954370",
+    "title": "12th Combat Aviation Brigade Soldiers conduct aerial gunnery training in UH-60 Black Hawks",
+    "credit": "Video by Pfc. Brent Lee / 5th Mobile Public Affairs Detachment",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "402119",
+    "url": "https://www.dvidshub.net/video/402119",
+    "title": "Utah Army Guard Helicopter Formation",
+    "credit": "Video by Senior Airman Danny Rangel / 2D Audiovisual Squadron",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "970547",
+    "url": "https://www.dvidshub.net/video/970547",
+    "title": "Oregon Guard MEDEVAC 101 Training with HH-60 Black Hawk - B-roll",
+    "credit": "Video by Maj. Wayne Clyne / Oregon National Guard Public Affairs Office",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "1020656",
+    "url": "https://www.dvidshub.net/video/1020656",
+    "title": "1-230th Aviation Regiment Builds Medical Readiness with Tennessee Agencies",
+    "credit": "Video by Staff Sgt. Brandon Keys / 134th Air Refueling Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 3
+   },
+   {
+    "id": "427009",
+    "url": "https://www.dvidshub.net/video/427009",
+    "title": "SC-HART GoPro Footage of Rescue",
+    "credit": "Video by Senior Master Sgt. Edward Snyder / South Carolina National Guard",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "809854",
+    "url": "https://www.dvidshub.net/video/809854",
+    "title": "Pilot Point of View: Coast Guard helicopter crew rescues 4 off disabled vessel",
+    "credit": "Courtesy Video / U.S. Coast Guard Southeast",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "421990",
+    "url": "https://www.dvidshub.net/video/421990",
+    "title": null,
+    "credit": "Video by George Davis / Ohio National Guard Public Affairs",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 46
+   },
+   {
+    "id": "894931",
+    "url": "https://www.dvidshub.net/video/894931",
+    "title": "28th ECAB hoist training in Pittsburgh",
+    "credit": "Video by 2nd Lt. Kate McNelis / Joint Force Headquarters - Pennsylvania National Guard",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "874438",
+    "url": "https://www.dvidshub.net/video/874438",
+    "title": "Hoist training",
+    "credit": "Video by 2nd Lt. Kate McNelis / 28th Expeditionary Combat Aviation Brigade",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "1001172",
+    "url": "https://www.dvidshub.net/video/1001172",
+    "title": "Wisconsin Army National Guard Conducts Hoist Training",
+    "credit": "Video by Staff Sgt. Cesar Salazar Jr. / 112th Mobile Public Affairs Detachment",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 2
+   },
+   {
+    "id": "846329",
+    "url": "https://www.dvidshub.net/video/846329",
+    "title": "Live UH-60 Black Hawk hoist training at Fort McCoy's Big Sandy Lake, Part II",
+    "credit": "Video by Scott Sturkol / Fort McCoy Public Affairs Office",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "846335",
+    "url": "https://www.dvidshub.net/video/846335",
+    "title": "Live UH-60 Black Hawk hoist training at Fort McCoy's Big Sandy Lake, Part IV",
+    "credit": "Video by Scott Sturkol / Fort McCoy Public Affairs Office",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "846336",
+    "url": "https://www.dvidshub.net/video/846336",
+    "title": "Live UH-60 Black Hawk hoist training at Fort McCoy's Big Sandy Lake, Part V",
+    "credit": "Video by Scott Sturkol / Fort McCoy Public Affairs Office",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "779897",
+    "url": "https://www.dvidshub.net/video/779897",
+    "title": "Hoist",
+    "credit": "Video by Capt. Travis Mueller / 28th Expeditionary Combat Aviation Brigade",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "874436",
+    "url": "https://www.dvidshub.net/video/874436",
+    "title": "Hoist training",
+    "credit": "Video by 2nd Lt. Kate McNelis / 28th Expeditionary Combat Aviation Brigade",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "894932",
+    "url": "https://www.dvidshub.net/video/894932",
+    "title": "28th ECAB hoist training in Pittsburgh",
+    "credit": "Video by 2nd Lt. Kate McNelis / Joint Force Headquarters - Pennsylvania National Guard",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "546795",
+    "url": "https://www.dvidshub.net/video/546795",
+    "title": "K9 Hoist Training",
+    "credit": "Video by Charles Rosemond / Training Support Activity Europe",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "409292",
+    "url": "https://www.dvidshub.net/video/409292",
+    "title": "Angel Thunder 2015",
+    "credit": "Video by Senior Airman Austin Willhoit / 355th Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 18
+   },
+   {
+    "id": "847288",
+    "url": "https://www.dvidshub.net/video/847288",
+    "title": "126th and 189th Aviation Regiment Soldiers execute multi-day field medevac training",
+    "credit": "Video by Pfc. Tonia Ciancanelli / 117th Mobile Public Affairs Detachment (Hawaii)",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 5
+   },
+   {
+    "id": "847320",
+    "url": "https://www.dvidshub.net/video/847320",
+    "title": "126th and 189th Aviation Regiments conduct field training rescue operations",
+    "credit": "Video by Pfc. Tonia Ciancanelli / 117th Mobile Public Affairs Detachment (Hawaii)",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 9
+   },
+   {
+    "id": "988555",
+    "url": "https://www.dvidshub.net/video/988555",
+    "title": "Combined Jungle Operations Training Course 26-02: MEDEVAC Training",
+    "credit": "Video by Spc. Richard Morgan / U.S. Southern Command",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 11
+   },
+   {
+    "id": "809015",
+    "url": "https://www.dvidshub.net/video/809015",
+    "title": "1st TSC MEDEVAC Training",
+    "credit": "Video by Sgt. Owen Thez / 1st Theater Sustainment Command",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 13
+   },
+   {
+    "id": "454188",
+    "url": "https://www.dvidshub.net/video/454188",
+    "title": "Gerard Butler Flies with the Thunderbirds",
+    "credit": "Video by Senior Airman Rachel Maxwell / Air Force Thunderbirds",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 66
+   },
+   {
+    "id": "454194",
+    "url": "https://www.dvidshub.net/video/454194",
+    "title": "Gerard Butler Flies with the Thunderbirds: Takeoff",
+    "credit": "Video by Senior Airman Rachel Maxwell / Air Force Thunderbirds",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 2
+   },
+   {
+    "id": "454197",
+    "url": "https://www.dvidshub.net/video/454197",
+    "title": "Gerard Butler Flies with the Thunderbirds: Landing",
+    "credit": "Video by Senior Airman Rachel Maxwell / Air Force Thunderbirds",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 18
+   },
+   {
+    "id": "466248",
+    "url": "https://www.dvidshub.net/video/466248",
+    "title": "Cannon AFB Thunderbirds Media Flight",
+    "credit": "Video by Airman 1st Class Treven Cannon / 27th Special Operations Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 21
+   },
+   {
+    "id": "431530",
+    "url": "https://www.dvidshub.net/video/431530",
+    "title": "JBSA Air Show Becky Hammon Thunderbirds Media Flight",
+    "credit": "Video by Anthony Hearst / 502d Air Base Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 42
+   },
+   {
+    "id": "127678",
+    "url": "https://www.dvidshub.net/video/127678",
+    "title": "IndyCar Driver J.R. Hildebrand Flies with the Thunderbirds",
+    "credit": "Courtesy Video / Air Force Thunderbirds",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 29
+   },
+   {
+    "id": "288477",
+    "url": "https://www.dvidshub.net/video/288477",
+    "title": "Thunderbirds Backseat B-roll",
+    "credit": "Video by Staff Sgt. Jarid Watson / Air Force Thunderbirds",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "767512",
+    "url": "https://www.dvidshub.net/video/767512",
+    "title": "F-16D Fighting Falcon Incentive Flight",
+    "credit": "Video by Airman 1st Class Heather Ley / 33rd Fighter Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 18
+   },
+   {
+    "id": "365077",
+    "url": "https://www.dvidshub.net/video/365077",
+    "title": "419th Fighter Wing Hosts Olympic Skier Ted Ligety F-16 Flight",
+    "credit": "Video by Senior Airman Danny Rangel / 2D Audiovisual Squadron",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "972669",
+    "url": "https://www.dvidshub.net/video/972669",
+    "title": "Coach Fickell flies with 16th WPS",
+    "credit": "Video by Staff Sgt. Jose Miguel Tamondong / Nellis Air Force Base",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 11
+   },
+   {
+    "id": "653593",
+    "url": "https://www.dvidshub.net/video/653593",
+    "title": "57th Wing Airmen takes flight (Peattie)",
+    "credit": "Video by Staff Sgt. Ashley Corkins / Air Force Thunderbirds",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 13
+   },
+   {
+    "id": "459918",
+    "url": "https://www.dvidshub.net/video/459918",
+    "title": "AFRL Crash Avoidance Systems",
+    "credit": "Video by John Harrington / 88th Air Base Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 25
+   },
+   {
+    "id": "957744",
+    "url": "https://www.dvidshub.net/video/957744",
+    "title": "Back POV F-16 demo flight Avalon AIA25",
+    "credit": "Video by Tech. Sgt. Peter Reft / Pacific Air Forces",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "957743",
+    "url": "https://www.dvidshub.net/video/957743",
+    "title": "Front POV F-16 demo flight Avalon AIA25",
+    "credit": "Video by Tech. Sgt. Peter Reft / Pacific Air Forces",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "863389",
+    "url": "https://www.dvidshub.net/video/863389",
+    "title": "B-Roll: 8th Operations Group Surges for Vigilant Storm 23 - F-16 Flight",
+    "credit": "Video by Petty Officer 2nd Class Madysson Ritter / 8th Fighter Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "516543",
+    "url": "https://www.dvidshub.net/video/516543",
+    "title": "Operation Inherent Resolve",
+    "credit": "Video by Damon Moritz / U.S. Navy",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "629520",
+    "url": "https://www.dvidshub.net/video/629520",
+    "title": "HH-60 MEDEVAC helicopter traffic pattern training flight",
+    "credit": "Video by Charles Rosemond / Training Support Activity Europe",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "985803",
+    "url": "https://www.dvidshub.net/video/985803",
+    "title": "BLACKHAWK LIVE HOIST CASUALTY RECOVERY TRAINING",
+    "credit": "Video by Staff Sgt. Uriah Clites / 109th Mobile Public Affairs Detachment",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "972061",
+    "url": "https://www.dvidshub.net/video/972061",
+    "title": "Alaska Army National Guard Dustoff crews conduct hoist training B-Roll",
+    "credit": "Video by Alejandro Pena / Alaska National Guard",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 3
+   },
+   {
+    "id": "654969",
+    "url": "https://www.dvidshub.net/video/654969",
+    "title": "MEDEVAC Crew Hoist Extraction Training",
+    "credit": "Video by Charles Rosemond / Training Support Activity Europe",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "297375",
+    "url": "https://www.dvidshub.net/video/297375",
+    "title": "WAREX 86-13-01/Global Medic 2013 - Blackhawk Hoist",
+    "credit": "Video by Senior Airman Joshua Roberts / 4th Combat Camera Squadron",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 22
+   },
+   {
+    "id": "154199",
+    "url": "https://www.dvidshub.net/video/154199",
+    "title": "Medevac Performs Hoist Training in Paktika Province, Afghanistan",
+    "credit": "Video by Sgt. 1st Class Eric Pahon / 82nd Combat Aviation Brigade",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 51
+   },
+   {
+    "id": "922192",
+    "url": "https://www.dvidshub.net/video/922192",
+    "title": "ARAC start-up",
+    "credit": "Video by Capt. Jeffrey Windmueller / Army Reserve Aviation Command",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "808534",
+    "url": "https://www.dvidshub.net/video/808534",
+    "title": "Prep for Night Flight",
+    "credit": "Video by Lt. Col. Andy Thaggard / Aviation Center of Excellence",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 6
+   },
+   {
+    "id": "807831",
+    "url": "https://www.dvidshub.net/video/807831",
+    "title": "USAACE Flight School Operations",
+    "credit": "Video by Lt. Col. Andy Thaggard / Aviation Center of Excellence",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 42
+   },
+   {
+    "id": "1000431",
+    "url": "https://www.dvidshub.net/video/1000431",
+    "title": "Fort Irwin's UH-60L Final Flights",
+    "credit": "Video by James Williams III / National Training Center and Fort Irwin",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 2
+   },
+   {
+    "id": "388347",
+    "url": "https://www.dvidshub.net/video/388347",
+    "title": "UH-60L Flight with A Company, 2-149th AVN",
+    "credit": "Video by Tech. Sgt. Matthew Pardini / 1st Combat Camera Squadron",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 80
+   },
+   {
+    "id": "843955",
+    "url": "https://www.dvidshub.net/video/843955",
+    "title": "Blackhawk Multi-Ship Flight 3-2 General Support Aviation Battalion",
+    "credit": "Video by Capt. Frank Spatt / 2nd Combat Aviation Brigade",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "939707",
+    "url": "https://www.dvidshub.net/video/939707",
+    "title": "Black Hawk flight",
+    "credit": "Video by Maj. Travis Mueller / Joint Force Headquarters - Pennsylvania National Guard",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "786162",
+    "url": "https://www.dvidshub.net/video/786162",
+    "title": "Black Hawk flight",
+    "credit": "Video by Capt. Travis Mueller / 28th Expeditionary Combat Aviation Brigade",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "786161",
+    "url": "https://www.dvidshub.net/video/786161",
+    "title": "Black Hawk flight",
+    "credit": "Video by Capt. Travis Mueller / 28th Expeditionary Combat Aviation Brigade",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "786172",
+    "url": "https://www.dvidshub.net/video/786172",
+    "title": "Black Hawk flight",
+    "credit": "Video by Capt. Travis Mueller / 28th Expeditionary Combat Aviation Brigade",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "731362",
+    "url": "https://www.dvidshub.net/video/731362",
+    "title": "F-16 shoot down test drone",
+    "credit": "Video by Tech. Sgt. John Raven / 40th Flight Test Squadron",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "731345",
+    "url": "https://www.dvidshub.net/video/731345",
+    "title": "F-16 shoot down test drone",
+    "credit": "Video by 1st Lt. Savanah Bray / 53rd Wing",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 0
+   },
+   {
+    "id": "346756",
+    "url": "https://www.dvidshub.net/video/346756",
+    "title": "Southern Frontier Pilots",
+    "credit": "Video by Cpl. Anthony Rayis / AFN Iwakuni",
+    "pd": true,
+    "audio_not_cleared": false,
+    "transcribed": true,
+    "speech_segments": 15
+   }
+  ],
+  "key_observation": "DVIDS cockpit videos rarely carry intercom audio: most cockpit b-roll is recorded by a GoPro ambient mic (engine/wind only) or has music, and some pages state explicitly \"*Audio was not cleared for release*\" (e.g. 723256, F-16 simulator b-roll). Where ICS audio exists (incentive rides, Thunderbird hometown-hero flights, Guard hoist rescues) no F-16 VMS words, F-22 ICAWS words, or UH-60 warning tones/voices were detected by whisper-small + tonal-track scan + spectrogram inspection. Of 325 DVIDS audio tracks downloaded, 12 were digital silence (audio stripped, e.g. 723256, 731345/731362 F-16 drone-shoot HUD, 809567), and whisper found real speech in only ~40% — mostly narration/interviews."
+ }
+}

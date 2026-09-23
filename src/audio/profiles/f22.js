@@ -1,5 +1,6 @@
 // F-22A Raptor (2 × F119-PW-100) sound profile: deeper, heavier, twin engine.
-import { airframeLayers, bettyAlerts, COMMON_SHOTS } from './common.js';
+import { airframeLayers, COMMON_SHOTS } from './common.js';
+import { f22Icaws } from '../alertlogic.js';
 import { fighterEngineLayers, WHINE_REFS } from './f16.js';
 
 export default {
@@ -17,6 +18,7 @@ export default {
       flapMotorDb: -22, canopy: true, transonicBuffet: 0.3, gBuffet: 0.4, gearMotorDb: -14, rollDb: -11, gearDragDb: -10 }),
   ],
   shots: { ...COMMON_SHOTS, abLightoff: 'f22/ab_lightoff', abOut: 'f22/ab_out' },
-  alerts: bettyAlerts('f22', { stallVoice: 'v_lowspeed' }),
+  // ICAWS: caution tone, warning tone + voice, PULL UP (no public word list: see tools/audio/research/alerts.md)
+  alerts: { style: 'icaws', chime: 'f22/caution', apDisconnect: null, systems: [() => f22Icaws('f22')] },
   mech: { flapLever: false, reverser: false, spoilers: false, canopy: true, gearSeconds: 5 },
 };

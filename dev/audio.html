@@ -129,6 +129,13 @@ async function load(id) {
     ...(prof.alerts?.rules || []).filter((r) => r.voice).map((r) => r.id), ...(prof.alerts?.callouts || []).map((c) => String(c.ft)),
     ...(prof.alerts?.retard ? ['retard'] : [])];
   for (const n of names) { const b = document.createElement('button'); b.textContent = n; b.onclick = () => audio.play(n); box.appendChild(b); }
+  // alert-system files (src/audio/alertlogic.js): every voice / tone the real-system logic can play
+  for (const mk of prof.alerts?.systems || []) {
+    const sys = mk();
+    for (const rel of [...sys.files, ...Object.values(sys.loops).map((l) => l.file)]) {
+      const b = document.createElement('button'); b.textContent = `${sys.name}:${rel.split('/').pop()}`; b.onclick = () => audio.play(rel); box.appendChild(b);
+    }
+  }
   try { flight.spec = (await import(`../src/aircraft/${id}/spec.js`)).default; } catch { flight.spec = {}; }
   if (!flight.spec.flapDetents) flight.spec.flapDetents = [{ label: 'UP' }, { label: '1' }, { label: '2' }, { label: '3' }, { label: 'FULL' }];
   n1Idle = flight.spec.engine?.n1Idle ?? (id === 'uh60' ? 0.63 : 0.2);

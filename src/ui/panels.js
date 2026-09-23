@@ -274,8 +274,9 @@ export function openCredits(container) {
     ['Bina verisi', 'DataSF'],
     ['Yazılım', 'Three.js (MIT)'],
     ['Yazı tipi', 'B612 font (OFL)'],
-    ['Sesli uyarılar', 'ElevenLabs ile üretildi'],
-    ['Otopilot ayırma sesleri', 'FlightGear A320-family (legoboyvdlp, Octal450 ve katkıda bulunanlar) ve Boeing 737-800YV (YV3399 ve katkıda bulunanlar) projelerinden türetilmiştir · GNU GPL-2.0'],
+    ['Sesli uyarılar', 'ElevenLabs ile üretildi; gerçek kişi sesi klonlanmadı'],
+    ['Otopilot ayırma sesleri', 'FlightGear A320-family (legoboyvdlp, Octal450 ve katkıda bulunanlar) ve Boeing 737-800YV (YV3399 ve katkıda bulunanlar) projelerinden türetilmiştir · GNU GPL-2.0 · A320 "cavalry charge" bir kayıt değil, Airbus dalga şemasından yeniden sentezlenmiştir'],
+    ['Ses referans kayıtları', 'Yalnız ölçüm için: Sygoletto (Air France A319, CC BY-SA 3.0) ve jan tisler (Adria Airways A319, CC BY 3.0), Wikimedia Commons; ABD Donanması (P-8A, DVIDS) ve ABD Hava Kuvvetleri (F-16), kamu malı'],
   ];
   for (const [k, v] of rows) { const li = el('li', null, ul); el('b', null, li, k); el('span', null, li, v); }
   el('p', 'gkp-disc', box, DISCLAIMER);

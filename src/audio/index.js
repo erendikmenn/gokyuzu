@@ -11,6 +11,7 @@
 // retarded position, Mach-cone gating + sonic boom. Interior: per-layer cockpit sends, muffled engine path.
 import * as THREE from 'three';
 import { band, clamp, db, sstep } from './util.js';
+import { approachGeometry, findApproach } from '../flight/fixedwing-autopilot.js';
 
 const ASSET_BASE = new URL('../../assets/audio/', import.meta.url).href;
 const C_SOUND = 343;
@@ -18,6 +19,8 @@ const MAX_DELAY = 12;          // s of propagation delay (≈4 km); farther sour
 const FT = 3.28084;
 const HIST = 2048;          // aircraft position history (ring buffer) for retarded-time lookups
 const TARGET_LUFS = -20;    // loops are mastered to this; the manifest corrects files that were peak-limited
+const RUNWAYS_URL = new URL('../../data/sf/runways.json', import.meta.url).href;   // ILS geometry for EGPWS mode 5
+const TRACE_MAX = 600;
 
 const num = (v, d = 0) => (typeof v === 'number' && Number.isFinite(v) ? v : typeof v === 'boolean' ? +v : d);
 
@@ -32,6 +35,18 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
   let manifest = null;
   let manifestP = null;
   const warned = new Set();
+  // alert trace (test hook): every voice / tone / alert loop start and stop, newest last
+  const trace = [];
+  const traceAdd = (kind, id, extra) => {
+    const e = { t: ctx ? +ctx.currentTime.toFixed(3) : 0, kind, id, ...(extra || {}) };
+    trace.push(e);
+    if (trace.length > TRACE_MAX) trace.splice(0, trace.length - TRACE_MAX);
+  };
+  let runways = null, runwaysP = null;
+  const loadRunways = () => {
+    if (!runwaysP) runwaysP = fetch(RUNWAYS_URL).then((r) => (r.ok ? r.json() : null)).then((j) => { runways = j; }).catch(() => {});
+    return runwaysP;
+  };
   // scratch objects (no per-frame allocation)
   const vA = new THREE.Vector3(), vB = new THREE.Vector3(), vC = new THREE.Vector3(), vCam = new THREE.Vector3();
   const vFwd = new THREE.Vector3(), vVel = new THREE.Vector3(), vCamVel = new THREE.Vector3();
@@ -207,6 +222,11 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
     for (const r of a.rules || []) { if (r.voice) s.add(r.voice); if (r.loop) s.add(r.loop); }
     for (const c of a.callouts || []) s.add(c.voice);
     for (const k of ['chime', 'apDisconnect', 'apDisconnectLoop', 'apButton', 'altAlert', 'retard']) if (a[k]) s.add(a[k]);
+    for (const mk of a.systems || []) {
+      const sys = mk();
+      for (const f of sys.files || []) s.add(f);
+      for (const L of Object.values(sys.loops || {})) s.add(L.file);
+    }
     s.delete(undefined); s.delete(null);
     return [...s];
   }
@@ -226,6 +246,7 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
     if (seq !== loadSeq) return;
     teardown();
     const mf = loadManifest();
+    if (profile.alerts?.systems?.length) loadRunways();
     const files = collectFiles(profile);
     const loads = files.map(getBuffer);
     await mf;
@@ -274,6 +295,7 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
       histN: 0, histHead: 0, lastT: 0, crashT: -99, boomT: -99, touchT: -99, noseDone: true, bumpDist: 0, vsAir: 0,
       gearSimEnd: 0, flapSimEnd: 0, canopySimEnd: 0, gearMov: false, gearMoveT: -9, flapT: -9, canopyT: -9,
       retardNext: 0, firstUpdate: true, apOn: null, lights: null, last: {},
+      systems: [], sysLoops: {}, ended: {}, graceUntil: 0, fcuValid: false,
     };
     for (const [name, d] of Object.entries(profile.emitters || { air: { offset: [0, 0, 0] } })) I.emitters[name] = makeEmitter(name, d);
     if (!I.emitters.air) I.emitters.air = makeEmitter('air', { offset: [0, 0, 0], ref: 25 });
@@ -281,6 +303,18 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
     for (const def of profile.layers || []) {
       if (def.perEngine) for (let i = 0; i < nE; i++) addLayer(I, def, i);
       else addLayer(I, def, -1);
+    }
+    for (const mk of profile.alerts?.systems || []) {
+      const sys = mk();
+      I.systems.push(sys);
+      for (const [lid, def] of Object.entries(sys.loops || {})) {
+        const id = `${sys.name}:${lid}`;
+        const L = { id: 'alert:' + id, def: { file: def.file }, g: gainNode(0), src: null, last: {}, norm: 1, db: def.db ?? 0, on: false };
+        L.g.connect(G.alert);
+        L.input = L.g;
+        attachLoop(I, L);
+        I.sysLoops[id] = L;
+      }
     }
     for (const r of profile.alerts?.rules || []) {
       if (!r.loop) continue;
@@ -346,7 +380,7 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
     if (!I || !ctx) return;
     I.dead = true;
     const t = ctx.currentTime;
-    const all = [...I.layers, ...Object.values(I.alertLoops)];
+    const all = [...I.layers, ...Object.values(I.alertLoops), ...Object.values(I.sysLoops)];
     for (const L of all) {
       try { L.g.gain.setTargetAtTime(0, t, 0.05); } catch { /* */ }
       if (L.src) try { L.src.stop(t + 0.3); } catch { /* */ }
@@ -369,6 +403,7 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
       onGround: 0, gear: 1, flaps: 0, flapsIndex: 0, flapsCount: 0, spoilers: 0, speedbrake: 0, brakes: 0, canopy: 0,
       gearMoving: 0, flapMoving: 0, canopyMoving: 0, rotor: 0, collective: 0, torque: 0, stalled: false, dead: false,
       w: { stall: false, overspeed: false, gear: false, bank: false, sinkRate: false, pullUp: false },
+      wHas: {},
       fuelFrac: 1, rotorLow: false, vrs: false, overtorque: false, pitch: 0,
     };
   }
@@ -379,7 +414,7 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
     s.dt = dt; s.t = ctx.currentTime;
     s.view = opts.view === 'cockpit' ? 'cockpit' : 'exterior';
     s.cockpit = s.view === 'cockpit';
-    s.dead = !!f.crashed;
+    s.dead = !!f.crashed || !!f.crashCause;        // crashCause ('stall' | 'lowspeed' | 'collective') comes with the crash
     s.thr = clamp(num(f.throttle));
     const engs = Array.isArray(f.engines) ? f.engines : null;
     const visE = vis && Array.isArray(vis.engines) ? vis.engines : null;
@@ -446,8 +481,37 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
     s.torque = clamp(num(f.torque, s.collective), 0, 1.5);
     s.stalled = !!f.stalled;
     s.apOn = !!(f.autopilot && f.autopilot.on);
+    // quantities in the units the real alert logic is written in (ft, kt, fpm) + system inputs
+    s.ft = Math.max(0, s.agl * FT);
+    s.kt = s.ias / 0.514444;
+    s.fpm = s.vs * 196.85;
+    s.alt = num(f.altitude, num(f.position?.y));
+    s.altFt = s.alt * FT;
+    s.roll = num(f.roll);
+    s.aoa = num(f.aoa);
+    s.gearHandle = typeof f.gearHandleDown === 'boolean' ? f.gearHandleDown : s.gear > 0.5;
+    s.landIdx = num(f.spec?.landingFlapIndex, 99);
+    s.gpwsLandIdx = p.gpwsLandIdx ?? s.landIdx;
+    s.parkBrake = !!f.parkingBrake;
+    const ap = f.autopilot || {};
+    s.apMode = typeof ap.mode === 'string' ? ap.mode : '';
+    s.athr = !!ap.athr;
+    s.athrMode = typeof f.athrMode === 'string' ? f.athrMode : '';   // A320: '' | 'A.FLOOR' | 'TOGA LK'
+    if (s.apOn) I.fcuValid = true;                 // FCU / MCP altitude = the autopilot target once it was engaged
+    s.apAlt = num(ap.altitude, NaN);
+    s.fcuValid = I.fcuValid && Number.isFinite(s.apAlt);
+    s.fuelKg = num(f.fuel, 0);
+    s.vlsKt = num(f.vSpeeds?.vls) / 0.514444;
+    s.vmoKt = num(f.spec?.limits?.vmo, 1e4) / 0.514444;
+    s.mmo = num(f.spec?.limits?.mmo, 9);
+    s.n1min = Math.min(...s.eng.map((e) => e.n1));
+    s.n1max = Math.max(...s.eng.map((e) => e.n1));
+    computeIls(I, s, f);
+    // every boolean flag the flight model publishes in `warnings` is passed through (new flags such as lowEnergy or
+    // alphaFloor become s.w.<name> without changes here); s.wHas tells whether the model provides a flag at all
     const w = f.warnings || {};
-    for (const key in s.w) s.w[key] = !!w[key] && !s.dead;
+    for (const key in s.w) s.w[key] = false;
+    for (const key in w) if (typeof w[key] === 'boolean') { s.w[key] = w[key] && !s.dead; s.wHas[key] = true; }
     const fuel = num(f.fuel, NaN);
     if (Number.isFinite(fuel)) { I.fuel0 = Math.max(I.fuel0, fuel); s.fuelFrac = I.fuel0 > 0 ? fuel / I.fuel0 : 1; } else s.fuelFrac = 1;
     s.rotorLow = p.category === 'helicopter' && !s.dead && (typeof w.lowRotor === 'boolean' ? w.lowRotor
@@ -458,6 +522,24 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
     s.flapMoving = s.t - I.flapT < 0.25 || s.t < I.flapSimEnd ? 1 : 0;
     s.canopyMoving = s.t - I.canopyT < 0.2 || s.t < I.canopySimEnd ? 1 : 0;
     return s;
+  }
+
+  /** Glide-slope / localizer deviation (dots) of the runway end ahead (3° path, the autopilot's ILS model). */
+  const gTmp = {};
+  function computeIls(I, s, f) {
+    s.gsDots = null; s.locDots = 99;
+    if (!runways || !f.position || s.onGround || s.ft > 2500) { I.ilsRw = null; return; }
+    if (!I.ilsRw || s.t - (I.ilsT ?? -9) > 1) {
+      I.ilsT = s.t;
+      I.ilsRw = findApproach(runways, f.position.x, f.position.z, num(f.heading) * Math.PI / 180, 20000);
+    }
+    const rw = I.ilsRw;
+    if (!rw) return;
+    const g = approachGeometry(rw, f.position.x, f.position.z, gTmp);
+    if (g.along < 150 || g.along > 18500) return;
+    const theta = Math.atan2(s.alt - rw.elevation, g.along) * 57.2958;
+    s.gsDots = (theta - 3) / 0.35;                                   // 1 dot = 0.35° (2 dots full scale)
+    s.locDots = (Math.atan2(g.lateral, g.along + (rw.length || 3000)) * 57.2958) / 1.25;
   }
 
   // ------------------------------------------------------------------------------------------------ helpers
@@ -580,28 +662,38 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
     I.queue.length = 0;
   }
 
-  function enqueueVoice(I, rel, prio, tag, maxAge = 3) {
+  // tags 'group#key' (e.g. 'fwc:co#50'): a newer item of the same group replaces older queued ones (callouts)
+  const groupOf = (tag) => { const i = tag.indexOf('#'); return i < 0 ? null : tag.slice(0, i); };
+  function enqueueVoice(I, rel, prio, tag, maxAge = 3, gainDb = 0, system = '') {
     if (!rel) return;
     const now = ctx.currentTime;
     if (I.voice && I.voice.tag === tag && tag !== 'co') return;
     if (I.queue.some((q) => q.tag === tag && tag !== 'co')) return;
     if (tag === 'co') I.queue = I.queue.filter((q) => q.tag !== 'co');   // only the latest callout matters
-    const item = { rel, prio, tag, t: now, maxAge };
+    const grp = groupOf(tag);
+    if (grp) I.queue = I.queue.filter((q) => groupOf(q.tag) !== grp);
+    const item = { rel, prio, tag, t: now, maxAge, gainDb, system };
     if (!I.voice) startVoice(I, item);
-    else if (I.voice.prio < prio) { const cur = I.voice; try { cur.src && cur.src.stop(); } catch { /* */ } I.voice = null; startVoice(I, item); }
-    else I.queue.push(item);
+    else if (I.voice.prio < prio) {
+      const cur = I.voice; try { cur.src && cur.src.stop(); } catch { /* */ }
+      I.ended[cur.tag] = now; traceAdd('voice-', cur.tag, { cut: true });
+      I.voice = null; startVoice(I, item);
+    } else I.queue.push(item);
   }
 
   function startVoice(I, item) {
     I.voice = { ...item, src: null, end: ctx.currentTime + 2 };
     const v = I.voice;
+    traceAdd('voice', item.tag, { rel: item.rel });
     getBuffer(item.rel).then((buf) => {
       if (I.voice !== v) return;
       if (!buf) { I.voice = null; return; }
       const src = ctx.createBufferSource();
       src.buffer = buf;
-      src.connect(G.alert);
+      const gn = gainNode(db(item.gainDb || 0));
+      src.connect(gn).connect(G.alert);
       src.start();
+      src.onended = () => { try { gn.disconnect(); } catch { /* */ } };
       v.src = src;
       v.end = ctx.currentTime + buf.duration;
     });
@@ -612,6 +704,7 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
     if (I.voice && now >= I.voice.end) {
       const st = I.ruleState[I.voice.tag];
       if (st) st.next = now + (st.repeat ?? 1);
+      I.ended[I.voice.tag] = now;
       I.voice = null;
     }
     if (!I.voice && I.queue.length) {
@@ -675,6 +768,62 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
       if (low && s.thr > 0.08 && s.rev < 0.1) { enqueueVoice(I, A.retard, 4, 'retard', 1.5); I.retardNext = now + 2.2; }
       else I.retardNext = 0;
     }
+    // real-system alert logic (src/audio/alertlogic.js)
+    if (I.systems.length) {
+      const io = I.io || (I.io = makeIo(I));
+      io.now = now;
+      const run = active && now >= I.graceUntil;
+      I.loopReq = I.loopReq || {};
+      I.loopWhy = I.loopWhy || {};
+      for (const k in I.loopReq) { I.loopReq[k] = false; I.loopWhy[k] = ''; }
+      if (run) {
+        for (const sys of I.systems) {
+          io.sys = sys.name;
+          try { sys.update(s, io, I.flightRef); } catch (e) { warnOnce('sys:' + sys.name, `alert system ${sys.name}`, e); }
+        }
+      }
+      for (const id in I.sysLoops) {
+        const L = I.sysLoops[id];
+        const on = run && !!I.loopReq[id];
+        if (on !== L.on) { L.on = on; traceAdd(on ? 'loop+' : 'loop-', id, on && I.loopWhy[id] ? { why: I.loopWhy[id] } : undefined); }
+        setP(L, 'g', L.g.gain, on ? db(L.db) * L.norm : 0, on ? 0.015 : 0.06);
+      }
+    }
+  }
+
+  function makeIo(I) {
+    const io = {
+      now: 0, sys: '',
+      say(tag, rel, prio, o = {}) { enqueueVoice(I, rel, prio, tag, o.maxAge ?? 1.5, o.gainDb ?? 0, o.system ?? io.sys); },
+      speaking(tag) {
+        if (tag == null) return !!I.voice;
+        return !!(I.voice && I.voice.tag === tag) || I.queue.some((q) => q.tag === tag);
+      },
+      speakingSystem(name) { return !!(I.voice && I.voice.system === name) || I.queue.some((q) => q.system === name); },
+      endedAt(tag) { return I.ended[tag] ?? -99; },
+      // why: short cause label recorded in the trace (e.g. CRC 'overspeed' vs 'gearNotDown')
+      loop(id, on, why) { if (on) { const k = `${io.sys}:${id}`; I.loopReq[k] = true; if (why && !I.loopWhy[k]) I.loopWhy[k] = why; } },
+      /** cut a playing / queued voice of this tag at once (its condition cleared) */
+      stop(tag) {
+        I.queue = I.queue.filter((q) => q.tag !== tag);
+        if (I.voice && I.voice.tag === tag) {
+          const cur = I.voice; try { cur.src && cur.src.stop(); } catch { /* */ }
+          I.ended[tag] = ctx.currentTime; traceAdd('voice-', tag, { cut: true }); I.voice = null;
+        }
+      },
+      tone(rel, o = {}) {
+        playFile(I, rel, { bus: G.alert, gain: db(o.gainDb ?? 0) }); traceAdd('tone', o.tag || rel, { rel });
+        I.toneUntil = Math.max(I.toneUntil || 0, ctx.currentTime + (manifest?.[rel]?.dur ?? 1.5));
+      },
+    };
+    return io;
+  }
+
+  function resetSystems(I, now) {
+    for (const sys of I.systems) { try { sys.reset(); } catch { /* */ } }
+    I.graceUntil = now + 1.5;                      // smoothed readouts settle after a (re)spawn
+    I.fcuValid = false;
+    I.ended = {};
   }
 
   // ------------------------------------------------------------------------------------------------ events
@@ -687,6 +836,7 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
     if (I.teleport) { I.teleport = false; I.noseDone = true; return; }   // reset / respawn: no transition sounds
     // crash
     if (s.dead && !P.dead && now - I.crashT > 1) { I.crashT = now; shot(I, 'crash', { ext: 1.4, int: 1.2 }); }
+    if (s.dead && !P.dead) { stopApDisc(I); stopVoice(I); }               // a crash silences every alert
     if (s.dead) return;
     // gear
     if (mech.gear !== false) {
@@ -790,13 +940,17 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
   function apDisconnect(I, involuntary) {
     const A = I.profile.alerts || {};
     if (!A.apDisconnect || !ctx) return;
+    if (I.flightRef?.crashed || I.s?.dead) { stopApDisc(I); return; }   // a crash disengages the A/P silently
     stopApDisc(I);
     const boeing = A.style === 'boeing';
     const now = ctx.currentTime;
     if (!involuntary && A.apButton) shot(I, A.apButton, { ext: 0, int: 0.8 });     // the disconnect pushbutton
     const loop = boeing || involuntary;
-    I.apd = { t0: now, until: now + (boeing ? (involuntary ? 8 : 3) : (involuntary ? 10 : 30)), srcs: [], loop,
+    // 737: >= 2 s after a disconnect-switch press, until reset after an automatic disengage (safety cap 30 s);
+    // A320: 1.5 s (take-over pb), permanent after an automatic disconnect until MASTER WARN / pb (cap 30 s)
+    I.apd = { t0: now, until: now + (boeing ? (involuntary ? 30 : 2.2) : 30), srcs: [], loop,
       file: loop ? (A.apDisconnectLoop || A.apDisconnect) : A.apDisconnect };
+    traceAdd('apd', involuntary ? 'apDisconnect:involuntary' : 'apDisconnect', { rel: I.apd.file });
     playApd(I);
   }
   function playApd(I) {
@@ -818,6 +972,7 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
   function stopApDisc(I) {
     if (!I || !I.apd) return;
     const now = ctx.currentTime;
+    traceAdd('apd-', 'apDisconnect');
     for (const { src, gn } of I.apd.srcs) {
       try { gn.gain.cancelScheduledValues(now); gn.gain.setTargetAtTime(0, now, 0.03); src.stop(now + 0.25); } catch { /* */ }
     }
@@ -868,7 +1023,8 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
           flight.on('autopilot', (e) => {
             if (inst !== I || I.flightRef !== flight || !e) return;
             if (e.on) stopApDisc(I);
-            else apDisconnect(I, e.reason !== 'pilot');
+            // pilot push / autoland rollout hand-over (the crew presses the take-over pb) = intentional
+            else apDisconnect(I, !(e.reason === 'pilot' || e.reason === 'rollout'));
           });
           I.apEvents = true;
         } catch { I.apEvents = false; }
@@ -1023,6 +1179,8 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
     }
 
     // --- transitions, alerts, timers
+    if (I.teleport || I.firstUpdate || I.sysFlight !== flight) { I.sysFlight = flight; resetSystems(I, now); stopVoice(I); stopApDisc(I); }
+    if (s.dead && I.apd) stopApDisc(I);            // nothing may keep sounding over the crash card
     runEvents(I, s, flight, dt, obj);
     runAlerts(I, s);
     serviceApDisc(I, now);
@@ -1099,6 +1257,8 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
       emitters: I ? Object.values(I.emitters).map((e) => ({ name: e.name, d: +e.d.toFixed(1), delay: +e.delayCur.toFixed(3), tau: +e.tau.toFixed(3), cos: +e.cos.toFixed(2), inside: e.inside !== false })) : [],
       apd: I && I.apd ? { file: I.apd.file, srcs: I.apd.srcs.length, left: +(I.apd.until - ctx.currentTime).toFixed(2) } : null,
       voice: I?.voice?.rel ?? null, queue: I ? I.queue.map((q) => q.rel) : [], idleN1: I?.idleN1, s: I ? { n1: I.s.n1, n1s: I.s.n1s, pow: I.s.pow, ab: I.s.ab } : null,
+      alerts: I ? { voice: I.voice ? { tag: I.voice.tag, rel: I.voice.rel } : null, loops: Object.keys(I.sysLoops).filter((k) => I.sysLoops[k].on),
+        systems: I.systems.map((x) => ({ name: x.name, ...(x.debug ? x.debug() : {}) })), ils: I.s.gsDots != null ? { gs: +I.s.gsDots.toFixed(2), loc: +I.s.locDots.toFixed(2) } : null } : null,
     };
   }
 
@@ -1119,6 +1279,15 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
     get atcInput() { return G ? G.atc : null; },       // connect ATC/radio sources here (atc volume applies)
     get context() { return ctx; },
     get analyser() { return G ? G.analyser : null; },
+    trace,                                              // alert trace: { t, kind: voice|voice-|tone|loop+|loop-|apd|apd-, id, rel, why }
+    /** true while any aural alert sounds (voice playing / queued, alert loop, A/P-disconnect alert, alert tone) */
+    get alertActive() {
+      const I = inst;
+      if (!I || !ctx || userPaused) return false;
+      if (I.voice || I.queue.length || I.apd || ctx.currentTime < (I.toneUntil || 0)) return true;
+      for (const k in I.sysLoops) if (I.sysLoops[k].on) return true;
+      return false;
+    },
     get output() { return G ? G.out : null; },          // post-limiter master (dev tools tap this for recording)
   };
   if (typeof window !== 'undefined') window.__audioSys = api;   // test hook (headless checks)
