@@ -144,7 +144,8 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
   // ------------------------------------------------------------------------------------------------ loading
   function loadManifest() {
     if (!manifestP) {
-      manifestP = fetch(ASSET_BASE + 'manifest.json').then((r) => (r.ok ? r.json() : {})).catch(() => ({}))
+      // always revalidate the manifest: it carries the per-file content hashes used to bust browser caches
+      manifestP = fetch(ASSET_BASE + 'manifest.json', { cache: 'no-cache' }).then((r) => (r.ok ? r.json() : {})).catch(() => ({}))
         .then((m) => { manifest = m || {}; return manifest; });
     }
     return manifestP;
@@ -176,9 +177,11 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
     if (!bufCache.has(rel)) {
       const p = loadManifest().then((man) => {
         const m = man && man[rel];
-        const wav = () => fetchDecode(ASSET_BASE + rel + '.wav');
+        // ?v=<content hash> (added to the manifest by the publish build) makes browsers fetch changed sounds anew
+        const ver = (ext) => (m && m.h && m.h[ext] ? `?v=${m.h[ext]}` : '');
+        const wav = () => fetchDecode(ASSET_BASE + rel + '.wav' + ver('wav'));
         if (m && m.m4a && canM4A()) {
-          return fetchDecode(ASSET_BASE + rel + '.m4a').then((buf) => {
+          return fetchDecode(ASSET_BASE + rel + '.m4a' + ver('m4a')).then((buf) => {
             if (typeof m.loopStart === 'number' && typeof m.loopDur === 'number') buf.__loop = { start: m.loopStart, dur: m.loopDur };
             return buf;
           }, () => wav());

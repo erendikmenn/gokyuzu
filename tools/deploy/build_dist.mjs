@@ -3,6 +3,7 @@
 // Files are hard-linked (no extra disk space). Usage: node tools/deploy/build_dist.mjs [--gallery]
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -59,6 +60,26 @@ if (withGallery) {
   addFile('galeri.html');
   addFile('renders/manifest.json');
   addTree('renders', (rel) => /\.(png|jpe?g|webp)$/i.test(rel));
+}
+
+// Cache busting for sounds: write each file's content hash into dist's copy of the audio manifest
+// (a new file, not the hard link, so the source stays untouched); the audio loader appends ?v=<hash>.
+{
+  const manPath = path.join(dist, 'assets/audio/manifest.json');
+  if (fs.existsSync(manPath)) {
+    const man = JSON.parse(fs.readFileSync(manPath, 'utf8'));
+    for (const [rel, entry] of Object.entries(man)) {
+      if (!entry || typeof entry !== 'object') continue;
+      const h = {};
+      for (const ext of ['m4a', 'wav']) {
+        const f = path.join(root, 'assets/audio', `${rel}.${ext}`);
+        if (fs.existsSync(f)) h[ext] = crypto.createHash('md5').update(fs.readFileSync(f)).digest('hex').slice(0, 10);
+      }
+      entry.h = h;
+    }
+    fs.unlinkSync(manPath);
+    fs.writeFileSync(manPath, JSON.stringify(man));
+  }
 }
 
 console.log(`dist/: ${files} files, ${(bytes / 1e9).toFixed(2)} GB`);
