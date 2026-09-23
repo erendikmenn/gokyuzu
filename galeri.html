@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Gökyüzü SF · Render galerisi</title>
+  <style>
+    :root { --bg: #0b1622; --panel: #122233; --text: #e8f0fa; --muted: #93a7bd; --accent: #f2801a; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 -apple-system, "Helvetica Neue", Arial, sans-serif; }
+    header { padding: 36px 24px 8px; max-width: 1400px; margin: 0 auto; }
+    h1 { margin: 0; font-size: 34px; letter-spacing: -.01em; }
+    header p { color: var(--muted); margin: 6px 0 0; }
+    header a { color: var(--accent); }
+    section { max-width: 1400px; margin: 0 auto; padding: 18px 24px; }
+    h2 { font-size: 20px; margin: 18px 0 12px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+    figure { margin: 0; background: var(--panel); border-radius: 10px; overflow: hidden; cursor: zoom-in; }
+    figure img { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; background: #0e1b28; }
+    figcaption { padding: 8px 12px; color: var(--muted); font-size: 13px; text-transform: capitalize; }
+    #lb { position: fixed; inset: 0; background: rgba(3, 8, 14, .94); display: none; align-items: center; justify-content: center; z-index: 9; cursor: zoom-out; }
+    #lb.on { display: flex; }
+    #lb img { max-width: 96vw; max-height: 92vh; border-radius: 6px; }
+    .empty { color: var(--muted); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Gökyüzü SF · Render galerisi</h1>
+    <p>Blender (Cycles) ile üretilmiş uçak, simge yapı ve havalimanı render'ları. Oyuna dönmek için <a href="index.html">index.html</a>.</p>
+  </header>
+  <main id="groups"><section><p class="empty">Yükleniyor… (liste için önce <code>node tools/make_gallery.mjs</code> çalıştırılmalı)</p></section></main>
+  <div id="lb"><img alt="" /></div>
+  <script>
+    const lb = document.getElementById('lb');
+    lb.onclick = () => lb.classList.remove('on');
+    addEventListener('keydown', (e) => { if (e.key === 'Escape') lb.classList.remove('on'); });
+    fetch('renders/manifest.json').then((r) => r.json()).then(({ groups }) => {
+      const main = document.getElementById('groups');
+      main.innerHTML = '';
+      for (const g of groups) {
+        const s = document.createElement('section');
+        const h = document.createElement('h2'); h.textContent = g.title; s.append(h);
+        const grid = document.createElement('div'); grid.className = 'grid';
+        for (const im of g.images) {
+          const f = document.createElement('figure');
+          const img = document.createElement('img'); img.src = im.src; img.loading = 'lazy'; img.alt = `${g.title} · ${im.name}`;
+          const c = document.createElement('figcaption'); c.textContent = im.name;
+          f.append(img, c);
+          f.onclick = () => { lb.querySelector('img').src = im.src; lb.classList.add('on'); };
+          grid.append(f);
+        }
+        s.append(grid); main.append(s);
+      }
+    }).catch(() => {});
+  </script>
+</body>
+</html>
