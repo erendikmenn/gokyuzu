@@ -3,6 +3,8 @@
 //   const route = createRoute();
 //   route.add(x, z)                   user waypoint (appended, or inserted at an index)
 //   route.move(id, x, z) / remove(id) / setAlt(id, altM | null) / setDefaultAlt(altM | null) / clear()
+//   route.setSpeed(id, { ias, mach }) / setDefaultSpeed({ ias, mach })   leg speed (m/s CAS or Mach; nulls = automatic,
+//                                     src/nav/speed.js); final approach legs keep their procedure speeds
 //   route.directTo(id)                "Direkt git": that waypoint becomes the active one, from the present position
 //   route.directToPoint(x, z)         direct-to a free point (the route becomes that single point)
 //   route.setApproach(runwayEnd, category, env)   "Bu piste yaklaş": procedure points appended after the user points
@@ -57,6 +59,8 @@ export class Route {
     this.approach = null;        // { rw, category, points: [...], name }
     this.waypoints = [];         // compiled: user points, then approach points
     this.defaultAlt = null;      // m MSL used by points without their own altitude (null: keep the present altitude)
+    this.defaultSpd = null;      // m/s CAS for points without their own speed (null with defaultMach null: automatic)
+    this.defaultMach = null;
     this.active = 0;
     this.origin = { x: 0, z: 0 };
     this.version = 0;            // edits
@@ -113,7 +117,7 @@ export class Route {
 
   /** Append (or insert at `index` of the user list) a user waypoint; returns it. */
   add(x, z, { index = this.user.length, alt = null } = {}) {
-    const w = { id: nextId++, x, z, alt, kind: 'wpt', name: '' };
+    const w = { id: nextId++, x, z, alt, spd: null, mach: null, kind: 'wpt', name: '' };
     const wasEmpty = !this.hasActive;
     index = Math.max(0, Math.min(this.user.length, index));
     this.user.splice(index, 0, w);
@@ -158,6 +162,23 @@ export class Route {
   setDefaultAlt(alt) {
     this.defaultAlt = alt == null ? null : Math.max(0, alt);
     this._changed('alt');
+  }
+
+  /** Leg speed into waypoint `id`: { ias } (m/s CAS) or { mach }; both null = automatic. */
+  setSpeed(id, { ias = null, mach = null } = {}) {
+    const w = this.waypoints.find((p) => p.id === id);
+    if (!w || w.fixedSpd) return false;
+    w.spd = ias == null ? null : Math.max(0, ias);
+    w.mach = ias == null && mach != null ? Math.max(0, mach) : null;
+    this._changed('spd');
+    return true;
+  }
+
+  /** Route default speed for points without their own: { ias } or { mach }; both null = automatic per category. */
+  setDefaultSpeed({ ias = null, mach = null } = {}) {
+    this.defaultSpd = ias == null ? null : Math.max(0, ias);
+    this.defaultMach = ias == null && mach != null ? Math.max(0, mach) : null;
+    this._changed('spd');
   }
 
   clear() {
@@ -249,8 +270,11 @@ export class Route {
       const last = this.user[nu - 1], prev = nu > 1 ? this.user[nu - 2] : (this.active < nu ? this.origin : null);
       from = { x: last.x, z: last.z, track: prev ? courseTo(prev.x, prev.z, last.x, last.z) : NaN };
     } else from = { x: this.px, z: this.pz, track: this.pValid ? this.ptrack : NaN };
+    const old = A.points;
     A.points = buildApproach(A.rw, A.category, from, this.env);
     A.from = from;
+    // speeds the player set on the entry legs survive the rebuild
+    for (const p of A.points) { const o = old.find((q) => q.kind === p.kind); if (o && !p.fixedSpd) { p.spd = o.spd; p.mach = o.mach; } }
   }
 
   /** Leg list for drawing: [{ x0, z0, x1, z1, active, done, approach }]. */
@@ -412,7 +436,11 @@ export function buildApproach(rw, category, from, env) {
   } else {
     pts.push({ x: rw.x, z: rw.z, kind: 'thr', name: rw.ident, alt: elev });
   }
-  for (const p of pts) { p.id = nextId++; p.fixedAlt = true; p.rw = rw.name; }
+  for (const p of pts) {
+    p.id = nextId++; p.fixedAlt = true; p.rw = rw.name;
+    p.spd = null; p.mach = null;
+    p.fixedSpd = p.kind === 'faf' || p.kind === 'thr' || p.kind === 'hov';   // the final keeps its procedure speeds
+  }
   return pts;
 }
 

@@ -1115,7 +1115,7 @@ export function createHUD(container) {
   function safeVal(fn) { try { return fn(); } catch { return null; } }
 
   // ---------- FMA ----------
-  /** Navigation hook: active route leg, e.g. "LNAV → 2/4 · 3,2 NM · 287°" ('' without an active leg). */
+  /** Navigation hook: active route leg, e.g. "LNAV → 2/4 · 3,2 NM · 287° · 250 kt" ('' without an active leg). */
   function navLine(f) {
     const n = f.nav;
     if (!n || !n.valid) return '';
@@ -1124,7 +1124,10 @@ export function createHUD(container) {
     const name = n.kind && n.kind !== 'wpt' ? `${n.name} ` : '';
     // on a route approach the localizer flies the final: "ILS 28R → …"
     const ils = lnav && n.rw && /^(LOC|LAND|FLARE|ROLLOUT)/.test(String(ap.mode || ''));
-    return `${ils ? `ILS ${n.rw.ident}` : lnav ? 'LNAV' : 'ROTA'} → ${name}${n.index + 1}/${n.count} · ${d < 10 ? d.toFixed(1).replace('.', ',') : Math.round(d)} NM · ${String(Math.round(n.brg) % 360).padStart(3, '0')}°`;
+    // target speed: the leg's (Mach up high for fighters); on the ILS final the approach speed the autothrust flies
+    const spd = ils && Number.isFinite(ap.speed) ? `${Math.round(ap.speed * KT)} kt` : Number.isFinite(n.spdMach) ? `M${n.spdMach.toFixed(2)}`
+      : Number.isFinite(n.legSpeed) ? `${Math.round(n.legSpeed * KT)} kt` : '';
+    return `${ils ? `ILS ${n.rw.ident}` : lnav ? 'LNAV' : 'ROTA'} → ${name}${n.index + 1}/${n.count} · ${d < 10 ? d.toFixed(1).replace('.', ',') : Math.round(d)} NM · ${String(Math.round(n.brg) % 360).padStart(3, '0')}°${spd ? ` · ${spd}` : ''}`;
   }
   function updateFMA(f) {
     const ap = f.autopilot;
@@ -1142,7 +1145,7 @@ export function createHUD(container) {
       parts.push(['ap', 'AFCS']);
     } else {
       const spd = Number.isFinite(ap.speed) && ap.speed > 0 ? Math.round(ap.speed * KT) : null;
-      if (spd != null) parts.push(['v', `${ap.athr === false ? '' : 'A/THR '}SPD ${spd}`.trim()]);
+      if (spd != null) parts.push(['v', ap.athr === false ? 'MAN THR' : `A/THR SPD ${spd}`]);   // MAN THR: route A/THR taken over (fighter)
       const modes = String(ap.mode || '').split(/\s+/).filter(Boolean);
       const lat = modes.find((m) => /^(HDG|LOC|NAV|ROLLOUT|FLARE|LAND)$/.test(m)) || 'HDG';
       const vert = modes.find((m) => /^(ALT|CLB|DES|G\/S|VS|FLARE|LAND)$/.test(m) && m !== lat);
@@ -1483,6 +1486,8 @@ export function createHUD(container) {
     get element() { return root; },
     /** Add an overlay layer (onboarding cards) above the instruments but below toasts, help and pause. */
     mountLayer(node) { root.insertBefore(node, toast); },
+    /** Time & weather hook: a control shown on the pause screen, between the buttons and the key list. */
+    mountPauseControl(node) { pause.insertBefore(node, credLink); },
     /** Navigation hook (src/ui/map.js): the minimap opens the map (click) and draws the planned route. */
     setNavMap(hooks) {
       navHooks = hooks || null;

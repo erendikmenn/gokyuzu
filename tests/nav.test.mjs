@@ -7,6 +7,7 @@ import { createHelicopterModel } from '../src/flight/helicopter.js';
 import { approachGeometry, findApproach } from '../src/flight/fixedwing-autopilot.js';
 import { createRoute, findRunwayEnd, buildApproach, courseTo, NM } from '../src/nav/route.js';
 import { createLnav } from '../src/nav/lnav.js';
+import { legSpeed, clampHeli, clampFixedWing } from '../src/nav/speed.js';
 
 const KT = 0.514444, FT = 0.3048, DEG = 180 / Math.PI, RAD = Math.PI / 180;
 const RUNWAYS = JSON.parse(readFileSync(new URL('../data/sf/runways.json', import.meta.url), 'utf8'));
@@ -308,6 +309,110 @@ for (const [id, rwName, spawn] of [['a320neo', 'KSFO 28R', 'GGB'], ['b737', 'KSF
   fly(f, inp, 200, () => { if (route.finished) { reached = true; return false; } });
   check('Route edits in flight: insert before a passed point keeps the TO point, on the active leg → new TO, delete TO → next',
     keep && becomesTo && next && reached && !f.crashed, `keep ${keep}, new TO ${becomesTo}, next ${next}, reached ${reached}`);
+}
+
+// 10. route speeds: automatic defaults, legs flown at their speeds, limits, fighter A/THR override, helicopter speed
+{
+  const r = createRoute();
+  const w = r.add(0, -5000);
+  const k = (v) => Math.round(v / KT);
+  const a1 = legSpeed(r, w, 'airliner', 5000 * FT).ias, a2 = legSpeed(r, w, 'airliner', 15000 * FT).ias;
+  const a3 = legSpeed(r, w, 'airliner', 33000 * FT).mach, f1 = legSpeed(r, w, 'fighter', 30000 * FT).mach, h1 = legSpeed(r, w, 'helicopter', 300).ias;
+  r.setDefaultSpeed({ ias: 230 * KT });
+  const d1 = legSpeed(r, w, 'airliner', 5000 * FT);
+  r.setSpeed(w.id, { mach: 0.8 });
+  const o1 = legSpeed(r, w, 'airliner', 5000 * FT);
+  const rw = findRunwayEnd(RUNWAYS, 'KSFO 28R');
+  const pts = buildApproach(rw, 'airliner', { x: SPAWN.GGB.x, z: SPAWN.GGB.z, track: 0 }, ENV);
+  const app = pts.map((p) => (p.kind === 'thr' ? '' : k(legSpeed(r, p, 'airliner', p.alt).ias))).join('/');
+  check('Speeds: automatic 250 kt below / 290 kt above 10,000 ft, M0.78 high, fighters M0.85, heli 110 kt, route default, own Mach, approach 210/180',
+    k(a1) === 250 && k(a2) === 290 && a3 === 0.78 && f1 === 0.85 && k(h1) === 110 && k(d1.ias) === 230 && d1.src === 'default' && o1.mach === 0.8 && o1.src === 'wpt' && app === '210/210/180/',
+    `${k(a1)}/${k(a2)} kt, M${a3}, fighter M${f1}, heli ${k(h1)} kt, default ${k(d1.ias)} kt, own M${o1.mach}, approach ${app}`);
+}
+{
+  // A320 from AIR-CITY: leg 1 at 220 kt, leg 2 at 280 kt, leg 3 automatic (250 kt)
+  const { f, route, inp } = fixedWing('a320neo', SPAWN.CITY);
+  const w1 = route.add(-4000, -21000, { alt: 900 }), w2 = route.add(6000, -27000, { alt: 1200 }), w3 = route.add(12000, -17000, { alt: 1000 });
+  route.setSpeed(w1.id, { ias: 220 * KT }); route.setSpeed(w2.id, { ias: 280 * KT });
+  f.step(0, inp, world);
+  f.command('autopilot');
+  const at = {};
+  fly(f, inp, 400, () => {
+    const n = f.nav;
+    if (!n.valid) return false;
+    at[n.index] = f.ias / KT;                                 // the IAS when the leg ends (sequencing)
+  });
+  const ok = [220, 280, 250].every((v, i) => Math.abs((at[i] ?? 0) - v) < 8);
+  check('A320 route speeds: legs at 220 / 280 / automatic 250 kt held by the autothrottle (± 8 kt)', ok && !f.crashed,
+    [0, 1, 2].map((i) => `${(at[i] ?? NaN).toFixed(0)} kt`).join(' / '));
+}
+{
+  // limits: a 330 kt leg with CONF 2 (VFE 200 kt) and a 160 kt leg clean (below VLS) stay inside the envelope
+  const f = createFixedWingModel(SPECS.a320neo, {});
+  f.reset({ ...SPAWN.CITY, speed: 180 * KT }, world, { flapIndex: 3, gearDown: false });
+  const route = createRoute(); route.env = ENV; f.setRoute(route);
+  const inp = input({ throttle: f.throttle });
+  const w1 = route.add(-7000, -40000);                     // long level leg: the clamp alone, no level-off transient
+  route.setSpeed(w1.id, { ias: 330 * KT });
+  f.step(0, inp, world);
+  f.command('autopilot');
+  let maxIas = 0;
+  fly(f, inp, 60, (t) => { maxIas = Math.max(maxIas, f.ias); });
+  const vfe = f.vSpeeds.vfe;
+  const hiOk = f.autopilot.speed <= vfe - 9.9 * KT && maxIas < vfe && !f.warnings.overspeed;
+  const flapLabel = f.flapsLabel;
+  f.command('flapsUp'); f.command('flapsUp'); f.command('flapsUp');
+  route.setSpeed(w1.id, { ias: 160 * KT });
+  let minIas = 1e9, tgt = 0;
+  fly(f, inp, 90, (t) => { if (t > 60) { minIas = Math.min(minIas, f.ias); tgt = clampFixedWing(f, f.autopilot.speed); } });
+  const loOk = minIas > f.vSpeeds.vls && Math.abs(tgt - (f.vSpeeds.vls + 5 * KT)) < 0.1 && !f.stalled;
+  check('Limits: 330 kt asked with CONF 2 → held below VFE (target VFE − 10 kt); 160 kt asked clean → target VLS + 5 kt',
+    hiOk && loOk && flapLabel === '2', `CONF ${flapLabel}: max ${(maxIas / KT).toFixed(0)} kt < VFE ${(vfe / KT).toFixed(0)}; clean: target VLS + 5 = ${(tgt / KT).toFixed(0)}, min ${(minIas / KT).toFixed(0)} kt > VLS ${(f.vSpeeds.vls / KT).toFixed(0)}`);
+}
+{
+  // F-16: A/THR holds a 400 kt leg; a throttle movement takes it back (AP stays in NAV); "Rotayı uç" re-arms it
+  const { f, route, inp } = fixedWing('f16', SPAWN.GGB);
+  const w1 = route.add(8000, -26000, { alt: 1500 });
+  route.setSpeed(w1.id, { ias: 400 * KT });
+  f.step(0, inp, world);
+  f.command('autopilot');
+  const events = [];
+  f.on('nav', (e) => events.push(e.type));
+  fly(f, inp, 45);
+  const held = Math.abs(f.ias / KT - 400) < 10 && f.autopilot.athr;
+  inp.throttle = Math.max(0, inp.throttle - 0.25);            // the pilot pulls the throttle
+  fly(f, inp, 2);
+  const off = f.autopilot.on && f.autopilot.lnav && f.autopilot.athr === false && events.includes('athr');
+  inp.throttle = 0.02;                                        // idle
+  fly(f, inp, 12);
+  const manual = f.ias / KT < 385 && f.autopilot.lnav;       // slows with the lever, the AP keeps the route
+  const re = f.engageNav() && f.autopilot.athr;
+  fly(f, inp, 35);
+  check('F-16 route A/THR: 400 kt held (± 10), throttle input → MAN THR (AP stays in NAV), re-armed from the map',
+    held && off && manual && re && Math.abs(f.ias / KT - 400) < 12, `held ${held}, off ${off}, manual ${manual} (${(f.ias / KT).toFixed(0)} kt after re-arm), re-arm ${re}`);
+}
+{
+  // UH-60: a route at 60 kt instead of the default 110 kt; 200 kt / 20 kt requests are clamped (40…150 kt)
+  const f = createHelicopterModel(SPECS.uh60, {});
+  f.reset({ x: -1500, z: -14500, heading: 340 * RAD, altitude: 300, speed: SPECS.uh60.spawnSpeed }, world);
+  const route = createRoute();
+  f.setRoute(route);
+  const w1 = route.add(-3000, -19500, { alt: 300 }), w2 = route.add(0, -22000, { alt: 250 });
+  route.setDefaultSpeed({ ias: 60 * KT });
+  const inp = input({ throttle: f.collective });
+  f.step(1 / 60, inp, world);
+  f.command('autopilot');
+  let sum = 0, nS = 0, done = null;
+  fly(f, inp, 500, (t) => {
+    if (t > 40 && f.nav.valid && f.nav.index === 0 && f.nav.dist > 800) { sum += Math.hypot(f.velocity.x, f.velocity.z) / KT; nS++; }
+    if (!done && route.finished) done = t;
+    if (done) return false;
+  });
+  const avg = sum / Math.max(nS, 1);
+  route.setSpeed(w2.id, { ias: 200 * KT });
+  const hi = clampHeli(SPECS.uh60, 200 * KT) / KT, lo = clampHeli(SPECS.uh60, 20 * KT) / KT;
+  check('UH-60 route at 60 kt (± 5 kt on the leg), hover at the end; requests clamped to 40…150 kt',
+    Math.abs(avg - 60) < 5 && done && Math.round(hi) === 150 && Math.round(lo) === 40, `${avg.toFixed(1)} kt on the leg, done ${done && done.toFixed(0)} s, clamp ${hi.toFixed(0)} / ${lo.toFixed(0)} kt`);
 }
 
 // 9. LNAV cost: the output object is reused (no allocation per update) and an update costs microseconds

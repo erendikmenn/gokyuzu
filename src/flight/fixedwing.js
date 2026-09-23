@@ -15,7 +15,8 @@
 //     parking brake, autobrake (landing + RTO), reversers, nose-wheel steering, canopy, lights
 //   - ground contact: per-contact spring-damper struts (from the rig contacts), tire friction, static friction hold,
 //     tail skid; crash detection (hard touchdown, attitude, water, structure strike, world.hitTest obstacles)
-//   - warnings: stall, overspeed (VMO/MMO/VFE/VLE), gear, bank, sink rate, pull up (terrain + obstacle look-ahead)
+//   - warnings: stall, overspeed (VMO/MMO/VFE/VLE), gear, bank, sink rate, pull up (terrain + obstacle look-ahead);
+//     A320 FAC low energy + alpha floor (A.FLOOR / TOGA LK); fighters low speed / high AoA; crash cause (crashCause)
 //
 // Body axes (Three.js): nose -Z, up +Y, right wing +X. Internally p = -omega.z (roll right), q = omega.x (nose up),
 // r = -omega.y (yaw right). No DOM access: runs in Node (tests/fixedwing.test.mjs).
@@ -29,6 +30,10 @@ import { createAutopilot, findApproach, approachGeometry, runwayEnds } from './f
 import { createLnav } from '../nav/lnav.js';
 
 const MAX_FRAME_DT = 0.25;
+const FT = 0.3048;
+// A320 FAC: alpha-floor phase advance (s of the present deceleration) and the low-energy speed-trend term (s)
+const FLOOR_LEAD = 3.5;
+const LE_TREND = 10;
 
 // scratch (no allocations in the hot loop)
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
@@ -75,6 +80,12 @@ export class FixedWingModel {
     this.slats = 0; this.spoilers = 0; this.speedbrake = 0; this.reverser = 0; this.brakes = 0; this.fuel = 0;
     this.parkingBrake = false; this.autobrake = ''; this.groundSpeed = 0; this.mass = spec.mass.typical;
     this.warnings = { stall: false, overspeed: false, gear: false, bank: false, sinkRate: false, pullUp: false };
+    // A320 FAC / A-THR: low-energy warning ("SPEED SPEED SPEED"), alpha floor active (A.FLOOR), TOGA thrust locked
+    // after alpha floor (TOGA LK); fighters: low speed / high AoA (see _updateWarnings)
+    if (spec.fcs.law === 'airbus') Object.assign(this.warnings, { lowEnergy: false, alphaFloor: false, togaLock: false });
+    if (this.fighter) this.warnings.lowSpeed = false;
+    this.athrMode = '';             // '' | 'A.FLOOR' | 'TOGA LK' (A320 thrust mode forced by alpha floor)
+    this.crashCause = '';           // '' | 'stall' | 'lowspeed' (what led to the crash, see _crash)
     this.autopilot = { on: false, altitude: 0, heading: 0, speed: 0, mode: '', athr: false };
     this.rotorRPM = 0; this.collective = 0; this.torque = 0;
     this.canopy = 0; this.tvc = { pitch: 0, yaw: 0 }; this.buffet = 0;
@@ -198,7 +209,10 @@ export class FixedWingModel {
     this._airTime = 0; this._noContactTime = 0; this._groundTime = 0; this._fastRoll = false; this._takeoffArmed = true;
     this._liftoff = null; this._contact = true; this._gSmooth = 1; this._loadAcc = 0; this._loadN = 0; this._aglCG = 0;
     this._tailWas = false; this._hitTimer = 0; this._warnTimer = 0; this._runwayTimer = 0; this._onRunway = true;
-    this._leverRef = null; this._leverTarget = 0; this._leverLatched = false; this._alphaFloorT = 0; this._lastBrakeIn = 0; this._abLatched = false;
+    this._leverRef = null; this._leverTarget = 0; this._leverLatched = false; this._lastBrakeIn = 0; this._abLatched = false;
+    this._floor = ''; this._floorLever0 = 0; this._floorLeverMax = 0; this.athrMode = ''; this.crashCause = '';
+    this._iasPrev = null; this._iasRate = 0; this._lowSpeedAt = -1e9; this._stallAt = -1e9;
+    this._climbout = false; this._takeoffMode = false;
     for (const w of this._wheels) { w.contact = false; w.load = 0; w.comp = 0; }
     for (const k in this.warnings) this.warnings[k] = false;
     const act = this.act; act.elevator = 0; act.aileron = 0; act.rudder = 0; act.trim = 0; act.tvc = 0;
@@ -497,9 +511,12 @@ export class FixedWingModel {
     const spec = this.spec, sys = this.sys, ad = this.ad;
     this._systems(h, inp);
     this._airData(world);
+    // IAS trend (m/s², 1 s filter): FAC low-energy warning and alpha-floor phase advance
+    if (this._iasPrev != null) this._iasRate += ((ad.ias - this._iasPrev) / h - this._iasRate) * (h / 1.0);
+    this._iasPrev = ad.ias;
     // autopilot → demands; engines; control laws
     this.ap.update(h, inp, world);
-    const thrust = this._engines(h);
+    const thrust = this._engines(h, inp);
     this._airMoments(thrust);
     this.fcs.update(h, inp, this.apOut);
     const act = this.act;
@@ -583,7 +600,7 @@ export class FixedWingModel {
       this._hitTimer = 1 / 60;
       if (this._obstacleHit(world)) return;
     }
-    if (!Number.isFinite(pos.x + pos.y + pos.z + vel.x + vel.y + vel.z + quat.w)) this._crash('Sayısal hata');
+    if (!Number.isFinite(pos.x + pos.y + pos.z + vel.x + vel.y + vel.z + quat.w)) this._crash('Sayısal hata', 'num');
   }
 
   // ------------------------------------------------------------------------------------------ air data
@@ -641,7 +658,7 @@ export class FixedWingModel {
   }
 
   // ------------------------------------------------------------------------------------------ engines
-  _engines(h) {
+  _engines(h, inp) {
     const spec = this.spec, sys = this.sys, ad = this.ad, fcs = this.fcs.st;
     let lever = this._lever;
     if (sys.leverLock) lever = 0;
@@ -650,19 +667,49 @@ export class FixedWingModel {
     let ab = this.pp.hasAB && lever > det + 0.004 ? (lever - det) / (1 - det) : 0;
     // autothrust
     if (this.apOut.active && this.apOut.power != null) { power = this.apOut.power; ab = 0; }
-    // alpha floor (airbus): TOGA when the AoA passes alpha floor in flight
-    if (this.law === 'airbus' && !this.wow && this.agl > 30) {
-      if (ad.alpha > fcs.alphaFloorA && fcs.alphaFloorA > 0) this._alphaFloorT = 5;
-    }
-    if (this._alphaFloorT > 0) {
-      this._alphaFloorT -= h;
-      if (ad.alpha > fcs.alphaProtA - 2 * DEG) this._alphaFloorT = Math.max(this._alphaFloorT, 1);
-      power = 1; ab = 0;
-    }
-    fcs.alphaFloor = this._alphaFloorT > 0;
+    // alpha floor (airbus): TOGA thrust whatever the lever position (A.FLOOR, then TOGA LK)
+    if (this.law === 'airbus') this._alphaFloor(lever, inp);
+    if (this._floor) { power = 1; ab = 0; }
+    fcs.alphaFloor = !!this._floor;
     this._effLever = this._leverFromPower(power, ab);
     const reverse = sys.reverserCmd;
     return this.pp.update(h, { power: reverse ? lever : power, ab, reverse, fuel: this.fuel }, { h: ad.h, M: ad.M, sigma: ad.sigma, theta: ad.theta0, delta: ad.delta });
+  }
+
+  /**
+   * A320 alpha floor (FAC → A/THR, FCOM DSC-22_30): TOGA thrust whatever the thrust lever position when
+   *   - the AoA passes the alpha-floor threshold (between alpha prot and alpha max); the signal is phase advanced with
+   *     the deceleration (the AoA the present speed decay leads to FLOOR_LEAD s later), or
+   *   - the sidestick is more than 14° of its 16° nose up with the AoA or pitch-attitude protection active.
+   * Available from lift-off down to 100 ft RA in approach. "A.FLOOR" while the condition lasts, then "TOGA LK": the thrust
+   * stays at TOGA until the pilot takes it back (A/THR disconnect; in the game: the thrust lever pulled back, or moved
+   * into the CL…TOGA range, or the autopilot / A-THR engaged).
+   */
+  _alphaFloor(lever, inp) {
+    const ad = this.ad, fcs = this.fcs.st, F = this.spec.fcs;
+    if (this.wow) { this._floor = ''; return; }
+    const aF = fcs.alphaFloorA;
+    // flight law fully engaged (not during the ground → flight mode blend after lift-off, where a keyboard rotation
+    // overshoots the AoA for a moment)
+    const avail = (this._aglCG > 30.5 || this._climbout) && fcs.blend > 0.99 && aF > 0 && aF < 1;
+    const decel = Math.max(0, -this._iasRate);
+    const CL = Math.max(this.aero.CL(ad.alpha, this.lp), 0);
+    // constant load factor: CL ∝ 1/V², so dα/dt = 2 CL (−dV/dt) / (V CLα)
+    const lead = Math.min(FLOOR_LEAD * (2 * CL * decel) / (Math.max(ad.ias, 20) * Math.max(this.lp.CLa, 1)), 3 * DEG);
+    const s = inp && Number.isFinite(inp.pitch) ? inp.pitch : 0;
+    const prot = fcs.alphaProt || ad.theta > ((F.pitchMaxLow ?? F.pitchMax ?? 25) - 3) * DEG;
+    if (avail && (ad.alpha + lead > aF || (s > 14 / 16 && prot))) {
+      if (this._floor !== 'A.FLOOR') { this._floor = 'A.FLOOR'; this._floorLever0 = lever; this._floorLeverMax = lever; }
+      this._floorLeverMax = Math.max(this._floorLeverMax, lever);
+      return;
+    }
+    if (!this._floor) return;
+    this._floorLeverMax = Math.max(this._floorLeverMax, lever);
+    if (this._floor === 'A.FLOOR' && (!avail || ad.alpha + lead < aF - 0.5 * DEG)) this._floor = 'TOGA LK';
+    if (this._floor === 'TOGA LK') {
+      const moved = Math.abs(lever - this._floorLever0) > 0.02;
+      if ((moved && lever >= 0.85) || lever < this._floorLeverMax - 0.02 || (this.apOut.active && this.apOut.power != null)) this._floor = '';
+    }
   }
 
   // ------------------------------------------------------------------------------------------ systems
@@ -680,7 +727,9 @@ export class FixedWingModel {
       // (label + 'flaps' event), so the pilot re-selects the flaps once slow enough.
       const det = spec.flapDetents, ias = this.ad.ias;
       target = sys.flapIndex;
-      while (target > 0 && det[target].vfe && ias > det[target].vfe + 3 * KT) target--;
+      // A320 CONF 1+F retracts to 1 at 210 kt, below its VFE (FCOM): no VFE overspeed warning on a normal acceleration
+      const relief = (i) => det[i].vfe + (this.law === 'airbus' && i === spec.takeoffFlapIndex ? -5 : 3) * KT;
+      while (target > 0 && det[target].vfe && ias > relief(target)) target--;
       if (target !== sys.flapIndex) {
         sys.flapIndex = target;
         this.flapsIndex = target; this.flapsLabel = det[target].label;
@@ -767,6 +816,15 @@ export class FixedWingModel {
     // warnings
     this._warnTimer -= dt;
     if (this._warnTimer <= 0) { this._warnTimer = 0.2; this._updateWarnings(world); }
+    // take-off phase: lift-off → the EGPWS Mode 4 upper limit (500–1000 ft RA); alpha floor climb-out: lift-off → 100 ft
+    if (this._climbout && this._aglCG > 30.5) this._climbout = false;
+    if (this._takeoffMode && this.agl / FT > clamp(-1083 + 8.333 * (ad.ias / KT), 500, 1000)) this._takeoffMode = false;
+    // low-speed states the pilot flew into (crash cause, see _crash)
+    const w = this.warnings;
+    if (!this.wow && this.agl > 3) {
+      if (w.stall || w.lowEnergy || w.lowSpeed || w.alphaFloor || this.stalled || (this.law === 'airbus' && this.fcs.st.alphaProt)) this._lowSpeedAt = this._time;
+      if (this.stalled || (w.stall && this.law === 'conventional')) this._stallAt = this._time;
+    }
   }
 
   _updateVSpeeds() {
@@ -795,10 +853,10 @@ export class FixedWingModel {
     const vfe = this.vSpeeds.vfe;
     const over = ad.ias > L.vmo + 1 || ad.M > L.mmo + 0.004 || (vfe > 0 && sys.flapPos > 0.05 && ad.ias > vfe + 2) || (sys.gear > 0.02 && L.vle && ad.ias > L.vle + 2);
     set('overspeed', over && !this.wow);
-    // gear not down
+    // gear not down (like EGPWS Mode 4A: not in the take-off phase, from lift-off to the Mode 4 upper limit)
     const landingFlaps = !this.fighter && sys.flapIndex >= (spec.landingFlapIndex ?? 99) - 1;
     const lowIdle = this.agl < 230 && this._lever < 0.15 && ad.vs < -1 && ad.ias < (this.fighter ? 110 : 95);
-    set('gear', air && sys.gear < 0.98 && (landingFlaps || lowIdle));
+    set('gear', air && !this._takeoffMode && sys.gear < 0.98 && (landingFlaps || lowIdle));
     // bank angle (airliners)
     set('bank', air && !this.fighter && Math.abs(ad.phi) > 35 * DEG);
     // sink rate (GPWS mode 1 like), fighters only with the gear down
@@ -807,6 +865,62 @@ export class FixedWingModel {
     set('sinkRate', sink);
     // pull up: predicted terrain / obstacle impact along the flight path, or an extreme sink rate close to the ground
     set('pullUp', air && (this._lookAhead(world) || (this.agl < 600 && -ad.vs > sinkLim * 1.6 + 3)));
+    // A320: alpha floor / TOGA LK (A/THR) and the FAC low-energy warning; fighters: low speed / high AoA
+    if (this.law === 'airbus') {
+      set('alphaFloor', this._floor === 'A.FLOOR');
+      set('togaLock', this._floor === 'TOGA LK');
+      set('lowEnergy', this._lowEnergy());
+    }
+    if (this.fighter) {
+      // confirmed for 1 s (a keyboard rotation briefly overshoots 15° AoA with the gear down)
+      const ls = this._fighterLowSpeed(air);
+      this._lowSpeedT = ls ? (this._lowSpeedT ?? 0) + 0.2 : 0;
+      set('lowSpeed', ls && (w.lowSpeed || this._lowSpeedT >= 1));
+    }
+  }
+
+  /**
+   * A320 FAC low-energy warning ("SPEED SPEED SPEED", FCOM DSC-22_40): the energy is going below the level from which a
+   * positive flight path can be regained with pitch alone, so thrust must be added. Available in CONF 1…FULL between 100
+   * and 2000 ft RA; inhibited with TOGA thrust, alpha floor or a GPWS alert. The FAC computes it from the configuration,
+   * the deceleration rate and the flight path angle: here a speed threshold halfway between VαPROT and VLS (1.13 VS1g
+   * in the take-off CONF 1+F), raised by the speed trend (LE_TREND s of the present deceleration) and 1 kt per degree of
+   * descent (lowered 1 kt per degree of climb).
+   */
+  _lowEnergy() {
+    const ad = this.ad, sys = this.sys, spec = this.spec, w = this.warnings;
+    const ft = this.agl / FT;
+    if (this.wow || sys.flapIndex < 1 || ft < 100 || ft > 2000) return false;
+    if (this._floor || this._effectiveLever() >= 0.97 || w.pullUp || w.sinkRate || w.gear) return false;
+    const vs1g = this.vSpeeds.vs1g;
+    const vls = vs1g * (sys.flapIndex === spec.takeoffFlapIndex ? 1.13 : (spec.vlsFactor ?? 1.23));
+    const vProt = vs1g / Math.sqrt(spec.fcs.clAlphaProt ?? 0.8);
+    const base = Math.max(vProt, 0.5 * (vProt + vls));
+    const thr = base - clamp(ad.gamma / DEG, -10, 10) * KT + LE_TREND * clamp(-this._iasRate, 0, 3 * KT);
+    return ad.ias < thr + (w.lowEnergy ? 3 * KT : 0);
+  }
+
+  /**
+   * Fighters: honest low-speed / high-AoA indication (no stall horn: the F-16 FLCS limits AoA and g). Gear handle down:
+   * AoA above the approach band (F-16 AoA indexer 11–15°, low-speed warning tone above 15°). Gear up: at the FLCS AoA
+   * limiter without load factor (out of energy, not a hard turn) below 1.5 VS1g, or nose high and slow (pitch 45–90°
+   * with KIAS < 2.22 × pitch).
+   */
+  _fighterLowSpeed(air) {
+    const ad = this.ad, F = this.spec.fcs, w = this.warnings;
+    if (!air || this.agl < 15) return false;
+    const aoa = ad.alpha / DEG, hys = w.lowSpeed ? 2 : 0;
+    if (this.sys.gearHandleDown) {
+      // above the aircraft's own approach AoA band (1 g AoA at VAPP + 1.5°: F-16 ≈ 15°, F-22 ≈ 16°)
+      const v = this.vSpeeds;
+      const aApp = v.vs1g > 0 && v.vapp > v.vs1g ? this.fcs.st.alphaForCL(this.lp.CLmax / (v.vapp / v.vs1g) ** 2) / DEG : 13;
+      return aoa > Math.max(15, aApp + 1.5) - hys;
+    }
+    const aHold = Math.min(F.alphaLimit ?? 25, this.lp.alphaStall / DEG) - (F.alphaHoldMargin ?? 5);
+    const slow = ad.ias < 1.5 * this._vs1g(0, 0.2);
+    const limiter = slow && aoa > aHold - 3 - hys && this.gForce < 1.6;
+    const pitch = ad.theta / DEG, kt = ad.ias / KT;
+    return limiter || (pitch >= 45 - hys && kt < 2.22 * Math.min(pitch, 90) + (hys ? 10 : 0));
   }
 
   _lookAhead(world) {
@@ -964,7 +1078,7 @@ export class FixedWingModel {
       if (this._aglCG > 1) this._airTime += h;
       if (this._fastRoll && this._noContactTime > 0.5 && this._liftoff) {
         this._fastRoll = false;
-        if (this._takeoffArmed) { this._takeoffArmed = false; this._emit('takeoff', { ...this._liftoff }); }
+        if (this._takeoffArmed) { this._takeoffArmed = false; this._climbout = true; this._takeoffMode = true; this._emit('takeoff', { ...this._liftoff }); }
       }
     }
     this._contact = anyContact;
@@ -1016,19 +1130,31 @@ export class FixedWingModel {
     for (const s of this._hitSpheres) {
       _pw.copy(s.r).applyQuaternion(this._quat).add(p);
       const hit = world.hitTest(_pw.x, _pw.y, _pw.z, s.rad);
-      if (hit) { this._crash(`${turkishDative(hit)} çarptı`); return true; }
+      if (hit) { this._crash(`${turkishDative(hit)} çarptı`, 'obstacle'); return true; }
     }
     return false;
   }
 
-  _crash(reason) {
+  /** kind: 'ground' (terrain / water / runway contact), 'obstacle' (world.hitTest), 'num'. */
+  _crash(reason, kind = 'ground') {
     if (this.crashed) return;
+    // an impact (ground, water, or sinking into a building) out of a low-speed state (stall warning, stall, alpha
+    // protection, low energy, AoA limiter in the last 20 s) names the real cause first: "Hız çok düştü (stall), uçak yere
+    // çakıldı", "Hız çok düştü, binaya çarptı" (src/ui/hints.js explains it; obstacle names keep their capitals)
+    let cause = '';
+    const t = this._time;
+    if (kind !== 'num' && t - this._lowSpeedAt < 20 && (this.velocity.y < -3 || t - this._stallAt < 3)) {
+      cause = t - this._stallAt < 15 ? 'stall' : 'lowspeed';
+      const r = kind === 'obstacle' ? reason : reason.charAt(0).toLocaleLowerCase('tr') + reason.slice(1);
+      reason = `Hız çok düştü${cause === 'stall' ? ' (stall)' : ''}, ${r}`;
+    }
     this.crashed = true;
     this.crashReason = reason;
+    this.crashCause = cause;
     this.velocity.set(0, 0, 0);
     this._omega.set(0, 0, 0);
     if (this.autopilot.on) { this.autopilot.on = false; this.autopilot.mode = ''; this.apOut.active = false; }
-    this._emit('crash', { reason, position: this._pos.clone() });
+    this._emit('crash', { reason, cause, position: this._pos.clone() });
   }
 
   // ------------------------------------------------------------------------------------------ readouts
@@ -1051,6 +1177,7 @@ export class FixedWingModel {
     this.sideslip = ad.beta / DEG;
     this.groundSpeed = Math.hypot(this.velocity.x, this.velocity.z);
     this.throttle = this._effectiveLever();
+    this.athrMode = this._floor;
     this.onGround = this._contact;
     this.aileron = this.act.aileron; this.elevator = this.act.elevator; this.rudder = this.act.rudder; this.trim = this.act.trim;
     this.gear = sys.gear; this.gearHandleDown = sys.gearHandleDown;

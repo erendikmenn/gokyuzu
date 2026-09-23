@@ -26,6 +26,11 @@ import { trackEvent } from '../core/telemetry.js';
 const DONE_KEY = 'gokyuzu.tutorial';          // { airliner: 'done' | 'skipped', fighter: …, helicopter: … }
 const KEYCARD_SECONDS = 10;
 const OK_SECONDS = 0.75;                      // check mark between two steps
+// flight-model warning flags → short codes for the crash event (src/flight: fixedwing.js, helicopter.js)
+const WARN_CODES = {
+  stall: 'st', overspeed: 'os', gear: 'gr', bank: 'bk', sinkRate: 'sr', pullUp: 'pu', lowEnergy: 'le', alphaFloor: 'af',
+  togaLock: 'tl', lowSpeed: 'ls', lowRotor: 'lr', highRotor: 'hr', overtorque: 'ot', vrs: 'vrs', lowFuel: 'lf',
+};
 
 /** Tutorial state per category ('done' | 'skipped' | undefined). */
 export function tutorialStatus(category) { const s = storageGet(DONE_KEY); return s && typeof s === 'object' ? s[category] : undefined; }
@@ -412,7 +417,9 @@ export function createOnboarding(container, { input = null, hud = null, restart 
     });
     flight.on('crash', (i) => {
       const reason = (i && i.reason) || flight.crashReason || '';
-      trackEvent('crash', { ac: ac(), sp: spawn && spawn.id, r: explainCrash(reason, c.cat).code, d: reason.slice(0, 60) });
+      // w: warnings active at the impact, short codes (e.g. "le,pu" = low energy + pull up)
+      const w = Object.entries(flight.warnings || {}).filter(([k, on]) => on && WARN_CODES[k]).map(([k]) => WARN_CODES[k]).join(',');
+      trackEvent('crash', { ac: ac(), sp: spawn && spawn.id, r: explainCrash(reason, c.cat).code, d: reason.slice(0, 60), w });
       if (tut.active) trackEvent('tut', { ac: ac(), sc: scenario.id, st: tut.steps[tut.i].id, x: 'crash' });
     });
   }

@@ -5,7 +5,9 @@
 //   click on the map            add a waypoint (appended before an approach)       drag a waypoint   move it
 //   click on a leg              insert a waypoint there (drag to place)            click a waypoint  altitude, Direkt git, Sil
 //   click a runway end          "Bu piste yaklaş" (approach procedure → ILS / hover) or "Direkt git"
-//   side panel                  default altitude, per-point altitudes, "Rotayı uç" (engages the autopilot in NAV), clear
+//   side panel                  default altitude + cruise speed, per-point altitude and speed (automatic values shown
+//                               as "oto": 250 kt below 10,000 ft for airliners, approach speeds on the procedure legs;
+//                               click a set value to return to automatic), "Rotayı uç" (autopilot in NAV), clear
 // Same imagery and style as the minimap (baked bay map), sharpened at high zoom by the terrain's NAIP tiles
 // (src/ui/map-tiles.js). Esc closes it before it can pause the game. Anonymous telemetry: 'map' (opened) and
 // 'route' (flown: point count, approach runway) through src/core/telemetry.js (CONTRACTS-SF.md §11).
@@ -17,6 +19,7 @@ import { shared } from './shared.js';
 import { REGION } from '../geo.js';
 import { runwayEnds } from '../flight/fixedwing-autopilot.js';
 import { NM } from '../nav/route.js';
+import { legSpeed, autoCruise, ROUTE_SPEED, FIXED_SPEED_KINDS } from '../nav/speed.js';
 import { drawRoute, drawAircraft, drawTrail, fmtFt } from './map-draw.js';
 import { createDetailTiles } from './map-tiles.js';
 import { trackEvent } from '../core/telemetry.js';
@@ -122,6 +125,9 @@ const CSS = `
 .gkn-step b { min-width: 56px; text-align: center; font: 700 12.5px var(--gk-mono); color: var(--gk-fg); }
 .gkn-step b small { font: 600 10px var(--gk-sans); color: var(--gk-faint); margin-left: 2px; }
 .gkn-step b.auto { color: var(--gk-dim); }
+.gkn-step b i { font: 800 8px var(--gk-sans); font-style: normal; letter-spacing: .08em; color: var(--gk-teal); margin-left: 3px; vertical-align: 1px; }
+.gkn-step b.reset { cursor: pointer; }
+.gkn-step b.reset:hover { color: var(--gk-teal); }
 .gkn-side { flex: 0 0 clamp(282px, 24vw, 350px); min-width: 0; overflow: hidden; display: flex; flex-direction: column; min-height: 0; border-left: 1px solid rgba(255, 255, 255, .07); background: rgba(5, 10, 19, .5); }
 .gkn-sh { padding: 14px 16px 12px; border-bottom: 1px solid rgba(255, 255, 255, .06); }
 .gkn-sh h3 { margin: 0; display: flex; align-items: baseline; justify-content: space-between; gap: 10px; font-size: 13px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; color: var(--gk-teal); }
@@ -132,11 +138,12 @@ const CSS = `
 .gkn-status.nav { color: #ffd4f8; }
 .gkn-status.on i { background: #4be37a; }
 .gkn-fly { width: 100%; padding: 10px 12px; font-size: 13.5px; }
-.gkn-def { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 16px; border-bottom: 1px solid rgba(255, 255, 255, .06);
+.gkn-defs { border-bottom: 1px solid rgba(255, 255, 255, .06); padding: 4px 0; }
+.gkn-def { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 16px;
   font-size: 12px; font-weight: 650; color: var(--gk-dim); }
 .gkn-list { flex: 1 1 auto; min-height: 0; overflow: auto; margin: 0; padding: 6px 8px 8px; list-style: none; }
 .gkn-list::-webkit-scrollbar { width: 8px; } .gkn-list::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, .1); border-radius: 8px; }
-.gkn-wp { display: flex; align-items: center; gap: 6px; padding: 6px 4px 6px 7px; border-radius: 10px; border-left: 3px solid transparent; cursor: pointer; transition: background .12s; }
+.gkn-wp { display: flex; align-items: flex-start; gap: 7px; padding: 6px 4px 7px 7px; border-radius: 10px; border-left: 3px solid transparent; cursor: pointer; transition: background .12s; }
 .gkn-wp:hover, .gkn-wp.sel { background: rgba(255, 255, 255, .06); }
 .gkn-wp.act { border-left-color: var(--gkn-mag); background: rgba(255, 110, 231, .08); }
 .gkn-wp.done { opacity: .45; }
@@ -144,6 +151,11 @@ const CSS = `
 .gkn-wp.app .gkn-n { border-radius: 5px; transform: rotate(45deg) scale(.82); }
 .gkn-wp.app .gkn-n span { transform: rotate(-45deg); font-size: 9px; }
 .gkn-wp.act .gkn-n { background: var(--gkn-mag); color: #1a0716; }
+.gkn-wm { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.gkn-wt { display: flex; align-items: center; gap: 2px; min-width: 0; }
+.gkn-wc { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.gkn-wc .gkn-alt { font: 650 11.5px var(--gk-mono); color: rgba(236, 244, 255, .72); }
+.gkn-n { margin-top: 2px; }
 .gkn-wl { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
 .gkn-wl b { font-size: 12.5px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .gkn-wl small { font: 600 10.5px var(--gk-mono); color: var(--gk-faint); white-space: nowrap; }
@@ -346,12 +358,14 @@ export function createNavMap({ hud, route }) {
     if (!flight || !route.hasActive) return false;
     if (!airborne()) { say('Otopilot yerde açılamaz: kalkıştan sonra O tuşu ya da «Rotayı uç»', 2600); return false; }
     const was = flight.autopilot && flight.autopilot.on;
+    const man = was && flight.autopilot.athr === false;
     const ok = flight.engageNav ? flight.engageNav() : false;
     if (!ok) { say('Otopilot şu an rotaya bağlanamıyor', 1800); return false; }
     const A = route.approach;
     // anonymous: aircraft, number of user points, approach runway (e.g. KSFO28R), how it was engaged (fly / dir / app)
     trackEvent('route', { ac: acId(), pt: route.user.length, rw: A ? A.name.replace(/\s+/g, '') : '', k: kind });
     if (!was) say(heli() ? 'AFCS rotada: NAV' : 'Otopilot rotada: LNAV', 1600);
+    else if (man) say('A/THR: rota hızı yeniden tutuluyor', 1400);
     dirty = true; lastPanelKey = '';
     return true;
   }
@@ -396,12 +410,45 @@ export function createNavMap({ hud, route }) {
     const cur = route.defaultAlt ?? (flight ? flight.altitude : 1000);
     route.setDefaultAlt(clamp(Math.round(cur / st) * st + dir * st, (heli() ? 200 : 1000) * FT, (heli() ? 10000 : 39000) * FT));
   }
+  // speeds: the leg's effective speed (own / route default / automatic), stepped in 10 kt or Mach 0.01–0.05
+  const _sp = { ias: NaN, mach: NaN, auto: true, src: 'auto' };
+  const legAlt = (w) => route.altFor(w) ?? (flight ? flight.altitude : 0);
+  const spdOf = (w) => legSpeed(route, w, category, legAlt(w), _sp);
+  const spdNum = (sp) => (Number.isFinite(sp.mach) ? `M${sp.mach.toFixed(2)}` : String(Math.round(sp.ias / KT)));
+  const spdUnit = (sp) => (Number.isFinite(sp.mach) ? '' : 'kt');
+  function stepSpeed(sp, dir) {
+    const P = ROUTE_SPEED[category] || ROUTE_SPEED.airliner;
+    if (Number.isFinite(sp.mach)) {
+      const st = P.machStep || 0.05;
+      return { mach: Math.round(clamp(Math.round(sp.mach / st) * st + dir * st, P.machMin, P.machMax) * 100) / 100 };
+    }
+    return { ias: clamp(Math.round(sp.ias / KT / P.step) * P.step + dir * P.step, P.min, P.max) * KT };
+  }
+  function setSpd(id, dir) { const w = route.byId(id); if (w && !w.fixedSpd) route.setSpeed(id, stepSpeed({ ...spdOf(w) }, dir)); }
+  function defaultSpd() {
+    if (route.defaultSpd != null) return { ias: route.defaultSpd, mach: NaN, auto: false };
+    if (route.defaultMach != null) return { ias: NaN, mach: route.defaultMach, auto: false };
+    const a = autoCruise(category, route.defaultAlt ?? (flight ? flight.altitude : 0), {});
+    a.auto = true;
+    return a;
+  }
+  function spdStepper(w) {
+    const sp = spdOf(w);
+    const view = () => { const v = spdOf(w); return { text: spdNum(v), unit: spdUnit(v), dim: v.src !== 'wpt', auto: v.auto, reset: v.src === 'wpt' }; };
+    return stepper(view, (d) => setSpd(w.id, d), () => route.setSpeed(w.id, {}));
+  }
+  /** Map label: "250 kt" (automatic values too), '' where the final's own logic flies. */
+  function speedText(w) {
+    if (w.kind === 'thr' || w.kind === 'hov') return '';
+    const sp = spdOf(w);
+    return Number.isFinite(sp.mach) ? `M${sp.mach.toFixed(2)}` : `${Math.round(sp.ias / KT)} kt`;
+  }
 
   // ---------------------------------------------------------------- popup
-  function closePop() { pop.classList.remove('on'); pop.textContent = ''; popFor = null; }
+  function closePop() { pop.classList.remove('on'); pop.textContent = ''; popFor = null; popStale = false; }
   let popFor = null;
   function showPop(target) {
-    popFor = target;
+    popFor = target; popStale = false;
     pop.textContent = '';
     if (target.type === 'wpt') {
       const w = route.byId(target.id);
@@ -414,7 +461,10 @@ export function createNavMap({ hud, route }) {
         if (prev) el('p', null, pop, `${i > 0 ? 'Önceki noktadan' : 'Uçaktan'} ${nmStr(Math.hypot(w.x - prev.x, w.z - prev.z))} · ${pad3(bearing(prev.x, prev.z, w.x, w.z))}°`);
         const ar = el('div', 'gkn-altrow', pop);
         el('span', null, ar, 'İrtifa');
-        ar.append(stepper(route.altFor(w), w.alt == null, (d) => setAlt(w.id, d)));
+        ar.append(altStepper(w));
+        const sr = el('div', 'gkn-altrow', pop);
+        el('span', null, sr, 'Hız');
+        sr.append(spdStepper(w));
         const row = el('div', 'gkn-row', pop);
         btn(row, 'mag', `${ICON.go}Direkt git`, () => directTo(w.id));
         btn(row, 'ghost', `${ICON.del}Sil`, () => { route.remove(w.id); sel = null; closePop(); });
@@ -426,6 +476,8 @@ export function createNavMap({ hud, route }) {
         const rwEnd = route.approach && route.approach.rw;
         const dThr = rwEnd ? Math.hypot(w.x - rwEnd.x, w.z - rwEnd.z) : 0;
         el('p', null, pop, `${what}${rwN ? ` · ${rwN}` : ''}${w.kind !== 'thr' && w.kind !== 'hov' && dThr ? ` · ${nmStr(dThr)}` : ''}${w.alt != null && w.kind !== 'thr' ? ` · ${fmtFt(w.alt)} ft` : ''}`);
+        if (!w.fixedSpd) { const sr = el('div', 'gkn-altrow', pop); el('span', null, sr, 'Hız'); sr.append(spdStepper(w)); }
+        else if (w.kind === 'faf') el('p', null, pop, `Hız ${speedText(w)}, G/S yakalanınca yaklaşma hızına iner.`);
         const row = el('div', 'gkn-row', pop);
         if (w.kind !== 'thr') btn(row, 'mag', `${ICON.go}Direkt git`, () => directTo(w.id));
         btn(row, 'ghost', `${ICON.del}Yaklaşmayı kaldır`, () => { route.clearApproach(); sel = null; closePop(); });
@@ -463,22 +515,42 @@ export function createNavMap({ hud, route }) {
     b.addEventListener('click', (ev) => { ev.stopPropagation(); b.blur(); fn(); dirty = true; });
     return b;
   }
-  function stepper(altM, auto, fn) {
+  /**
+   * −/+ stepper. view() → { text, unit, dim (from a default), auto ("oto" tag), reset (a click on the value returns to
+   * the default) }. The value re-renders in place and the panel / popup rebuild waits for a pause in the clicking, so
+   * quick repeated clicks all land on the same buttons.
+   */
+  function stepper(view, fn, reset = null) {
     const s = el('span', 'gkn-step');
-    const m = el('button', null, s); m.type = 'button'; m.innerHTML = ICON.minus; m.title = 'Alçalt';
-    const b = el('b', auto ? 'auto' : null, s);
-    b.append(altM != null ? fmtFt(altM) : 'mevcut');
-    if (altM != null) el('small', null, b, 'ft');
-    const p = el('button', null, s); p.type = 'button'; p.innerHTML = ICON.plus; p.title = 'Yükselt';
-    m.addEventListener('click', (ev) => { ev.stopPropagation(); fn(-1); dirty = true; });
-    p.addEventListener('click', (ev) => { ev.stopPropagation(); fn(1); dirty = true; });
+    const m = el('button', null, s); m.type = 'button'; m.innerHTML = ICON.minus; m.title = 'Azalt';
+    const b = el('b', null, s);
+    const p = el('button', null, s); p.type = 'button'; p.innerHTML = ICON.plus; p.title = 'Artır';
+    const render = () => {
+      const v = view();
+      b.textContent = '';
+      b.className = `${v.dim ? 'auto' : ''}${v.reset && reset ? ' reset' : ''}`;
+      b.title = v.reset && reset ? 'Otomatiğe / varsayılana dön' : '';
+      b.append(v.text);
+      if (v.unit) el('small', null, b, v.unit);
+      if (v.auto) el('i', null, b, 'oto');
+    };
+    const act = (ev, f) => { ev.stopPropagation(); f(); uiHoldUntil = performance.now() + 700; render(); dirty = true; };
+    b.addEventListener('click', (ev) => { if (reset && b.classList.contains('reset')) act(ev, reset); });
+    m.addEventListener('click', (ev) => act(ev, () => fn(-1)));
+    p.addEventListener('click', (ev) => act(ev, () => fn(1)));
+    render();
     return s;
+  }
+  let uiHoldUntil = 0, popStale = false;
+  function altStepper(w) {
+    const view = () => { const a = route.altFor(w); return { text: a != null ? fmtFt(a) : 'mevcut', unit: a != null ? 'ft' : '', dim: w.alt == null, reset: w.alt != null }; };
+    return stepper(view, (d) => setAlt(w.id, d), () => route.setAlt(w.id, null));
   }
 
   // ---------------------------------------------------------------- side panel (rebuilt when the route / AP state changes)
   function panelKey() {
     const ap = flight && flight.autopilot;
-    return `${route.version}|${route.active}|${route.finished}|${ap && ap.on}|${ap && ap.lnav}|${ap && ap.mode}|${airborne()}|${sel && (sel.id || '')}`;
+    return `${route.version}|${route.active}|${route.finished}|${ap && ap.on}|${ap && ap.lnav}|${ap && ap.athr}|${ap && ap.mode}|${airborne()}|${sel && (sel.id || '')}`;
   }
   function buildPanel() {
     side.textContent = '';
@@ -493,18 +565,26 @@ export function createNavMap({ hud, route }) {
     let txt;
     if (!n) txt = 'Rota yok: haritaya tıklayarak nokta ekle.';
     else if (!route.hasActive) txt = 'Rota tamamlandı.';
-    else if (onNav) txt = heli() ? 'AFCS rotayı uçuyor (NAV).' : `Otopilot rotayı uçuyor (${String(ap.mode || 'NAV').split(' ')[0]}).`;
+    else if (onNav && ap.athr === false) txt = 'Otopilot rotada, gaz sende (A/THR kapalı). «A/THR aç» ile hız yeniden tutulur.';
+    else if (onNav) txt = heli() ? 'AFCS rotayı uçuyor (NAV).' : `Otopilot rotayı uçuyor (${String(ap.mode || 'NAV').split(' ')[0]}${category === 'fighter' ? ', A/THR' : ''}).`;
     else if (ap && ap.on) txt = 'Otopilot açık, rota beklemede (HDG).';
     else if (!airborne()) txt = 'Yerde: kalkıştan sonra otopilot rotaya bağlanır.';
     else txt = 'Otopilot kapalı: rota rehber olarak gösteriliyor.';
     el('span', null, st, txt);
-    const fly = btn(sh, 'primary gkn-fly', `${ICON.plane}${onNav ? 'Rotada' : 'Rotayı uç'}`, () => flyRoute('fly'));
-    fly.disabled = !route.hasActive || onNav || !airborne();
+    const manThr = onNav && ap.athr === false;
+    const fly = btn(sh, 'primary gkn-fly', `${ICON.plane}${manThr ? 'A/THR aç' : onNav ? 'Rotada' : 'Rotayı uç'}`, () => flyRoute('fly'));
+    fly.disabled = !route.hasActive || (onNav && !manThr) || !airborne();
     fly.title = 'Otopilotu rotada (LNAV) açar · O tuşu da rota varken rotayı uçar';
-    // default altitude
-    const dRow = el('div', 'gkn-def', side);
+    // route defaults: altitude and cruise speed
+    const defs = el('div', 'gkn-defs', side);
+    const dRow = el('div', 'gkn-def', defs);
     el('span', null, dRow, 'Varsayılan irtifa');
-    dRow.append(stepper(route.defaultAlt, route.defaultAlt == null, setDefault));
+    dRow.append(stepper(() => ({ text: route.defaultAlt != null ? fmtFt(route.defaultAlt) : 'mevcut', unit: route.defaultAlt != null ? 'ft' : '', dim: route.defaultAlt == null }), setDefault));
+    const sRow = el('div', 'gkn-def', defs);
+    el('span', null, sRow, 'Seyir hızı');
+    const dsView = () => { const v = defaultSpd(); return { text: spdNum(v), unit: spdUnit(v), dim: v.auto, auto: v.auto, reset: !v.auto }; };
+    sRow.append(stepper(dsView, (d) => route.setDefaultSpeed(stepSpeed(defaultSpd(), d)), () => route.setDefaultSpeed({})));
+    sRow.title = category === 'airliner' ? 'Otomatik: 10.000 ft altında 250 kt, üstünde 290 kt / M0.78' : category === 'fighter' ? 'Otomatik: 350 kt, 25.000 ft üstünde M0.85' : 'Otomatik: 110 kt (40–150 kt)';
     // list
     const list = el('ol', 'gkn-list', side);
     if (!n) {
@@ -526,20 +606,31 @@ export function createNavMap({ hud, route }) {
       const li = el('li', `gkn-wp${w.kind !== 'wpt' ? ' app' : ''}${i === act ? ' act' : ''}${i < act ? ' done' : ''}${sel && sel.id === w.id ? ' sel' : ''}`, list);
       const nEl = el('span', 'gkn-n', li);
       el('span', null, nEl, w.kind === 'wpt' ? w.name : w.kind === 'thr' ? '▲' : w.kind === 'hov' ? 'H' : w.kind === 'base' ? 'G' : w.kind === 'if' ? 'IF' : 'F');
-      const wl = el('span', 'gkn-wl', li);
+      const main = el('div', 'gkn-wm', li);
+      const top = el('div', 'gkn-wt', main);
+      const wl = el('span', 'gkn-wl', top);
       el('b', null, wl, w.kind === 'wpt' ? `Nokta ${w.name}` : w.kind === 'thr' ? `Pist ${w.name}` : w.kind === 'hov' ? `Askı · ${w.name}` : w.name);
       const prev = i > 0 ? W0[i - 1] : (route.hasActive && act === 0 ? route.origin : null);
-      const small = el('small', low[i] ? 'low' : null, wl, prev ? `${nmStr(Math.hypot(w.x - prev.x, w.z - prev.z))} · ${pad3(bearing(prev.x, prev.z, w.x, w.z))}°` : '—');
+      const small = el('small', low[i] ? 'low' : null, wl, prev ? `${nmStr(Math.hypot(w.x - prev.x, w.z - prev.z))} · ${pad3(bearing(prev.x, prev.z, w.x, w.z))}°` : '');
       if (low[i]) { small.textContent += ' · alçak!'; }
-      if (w.kind === 'wpt' && i >= act) li.append(stepper(route.altFor(w), w.alt == null, (d) => setAlt(w.id, d)));
-      else el('span', 'gkn-alt', li, w.kind === 'thr' ? 'ILS' : route.altFor(w) != null ? `${fmtFt(route.altFor(w))}` : '');
       if (i >= act && w.kind !== 'thr') {
-        const d = el('button', 'gkn-ic', li); d.type = 'button'; d.innerHTML = ICON.go; d.title = 'Direkt git';
+        const d = el('button', 'gkn-ic', top); d.type = 'button'; d.innerHTML = ICON.go; d.title = 'Direkt git';
         d.addEventListener('click', (ev) => { ev.stopPropagation(); directTo(w.id); dirty = true; });
       }
       if (w.kind === 'wpt') {
-        const x = el('button', 'gkn-ic', li); x.type = 'button'; x.innerHTML = ICON.del; x.title = 'Sil';
+        const x = el('button', 'gkn-ic', top); x.type = 'button'; x.innerHTML = ICON.del; x.title = 'Sil';
         x.addEventListener('click', (ev) => { ev.stopPropagation(); route.remove(w.id); if (sel && sel.id === w.id) { sel = null; closePop(); } dirty = true; });
+      }
+      // altitude + speed of the leg into this point (steppers ahead of the aircraft, text for the rest)
+      const cr = el('div', 'gkn-wc', main);
+      const altTxt = w.kind === 'thr' ? '' : route.altFor(w) != null ? `${fmtFt(route.altFor(w))} ft` : '';
+      if (w.kind === 'thr') el('span', 'gkn-alt', cr, heli() ? '' : category === 'airliner' ? 'ILS · otomatik iniş' : 'ILS · teker koyunca devir');
+      else if (w.kind === 'hov') el('span', 'gkn-alt', cr, `${altTxt ? `${altTxt} · ` : ''}yavaşla, askıda kal`);
+      else if (i < act) el('span', 'gkn-alt', cr, `${altTxt}${altTxt ? ' · ' : ''}${speedText(w)}`);
+      else {
+        if (w.kind === 'wpt') cr.append(altStepper(w)); else if (altTxt) el('span', 'gkn-alt', cr, altTxt);
+        if (w.fixedSpd) el('span', 'gkn-alt', cr, `${altTxt ? '· ' : ''}${speedText(w)}`);
+        else cr.append(spdStepper(w));
       }
       li.addEventListener('click', () => { sel = { type: 'wpt', id: w.id }; follow = false; bFollow.classList.remove('on'); centerOn(w.x, w.z); showPop(sel); dirty = true; lastPanelKey = ''; });
       if (low[i] && i >= act) warn.push(`${i > 0 ? W0[i - 1].name : 'Uçak'} → ${w.name}: arazi / engel ${fmtFt(lowTop[i])} ft, rota ${fmtFt(route.altFor(w) ?? (flight ? flight.altitude : 0))} ft`);
@@ -806,7 +897,7 @@ export function createNavMap({ hud, route }) {
     // track trail, route, aircraft
     const f = flight;
     drawTrail(ctx, trail, trailHead, trailCount, TRAIL_CAP, X, Y, 2.6);
-    drawRoute(ctx, route, X, Y, { big: true, selectedId: sel && sel.type === 'wpt' ? sel.id : null, hoverId: hover && hover.type === 'wpt' ? hover.id : null, low });
+    drawRoute(ctx, route, X, Y, { big: true, selectedId: sel && sel.type === 'wpt' ? sel.id : null, hoverId: hover && hover.type === 'wpt' ? hover.id : null, low, speedText, width: W - 52, height: H - 70 });
     if (f && f.position) {
       const px = X(f.position.x), py = Y(f.position.z);
       const gs = f.velocity ? Math.hypot(f.velocity.x, f.velocity.z) : 0;
@@ -901,6 +992,7 @@ export function createNavMap({ hud, route }) {
         f.on('nav', (e) => {
           if (e.type === 'hdg') say('Rota: yön moduna geçildi (HDG) · haritada «Rotayı uç» ile geri dön', 2600);
           else if (e.type === 'end') say('Rota tamamlandı: otopilot yönü koruyor', 2200);
+          else if (e.type === 'athr') say('A/THR kapandı: gaz sende · haritada «A/THR aç» ile geri aç', 2600);
         });
       }
       lastPanelKey = '';
@@ -928,9 +1020,13 @@ export function createNavMap({ hud, route }) {
         stripT = 0.25;
         updateStrip();
         const key = panelKey();
-        if (key !== lastPanelKey) { lastPanelKey = key; buildPanel(); }
+        if (key !== lastPanelKey && performance.now() > uiHoldUntil) { lastPanelKey = key; buildPanel(); }
       }
-      if (route.version !== lastRouteVersion) { lastRouteVersion = route.version; dirty = true; }
+      if (popStale && performance.now() > uiHoldUntil && popFor) { popStale = false; showPop(popFor); }   // e.g. edited in the list
+      if (route.version !== lastRouteVersion) {
+        lastRouteVersion = route.version; dirty = true;
+        if (popFor && !(gesture && gesture.mode === 'drag')) popStale = true;
+      }
       clearT -= dt;
       if (clearDirty && clearT <= 0 && !(gesture && gesture.mode === 'drag')) { clearDirty = false; clearT = 0.3; updateClearance(); lastPanelKey = ''; }
       if (dirty || loadingTiles || redrawT > 1 / 30) {

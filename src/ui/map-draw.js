@@ -37,7 +37,7 @@ function reserve(x0, y0, x1, y1) { if (nRects < 96) { const o = nRects * 4; RECT
 
 /**
  * Route overlay. opts: { big (labels, symbols), selectedId, hoverId, low (Uint8Array|array per waypoint index: leg
- * into it is too low), scale (px per m, for the extended centreline) }.
+ * into it is too low), speedText(w) → "250 kt" for the labels }.
  */
 export function drawRoute(ctx, route, X, Y, opts = {}) {
   if (!route || !route.waypoints.length) return;
@@ -113,7 +113,8 @@ export function drawRoute(ctx, route, X, Y, opts = {}) {
     // label: name (approach fixes) + altitude
     const alt = w.kind === 'thr' ? null : route.altFor(w);
     const name = w.kind === 'wpt' ? '' : w.kind === 'thr' ? '' : w.name;
-    const altStr = alt != null ? `${fmtFt(alt)} ft` : '';
+    const spdStr = opts.speedText ? opts.speedText(w) : '';
+    const altStr = alt != null ? `${fmtFt(alt)} ft${spdStr ? ` · ${spdStr}` : ''}` : spdStr;
     if (!name && !altStr) continue;
     ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
     ctx.font = `800 11px ${SANS}`;
@@ -123,9 +124,11 @@ export function drawRoute(ctx, route, X, Y, opts = {}) {
     const bw = Math.max(wN, wA), bh = name && altStr ? 26 : 13;
     // right, left, below, above
     let bx = x + 15, by = y - bh / 2;
+    const VW = opts.width || Infinity, VH = opts.height || Infinity;   // keep labels inside the map
     for (let c = 0; c < 4; c++) {
       const cx = c === 0 ? x + 15 : c === 1 ? x - 15 - bw : x - bw / 2;
       const cy = c < 2 ? y - bh / 2 : c === 2 ? y + 14 : y - 14 - bh;
+      if (cx < 4 || cx + bw > VW - 4 || cy < 4 || cy + bh > VH - 4) continue;
       if (freeSpot(cx, cy, cx + bw, cy + bh)) { bx = cx; by = cy; break; }
     }
     reserve(bx, by, bx + bw, by + bh);

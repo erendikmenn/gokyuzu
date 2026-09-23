@@ -129,6 +129,7 @@ export class HelicopterModel {
     this.airspeed = 0; this.ias = 0; this.mach = 0; this.altitude = 0; this.agl = 0;
     this.heading = 0; this.pitch = 0; this.roll = 0; this.verticalSpeed = 0; this.gForce = 1; this.aoa = 0; this.sideslip = 0;
     this.throttle = 0; this.onGround = true; this.stalled = false; this.crashed = false; this.crashReason = '';
+    this.crashCause = '';         // '' | 'collective' (collective lowered into a hard ground / water impact, see _crash)
     this.aileron = 0; this.elevator = 0; this.rudder = 0;
     this.engines = [0, 1].map(() => ({ n1: 0, thrust: 0, afterburner: 0, fuelFlow: 0, power: 0, torque: 0, running: true }));
     this.gear = 1; this.gearHandleDown = true; this.flaps = 0; this.flapsIndex = 0; this.flapsLabel = '—';
@@ -283,7 +284,7 @@ export class HelicopterModel {
     this.velocity.set(0, 0, 0);
     this._omega.set(0, 0, 0);
     this._acc = 0;
-    this.crashed = false; this.crashReason = '';
+    this.crashed = false; this.crashReason = ''; this.crashCause = ''; this._lowColAt = -1e9;
     this.stalled = false; this.onGround = true;
     this._contact = true; this._airTime = 0; this._noContactTime = 0; this._groundTime = 0; this._takeoffArmed = true;
     this._gSmooth = 1; this._loadAcc = 0; this._loadN = 0;
@@ -1092,7 +1093,7 @@ export class HelicopterModel {
       _dq.setFromAxisAngle(_v1.copy(omega).normalize(), ang);
       quat.multiply(_dq).normalize();
     }
-    if (!Number.isFinite(pos.x + pos.y + pos.z + vel.x + vel.y + vel.z + omega.x + omega.y + omega.z + s.Om + s.vi)) this._crash('Sayısal hata');
+    if (!Number.isFinite(pos.x + pos.y + pos.z + vel.x + vel.y + vel.z + omega.x + omega.y + omega.z + s.Om + s.vi)) this._crash('Sayısal hata', 'num');
   }
 
   /** Wheels, stiction, touchdown/takeoff events. Returns true if crashed. */
@@ -1212,7 +1213,8 @@ export class HelicopterModel {
       _pw.copy(st.r).applyQuaternion(this._quat).add(this._pos);
       const gh = this._surfaceAt(world, _pw.x, _pw.z, _pw.y + 0.5);
       if (_pw.y < gh) {
-        this._crash(this._surfKind === 'water' ? 'Helikopter suya düştü' : tipped ? 'Helikopter devrildi (dinamik devrilme)' : st.reason);
+        this._crash(this._surfKind === 'water' ? 'Helikopter suya düştü' : tipped ? 'Helikopter devrildi (dinamik devrilme)' : st.reason,
+          this._surfKind === 'obstacle' ? 'obstacle' : 'ground');
         return true;
       }
     }
@@ -1227,7 +1229,7 @@ export class HelicopterModel {
         const gh = this._surfaceAt(world, _pw.x, _pw.z, _pw.y + 0.3);
         if (_pw.y < gh) {
           this._crash(this._surfKind === 'water' ? 'Ana rotor suya çarptı' : this._surfKind === 'obstacle' ? 'Ana rotor binaya çarptı'
-            : tipped ? 'Helikopter devrildi (dinamik devrilme)' : 'Ana rotor yere çarptı');
+            : tipped ? 'Helikopter devrildi (dinamik devrilme)' : 'Ana rotor yere çarptı', this._surfKind === 'obstacle' ? 'obstacle' : 'ground');
           return true;
         }
       }
@@ -1264,7 +1266,7 @@ export class HelicopterModel {
         if (f < 0.5 && i % 2) continue;
         _pw.copy(hub).addScaledVector(_e1, Math.cos(a) * P.R * f).addScaledVector(_e2, Math.sin(a) * P.R * f).addScaledVector(_n, lift * f);
         const hit = world.hitTest(_pw.x, _pw.y, _pw.z, 0.6);
-        if (hit) { this._crash(`Ana rotor çarpması: ${hit}`); return true; }
+        if (hit) { this._crash(`Ana rotor çarpması: ${hit}`, 'obstacle'); return true; }
       }
     }
     const parts = this._hitParts || (this._hitParts = [
@@ -1276,7 +1278,7 @@ export class HelicopterModel {
     for (const part of parts) {
       _pw.copy(part.r).applyQuaternion(this._quat).add(this._pos);
       const hit = world.hitTest(_pw.x, _pw.y, _pw.z, part.rad);
-      if (hit) { this._crash(`${part.label}: ${hit}`); return true; }
+      if (hit) { this._crash(`${part.label}: ${hit}`, 'obstacle'); return true; }
     }
     return false;
   }
@@ -1287,15 +1289,24 @@ export class HelicopterModel {
     return out.set(-hx / 0.5, 1, -hz / 0.5).normalize();
   }
 
-  _crash(reason) {
+  /** kind: 'ground' (terrain / water / roof contact), 'obstacle' (world.hitTest, roofs), 'num'. */
+  _crash(reason, kind = 'ground') {
     if (this.crashed) return;
+    // the collective lowered to the bottom (in the last 6 s, engines running) into a hard impact (ground, water, falling
+    // onto a building) names the real cause first: "Kolektif çok düşük, çok sert iniş" (src/ui/hints.js explains it)
+    let cause = '';
+    if (kind !== 'num' && this._stepCount * H - this._lowColAt < 6 && this.velocity.y < -2.5 && this.fuel > 0 && this.engines.every((e) => e.running)) {
+      cause = 'collective';
+      reason = `Kolektif çok düşük, ${reason.charAt(0).toLocaleLowerCase('tr')}${reason.slice(1)}`;
+    }
     this.crashed = true;
     this.crashReason = reason;
+    this.crashCause = cause;
     this.velocity.set(0, 0, 0);
     this._omega.set(0, 0, 0);
     this.afcs.disengage();
     this._syncAutopilot();
-    this._emit('crash', { reason, position: this._pos.clone() });
+    this._emit('crash', { reason, cause, position: this._pos.clone() });
   }
 
   // ------------------------------------------------------------------------------------------------
@@ -1352,8 +1363,13 @@ export class HelicopterModel {
     const set = (k, v) => { if (w[k] !== v) { w[k] = v; this._emit('warning', { type: k, on: v }); } };
     const air = !this._contact;
     const nr = this.rotorRPM;
-    set('lowRotor', nr < (w.lowRotor ? 0.96 : 0.95) && (air || this._col > 0.2));
-    set('highRotor', nr > (w.highRotor ? 1.06 : 1.07));
+    // LOW ROTOR RPM warning light + tone below 96 % NR (TM 1-1520-237-10); NR above the limit: 107 % power on, 110 %
+    // power off (autorotation, engines not driving) — the UH-60 has no high-rotor light or tone, the flag is for displays
+    set('lowRotor', nr < (w.lowRotor ? 0.97 : 0.96) && (air || this._col > 0.2));
+    const nrMax = this.torque < 0.15 ? 1.10 : 1.07;
+    set('highRotor', nr > (w.highRotor ? nrMax - 0.01 : nrMax));
+    // collective at the bottom while airborne (crash cause, see _crash)
+    if (air && this.agl > 2 && this._col < 0.2) this._lowColAt = this._stepCount * H;
     set('overtorque', this.torque > (w.overtorque ? 0.99 : 1.0));
     set('stall', this.stalled);
     set('overspeed', this.ias > P.vne);

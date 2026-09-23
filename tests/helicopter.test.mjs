@@ -956,6 +956,37 @@ let curve = [];
     `mode ${mode}, speed after 25 s ${(hspeed(c) / KT).toFixed(1)} kt`);
 }
 
+// =================================================================================================
+// 32. the owner's report: collective to 0 right after lift-off (90 % preset, 14 s climb, Z held 3 s), hands off
+// =================================================================================================
+{
+  const run = (upAt = null) => {
+    const f = make();
+    f.reset({ x: 0, z: 0, heading: 0 }, flatWorld);
+    const inp = newInput();
+    fly(f, flatWorld, inp, 0.05);
+    inp.throttle = 0.9;
+    fly(f, flatWorld, inp, 14);
+    const r = { f, nrMax: 0, highAt: null, lowRotor: false, crashT: null };
+    const tEnd = fly(f, flatWorld, inp, 60, 1 / 60, (t, g, i, dt) => {
+      i.throttle = upAt != null && t >= upAt ? Math.min(0.75, i.throttle + 0.35 * dt) : Math.max(0, i.throttle - 0.35 * dt);
+      r.nrMax = Math.max(r.nrMax, g.rotorRPM);
+      if (r.highAt == null && g.warnings.highRotor) r.highAt = g.rotorRPM;
+      if (t > 3 && g.warnings.lowRotor) r.lowRotor = true;
+    });
+    if (f.crashed) r.crashT = tEnd;
+    return r;
+  };
+  const a = run();
+  check('32a. Collective dumped after lift-off, hands off: crash reason names the collective, NR rises (autorotation), high-rotor flag only above 110 % power off',
+    a.f.crashed && /^Kolektif çok düşük/.test(a.f.crashReason) && a.f.crashCause === 'collective' && a.nrMax > 1.1 && (a.highAt == null || a.highAt > 1.1) && !a.lowRotor,
+    `"${a.f.crashReason}" (${a.f.crashCause}) after ${a.crashT?.toFixed(1)} s, NR max ${(a.nrMax * 100).toFixed(0)} %, high-rotor flag at ${a.highAt ? (a.highAt * 100).toFixed(0) + ' %' : '—'}`);
+  const b = run(4);
+  check('32b. Following the hint: collective back up 4 s after the dump → no crash, climbing again, NR back to 100 %',
+    !b.f.crashed && b.f.verticalSpeed > 0 && Math.abs(b.f.rotorRPM - 1) < 0.02, `alt ${b.f.agl.toFixed(0)} m, V/S ${b.f.verticalSpeed.toFixed(1)} m/s, NR ${(b.f.rotorRPM * 100).toFixed(0)} %`);
+  note('Collective dumped after lift-off, hands off', `impact after ${a.crashT?.toFixed(1)} s, NR max ${(a.nrMax * 100).toFixed(0)} %`, 'autorotation without flare → hard landing');
+}
+
 // ---- report ------------------------------------------------------------------------------------
 const w1 = Math.max(...results.map((r) => r.name.length));
 console.log('\nUH-60M helicopter flight model tests\n');

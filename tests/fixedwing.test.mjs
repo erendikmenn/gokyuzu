@@ -181,7 +181,7 @@ function autoland(id, opts = {}) {
   f.reset(start, world);
   const res = { td: null, crash: null, modes: [], stopped: false, lat: NaN, dist: NaN, warnings: [] };
   f.on('touchdown', (e) => { if (!res.td) res.td = e; });
-  f.on('warning', (e) => { if (e.on && !res.td && ['pullUp', 'sinkRate', 'gear', 'stall', 'overspeed', 'bank'].includes(e.type)) res.warnings.push(e.type); });
+  f.on('warning', (e) => { if (e.on && !res.td && ['pullUp', 'sinkRate', 'gear', 'stall', 'overspeed', 'bank', 'lowEnergy', 'alphaFloor', 'lowSpeed'].includes(e.type)) res.warnings.push(e.type); });
   f.on('crash', (e) => { res.crash = e.reason; });
   const inp = input({ throttle: f.throttle });
   f.command('autopilot');
@@ -232,6 +232,48 @@ function idleDescent(id, alt, kts, speedbrake) {
     if (t > 20) { sum += f.verticalSpeed; err = Math.max(err, Math.abs(f.ias / KT - kts)); n++; }
   });
   return { fpm: -sum / Math.max(n, 1) / FPM, err, f };
+}
+
+/**
+ * The owner's report ("after takeoff I reduced the power, then the screen went dark"): take off at 90 % (fighters MIL)
+ * with a keyboard rotation (S held 2.2 s), climb 6 s, gear up, then Z held 3 s (lever to idle) and hands off.
+ * recover: null | { at: 'warning' | s after the power cut, nose } = thrust back up (+ nose ≈2° until 1.3 VS1g, then 8°)
+ * like the hint says. idle = false: the same takeoff and climb without the power cut.
+ */
+function idleAfterTakeoff(id, recover = null, secs = 90, idle = true) {
+  const spec = SPECS[id], isF = fighter(id);
+  const world = flatWorld();
+  const f = model(id);
+  f.reset({ x: 0, z: 0, heading: 0 }, world);
+  const inp = input();
+  const dt = 1 / 60;
+  let t = 0, tIdle = null;
+  const res = { f, inp, world, first: {}, crash: null, cause: '', tCrash: null, minRatio: Infinity, stalled: false, recoveredAt: null };
+  f.on('warning', (e) => { if (e.on && tIdle != null && res.first[e.type] == null) res.first[e.type] = t - tIdle; });
+  f.on('crash', (e) => { res.crash = e.reason; res.cause = e.cause; res.tCrash = t - (tIdle ?? 0); });
+  const step = () => { f.step(dt, inp, world); t += dt; };
+  step();
+  inp.throttle = isF ? spec.abDetent : 0.9;
+  while (f.ias < (isF ? 80 : 75) && t < 60) step();
+  for (let i = 0; i < 132; i++) { inp.pitch = Math.min(1, inp.pitch + (isF ? 1.6 : 1.8) * dt); step(); }
+  for (let i = 0; i < 18; i++) { inp.pitch = Math.max(0, inp.pitch - 7 * dt); step(); }
+  for (let i = 0; i < 360; i++) step();
+  f.command('gear');
+  for (let i = 0; i < 180; i++) step();
+  tIdle = t;
+  if (idle) for (let i = 0; i < 180; i++) { inp.throttle = Math.max(0, inp.throttle - 0.45 * dt); step(); }
+  for (let i = 0; i < secs * 60 && !f.crashed; i++) {
+    const w = f.warnings;
+    if (recover && res.recoveredAt == null && (recover.at === 'warning' ? w.lowEnergy || w.lowSpeed || w.stall || w.alphaFloor : t - tIdle >= recover.at)) res.recoveredAt = t - tIdle;
+    if (res.recoveredAt != null) {
+      inp.throttle = Math.min(isF ? spec.abDetent : 1, inp.throttle + 0.45 * dt);
+      if (recover.nose) inp.pitch = pitchStick(f, f.ias < 1.3 * f.vSpeeds.vs1g ? 2 : 8, 0.12, 0.12);
+    }
+    step();
+    if (!f.onGround && f.agl > 3) res.minRatio = Math.min(res.minRatio, f.ias / f.vSpeeds.vs1g);
+    if (f.stalled) res.stalled = true;
+  }
+  return res;
 }
 
 // ======================================================================================================
@@ -664,7 +706,7 @@ for (const id of IDS) {
   {
     // no nuisance warnings on a stabilized approach (the autoland run above)
     const al = autoland(id, { watchWarnings: true });
-    check(id, 'Stabilized ILS approach: no PULL UP / SINK RATE / GEAR / STALL / OVERSPEED warnings', al.td && al.warnings.length === 0, al.warnings.join(', ') || 'none');
+    check(id, 'Stabilized ILS approach: no PULL UP / SINK RATE / GEAR / STALL / OVERSPEED / low-speed warnings', al.td && al.warnings.length === 0, al.warnings.join(', ') || 'none');
     // taxi: tiller steering at walking pace turns tightly without skidding off / tipping
     const f = model(id);
     f.reset({ x: 0, z: 0, heading: 0 }, world);
@@ -760,7 +802,8 @@ for (const id of IDS) {
     // water ditching
     const water = flatWorld({ getGroundHeight: (x, z) => (z < -1500 ? 0 : ELEV), isWater: (x, z) => z < -1500 });
     const w = model(id);
-    w.reset({ x: 0, z: 0, heading: 0, altitude: 60, speed: isF ? 120 : 90 }, water, { throttle: 0 });
+    // A320: descending on a path (level at idle, alpha floor would add TOGA thrust above 100 ft RA and climb away)
+    w.reset({ x: 0, z: 0, heading: 0, altitude: 60, speed: isF ? 120 : 90 }, water, { throttle: 0, ...(spec.fcs.law === 'airbus' ? { verticalSpeed: -3 } : {}) });
     fly(w, water, input(), 80);
     check(id, 'Descending into the bay → crash "suya"', w.crashed && /suya/.test(w.crashReason), w.crashReason);
     // hard landing
@@ -920,6 +963,55 @@ for (const id of IDS) {
       const g = levelDecel(id, 3000, 250, true).f;
       check(id, 'Airliner speedbrake = in-flight spoilers at speedbrakeMax (< ground-spoiler travel), no separate board',
         Math.abs(g.spoilers - spec.speedbrakeMax) < 0.01 && spec.speedbrakeMax < 0.5 && (spec.aero.speedbrakeCD ?? 0.05) === 0, `spoilers ${g.spoilers.toFixed(2)}, speedbrakeCD ${spec.aero.speedbrakeCD}`);
+    }
+  }
+
+  // ---------------------------------------------------------------------------------------------- 14 idle after takeoff
+  // the owner's report: power to idle after takeoff, hands off (idleAfterTakeoff). A320: FAC low energy, then alpha floor
+  // (A.FLOOR → TOGA LK) saves it; 737 stick shaker, fighters low-speed flag early; a crash names the lost speed.
+  {
+    const law = spec.fcs.law;
+    const KEYS = ['lowEnergy', 'alphaFloor', 'togaLock', 'lowSpeed', 'stall', 'gear', 'sinkRate', 'pullUp'];
+    const fmt = (r) => Object.entries(r.first).filter(([k]) => KEYS.includes(k)).map(([k, v]) => `${k} ${v.toFixed(1)} s`).join(', ') || 'no warnings';
+    const n = idleAfterTakeoff(id, null, 60, false);
+    const nFlags = Object.keys(n.first).filter((k) => ['lowEnergy', 'alphaFloor', 'togaLock', 'lowSpeed', 'stall'].includes(k));
+    check(id, 'Normal takeoff + 60 s climb (keyboard rotation): no low-speed / low-energy / alpha-floor / stall flags', !n.crash && nFlags.length === 0 && n.f.athrMode === '',
+      nFlags.join(', ') || `none (${kt(n.f.ias).toFixed(0)} kt, ${(n.f.agl / FT).toFixed(0)} ft)`);
+    const h = idleAfterTakeoff(id);
+    if (law === 'airbus') {
+      const le = h.first.lowEnergy, af = h.first.alphaFloor;
+      note(id, 'Idle after takeoff, hands off: SPEED SPEED SPEED → A.FLOOR', `${le?.toFixed(1)} s → ${af?.toFixed(1)} s`, 'FAC low energy, then alpha floor (TOGA)');
+      check(id, 'Idle after takeoff, hands off: low energy ≥ 4 s before alpha floor, then TOGA LK; no stall, no crash, climbing',
+        le != null && af != null && af - le >= 4 && h.first.togaLock > af && !h.stalled && !h.crash && h.f.verticalSpeed > 2 && h.f.throttle > 0.99 && h.minRatio > 1,
+        `${fmt(h)}; min ${h.minRatio.toFixed(2)} × VS1g, then V/S ${h.f.verticalSpeed.toFixed(1)} m/s at ${h.f.athrMode || 'no'} thrust`);
+      // TOGA LK holds TOGA with the lever at idle until the pilot moves the lever into CL…TOGA (then it follows the lever)
+      const { f: g, inp: gi, world: gw } = h;
+      gi.throttle = 0.5; fly(g, gw, gi, 2);
+      const held = g.athrMode === 'TOGA LK' && g.throttle > 0.99;
+      gi.throttle = 0.9; fly(g, gw, gi, 1);
+      check(id, 'TOGA LK: lever to 50 % keeps TOGA, lever into CL (90 %) hands the thrust back to the lever', held && g.athrMode === '' && Math.abs(g.throttle - 0.9) < 0.01,
+        `after 50 %: ${held ? 'TOGA LK' : 'released'}, after 90 %: ${g.athrMode || 'lever'} ${g.throttle.toFixed(2)}`);
+      // alpha floor is available from lift-off down to 100 ft RA in approach
+      const floorAt = (ft) => {
+        const g2 = model(id);
+        g2.reset({ x: 0, z: 0, heading: 0, altitude: ELEV + ft * FT, speed: 70 }, world, { approach: true, throttle: 0 });
+        let on = false;
+        fly(g2, world, input(), 2.5, 1 / 60, (t, f, inp) => { inp.pitch = 1; if (f.athrMode === 'A.FLOOR' && (ft > 100 || f.agl < 30)) on = true; });
+        return on;
+      };
+      const hi = floorAt(300), lo = floorAt(60);
+      check(id, 'Alpha floor: full aft sidestick in approach at 300 ft RA → A.FLOOR (TOGA), at 60 ft RA inhibited', hi && !lo, `300 ft ${hi}, 60 ft ${lo}`);
+    } else {
+      const key = law === 'fighter' ? 'lowSpeed' : 'stall', w0 = h.first[key];
+      note(id, `Idle after takeoff, hands off: ${key === 'stall' ? 'stick shaker' : 'low-speed flag'} → crash`, `${w0?.toFixed(1)} s → ${h.tCrash?.toFixed(1)} s`, 'early warning, the crash card names the cause');
+      check(id, `Idle after takeoff, hands off: ${key === 'stall' ? 'stick shaker' : 'low-speed flag'} ≥ 10 s before the impact, crash reason names the lost speed`,
+        w0 != null && h.crash && h.tCrash - w0 >= 10 && /^Hız çok düştü/.test(h.crash) && !!h.cause, `${fmt(h)}; crash at ${h.tCrash?.toFixed(1)} s: "${h.crash}" (${h.cause})`);
+    }
+    // following the hint: thrust back up at the first warning; thrust + nose down 5 s after the power cut
+    for (const [label, rec] of [['at the first warning: thrust', { at: 'warning' }], ['5 s after the power cut: thrust + nose down', { at: 5, nose: true }]]) {
+      const r = idleAfterTakeoff(id, rec, 60);
+      check(id, `Recovery ${label} → no crash, no stall, climbing`, r.recoveredAt != null && !r.crash && !r.stalled && r.f.verticalSpeed > 0 && r.f.agl > 60,
+        `from ${r.recoveredAt?.toFixed(1)} s: ${(r.f.agl / FT).toFixed(0)} ft, V/S ${r.f.verticalSpeed.toFixed(1)} m/s, ${kt(r.f.ias).toFixed(0)} kt ${r.crash || ''}`);
     }
   }
 }

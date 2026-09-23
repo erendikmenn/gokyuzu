@@ -7,7 +7,8 @@
 //     dist, brg    direct distance (m) / true bearing (deg) to the active waypoint
 //     course       true course of the active leg (deg)                        xtk  cross-track error (m, + = right)
 //     trackCmd     commanded true track (rad): asymptotic intercept of the leg (≤ 45°), turns anticipated (fly-by)
-//     alt          altitude target (m MSL) or NaN (keep)                      speed  speed target (m/s) or NaN (keep)
+//     alt          altitude target (m MSL) or NaN (keep)                      speed  speed target now (m/s CAS)
+//     legSpeed     the leg's selected speed (m/s CAS; spdMach = Mach when it is a Mach leg, spdAuto = automatic)
 //     phase        '' | 'enroute' | 'approach' | 'final' | 'hover' | 'done'
 //     appArm       fixed wing: the ILS logic may capture `rw` (the selected runway end) now
 //     hover        helicopter: fly to (hx, hz) and hover there at hAlt (m MSL)
@@ -16,25 +17,28 @@
 // Lateral law: the leg is intercepted with a lateral closure speed of −xtk/τ (τ per category, capped at 45° to the
 // leg), and the next leg becomes active R·tan(Δψ/2) before the waypoint (R = turn radius at the bank limit), so the
 // turn rolls out on the new leg. The host turns trackCmd into bank with its heading law. No allocations per update.
-import { courseTo, NM } from './route.js';
+import { courseTo } from './route.js';
+import { legSpeed, iasOf, clampHeli } from './speed.js';
 
-const G = 9.81, DEG = Math.PI / 180, KT = 0.514444;
+const G = 9.81, DEG = Math.PI / 180;
 const wrapPi = (a) => { a = (a + Math.PI) % (2 * Math.PI); return a < 0 ? a + Math.PI : a - Math.PI; };
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 
-/** Per category: intercept time constant τ (s), default bank limit, approach speeds (m/s), helicopter cruise/decel. */
+/** Per category: intercept time constant τ (s), default bank limit, helicopter deceleration and hover capture.
+ *  (Speeds per leg: src/nav/speed.js.) */
 export const LNAV = {
-  airliner: { tau: 18, bank: 25, maxIntercept: 45, ifSpeed: 210 * KT, finalSpeed: 180 * KT, slowFrom: 12 * NM },
-  fighter: { tau: 12, bank: 45, maxIntercept: 45, ifSpeed: 250 * KT, finalSpeed: 200 * KT, slowFrom: 12 * NM },
-  helicopter: { tau: 10, bank: 20, maxIntercept: 50, cruise: 110 * KT, decel: 0.75, hoverRange: 120 },
+  airliner: { tau: 18, bank: 25, maxIntercept: 45 },
+  fighter: { tau: 12, bank: 45, maxIntercept: 45 },
+  helicopter: { tau: 10, bank: 20, maxIntercept: 50, decel: 0.75, hoverRange: 120 },
 };
 
 export function createLnav() {
   const out = {
     valid: false, index: 0, count: 0, name: '', kind: '', dist: 0, brg: 0, course: 0, xtk: 0, along: 0, legLength: 0,
     trackCmd: 0, alt: NaN, speed: NaN, phase: '', appArm: false, rw: null, hover: false, hx: 0, hz: 0, hAlt: NaN,
-    remaining: 0, seq: 0, finished: false, route: null, turnRadius: 0,
+    remaining: 0, seq: 0, finished: false, route: null, turnRadius: 0, legSpeed: NaN, spdMach: NaN, spdAuto: true,
   };
+  const spd = { ias: NaN, mach: NaN, auto: true, src: 'auto' };
   let lastSeq = -1, lastVersion = -1, legStartAlt = NaN;
 
   function computeLeg(route, S) {
@@ -122,14 +126,19 @@ export function createLnav() {
     out.trackCmd = out.course + Math.asin(clamp(vLat / gsRef, -0.95, 0.95));
     // ---- vertical / speed targets and phase
     out.alt = B.kind === 'thr' ? NaN : route.altFor(B) ?? NaN;   // the threshold: the glide slope takes over
-    out.speed = NaN;
+    // leg speed: the waypoint's, the route default, or automatic (category, altitude, approach leg)
+    legSpeed(route, B, cat, Number.isFinite(out.alt) ? out.alt : S.alt, spd);
+    out.legSpeed = cat === 'helicopter' ? clampHeli(S.spec, iasOf(spd, S.alt)) : iasOf(spd, S.alt);
+    out.spdMach = spd.mach; out.spdAuto = spd.auto;
+    out.speed = out.legSpeed;
     out.appArm = false; out.rw = null; out.hover = false;
     const onApp = route.onApproach;
     out.phase = onApp ? 'approach' : 'enroute';
     if (cat === 'helicopter') {
       const last = !W[route.active + 1];
       const dEnd = out.remaining;
-      out.speed = Math.min(P.cruise, Math.max(2.5, Math.sqrt(2 * P.decel * Math.max(dEnd - 15, 0))));
+      // the route speed, braking toward the last point (hover)
+      out.speed = Math.min(out.legSpeed, Math.max(2.5, Math.sqrt(2 * P.decel * Math.max(dEnd - 15, 0))));
       if (last) {
         // final leg: descend on a straight path toward the hover point, then hover there
         const Af = route.legFrom();
@@ -142,23 +151,11 @@ export function createLnav() {
         out.hx = B.x; out.hz = B.z; out.hAlt = route.altFor(B) ?? NaN;   // NaN: hover at the present altitude
         if (out.hover) out.phase = 'hover';
       }
-    } else if (onApp) {
-      const rw = route.approach.rw;
-      if (B.kind === 'faf' || B.kind === 'thr') { out.appArm = true; out.rw = rw; out.phase = 'final'; out.speed = P.finalSpeed; }
-      else if (out.remaining - distAfterIf(route) < P.slowFrom || B.kind === 'if') out.speed = P.ifSpeed;
+    } else if (onApp && (B.kind === 'faf' || B.kind === 'thr')) {
+      // final: the ILS logic of the selected runway may capture now (its deceleration has priority)
+      out.appArm = true; out.rw = route.approach.rw; out.phase = 'final';
     }
     return out;
-  }
-
-  /** Distance along the route from the IF to the end (so the deceleration starts `slowFrom` before the IF). */
-  function distAfterIf(route) {
-    const W = route.waypoints;
-    let k = -1;
-    for (let i = route.active; i < W.length; i++) if (W[i].kind === 'if') { k = i; break; }
-    if (k < 0) return 0;
-    let d = 0;
-    for (let i = k + 1; i < W.length; i++) d += Math.hypot(W[i].x - W[i - 1].x, W[i].z - W[i - 1].z);
-    return d;
   }
 
   function reset() { lastSeq = -1; lastVersion = -1; legStartAlt = NaN; out.valid = false; out.phase = ''; }

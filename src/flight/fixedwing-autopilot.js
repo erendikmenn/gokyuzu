@@ -16,6 +16,7 @@
 // arms the ILS logic for **that** runway on the final legs. A.approachRunway ('KSFO 28R') restricts the gear-down
 // approach arming to the selected runway end.
 import { DEG, G0, FT, KT, clamp, wrap360, wrap180, moveToward } from './fixedwing-util.js';
+import { clampFixedWing } from '../nav/speed.js';   // route speeds: VLS / VMO / MMO / VFE / VLE limits
 
 const GS_ANGLE = 3 * DEG;
 const AIM_DIST = 300;           // m past the threshold (glide path origin, TCH ~ 50 ft)
@@ -112,7 +113,7 @@ export function createAutopilot(m) {
     A.on = true; A.athr = true;
     A.altitude = Math.round(m.altitude / (100 * FT)) * 100 * FT;
     A.heading = wrap360(m.heading);
-    A.speed = m.ias;
+    A.speed = Math.max(m.ias, m.vSpeeds.vls || 0);     // engaged while slow (e.g. to silence a disconnect alert): at least VLS
     st.athrI = m._leverPower();
     st.iasPrev = m.ias; st.iasRate = 0;
     st.lastLever = null;
@@ -133,6 +134,7 @@ export function createAutopilot(m) {
     if (!A.on) return engage();
     if (st.phase) return false;       // LOC / G/S captured: the approach stays
     A.lnav = true;
+    if (!A.athr) { A.athr = true; st.athrI = m._leverPower(); st.lastLever = null; }   // re-arms a fighter's route A/THR
     resetNav();
     if (st.app) st.app = null;
     m.route.restartLeg();
@@ -157,6 +159,16 @@ export function createAutopilot(m) {
 
   function toggle() { if (A.on) disengage('pilot'); else engage(); }
 
+  /** Autothrottle off, autopilot on (fighter route + throttle input): the lever takes the present thrust. */
+  function athrOff() {
+    A.athr = false;
+    m.pendingThrottle = m._effectiveLever();
+    m._leverTarget = m.pendingThrottle;
+    m._leverLatched = true; m._leverRef = null;
+    m._lever = m._leverTarget;
+    m._emit('nav', { type: 'athr', on: false });
+  }
+
   function update(h, inp, world) {
     out.active = A.on;
     out.nCmd = null; out.pCmd = null; out.power = null; out.pedal = null; out.groundPitch = null;
@@ -177,7 +189,9 @@ export function createAutopilot(m) {
     const lever = inp.throttle ?? 0;
     if (st.lastLever != null && !st.retard) {
       const d = lever - st.lastLever;
-      if (d !== 0) A.speed = clamp(A.speed + d * (fighter ? 120 : 60), m.vSpeeds.vls || 50, (spec.limits.vmo ?? 180) - 3);
+      // route: a fighter's throttle movement takes the thrust back (A/THR off, AP stays); otherwise it moves the target
+      if (d !== 0 && fighter && A.lnav && A.athr) athrOff();
+      else if (d !== 0) A.speed = clamp(A.speed + d * (fighter ? 120 : 60), m.vSpeeds.vls || 50, (spec.limits.vmo ?? 180) - 3);
     }
     st.lastLever = lever;
 
@@ -186,12 +200,12 @@ export function createAutopilot(m) {
     let navOk = A.lnav && !!nav && nav.valid;
     if (A.lnav && !navOk && !st.phase && !st.routeApp) {
       // route flown to its end (or cleared): hold the present heading
-      A.lnav = false; A.heading = wrap360(ad.psi / DEG);
+      A.lnav = false; A.heading = wrap360(ad.psi / DEG); A.speed = clampFixedWing(m, A.speed);   // keep a safe speed
       m._emit('nav', { type: 'end' });
     }
     if (A.lnav && !captured && Math.abs(inp.roll ?? 0) > 0.3) {
       // the pilot turns: heading select (HDG); the route stays for later ("Rotayı uç" on the map)
-      A.lnav = false; navOk = false; A.heading = wrap360(ad.psi / DEG);
+      A.lnav = false; navOk = false; A.heading = wrap360(ad.psi / DEG); A.speed = clampFixedWing(m, A.speed);
       if (st.routeApp && !st.phase) { st.routeApp = false; st.app = null; }
       m._emit('nav', { type: 'hdg' });
     }
@@ -202,7 +216,7 @@ export function createAutopilot(m) {
       }
       if (Number.isFinite(nav.speed) && nav.speed !== st.navSpeed) {
         st.navSpeed = nav.speed;
-        if (!st.phase) A.speed = Math.min(A.speed, nav.speed);
+        if (!st.phase) A.speed = clampFixedWing(m, nav.speed);   // the leg's speed (the final keeps its own)
       }
       if (nav.appArm && nav.rw && !st.phase && st.app !== nav.rw) { st.app = nav.rw; st.routeApp = true; }
     }
@@ -303,8 +317,9 @@ export function createAutopilot(m) {
     st.iasRate += (rate - st.iasRate) * Math.min(1, h / 0.6);
     const pMaxT = P.athrMax ?? 1;
     if (st.retard) { out.power = 0; st.athrI = 0; }
+    else if (!A.athr) { out.power = null; st.athrI = m._leverPower(); }   // manual thrust (fighter route, lever moved)
     else {
-      const spd = A.lnav ? Math.max(A.speed, (m.vSpeeds.vls || 0) + 3 * KT) : A.speed;
+      const spd = A.lnav ? clampFixedWing(m, A.speed) : A.speed;
       const e = spd - ias;
       st.athrI = clamp(st.athrI + (P.athrKi ?? 0.012) * e * h, 0, pMaxT);
       out.power = clamp(st.athrI + (P.athrKp ?? 0.05) * e - (P.athrKd ?? 0.25) * st.iasRate, 0, pMaxT);
