@@ -668,7 +668,7 @@ def build_sutro(lod):
             wm.cylinder(top + V(0, 0, zb), rr, ze - zb, sides=8)
         if b.meta:
             for p0, p1 in zip(pts[:-1], pts[1:]):
-                b.meta.capsule(p0, p1, 3.2, 'Sutro Kulesi')
+                b.meta.capsule(p0, p1, 3.2, 'Sutro Kulesi', solid=True)
             b.meta.light(top + V(0, 0, SUTRO_TOP + 1.0), '#ff2a14', size=7.0, period=1.6, duty=0.5)
             b.meta.light(d * sutro_r(232.0) + V(0, 0, 234.0), '#ff2a14', size=5.0, period=1.6, duty=0.5)
             b.meta.light(d * sutro_r(140.0) + V(0, 0, 142.0), '#ff2a14', size=4.0, period=0)

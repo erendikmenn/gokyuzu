@@ -93,11 +93,17 @@ function createGlow(maxCount) {
 }
 
 // ---------------------------------------------------------------------------------------------- collision grid
-function createCollision() {
+// Each primitive stores its vertical extent at build time: `top` and `bot`. `bot` is -Infinity for grounded obstacles
+// (towers, piers, buildings: their bottom is at/below the terrain) and the real underside for floating ones (bridge
+// decks, portal struts, cables, crane booms) so that flying *under* them is not treated as an obstacle.
+const FLOAT_CLEARANCE = 3.0;   // m: a primitive whose bottom is this far above the ground under it is "floating"
+
+function createCollision(groundAt = () => 0) {
   const cells = new Map();
   const key = (ix, iz) => (ix + 32768) * 65536 + (iz + 32768);
   const prims = [];
   let stamp = 0;
+  const ground = (x, z) => { const g = groundAt(x, z); return Number.isFinite(g) ? g : 0; };
   function insert(p, minX, minZ, maxX, maxZ) {
     p.stamp = 0;
     prims.push(p);
@@ -110,27 +116,87 @@ function createCollision() {
       }
     }
   }
+  // vertical extent [bot, top] of primitive p over the ground point (x, z), or null if p does not cover it
+  function column(p, x, z, out) {
+    if (p.t === 0) {
+      const dx = x - p.cx, dz = z - p.cz;
+      const lx = dx * p.c - dz * p.s, lz = dx * p.s + dz * p.c;
+      if (Math.abs(lx) > p.hx || Math.abs(lz) > p.hz) return null;
+      out.top = p.cy + p.hy;
+      out.bot = p.bot;
+      return out;
+    }
+    // capsule: interval of the segment parameter t whose horizontal distance to (x, z) is <= r
+    const ux = p.bx - p.ax, uz = p.bz - p.az, wx = x - p.ax, wz = z - p.az;
+    const L2 = ux * ux + uz * uz, r2 = p.r * p.r, ww = wx * wx + wz * wz;
+    let t0, t1;
+    if (L2 < 1e-6) {                               // vertical capsule (mast, leg segment)
+      if (ww > r2) return null;
+      t0 = 0; t1 = 1;
+    } else {
+      const wu = wx * ux + wz * uz;
+      const disc = wu * wu - L2 * (ww - r2);
+      if (disc < 0) return null;
+      const sq = Math.sqrt(disc);
+      t0 = Math.max(0, (wu - sq) / L2); t1 = Math.min(1, (wu + sq) / L2);
+      if (t0 > t1) {                               // only the end spheres can cover the point
+        const e = Math.min((x - p.ax) ** 2 + (z - p.az) ** 2, (x - p.bx) ** 2 + (z - p.bz) ** 2);
+        if (e > r2) return null;
+        t0 = t1 = (x - p.ax) ** 2 + (z - p.az) ** 2 < (x - p.bx) ** 2 + (z - p.bz) ** 2 ? 0 : 1;
+      }
+    }
+    const y0 = p.ay + (p.by - p.ay) * t0, y1 = p.ay + (p.by - p.ay) * t1;
+    out.top = Math.max(y0, y1) + p.r;
+    out.bot = p.grounded ? -Infinity : Math.min(y0, y1) - p.r;
+    return out;
+  }
+  const tmp = { top: 0, bot: 0 };
   return {
     prims,
     addBox(cx, cy, cz, hx, hy, hz, yaw, name) {
       const c = Math.cos(yaw), s = Math.sin(yaw);
       const ex = Math.abs(hx * c) + Math.abs(hz * s), ez = Math.abs(hx * s) + Math.abs(hz * c);
-      insert({ t: 0, cx, cy, cz, hx, hy, hz, c, s, name }, cx - ex, cz - ez, cx + ex, cz + ez);
+      // highest ground under the footprint (center + corners)
+      let g = ground(cx, cz);
+      for (const [sx, sz] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+        const lx = sx * hx, lz = sz * hz;
+        g = Math.max(g, ground(cx + lx * c + lz * s, cz - lx * s + lz * c));
+      }
+      const bottom = cy - hy;
+      insert({ t: 0, cx, cy, cz, hx, hy, hz, c, s, name, bot: bottom > g + FLOAT_CLEARANCE ? bottom : -Infinity },
+        cx - ex, cz - ez, cx + ex, cz + ez);
     },
-    addCapsule(ax, ay, az, bx, by, bz, r, name) {
-      insert({ t: 1, ax, ay, az, bx, by, bz, r, name }, Math.min(ax, bx) - r, Math.min(az, bz) - r, Math.max(ax, bx) + r, Math.max(az, bz) + r);
+    addCapsule(ax, ay, az, bx, by, bz, r, name, solid = false) {
+      const g = Math.max(ground(ax, az), ground(bx, bz), ground((ax + bx) / 2, (az + bz) / 2));
+      const grounded = solid || Math.min(ay, by) - r <= g + FLOAT_CLEARANCE;
+      insert({ t: 1, ax, ay, az, bx, by, bz, r, name, grounded },
+        Math.min(ax, bx) - r, Math.min(az, bz) - r, Math.max(ax, bx) + r, Math.max(az, bz) + r);
     },
+    /** Top of the tallest primitive (box or capsule: towers, masts, cables, decks) covering (x, z), or -Infinity. */
     heightAt(x, z) {
       const a = cells.get(key(Math.floor(x / CELL), Math.floor(z / CELL)));
       let h = -Infinity;
       if (!a) return h;
       for (const p of a) {
-        if (p.t !== 0) continue;
-        const dx = x - p.cx, dz = z - p.cz;
-        const lx = dx * p.c - dz * p.s, lz = dx * p.s + dz * p.c;
-        if (Math.abs(lx) <= p.hx && Math.abs(lz) <= p.hz) { const top = p.cy + p.hy; if (top > h) h = top; }
+        if (column(p, x, z, tmp) && tmp.top > h) h = tmp.top;
       }
       return h;
+    },
+    /** Vertical span of the obstacles covering (x, z): { bottom, top }. bottom = -Infinity when a grounded obstacle
+     * covers the point; for bridge decks/cables/struts it is the underside of the lowest floating part. Nothing
+     * there: { bottom: -Infinity, top: -Infinity }. Writes into `out` when given (no allocation). */
+    spanAt(x, z, out = { bottom: -Infinity, top: -Infinity }) {
+      out.bottom = Infinity; out.top = -Infinity;
+      const a = cells.get(key(Math.floor(x / CELL), Math.floor(z / CELL)));
+      if (a) {
+        for (const p of a) {
+          if (!column(p, x, z, tmp)) continue;
+          if (tmp.top > out.top) out.top = tmp.top;
+          if (tmp.bot < out.bottom) out.bottom = tmp.bot;
+        }
+      }
+      if (out.top === -Infinity) out.bottom = -Infinity;
+      return out;
     },
     hitTest(x, y, z, r) {
       stamp++;
@@ -370,7 +436,7 @@ class Landmark {
 export async function createLandmarks(ctx) {
   const root = new THREE.Group();
   root.name = 'landmarks';
-  const empty = { object: root, update() {}, heightAt: () => -Infinity, hitTest: () => null, ready: Promise.resolve() };
+  const empty = { object: root, update() {}, heightAt: () => -Infinity, spanAt: (x, z, out = {}) => Object.assign(out, { bottom: -Infinity, top: -Infinity }), hitTest: () => null, ready: Promise.resolve() };
   let index;
   try {
     index = await ctx.loader.loadJSON(`${BASE}index.json`);
@@ -380,13 +446,14 @@ export async function createLandmarks(ctx) {
   }
   const sink = { warn: [], lamp: [] };
   const items = index.landmarks.map((def) => new Landmark(def, ctx, root, sink));
-  let collision = createCollision();
+  const groundAt = (x, z) => (ctx.terrain ? ctx.terrain.getHeight(x, z) : 0);
+  let collision = createCollision(groundAt);
   const glow = createGlow(8192);
   root.add(glow.points);
 
   // world-space collision primitives and lights (rebuilt when the terrain placement changes)
   function buildWorldData() {
-    collision = createCollision();
+    collision = createCollision(groundAt);
     glow.clear();
     const q = new THREE.Vector3();
     for (const it of items) {
@@ -410,7 +477,7 @@ export async function createLandmarks(ctx) {
             const s = dy(p);
             const a = new THREE.Vector3(p.a[0], p.a[1] + s, p.a[2]).applyMatrix4(world);
             const b = new THREE.Vector3(p.b[0], p.b[1] + s, p.b[2]).applyMatrix4(world);
-            collision.addCapsule(a.x, a.y, a.z, b.x, b.y, b.z, p.r * sc, nm);
+            collision.addCapsule(a.x, a.y, a.z, b.x, b.y, b.z, p.r * sc, nm, !!p.g);
           }
         }
         for (const L of def.lights || []) {
@@ -479,6 +546,9 @@ export async function createLandmarks(ctx) {
       glow.update(t, camera, ctx.renderer, night);
     },
     heightAt: (x, z) => collision.heightAt(x, z),
+    // { bottom, top } of the obstacles at (x, z); bottom is the deck/cable underside for bridges, -Infinity for grounded
+    // obstacles (see createCollision). Pass `out` to avoid allocating.
+    spanAt: (x, z, out) => collision.spanAt(x, z, out),
     hitTest: (x, y, z, r) => collision.hitTest(x, y, z, r),
     replace() { for (const it of items) it.place(); buildWorldData(); },
     // debug / tooling

@@ -550,8 +550,11 @@ class Meta:
         yaw = math.atan2(fwd2[1], fwd2[0]) - math.pi / 2
         self.box(V(c) - V(hx, hy, hz), V(c) + V(hx, hy, hz), name, yaw)
 
-    def capsule(self, a, b, r, name=None):
+    def capsule(self, a, b, r, name=None, solid=False):
+        """solid=True: part of a structure standing on the ground (mast legs): never 'flown under' (spanAt)."""
         e = {'t': 'cap', 'a': to_three(a), 'b': to_three(b), 'r': round(float(r), 3)}
+        if solid:
+            e['g'] = 1
         if name:
             e['n'] = name
         if self.anchor is not None:

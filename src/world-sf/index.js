@@ -43,6 +43,7 @@ export async function createSFWorld({ scene, renderer, camera, loader, focus = {
     rects.push({ ax: a.x, az: a.z, ux: dx / len, uz: dz / len, len, half: r.width / 2, airport: apt.icao, id: r.id });
   }
 
+  const spanScratch = { bottom: -Infinity, top: -Infinity };
   return {
     runways, landmarks, region, environment, terrain, layers,
     towers: layers.flatMap((l) => l.towers || []),   // control-tower cab eye points (airports layer) for the tower camera
@@ -68,15 +69,21 @@ export async function createSFWorld({ scene, renderer, camera, loader, focus = {
      * Vertical extent of the obstacles above (x, z): { bottom, top }. Solid obstacles (buildings, towers) have
      * bottom = -Infinity; bridge decks report their underside as bottom so flying under them is not a pull-up.
      */
-    getObstacleSpan(x, z) {
-      let solidTop = -Infinity, span = null;
+    getObstacleSpan(x, z, out = { bottom: -Infinity, top: -Infinity }) {
+      let solidTop = -Infinity, spanTop = -Infinity, spanBottom = Infinity;
       for (const l of layers) {
-        const s = l.spanAt ? l.spanAt(x, z) : null;
-        if (s && Number.isFinite(s.bottom)) { if (!span || s.top > span.top) span = s; }
-        else { const t = s ? s.top : l.heightAt(x, z); if (t > solidTop) solidTop = t; }
+        if (l.spanAt) {
+          const s = l.spanAt(x, z, spanScratch);
+          if (Number.isFinite(s.bottom)) { if (s.top > spanTop) { spanTop = s.top; spanBottom = s.bottom; } }
+          else if (s.top > solidTop) solidTop = s.top;
+        } else {
+          const t = l.heightAt(x, z);
+          if (t > solidTop) solidTop = t;
+        }
       }
-      if (!span || solidTop >= span.top) return { bottom: -Infinity, top: solidTop };
-      return { bottom: Math.max(span.bottom, solidTop), top: span.top };
+      if (spanTop === -Infinity || solidTop >= spanTop) { out.bottom = -Infinity; out.top = solidTop; }
+      else { out.bottom = Math.max(spanBottom, solidTop); out.top = spanTop; }
+      return out;
     },
     hitTest(x, y, z, r) {
       for (const l of layers) { const hit = l.hitTest(x, y, z, r); if (hit) return hit; }
