@@ -671,8 +671,22 @@ for (const id of IDS) {
       for (let i = 0; i < spec.flapDetents.length; i++) l.command('flapsDown');
       fly(l, world, li, 60);
       const allowed = spec.flapDetents.filter((d) => !d.vfe || d.vfe >= 240 * KT - 3 * KT).length - 1;
-      check(id, 'Flap load relief: full flaps selected at 240 kt run only to the detent within VFE', l.flapsIndex === spec.flapDetents.length - 1 && Math.abs(l.sys.flapPos - allowed) < 0.01,
-        `selected ${l.flapsLabel}, surfaces at ${spec.flapDetents[Math.round(l.sys.flapPos)].label}`);
+      check(id, 'Flap load relief: full flaps selected at 240 kt go only to the detent within VFE (label follows)', l.flapsIndex === allowed && Math.abs(l.sys.flapPos - allowed) < 0.01 && l.flapsLabel === spec.flapDetents[allowed].label,
+        `label ${l.flapsLabel}, surfaces at ${spec.flapDetents[Math.round(l.sys.flapPos)].label}`);
+      // takeoff flaps retract automatically when the speed passes their VFE (A320 1+F → 1, 737 5 → UP);
+      // the label and the 'flaps' event follow the blown-back position
+      const ti = spec.takeoffFlapIndex, vfe = spec.flapDetents[ti].vfe;
+      const a = model(id);
+      a.reset({ x: 0, z: 0, heading: 0, altitude: 1500, speed: tasFromCas(vfe - 12 * KT, 1500) }, world, { flapIndex: ti, gearDown: false, approach: false, throttle: 1 });
+      const ai = input({ throttle: 1 });
+      const fev = [];
+      a.on('flaps', (e) => fev.push(e));
+      const lbl0 = a.flapsLabel;
+      fly(a, world, ai, 60, 1 / 60, (t, f) => { if (f.ias > vfe + 12 * KT) return false; });
+      const exp = spec.flapDetents.filter((d, i) => i < ti && (!d.vfe || d.vfe + 3 * KT >= a.ias)).length - 1;
+      const last = fev[fev.length - 1];
+      check(id, `Auto flap retraction past VFE: ${lbl0} → ${spec.flapDetents[exp].label}, label + 'flaps' event follow`, a.flapsLabel === spec.flapDetents[exp].label && last && last.auto && last.label === a.flapsLabel && a.sys.flapPos < ti,
+        `${lbl0} → ${a.flapsLabel} at ${kt(a.ias).toFixed(0)} kt, events ${fev.map((e) => e.label).join(',')}`);
     }
   }
 
@@ -694,6 +708,18 @@ for (const id of IDS) {
     g.reset({ x: 0, z: 0, heading: 0, altitude: 35, speed: isF ? 150 : 110 }, bridge);
     fly(g, bridge, input({ throttle: g.throttle }), 30);
     check(id, 'Flying under the bridge deck (35 m): no false collision', !g.crashed && g.position.z < -3100, g.crashReason || `z ${g.position.z.toFixed(0)}`);
+    // with world.getObstacleSpan (deck 60–90 m): no PULL UP under the deck, still PULL UP (and the crash) into it
+    const spanWorld = { ...bridge, getObstacleSpan: (x, z) => (Math.abs(x) < 40 && z < -3000 && z > -3030 ? { bottom: 60, top: 90 } : null) };
+    const u = model(id);
+    u.reset({ x: 0, z: 0, heading: 0, altitude: 35, speed: isF ? 150 : 110 }, spanWorld);
+    let puUnder = false; u.on('warning', (e) => { if (e.type === 'pullUp' && e.on) puUnder = true; });
+    fly(u, spanWorld, input({ throttle: u.throttle }), 30);
+    const o = model(id);
+    o.reset({ x: 0, z: 0, heading: 0, altitude: 80, speed: isF ? 150 : 110 }, spanWorld);
+    let puInto = false; o.on('warning', (e) => { if (e.type === 'pullUp' && e.on) puInto = true; });
+    fly(o, spanWorld, input({ throttle: o.throttle }), 60);
+    check(id, 'Obstacle spans: no PULL UP under a bridge deck, PULL UP + crash when flying into it', !puUnder && !u.crashed && puInto && o.crashed,
+      `under: pull up ${puUnder}, crash ${u.crashed}; into deck: pull up ${puInto}, ${o.crashReason}`);
     // water ditching
     const water = flatWorld({ getGroundHeight: (x, z) => (z < -1500 ? 0 : ELEV), isWater: (x, z) => z < -1500 });
     const w = model(id);

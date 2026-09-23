@@ -638,13 +638,17 @@ export class FixedWingModel {
     let target;
     if (this.fighter) target = (sys.gearHandleDown || sys.altFlaps) && this.ad.ias < (spec.limits.vfeAuto ?? 190) ? 1 : 0;
     else {
-      // flap load relief: above a detent's VFE the flaps stop at / retract to the highest detent that is still
-      // below its limit (A320 1+F → 1 at ~210 kt, 737 load relief); they run out again once slow enough
+      // flap load relief / automatic retraction: above a detent's VFE (+3 kt) the flaps are commanded to the highest
+      // detent still within its limit (A320 1+F → 1 at ~210 kt, 737 blow-back). The selected position follows
+      // (label + 'flaps' event), so the pilot re-selects the flaps once slow enough.
       const det = spec.flapDetents, ias = this.ad.ias;
       target = sys.flapIndex;
-      const prev = this._flapRelief ?? target;
-      while (target > 0 && det[target].vfe && ias > det[target].vfe + (target > prev ? -5 : 3) * KT) target--;
-      this._flapRelief = target;
+      while (target > 0 && det[target].vfe && ias > det[target].vfe + 3 * KT) target--;
+      if (target !== sys.flapIndex) {
+        sys.flapIndex = target;
+        this.flapsIndex = target; this.flapsLabel = det[target].label;
+        this._emit('flaps', { index: target, label: det[target].label, auto: true });
+      }
     }
     const from = sys.flapPos;
     if (from !== target) {
@@ -779,9 +783,16 @@ export class FixedWingModel {
     for (let t = 1; t <= T; t += 1) {
       const x = p.x + vel.x * t, z = p.z + vel.z * t, y = p.y + vel.y * t - this.gearHeight;
       let g = groundAt(world, x, z);
-      const obs = world.getObstacleHeight ? world.getObstacleHeight(x, z) : -Infinity;
       const terrainHit = y < g;
-      const obstacleHit = Number.isFinite(obs) && y < obs + 10;
+      let obstacleHit;
+      if (world.getObstacleSpan) {
+        // spans ({ bottom, top }, bottom = -Infinity for solids): passing well below a bridge deck is not a threat
+        const sp = world.getObstacleSpan(x, z);
+        obstacleHit = !!sp && Number.isFinite(sp.top) && y < sp.top + 10 && !(y < sp.bottom - 10);
+      } else {
+        const obs = world.getObstacleHeight ? world.getObstacleHeight(x, z) : -Infinity;
+        obstacleHit = Number.isFinite(obs) && y < obs + 10;
+      }
       if (!terrainHit && !obstacleHit) continue;
       if (terrainHit && !obstacleHit && landing) {
         // landing: an impact point on or just short of a runway is the touchdown, not terrain

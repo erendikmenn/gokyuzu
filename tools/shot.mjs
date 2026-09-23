@@ -26,7 +26,8 @@ const gpuArgs = args.includes('--swiftshader')
   : ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist'];
 // --webkit runs Safari's engine (WebKit) instead of Chromium, to check Safari compatibility
 const browser = args.includes('--webkit') ? await webkit.launch() : await chromium.launch({ args: gpuArgs });
-const page = await browser.newPage({ viewport: { width: vw, height: vh } });
+const dpr = Number(opt('--dpr') ?? 1);   // --dpr 2 emulates a Retina display (devicePixelRatio 2)
+const page = await browser.newPage({ viewport: { width: vw, height: vh }, deviceScaleFactor: dpr });
 const problems = [];
 page.on('console', (m) => { if ((m.type() === 'error' || m.type() === 'warning') && !/GL Driver Message|GPU stall/.test(m.text())) problems.push(`[console.${m.type()}] ${m.text()}`); });
 page.on('pageerror', (e) => problems.push(`[pageerror] ${e.message}\n${e.stack ?? ''}`));

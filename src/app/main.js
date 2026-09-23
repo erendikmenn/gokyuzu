@@ -18,7 +18,12 @@ const hudRoot = document.getElementById('hud');
 
 // ---- renderer ----
 const renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true, powerPreference: 'high-performance' });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+// Dynamic resolution: start at the display's pixel ratio (≤ 2) and step down when the frame rate drops
+// (e.g. Retina over downtown), stepping back up after a sustained smooth period. ?pr=<n> pins it.
+const maxPixelRatio = params.has('pr') ? Number(params.get('pr')) : Math.min(window.devicePixelRatio, 2);
+const minPixelRatio = params.has('pr') ? maxPixelRatio : Math.max(1, maxPixelRatio * 0.6);
+let pixelRatio = maxPixelRatio;
+renderer.setPixelRatio(pixelRatio);
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -200,7 +205,27 @@ function frame(ts) {
   }
   renderer.render(scene, camera);
   fpsAcc += dt; fpsFrames++;
-  if (fpsAcc >= 1) { window.__fps = fpsFrames / fpsAcc; fpsAcc = 0; fpsFrames = 0; }
+  if (fpsAcc >= 1) {
+    const fps = fpsFrames / fpsAcc;
+    window.__fps = fps;
+    adaptResolution(fps, fpsAcc);
+    fpsAcc = 0; fpsFrames = 0;
+  }
 }
+let smoothFor = 0, sinceDrop = 99;
+function adaptResolution(fps, span) {
+  if (!state.flight || maxPixelRatio === minPixelRatio) return;
+  sinceDrop += span;
+  if (fps < 50 && pixelRatio > minPixelRatio) {
+    pixelRatio = Math.max(minPixelRatio, pixelRatio - 0.15);
+    renderer.setPixelRatio(pixelRatio);
+    smoothFor = 0; sinceDrop = 0;
+  } else if (fps > 58.5 && pixelRatio < maxPixelRatio) {
+    smoothFor += span;
+    if (smoothFor > 8 && sinceDrop > 20) { pixelRatio = Math.min(maxPixelRatio, pixelRatio + 0.1); renderer.setPixelRatio(pixelRatio); smoothFor = 0; }
+  } else smoothFor = 0;
+  state.pixelRatio = pixelRatio;
+}
+
 requestAnimationFrame(frame);
 start().catch((e) => { console.error(e); hud.showMessage(`Hata: ${e.message}`, 10000); });

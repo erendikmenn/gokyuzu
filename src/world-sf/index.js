@@ -64,6 +64,20 @@ export async function createSFWorld({ scene, renderer, camera, loader, focus = {
       for (const l of layers) { const v = l.heightAt(x, z); if (v > h) h = v; }
       return h;
     },
+    /**
+     * Vertical extent of the obstacles above (x, z): { bottom, top }. Solid obstacles (buildings, towers) have
+     * bottom = -Infinity; bridge decks report their underside as bottom so flying under them is not a pull-up.
+     */
+    getObstacleSpan(x, z) {
+      let solidTop = -Infinity, span = null;
+      for (const l of layers) {
+        const s = l.spanAt ? l.spanAt(x, z) : null;
+        if (s && Number.isFinite(s.bottom)) { if (!span || s.top > span.top) span = s; }
+        else { const t = s ? s.top : l.heightAt(x, z); if (t > solidTop) solidTop = t; }
+      }
+      if (!span || solidTop >= span.top) return { bottom: -Infinity, top: solidTop };
+      return { bottom: Math.max(span.bottom, solidTop), top: span.top };
+    },
     hitTest(x, y, z, r) {
       for (const l of layers) { const hit = l.hitTest(x, y, z, r); if (hit) return hit; }
       return null;
