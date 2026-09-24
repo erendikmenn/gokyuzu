@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 
 /** waveUniform: the terrain's shared { value: waves texture } (the full texture replaces a small one after the start). */
-export function createHorizonRing({ rootMinX, rootMinZ, rootSize, waveUniform }) {
+export function createHorizonRing({ rootMinX, rootMinZ, rootSize, waveUniform, oceanGLSL = null }) {
   const x0 = rootMinX, z0 = rootMinZ, x1 = rootMinX + rootSize, z1 = rootMinZ + rootSize;
   const R = 500000;
   // square annulus as 4 quads (outer square -> inner square)
@@ -34,9 +34,9 @@ export function createHorizonRing({ rootMinX, rootMinZ, rootSize, waveUniform })
         {
           vec2 p = vHzWorld.xz;
           // Pacific: everything west of the root, plus the offshore parts of the north/south bands
-          float coastX = p.y > 0.0 ? mix(-12000.0, 10000.0, clamp((p.y - 55000.0) / 60000.0, 0.0, 1.0))
+          ${oceanGLSL || `float coastX = p.y > 0.0 ? mix(-12000.0, 10000.0, clamp((p.y - 55000.0) / 60000.0, 0.0, 1.0))
                                    : mix(-58000.0, -95000.0, clamp((-p.y - 75000.0) / 80000.0, 0.0, 1.0));
-          hzOcean = smoothstep(coastX + 3000.0, coastX - 3000.0, p.x);
+          hzOcean = smoothstep(coastX + 3000.0, coastX - 3000.0, p.x);`}
           vec3 land = vec3(0.20, 0.17, 0.12) * (0.85 + 0.3 * texture2D(uWaveTex, p / 23000.0).b);
           diffuseColor.rgb = mix(land, vec3(0.006, 0.022, 0.040), hzOcean);
         }`)
@@ -46,7 +46,7 @@ export function createHorizonRing({ rootMinX, rootMinZ, rootSize, waveUniform })
         material.specularColorBlended = material.specularColor;
         material.specularF90 = mix(0.3, 1.0, hzOcean);`);
   };
-  m.customProgramCacheKey = () => 'sf-horizon-1';
+  m.customProgramCacheKey = () => (oceanGLSL ? 'sf-horizon-1o' : 'sf-horizon-1');
   const mesh = new THREE.Mesh(g, m);
   mesh.name = 'sf-horizon-ring';
   mesh.position.y = -0.5;

@@ -10,8 +10,10 @@
 //    and decoder URLs (src/core/assets.js ROOT, three's Draco/Basis defaults, …) resolve exactly as in development.
 //  - Dynamic imports of a runtime URL, `import(new URL('…', import.meta.url).href)`, become `import('…')` so esbuild can
 //    split them. A template literal becomes a glob over the matching files; its lookup throws synchronously for a path that
-//    is not in the bundle, so it is wrapped in a promise (like import(), it rejects instead). An import esbuild cannot
-//    follow fails the build (it would load an unbundled second copy of a module).
+//    is not in the bundle, so it is wrapped in a promise (like import(), it rejects instead). A glob that matches no file
+//    yet (a map's optional module, e.g. src/missions/<map>/challenges.js before it is written) is allowed: it rejects at
+//    runtime like a missing module. Any other import esbuild cannot follow fails the build (it would load an unbundled
+//    second copy of a module).
 //  - The page is rewritten: no import map, the entry chunk as its module script, <link rel="modulepreload"> for every chunk
 //    the entry imports statically (they would otherwise be discovered only after the entry has downloaded).
 //  - Source maps are written next to the chunks as external files without a sourceMappingURL comment (browsers never ask
@@ -120,7 +122,8 @@ export async function bundlePage({ root, dist, page }) {
     plugins: [importMapPlugin(pageDir, imports), sourceUrlPlugin(root, JS_DIR)],
   });
   // a dynamic import esbuild could not follow would fetch an unbundled module at runtime: fail instead
-  const bad = res.warnings.filter((w) => /import|require|resolve/i.test(w.text));
+  const noMatch = (w) => /^The glob pattern import\(.*\) did not match any files$/.test(w.text);
+  const bad = res.warnings.filter((w) => /import|require|resolve/i.test(w.text) && !noMatch(w));
   if (bad.length) throw new Error(`${page}: ${bad.map((w) => `${w.location ? `${w.location.file}:${w.location.line} ` : ''}${w.text}`).join('; ')}`);
   for (const w of res.warnings) console.warn(`[bundle] ${page}: ${w.location ? `${w.location.file}:${w.location.line} ` : ''}${w.text}`);
 

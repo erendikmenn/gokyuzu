@@ -5,7 +5,7 @@
 // Bounces are counted for 2.5 s after the first contact before the final rating; the telemetry `land` event gains
 // fpm / cl / tdz / st (src/core/telemetry.js setEventExtras). Loaded lazily by src/app/main.js after the start.
 //
-//   const lc = createLandingCard({ hud, getWorld, prepareShare })   // prepareShare(card) → Promise<{ run(anchor) }> (src/ui/share.js)
+//   const lc = createLandingCard({ hud, getWorld, prepareShare, airports })   // prepareShare(card) → Promise<{ run(anchor) }> (src/ui/share.js); airports: src/ui/data.js AIRPORTS
 //   lc.attach(flight, def)          // once per flight model
 //   lc.update(dt, flight)           // every frame (cheap: returns at once without a pending touchdown)
 //   lc.onResult(cb)                 // cb(card, touchdown) when a landing is final (missions)
@@ -60,7 +60,7 @@ html.gk-touch .gkls-card.on { transform: translate(-50%, 0); }
 html.gk-touch .gkls-card.open { max-height: calc(100vh - var(--gkx-top, 60px) - 12px); overflow-y: auto; }
 `;
 
-export function createLandingCard({ hud, getWorld = () => null, prepareShare = null } = {}) {
+export function createLandingCard({ hud, getWorld = () => null, prepareShare = null, airports = {} } = {}) {
   injectCSS('base', BASE_CSS);
   injectCSS('landing', CSS);
   const root = el('div', 'gkls');
@@ -142,7 +142,8 @@ export function createLandingCard({ hud, getWorld = () => null, prepareShare = n
     for (let i = 0; i < 3; i++) stars[i].classList.toggle('on', i < c.stars);
     starsEl.setAttribute('aria-label', `${c.stars} yıldız`);
     lbl.textContent = c.label;
-    const rwName = c.runway ? c.runway.replace(/^K/, '').replace(/^SFO|^OAK|^NGZ/, (m) => ({ SFO: 'SFO', OAK: 'OAK', NGZ: 'Alameda' }[m])) : '';
+    const rwName = c.runway ? c.runway.replace(/^K/, '').replace(/^SFO|^OAK|^NGZ/, (m) => ({ SFO: 'SFO', OAK: 'OAK', NGZ: 'Alameda' }[m]))
+      .replace(/^LT[A-Z]{2}/, (m) => (airports[m] ? airports[m].code : m)) : '';   // (İstanbul: IST / SAW / ISL)
     sub.textContent = `−${c.fpm} ft/dk${c.onRunway && rwName ? ` · ${rwName}` : ''}`;
     rows.textContent = '';
     const row = (label, value, ok) => { const r = el('div', 'gkls-row', rows); el('i', ok || '', r); el('span', null, r, label); el('b', null, r, value); };

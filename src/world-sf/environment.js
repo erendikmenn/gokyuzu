@@ -7,6 +7,7 @@ import { NOISE_GLSL, CLOUD_GLSL, createCloudLayer } from './environment-clouds.j
 import { createFogBank, loadBankHeight } from './environment-fogbank.js';
 
 const D2R = Math.PI / 180;
+const NO_BANK = { inside: 0, topAbove: 0 };
 
 export async function createEnvironment(ctx) {
   const { scene, renderer } = ctx;
@@ -149,11 +150,11 @@ export async function createEnvironment(ctx) {
   scene.add(clouds.mesh);
 
   // ---------------- Golden Gate fog bank ----------------
-  // always created (cheap) so it can be toggled at runtime; ?fogbank=0 starts with it off
-  const bank = createFogBank({ sunDir: sunDirection, sunE: sunRGB, amb: ambient, ground: null });   // ground map loads after start
-  let bankGroundRequested = false;
-  bank.mesh.visible = useBank;
-  scene.add(bank.mesh);
+  // always created on San Francisco (cheap) so it can be toggled at runtime; ?fogbank=0 starts with it off; other maps
+  // (src/maps/index.js) have none
+  const bank = ctx.map && !ctx.map.fogBank ? null : createFogBank({ sunDir: sunDirection, sunE: sunRGB, amb: ambient, ground: null });   // ground map loads after start
+  let bankGroundRequested = !bank;
+  if (bank) { bank.mesh.visible = useBank; scene.add(bank.mesh); }
 
   let time = 0, lutTimer = 0, lastLutH = 300, quality = null;
   const env = {
@@ -176,19 +177,19 @@ export async function createEnvironment(ctx) {
       // cascade covers little and its caster pass is cheap
       sun.shadow.camera.far = (qq.shadowCascades || 2) >= 2 ? shadowDist : Math.min(shadowDist, 500);
       clouds.setQuality(qq.clouds || 'high');
-      bank.setQuality(qq.clouds || 'high');
+      if (bank) bank.setQuality(qq.clouds || 'high');
       quality = qq;
     },
     get quality() { return quality; },
     /** Show/hide the Golden Gate fog bank (also removes the in-fog visibility effect). */
-    setFogBank(on) { bank.mesh.visible = !!on; },
-    get fogBankEnabled() { return bank.mesh.visible; },
+    setFogBank(on) { if (bank) bank.mesh.visible = !!on; },
+    get fogBankEnabled() { return !!bank && bank.mesh.visible; },
     update(dt, camera) {
       if (!bankGroundRequested) { bankGroundRequested = true; loadBankHeight().then((g) => bank.setGround(g)); }
       time += dt;
       skyUniforms.uTime.value = time;
       if (scene.fog && scene.fog.isFog) scene.fog.far = time % 100000;
-      const b = bank.mesh.visible ? bank.update(dt, camera) : { inside: 0, topAbove: 0 };
+      const b = bank && bank.mesh.visible ? bank.update(dt, camera) : NO_BANK;
       skyUniforms.uBank.value.set(b.inside, b.topAbove);
       if (scene.fog && scene.fog.isFog) scene.fog.color.setRGB(b.inside, b.topAbove / 1000, 0);
       skyUniforms.uCamPos.value.copy(camera.position);

@@ -5,12 +5,12 @@
 //    imagery as WebP, a few uploads per frame
 //  - getHeight(x,z) samples exactly the triangles that are rendered near the camera (same data, same diagonal split)
 import * as THREE from 'three';
-import { createTerrainShared, createTerrainMaterial, setTerrainWaterQuality, applyWaterDefine } from './terrain-material.js';
+import { createTerrainShared, createTerrainMaterial, setTerrainWaterQuality, applyWaterDefine, terrainMaterialState } from './terrain-material.js';
 import { createHorizonRing } from './terrain-horizon.js';
 import { parseHeightFile, decodeTile, heightFileOf } from './terrain-heights.js';
 import { assetData, assetImage, isNetworkError, reportLoadFailure, retryDelay } from '../core/assets.js';
 
-const BASE = new URL('../../assets/sf/terrain/', import.meta.url).href;
+let BASE = new URL('../../assets/sf/terrain/', import.meta.url).href;   // the active map's (createTerrain: ctx.map.assets)
 const Q = 64, NV = 65, NS = 67;          // quads, vertices per edge, samples per edge (1 border)
 const PERIM = 4 * Q;
 const VERT_COUNT = NV * NV + PERIM;
@@ -75,7 +75,6 @@ function flatPlaceholder({ region }) {
   mesh.receiveShadow = true;
   return { object: mesh, getHeight: () => 4, isWater: () => false, getNormal: (x, z, o = new THREE.Vector3()) => o.set(0, 1, 0), update() {}, ready: Promise.resolve(), stats: {}, dispose() {} };
 }
-
 let _perim = null;
 function perimeter() {
   if (_perim) return _perim;
@@ -92,11 +91,15 @@ export async function createTerrain(ctx) {
   const { renderer, loader } = ctx;
   const focus = ctx.focus || { x: 0, z: 0 };
   const q = new URLSearchParams(location.search);
+  const other = ctx.map && ctx.map.id !== 'sf';   // another map (src/maps/index.js): its own terrain directory
+  if (ctx.map) BASE = new URL(`../../${ctx.map.assets}terrain/`, import.meta.url).href;
+  terrainMaterialState.ocean = other ? ctx.map.oceanGLSL || null : null;
   let index;
   try {
-    index = await loadIndexBin().catch((e) => { if (isNetworkError(e)) throw e; return assetData(BASE + 'index.json', 'json'); });
+    index = await loadIndexBin().catch((e) => { if (isNetworkError(e) || other) throw e; return assetData(BASE + 'index.json', 'json'); });
   } catch (e) {
     if (isNetworkError(e)) throw e;   // connection lost: the game shows its connection error screen (not a flat world)
+    if (other) { console.info(`[terrain] no ${ctx.map.assets}terrain yet: sea level + flat airport grounds`); return (await import('./terrain-placeholder.js')).seaPlaceholder(ctx); }
     console.error('[terrain] assets/sf/terrain missing - run tools/geo/terrain_build.py + imagery_build.py. Using a flat placeholder.', e);
     return flatPlaceholder(ctx);
   }
@@ -206,7 +209,7 @@ export async function createTerrain(ctx) {
 
   const object = new THREE.Group();
   object.name = 'sf-terrain';
-  object.add(createHorizonRing({ rootMinX: RX, rootMinZ: RZ, rootSize: ROOT, waveUniform: shared.uWaveTex }));
+  object.add(createHorizonRing({ rootMinX: RX, rootMinZ: RZ, rootSize: ROOT, waveUniform: shared.uWaveTex, oceanGLSL: other ? ctx.map.horizonGLSL : null }));
 
   // ---------------- loading ----------------
   const MAX_INFLIGHT = 12;

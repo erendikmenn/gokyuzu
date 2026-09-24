@@ -6,14 +6,16 @@
 // Telemetry (CONTRACTS-SF.md §11): `ffc` = the challenges (start | done | fail | cancel | drop), `ffp` = the panel UI
 // (open with src, track / untrack, play) — separate types so panel clicks can never use up the `ffc` event cap.
 //
+//   const set = await loadChallengeSet(map)   the map's challenges + mission catalog (null: none, no panel)
 //   const ffc = createFreeFlightChallenges(ctx)
 //   ffc.update(dt, { paused })   every frame (idle: the flight sample + a few distance checks; no allocation)
 //   ffc.onCrash(flight)          main.js crash handler → true when a ditching was rated a success (no crash card)
 //   ffc.onReset()                main.js resetFlight()
 //   ffc.toggle()
-// ctx = { state, scene, camera, hud, landing, touch, aircraft, leave(url), compile(object3d) → Promise, canToggle() }
-import { createChallengeTracker, loadChallengeProgress, recordChallenge } from './challenges.js';
-import { BRIDGES } from './catalog.js';
+// ctx = { state, scene, camera, hud, landing, touch, aircraft, set, leave(url), compile(object3d) → Promise, canToggle() }
+import { createChallengeTracker, loadChallengeProgress, recordChallenge, loadChallengeSet } from './challenges.js';
+
+export { loadChallengeSet };
 import { LANDING_BANDS } from './landing-score.js';
 import { dirOf, fmtDist, fmtInt, FPM, KT } from './util.js';
 import { runwayEnds } from '../flight/fixedwing-autopilot.js';
@@ -41,11 +43,12 @@ export function createFreeFlightChallenges(ctx) {
   const session = [];
   let tracked = null, crashing = false, pendingSession = false, landingShown = false, dirty = true, uiT = 0, hudT = 0, distLabel = '';
   let sessionShown = 0;   // session results already shown in a crash view (a crash reopens it only for something new)
-  let progress = loadChallengeProgress();
+  const set = ctx.set || { map: 'sf' };   // (loadChallengeSet)
+  let progress = loadChallengeProgress(set.map);
   const submitted = new Set();
 
   const tracker = createChallengeTracker({
-    aircraft: ac, category: cat, ends, bridges: BRIDGES,
+    aircraft: ac, category: cat, ends, challenges: set.challenges, catalog: set.catalog,
     spanAt: world.getObstacleSpan ? (x, z, out) => world.getObstacleSpan(x, z, out || spanScratch) : null,
     isOnRunway: (x, z) => (world.isOnRunway ? world.isOnRunway(x, z) : false),
     isWater: (x, z) => (world.isWater ? !!world.isWater(x, z) : false),
@@ -204,8 +207,8 @@ export function createFreeFlightChallenges(ctx) {
     // done / fail
     const r = data;
     if (e.def.objective && e.def.objective.profile && landing && landing.setProfile) landing.setProfile(null);
-    const prog = recordChallenge(e.id, { ok: r.ok, score: r.score, stars: r.stars, ac });
-    progress = loadChallengeProgress();
+    const prog = recordChallenge(e.id, { ok: r.ok, score: r.score, stars: r.stars, ac }, set.map);
+    progress = loadChallengeProgress(set.map);
     session.push(r);
     if (session.length > 20) session.shift();
     trackEvent('ffc', { id: TELE_ID[e.id] || e.id, st: r.ok ? 'done' : 'fail', score: r.ok ? r.score : undefined, stars: r.ok ? r.stars : undefined, ac,

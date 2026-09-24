@@ -11,6 +11,7 @@ import { touchMode } from './touch-env.js';             // touch hook: phones / 
 import { MENU_TOUCH_CSS } from './touch-menu.js';
 import { showInAppHint } from './touch-gate.js';
 import { enterFullscreen } from './touch.js';
+import { rememberMap } from '../maps/index.js';
 
 const STORE_KEY = 'gokyuzu-sf.menu';
 
@@ -294,6 +295,9 @@ const CSS = `
 .gkm-sp-hdg { display: flex; align-items: center; gap: calc(5 * var(--u1)); font: 600 calc(11.5 * var(--u1)) var(--gk-mono); color: var(--gk-dim); }
 .gkm-sp-hdg i { display: block; width: calc(14 * var(--u1)); height: calc(14 * var(--u1)); border-radius: 50%; border: 1px solid rgba(255, 255, 255, .25); position: relative; }
 .gkm-sp-hdg i::after { content: ""; position: absolute; left: 50%; top: 8%; width: 1.5px; height: 46%; margin-left: -.75px; background: var(--gk-orange-2); border-radius: 2px; }
+.gkm-maps { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 3px; margin-bottom: max(8px, calc(12 * var(--u1))); border-radius: 12px; background: rgba(255, 255, 255, .06); }
+.gkm-maps button { padding: max(6px, calc(7 * var(--u1))) 4px; border: 0; border-radius: 9px; background: none; cursor: pointer; color: var(--gk-dim) !important; font: 700 max(12px, calc(12.5 * var(--u1))) var(--gk-sans) !important; }
+.gkm-maps [aria-checked=true] { color: #ffe2d2 !important; background: rgba(255, 107, 61, .24); box-shadow: inset 0 0 0 1px rgba(255, 130, 80, .5); }
 .gkm-ctrl { padding: calc(10 * var(--u1)) calc(20 * var(--u1)) calc(2 * var(--u1)); border-top: 1px solid rgba(255, 255, 255, .07); }
 .gkm-ctrl-grid { display: grid; grid-template-columns: 1fr 1fr; gap: calc(3 * var(--u1)) calc(14 * var(--u1)); margin-top: calc(8 * var(--u1)); }
 .gkm-ctrl-row { display: flex; align-items: center; justify-content: space-between; gap: calc(6 * var(--u1)); font-size: calc(11.5 * var(--u1)); color: rgba(226, 236, 250, .78); min-width: 0; }
@@ -350,7 +354,8 @@ const CARD_GRADIENTS = {
 const PLANE_ICON = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M21 16v-2l-8-5V3.5A1.5 1.5 0 0 0 11.5 2 1.5 1.5 0 0 0 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5z"/></svg>';
 const ARROW_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>';
 
-export function createMenu(container, { aircraft = [], spawns = [] } = {}) {
+/** maps (optional): { id, list: src/maps/index.js entries, load(id) → Promise<{ spawns }> } → a San Francisco / İstanbul choice. */
+export function createMenu(container, { aircraft = [], spawns = [], maps = null } = {}) {
   injectCSS('base', BASE_CSS);
   injectCSS('menu', CSS);
   injectCSS('spawnmap', SPAWN_MAP_CSS);
@@ -358,11 +363,19 @@ export function createMenu(container, { aircraft = [], spawns = [] } = {}) {
   if (touch) injectCSS('menu-touch', MENU_TOUCH_CSS);
   return new Promise((resolve) => {
     const list = aircraft.filter(Boolean);
-    const stored = storageGet(STORE_KEY) || {};
-    let acIndex = Math.max(0, list.findIndex((a) => a.id === stored.aircraftId));
-    let spawnManual = !!stored.spawnManual && spawns.some((s) => s.id === stored.spawnId);
-    let spawnId = spawnManual ? stored.spawnId : (list[acIndex] && list[acIndex].defaultSpawn) || (spawns[0] && spawns[0].id);
-    if (!spawns.some((s) => s.id === spawnId)) spawnId = spawns[0] ? spawns[0].id : null;
+    // maps hook (src/maps/index.js): the start points, missions and credits of the chosen map; San Francisco keeps its keys
+    let mapId = maps ? maps.id : 'sf', mapInfo = maps ? maps.list.find((m) => m.id === mapId) : null;
+    const storeKey = () => (mapId === 'sf' ? STORE_KEY : `${STORE_KEY}.${mapId}`);
+    const defSpawn = (a) => (a ? (mapId === 'sf' ? a.defaultSpawn : (mapInfo.defaultSpawns || {})[a.id]) : null);
+    const stored = storageGet(storeKey()) || {};
+    let acIndex = Math.max(0, list.findIndex((a) => a.id === (stored.aircraftId || (storageGet(STORE_KEY) || {}).aircraftId)));
+    let spawnManual, spawnId;
+    function initSpawn(st) {
+      spawnManual = !!st.spawnManual && spawns.some((s) => s.id === st.spawnId);
+      spawnId = spawnManual ? st.spawnId : defSpawn(list[acIndex]) || (spawns[0] && spawns[0].id);
+      if (!spawns.some((s) => s.id === spawnId)) spawnId = spawns[0] ? spawns[0].id : null;
+    }
+    initSpawn(stored);
     let closed = false, hintBox = null;
 
     const root = el('div', touch ? 'gkm gkm-touch' : 'gkm', container);
@@ -383,13 +396,14 @@ export function createMenu(container, { aircraft = [], spawns = [] } = {}) {
     const brand = el('header', 'gkm-brand', ui);
     el('div', 'gkm-over', brand, 'Uçuş simülatörü');
     el('h1', null, brand, 'Gökyüzü');
-    el('div', 'gkm-sub', brand, 'San Francisco Körfezi');
+    const sub = el('div', 'gkm-sub', brand, mapInfo ? mapInfo.title : 'San Francisco Körfezi');
 
     // hero
     const hero = el('section', 'gkm-hero', ui);
     const heroText = el('div', 'gkm-hero-text', hero);
     const heroArt = el('div', 'gkm-hero-art', hero);
-    const spawnMap = createSpawnMap({ spawns, onSelect: (id) => selectSpawn(id, true) });
+    const mapRunways = () => (maps ? maps.load(mapId).then((d) => d.runways) : null);
+    let spawnMap = createSpawnMap({ spawns, onSelect: (id) => selectSpawn(id, true), map: mapInfo, runways: mapRunways() });
     heroArt.appendChild(spawnMap.el);
 
     // cards
@@ -443,14 +457,22 @@ export function createMenu(container, { aircraft = [], spawns = [] } = {}) {
     const credBtn = el('button', null, footR, 'Künye');
     credBtn.type = 'button';
     setBtn.addEventListener('click', () => openSettings(container));
-    credBtn.addEventListener('click', () => openCredits(container));
-    const credit = el('div', 'gkm-credit', root, `${CREDITS_LINE} · Ticari olmayan hayran projesi`);
+    credBtn.addEventListener('click', () => openCredits(container, mapInfo));
+    const credit = el('div', 'gkm-credit', root, '');
+    const creditText = () => { credit.textContent = `${(mapInfo && mapInfo.creditsLine) || CREDITS_LINE} · Ticari olmayan hayran projesi`; };
+    creditText();
     credit.title = 'Künye';
-    credit.addEventListener('click', () => openCredits(container));
+    credit.addEventListener('click', () => openCredits(container, mapInfo));
 
     // side panel
     const side = el('aside', 'gkm-side', ui);
     const top = el('div', 'gkm-side-top', side);
+    const seg = maps && el('div', 'gkm-maps', top);   // San Francisco / İstanbul
+    if (seg) {
+      seg.setAttribute('role', 'radiogroup');
+      seg.setAttribute('aria-label', 'Harita');
+      for (const m of maps.list) { const b = el('button', null, seg, m.name); b.type = 'button'; b.setAttribute('role', 'radio'); b.onclick = () => switchMap(m.id); }
+    }
     const sh = el('div', 'gkm-h', top);
     el('span', null, sh, 'Başlangıç noktası');
     const selLabel = el('div', 'gkm-sel', top, '');
@@ -459,43 +481,47 @@ export function createMenu(container, { aircraft = [], spawns = [] } = {}) {
     spWrap.setAttribute('aria-label', 'Başlangıç noktası');
     const spawnButtons = new Map();
     const order = [];
-    for (const g of groupSpawns(spawns)) {
-      const grp = el('div', 'gkm-group', spWrap);
-      const gh = el('div', 'gkm-group-h', grp);
-      if (g.key === 'AIR') el('span', null, gh, 'Havada başla');
-      else {
-        const apt = AIRPORTS[g.key];
-        el('span', null, gh, apt ? apt.name : g.key);
-        el('span', 'gkm-code', gh, apt ? apt.code : g.key);
-        if (g.key === 'KNGZ') el('span', 'gkm-mil', gh, 'Askeri');
-      }
-      for (const s of g.items) {
-        const b = el('button', 'gkm-spawn', grp);
-        b.type = 'button';
-        b.setAttribute('role', 'radio');
-        const idBox = el('span', 'gkm-sp-id', b);
-        const ident = spawnIdent(s);
-        if (ident) idBox.textContent = ident; else idBox.innerHTML = PLANE_ICON;
-        const txt = el('span', 'gkm-sp-txt', b);
-        const lab = spawnLabel(s);
-        const t = el('span', null, txt, lab.title);
-        const rec = el('span', 'gkm-sp-rec', t, 'Önerilen');
-        rec.style.display = 'none';
-        if (lab.detail) el('small', null, txt, lab.detail);
-        const hdg = el('span', 'gkm-sp-hdg', b);
-        const deg = Math.round(((((s.heading || 0) * 180 / Math.PI) % 360) + 360) % 360);
-        const dial = el('i', null, hdg);
-        dial.style.transform = `rotate(${deg}deg)`;
-        el('span', null, hdg, `${String(deg).padStart(3, '0')}°`);
-        b.addEventListener('click', () => selectSpawn(s.id, true));
-        b.addEventListener('dblclick', () => { selectSpawn(s.id, true); fly(); });
-        b.addEventListener('mouseenter', () => spawnMap.setHover(s.id));
-        b.addEventListener('mouseleave', () => spawnMap.setHover(null));
-        b.addEventListener('focus', () => spawnMap.setHover(null));
-        spawnButtons.set(s.id, { b, rec });
-        order.push(s.id);
+    function buildSpawnList() {
+      spWrap.textContent = ''; spawnButtons.clear(); order.length = 0;
+      for (const g of groupSpawns(spawns)) {
+        const grp = el('div', 'gkm-group', spWrap);
+        const gh = el('div', 'gkm-group-h', grp);
+        if (g.key === 'AIR') el('span', null, gh, 'Havada başla');
+        else {
+          const apt = AIRPORTS[g.key];
+          el('span', null, gh, apt ? apt.name : g.key);
+          el('span', 'gkm-code', gh, apt ? apt.code : g.key);
+          if (g.key === 'KNGZ') el('span', 'gkm-mil', gh, 'Askeri');
+        }
+        for (const s of g.items) {
+          const b = el('button', 'gkm-spawn', grp);
+          b.type = 'button';
+          b.setAttribute('role', 'radio');
+          const idBox = el('span', 'gkm-sp-id', b);
+          const ident = spawnIdent(s);
+          if (ident) idBox.textContent = ident; else idBox.innerHTML = PLANE_ICON;
+          const txt = el('span', 'gkm-sp-txt', b);
+          const lab = spawnLabel(s);
+          const t = el('span', null, txt, lab.title);
+          const rec = el('span', 'gkm-sp-rec', t, 'Önerilen');
+          rec.style.display = 'none';
+          if (lab.detail) el('small', null, txt, lab.detail);
+          const hdg = el('span', 'gkm-sp-hdg', b);
+          const deg = Math.round(((((s.heading || 0) * 180 / Math.PI) % 360) + 360) % 360);
+          const dial = el('i', null, hdg);
+          dial.style.transform = `rotate(${deg}deg)`;
+          el('span', null, hdg, `${String(deg).padStart(3, '0')}°`);
+          b.addEventListener('click', () => selectSpawn(s.id, true));
+          b.addEventListener('dblclick', () => { selectSpawn(s.id, true); fly(); });
+          b.addEventListener('mouseenter', () => spawnMap.setHover(s.id));
+          b.addEventListener('mouseleave', () => spawnMap.setHover(null));
+          b.addEventListener('focus', () => spawnMap.setHover(null));
+          spawnButtons.set(s.id, { b, rec });
+          order.push(s.id);
+        }
       }
     }
+    buildSpawnList();
 
     // controls
     const ctrl = el('div', 'gkm-ctrl', side);
@@ -575,7 +601,7 @@ export function createMenu(container, { aircraft = [], spawns = [] } = {}) {
         const on = id === spawnId;
         b.setAttribute('aria-checked', String(on));
         b.tabIndex = on ? 0 : -1;
-        rec.style.display = a && a.defaultSpawn === id ? '' : 'none';
+        rec.style.display = a && defSpawn(a) === id ? '' : 'none';
       }
       const s = currentSpawn();
       const lab = s ? spawnLabel(s) : { title: '' };
@@ -592,7 +618,7 @@ export function createMenu(container, { aircraft = [], spawns = [] } = {}) {
       const changed = i !== acIndex;
       acIndex = i;
       const a = currentAircraft();
-      if (!spawnManual && a && a.defaultSpawn && spawns.some((s) => s.id === a.defaultSpawn)) spawnId = a.defaultSpawn;
+      if (!spawnManual && a && defSpawn(a) && spawns.some((s) => s.id === defSpawn(a))) spawnId = defSpawn(a);
       refresh();
       if (changed || !user) { renderHero(changed); renderControls(); }
       if (user) cards[acIndex].focus({ preventScroll: true });
@@ -602,13 +628,38 @@ export function createMenu(container, { aircraft = [], spawns = [] } = {}) {
       if (!spawns.some((s) => s.id === id)) return;
       spawnId = id;
       const a = currentAircraft();
-      if (user) spawnManual = !(a && a.defaultSpawn === id);
+      if (user) spawnManual = !(a && defSpawn(a) === id);
       refresh();
       const sb = spawnButtons.get(id);
       if (sb) sb.b.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
       persist();
     }
-    function persist() { storageSet(STORE_KEY, { aircraftId: currentAircraft() && currentAircraft().id, spawnId, spawnManual }); }
+    function persist() { storageSet(storeKey(), { aircraftId: currentAircraft() && currentAircraft().id, spawnId, spawnManual }); }
+    // ---------- map choice ----------
+    function refreshMaps() {
+      if (seg) maps.list.forEach((m, i) => { const b = seg.children[i]; b.setAttribute('aria-checked', String(m.id === mapId)); b.tabIndex = m.id === mapId ? 0 : -1; });
+    }
+    let switching = 0;
+    function switchMap(id) {
+      if (closed || id === mapId || !maps) return;
+      const n = ++switching;
+      maps.load(id).then((d) => {
+        if (closed || n !== switching) return;
+        persist();
+        mapId = id; mapInfo = maps.list.find((m) => m.id === id); spawns = d.spawns;
+        rememberMap(id);
+        initSpawn(storageGet(storeKey()) || {});
+        sub.textContent = mapInfo.title;
+        creditText();
+        const next = createSpawnMap({ spawns, onSelect: (sid) => selectSpawn(sid, true), map: mapInfo, runways: mapRunways() });
+        spawnMap.el.replaceWith(next.el);
+        spawnMap = next;
+        buildSpawnList();
+        refreshMaps(); refresh();
+        mountMissionsFor(id);
+      }).catch((e) => console.warn('[menu] map', id, e));
+    }
+    refreshMaps();
 
     function fly() {
       if (closed) return;
@@ -618,7 +669,7 @@ export function createMenu(container, { aircraft = [], spawns = [] } = {}) {
       persist();
       if (touch) enterFullscreen();   // touch hook: Android Chrome goes fullscreen + landscape inside this tap
       const s = currentSpawn();
-      const result = { aircraftId: a.id, spawnId: spawnId || a.defaultSpawn };
+      const result = { aircraftId: a.id, spawnId: spawnId || defSpawn(a), map: mapId };
       shared.choice = { ...result, aircraftName: a.name, spawnName: s ? s.name : '', category: a.category };
       cleanup();
       if (hintBox && hintBox.el.isConnected) hintBox.el.remove();
@@ -634,19 +685,24 @@ export function createMenu(container, { aircraft = [], spawns = [] } = {}) {
       closed = true;
       if (touch) enterFullscreen();
       const a = list.find((x) => x.id === (sel.aircraft || '')) || currentAircraft();
-      const result = { aircraftId: a ? a.id : list[0].id, spawnId: spawnId || (a && a.defaultSpawn), mission: { id: sel.id, daily: sel.daily || null } };
+      const result = { aircraftId: a ? a.id : list[0].id, spawnId: spawnId || defSpawn(a), mission: { id: sel.id, daily: sel.daily || null }, map: mapId };
       cleanup();
       if (hintBox && hintBox.el.isConnected) hintBox.el.remove();
       root.classList.add('gkm-out');
       setTimeout(() => root.remove(), 600);
       resolve(result);
     }
-    setTimeout(() => {
-      if (closed) return;
+    function mountMissionsFor(id) {
+      if (shared.missionsMenu && shared.missionsMenu.destroy) shared.missionsMenu.destroy();
+      shared.missionsMenu = null;
       import(new URL('./missions-menu.js', import.meta.url).href)
-        .then((m) => { if (!closed) shared.missionsMenu = m.mountMissions({ root, brand, foot, container, touch, start: startMission }); })
+        .then(async (m) => {
+          const catalog = await m.loadMenuMissions(id);   // (a map without missions yet: no entry)
+          if (!closed && id === mapId && catalog) shared.missionsMenu = m.mountMissions({ root, brand, foot, container, touch, start: startMission, catalog });
+        })
         .catch((e) => console.warn('[menu] missions', e));
-    }, 0);
+    }
+    setTimeout(() => { if (!closed) mountMissionsFor(mapId); }, 0);
 
     // ---------- keyboard (captured before the game input sees it) ----------
     function onKey(e) {

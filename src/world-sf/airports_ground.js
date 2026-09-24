@@ -4,7 +4,8 @@
 import * as THREE from 'three';
 import { assetImage, isNetworkError, reportLoadFailure, retryDelay } from '../core/assets.js';
 
-const TEX = 'assets/sf/airports/tex/';
+/** The active map's airport files (createAirports sets them): base = <assets>/airports/, tex = ground textures, props = props GLB. */
+export const airportFiles = { base: 'assets/sf/airports/', tex: 'assets/sf/airports/tex/', props: 'assets/sf/airports/props.glb' };
 
 // ---------------------------------------------------------------- shared helpers
 export function readArrays(meta, buf) {
@@ -61,7 +62,7 @@ export function groundTextures(loader, renderer) {
       get() {
         if (!t) {
           t = new THREE.Texture();
-          loadInto(t, TEX + name);
+          loadInto(t, airportFiles.tex + name);
           t.wrapS = t.wrapT = THREE.RepeatWrapping;
           t.anisotropy = texOpts.aniso;
           t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;

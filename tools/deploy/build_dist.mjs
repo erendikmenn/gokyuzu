@@ -24,7 +24,10 @@ const SKIP_DIRS = new Set(['_bake', 'bake', 'build', 'render', 'cache', 'raw', '
 // aircraft textures are embedded in the GLBs (tex/ holds bake inputs); other layers (airports) load tex/ at runtime.
 // Terrain heights: the game reads the small cacheable files in hz/; the 0.7 GB h/<L>.bin level packs are only the
 // input of tools/geo/terrain_heightfiles.py (deploy.sh leaves the copies already in the bucket alone for old pages).
-const SKIP_UNDER = [['assets/aircraft', 'tex'], ['assets/sf/terrain', 'h']];
+// Maps (src/maps/index.js): every data/<id>/ with a region.json — San Francisco and İstanbul — ships its data/<id>/*.json
+// and assets/<id>/ (build caches in _* directories and raw/ never do).
+const MAPS = fs.readdirSync(path.join(root, 'data')).filter((m) => fs.existsSync(path.join(root, 'data', m, 'region.json')));
+const SKIP_UNDER = [['assets/aircraft', 'tex'], ...MAPS.map((m) => [`assets/${m}/terrain`, 'h'])];
 const SKIP_FILE = /(\.(blend\d?|exr|tif|tiff|py|pyc|psd|kra|log)$)|(^\.)|(^compare)|(^cmp)/i;
 
 let files = 0, bytes = 0;
@@ -59,8 +62,8 @@ for (const f of ['favicon.ico', 'favicon.svg', 'favicon-180.png', 'apple-touch-i
 // code: the modules are bundled into js/ below; src/ keeps the files the code loads by URL (fonts, map image, CSS);
 // no per-agent dev/test pages
 addTree('src', (rel) => !/\.m?js$/.test(rel) && !/\/(preview|view|cockpit_check)\.html$/.test(rel) && !rel.includes(`${path.sep}tools${path.sep}`));
-// shared data (runways, landmarks, region, …)
-addTree('data/sf', (rel) => rel.endsWith('.json'));
+// shared data of every map (runways, landmarks, region, …)
+for (const m of MAPS) addTree(`data/${m}`, (rel) => rel.endsWith('.json'));
 // three.js is bundled too; the Draco / Basis decoders stay files (loaded at runtime from src/core/assets.js LIBS)
 addFile('node_modules/three/LICENSE');
 addTree('node_modules/three/examples/jsm/libs/draco');

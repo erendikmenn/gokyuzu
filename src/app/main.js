@@ -10,7 +10,11 @@ import { createInput } from '../flight/input.js';
 import { createDisplay, loadAvionicsFonts } from '../avionics/index.js';
 import { createAudioSystem } from '../audio/index.js';
 import { createMenu, createLoadingScreen, createHUD, createCameraRig, createOnboarding } from '../ui/index.js';
-import { buildSpawns } from './spawns.js';
+import { MAPS, pickMap, loadMap, useMap, mapHooks } from '../maps/index.js';   // maps: San Francisco, İstanbul
+import { BRIDGES } from '../ui/baymap.js';
+import { AIRPORTS, AIRPORT_ORDER, TIPS, TOUCH_TIPS } from '../ui/data.js';
+import { TOWERS } from '../ui/camera.js';
+import { setNavData } from '../avionics/nav.js';
 import { loadSettings } from '../core/settings.js';
 import { QUALITY, resolveQuality, lowerQuality, setQualityCap } from '../core/quality.js';
 import { detectDevice } from '../core/gpu-device.js';
@@ -18,7 +22,7 @@ import { createGpuGuard, noteGpuFailure } from '../core/gpu-guard.js';          
 import { readResume, applyResume, clearResume } from '../core/gpu-resume.js';
 import { IS_MAC } from '../core/platform.js';
 import { goToMenu, guardUnload } from '../core/leave.js';
-import { startTelemetry, trackFlight, trackFail } from '../core/telemetry.js';
+import { startTelemetry, trackFlight, trackFail, setTelemetryMap } from '../core/telemetry.js';
 import { createRoute } from '../nav/route.js';     // navigation hook: route planning + LNAV (src/nav)
 import { createNavMap } from '../ui/map.js';       // navigation hook: big map (J / minimap click)
 import { runDeviceGate, showInAppFailure } from '../ui/touch-gate.js';   // mobile hook: weak / unsupported device gate
@@ -46,6 +50,10 @@ if (resume && resume.crash) {   // the previous page of this tab died without un
   }
 }
 let quality = resolveQuality(QUALITY[settings.quality] ? settings.quality : 'high');   // preset + device caps (src/core/quality.js)
+// maps hook (src/maps/index.js): ?map=, a deep link's mission / spawn, a resumed flight, else the menu's last choice
+let mapId = pickMap(params, resume);
+setTelemetryMap(mapId);
+Object.assign(mapHooks, { BRIDGES, AIRPORTS, AIRPORT_ORDER, TIPS, TOUCH_TIPS, TOWERS, setNavData });   // tables a map module switches over
 
 // ---- renderer ----
 const renderer = new THREE.WebGLRenderer({ antialias: quality.antialias, logarithmicDepthBuffer: true, powerPreference: 'high-performance' });
@@ -122,9 +130,10 @@ function loadChallenges() {
   ffcLoading = true;
   const go = () => import('../missions/ff-runtime.js').then(async (m) => {
     await landingP;
-    if (state.mission || ffc || !state.flight) return;
+    const set = await m.loadChallengeSet(mapId);   // maps hook: the map's challenges (none yet: no panel)
+    if (state.mission || ffc || !state.flight || !set) return;
     ffc = m.createFreeFlightChallenges({
-      state, scene, camera, hud, landing, touch: touchUI.active, aircraft: state.aircraftId,
+      state, scene, camera, hud, landing, touch: touchUI.active, aircraft: state.aircraftId, set,
       leave: (url) => { state.leaving = true; clearResume(); location.href = url; },   // (no "leave the page?" prompt)
       compile: (obj) => renderer.compileAsync(obj, camera, scene),
       canToggle: () => !state.paused && !state.helpVisible && !navMap.isOpen,
@@ -134,8 +143,8 @@ function loadChallenges() {
   }).catch((e) => { if (!isNetworkError(e)) console.warn('[challenges]', e); ffcLoading = false; });
   afterFrames(20, () => { if (window.requestIdleCallback) requestIdleCallback(go, { timeout: 4000 }); else setTimeout(go, 1000); });
 }
-async function planMissionFor(req, runways) {
-  try { missionMod = await import('../missions/runtime.js'); return missionMod.planMission(req, runways); } catch (e) {
+async function planMissionFor(req, runways, map) {
+  try { missionMod = await import('../missions/runtime.js'); return await missionMod.planMission(req, runways, map); } catch (e) {
     if (isNetworkError(e)) throw e;
     console.warn('[missions] cannot start', req && req.id, e);
     return null;
@@ -144,7 +153,7 @@ async function planMissionFor(req, runways) {
 const aircraftShort = () => (state.def ? String(state.def.name || state.def.id).replace(/^(Airbus|Boeing) /, '').replace(/ (Fighting Falcon|Raptor|Black Hawk)$/, '') : '');
 function loadLandingCard() {
   landingP = import('../ui/landing.js').then((m) => {
-    landing = m.createLandingCard({ hud, getWorld: () => state.world, prepareShare: (card) => import('../ui/share.js').then((x) => x.prepareLanding(card, { aircraft: aircraftShort() })) });
+    landing = m.createLandingCard({ hud, getWorld: () => state.world, airports: AIRPORTS, prepareShare: (card) => import('../ui/share.js').then((x) => x.prepareLanding(card, { aircraft: aircraftShort(), map: MAPS[mapId] })) });
     state.landing = landing;   // test hook
     if (state.flight) landing.attach(state.flight, state.def);
     return landing;
@@ -153,23 +162,25 @@ function loadLandingCard() {
 }
 async function start() {
   await loadAssetVersions();   // CONTRACTS-SF.md §9: version map before any asset request (menu thumbnails too)
-  const runways = await loader.loadJSON('data/sf/runways.json');
-  const spawns = buildSpawns(runways);
+  let { runways, spawns, map } = await loadMap(mapId, loader);
   let choice, plan = null;
   const direct = AIRCRAFT.find((a) => a.id === params.get('aircraft'));   // ?aircraft=<id>&spawn=<id> skips the menu
   const resumed = resume && AIRCRAFT.some((a) => a.id === resume.aircraft) ? resume : null;   // robustness hook: same flight
   const missionReq = !resumed && params.get('mission') ? { id: params.get('mission'), daily: params.get('daily') } : null;   // missions hook: ?mission=<id>(&daily=YYYYMMDD)
-  if (missionReq) plan = await planMissionFor(missionReq, runways);
+  if (missionReq) plan = await planMissionFor(missionReq, runways, mapId);
   if (resumed) choice = { aircraftId: resumed.aircraft, spawnId: spawns.some((s) => s.id === resumed.spawn) ? resumed.spawn : spawns[0].id };
   else if (plan) choice = { aircraftId: plan.aircraft, spawnId: plan.spawn.id, mission: missionReq };
-  else if (direct) choice = { aircraftId: direct.id, spawnId: spawns.some((s) => s.id === params.get('spawn')) ? params.get('spawn') : direct.defaultSpawn };
-  else choice = await createMenu(uiRoot, { aircraft: AIRCRAFT, spawns });
+  else if (direct) choice = { aircraftId: direct.id, spawnId: spawns.some((s) => s.id === params.get('spawn')) ? params.get('spawn') : (map.defaultSpawns && map.defaultSpawns[direct.id]) || direct.defaultSpawn };
+  else choice = await createMenu(uiRoot, { aircraft: AIRCRAFT, spawns, maps: { id: mapId, list: Object.values(MAPS), load: (id) => loadMap(id, loader) } });
+  if (choice.map && choice.map !== mapId) ({ runways, spawns, map } = await loadMap(mapId = choice.map, loader));   // the menu's map choice
+  useMap(mapId);
+  setTelemetryMap(mapId);
   if (!plan && choice.mission) {   // missions hook: "Görevler" in the menu — the mission picks the aircraft and the start
-    plan = await planMissionFor(choice.mission, runways);
+    plan = await planMissionFor(choice.mission, runways, mapId);
     if (plan) choice = { ...choice, aircraftId: plan.aircraft, spawnId: plan.spawn.id }; else delete choice.mission;
   }
   audio.start();
-  state.choice = choice;
+  state.choice = { ...choice, map: mapId };
   loadLandingCard();   // missions hook: landing score card (free flight and missions)
   const spawn = plan ? plan.spawn : spawns.find((s) => s.id === choice.spawnId) || spawns[0];
   state.spawn = spawn;
@@ -183,14 +194,14 @@ async function start() {
   aircraftP.catch(() => {});   // (awaited below, after the world)
   if (!state.world) {
     const focus = resumed ? { x: resumed.x, z: resumed.z } : { x: spawn.x, z: spawn.z };   // robustness hook: load around the resumed aircraft
-    state.world = await createSFWorld({ scene, renderer, camera, loader, quality, focus, onProgress: (p, t) => loading.setProgress(p * 0.8, t) });
+    state.world = await createSFWorld({ scene, renderer, camera, loader, quality, focus, onProgress: (p, t) => loading.setProgress(p * 0.8, t), map, runways: map.module ? runways : null });
   }
   loading.setProgress(0.85, 'Uçak yükleniyor');
   await loadAircraft(await aircraftP);
   if (plan) {   // missions hook: the runtime drives resetFlight (start state), holds the flight for the briefing / results
     await landingP;
     state.mission = missionMod.createMissionRuntime(plan, {
-      state, scene, camera, hud, input, audio, navRoute, landing, touch: touchUI.active, resetFlight, goToMenu,
+      state, scene, camera, hud, input, audio, navRoute, landing, touch: touchUI.active, resetFlight, goToMenu, map,
       // where the player came from (telemetry `mission` brief): the menu / its daily card, a link, or "Görev olarak oyna"
       via: missionReq ? ({ ff: 'ff', next: 'next' }[params.get('from')] || 'link') : choice.mission && choice.mission.daily ? 'daily' : 'menu',
       leave: (url) => { state.leaving = true; location.href = url; },
@@ -541,7 +552,7 @@ function bindFlightEvents(flight) {
 function resetFlight() {
   const s = state.spawn;
   if (state.mission) state.mission.resetFlight();   // missions hook: the mission's start state, objectives and failures
-  else state.flight.reset({ x: s.x, z: s.z, heading: s.heading, altitude: s.altitude, speed: s.altitude ? state.def.spec.spawnSpeed : undefined }, state.world);
+  else state.flight.reset({ x: s.x, z: s.z, heading: s.heading, altitude: s.altitude, speed: s.altitude ? (s.hover && state.def.spec.category === 'helicopter' ? 0 : state.def.spec.spawnSpeed) : undefined }, state.world);
   if (landing) landing.reset();
   if (ffc) ffc.onReset();   // free-flight challenges hook: running runs end silently
   state.crashTimer = 0;
@@ -747,6 +758,7 @@ function startFailed(e) {
   trackFail(state.world ? 'aircraft' : state.choice ? 'world' : 'menu', e && e.message, net);   // load failures were invisible in the analytics
   if (!loading) loading = createLoadingScreen(uiRoot);   // failed before the loading screen (version map, runways)
   const q = new URLSearchParams(location.search);
+  if (mapId !== 'sf') q.set('map', mapId);   // maps hook
   if (state.choice && state.choice.mission) { q.set('mission', state.choice.mission.id); if (state.choice.mission.daily) q.set('daily', state.choice.mission.daily); }   // missions hook
   else if (state.choice) { q.set('aircraft', state.choice.aircraftId); q.set('spawn', state.choice.spawnId); }
   const url = q.toString() ? `${location.pathname}?${q}` : location.pathname;

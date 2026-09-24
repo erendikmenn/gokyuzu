@@ -3,14 +3,17 @@
 // locked state), the selected mission's briefing and "Başla". Loaded lazily by src/ui/menu.js once the menu is on
 // screen (the catalog is small; the mission runtime itself only loads when a mission starts).
 //
-//   mountMissions({ root, brand, foot, container, touch, start })   // start({ id, daily }) closes the menu into the mission
+//   await loadMenuMissions(map)                                     // the map's catalog (src/missions/catalog.js), null: none
+//   mountMissions({ root, brand, foot, container, touch, start, catalog })   // start({ id, daily }) closes the menu into the mission
 // Telemetry `mmenu` (CONTRACTS-SF.md §11): open (via = tab | daily: the panel opened from "Görevler" / the daily card),
 // daily (the daily mission's details viewed), detail (id: a mission's details viewed by the player; once per mission and
 // page, so browsing never uses up the event cap).
 import { injectCSS } from './styles.js';
 import { el } from './util.js';
 import { shared } from './shared.js';
-import { MISSIONS, buildMission, dailyMissionId, loadProgress, totalStars, isUnlocked, AIRCRAFT_SHORT, LEVEL_LABEL } from '../missions/catalog.js';
+import { SF_CATALOG, loadMissionCatalog, AIRCRAFT_SHORT, LEVEL_LABEL } from '../missions/catalog.js';
+
+export { loadMissionCatalog as loadMenuMissions };
 import { istanbulDay, secondsToNextDay, fmtClock, fmtInt, fmtTime, dayLabel } from '../missions/util.js';
 import { trackEvent } from '../core/telemetry.js';
 
@@ -128,7 +131,8 @@ const CSS = `
 
 const stars = (n, total = 3) => { const s = document.createElement('span'); s.className = 'gkmm-stars'; s.innerHTML = STAR.repeat(total); for (let i = 0; i < n; i++) s.children[i].classList.add('on'); return s; };
 
-export function mountMissions({ root, brand, foot, container, touch = false, start }) {
+export function mountMissions({ root, brand, foot, container, touch = false, start, catalog = SF_CATALOG }) {
+  const { MISSIONS, buildMission, dailyMissionId, loadProgress, totalStars, isUnlocked } = catalog;
   injectCSS('missions-menu', CSS);
   const narrowQ = matchMedia('(max-height: 520px), (max-width: 560px)');
   const narrow = () => narrowQ.matches;
@@ -164,7 +168,8 @@ export function mountMissions({ root, brand, foot, container, touch = false, sta
     if (inFoot) foot.insertBefore(entry, foot.firstChild); else brand.appendChild(entry);
   }
   place();
-  if (narrowQ.addEventListener) narrowQ.addEventListener('change', () => { place(); if (panel) panel.classList.toggle('gkmm-narrow', narrow()); });
+  let destroyed = false;
+  if (narrowQ.addEventListener) narrowQ.addEventListener('change', () => { if (destroyed) return; place(); if (panel) panel.classList.toggle('gkmm-narrow', narrow()); });
   function refreshEntry() {
     progress = loadProgress();
     const ts = totalStars(progress), done = MISSIONS.filter((m) => progress.missions[m.id] && progress.missions[m.id].done).length;
@@ -325,5 +330,9 @@ export function mountMissions({ root, brand, foot, container, touch = false, sta
     else if (e.code === 'ArrowUp' || e.code === 'ArrowLeft') { e.preventDefault(); const n = ids[(i - 1 + ids.length) % ids.length]; viewed(n); select(n); }
   }
 
-  return { open: openPanel, close: closePanel, get isOpen() { return !!panel; }, daily: () => ({ id: daily.id, day, title: daily.title }), select, go };
+  return {
+    open: openPanel, close: closePanel, get isOpen() { return !!panel; }, daily: () => ({ id: daily.id, day, title: daily.title }), select, go,
+    /** The menu switched maps: remove the entry (a new mount shows the other map's missions). */
+    destroy() { destroyed = true; closePanel(); clearInterval(timer); entry.remove(); },
+  };
 }

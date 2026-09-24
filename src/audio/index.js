@@ -13,6 +13,7 @@ import * as THREE from 'three';
 import { band, clamp, db, sstep } from './util.js';
 import { approachGeometry, findApproach } from '../flight/fixedwing-autopilot.js';
 import { detectDevice } from '../core/gpu-device.js';   // mobile hook: staged decoding on phones / tablets
+import { activeMap } from '../maps/index.js';
 
 const isMobile = () => { try { const d = detectDevice(); return d.kind === 'phone' || d.kind === 'tablet'; } catch { return false; } };
 
@@ -22,7 +23,6 @@ const MAX_DELAY = 12;          // s of propagation delay (≈4 km); farther sour
 const FT = 3.28084;
 const HIST = 2048;          // aircraft position history (ring buffer) for retarded-time lookups
 const TARGET_LUFS = -20;    // loops are mastered to this; the manifest corrects files that were peak-limited
-const RUNWAYS_URL = new URL('../../data/sf/runways.json', import.meta.url).href;   // ILS geometry for EGPWS mode 5
 const TRACE_MAX = 600;
 
 const num = (v, d = 0) => (typeof v === 'number' && Number.isFinite(v) ? v : typeof v === 'boolean' ? +v : d);
@@ -47,7 +47,8 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
   };
   let runways = null, runwaysP = null;
   const loadRunways = () => {
-    if (!runwaysP) runwaysP = fetch(RUNWAYS_URL).then((r) => (r.ok ? r.json() : null)).then((j) => { runways = j; }).catch(() => {});
+    // ILS geometry for EGPWS mode 5: the active map's runways (src/maps/index.js)
+    if (!runwaysP) runwaysP = fetch(new URL(`../../${activeMap().data}runways.json`, import.meta.url).href).then((r) => (r.ok ? r.json() : null)).then((j) => { runways = j; }).catch(() => {});
     return runwaysP;
   };
   // scratch objects (no per-frame allocation)

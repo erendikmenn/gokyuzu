@@ -1,0 +1,10 @@
+{
+ "minX": -29354,
+ "maxX": 34747,
+ "minZ": -37627,
+ "maxZ": 21924,
+ "width": 2003,
+ "height": 1861,
+ "metersPerPixel": 32.0,
+ "source": "OpenStreetMap (\u00a9 OpenStreetMap contributors, ODbL) + Copernicus DEM GLO-30 (ESA), baked by src/ui/tools/bake_ist_map.py"
+}

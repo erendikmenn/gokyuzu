@@ -28,7 +28,7 @@ import { Worker } from 'node:worker_threads';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { readGlb, writeGlb, imageBytes, relayoutBuffer, materialSlots, textureSource, writeFileAtomic } from './lib/glb.mjs';
-import { PIPELINE_VERSION, MAX_SIZE, MIN_TEXELS, FAMILIES, PROFILES, UASTC, ETC1S, ETC1S_GATE, GROWTH_GUARD, PHONE_SIZE, PHONE_MANIFEST, tooBig } from './lib/policy.mjs';
+import { PIPELINE_VERSION, MAX_SIZE, MIN_TEXELS, FAMILIES, POLICY_FAMILIES, PROFILES, UASTC, ETC1S, ETC1S_GATE, GROWTH_GUARD, PHONE_SIZE, PHONE_MANIFEST, tooBig } from './lib/policy.mjs';
 import { dropLevels } from './lib/ktx2.mjs';
 import { KTX_BIN, ktxVersion } from './setup.mjs';
 
@@ -50,7 +50,7 @@ const SKIP_DIRS = /^(_|\.)|^(tex|src|render|renders|dev|bake|build|raw|ref|befor
 const sha1 = (b) => crypto.createHash('sha1').update(b).digest('hex');
 const SETTINGS = JSON.stringify({ PIPELINE_VERSION, MAX_SIZE, UASTC, ETC1S, ETC1S_GATE, PROFILES });
 const GUARD = JSON.stringify(GROWTH_GUARD);
-const policyKey = sha1(JSON.stringify({ SETTINGS, GUARD, PHONE_SIZE, MIN_TEXELS, FAMILIES: FAMILIES.map((f) => ({ ...f, profile: String(f.profile) })), COLOUR })).slice(0, 12);
+const policyKey = sha1(JSON.stringify({ SETTINGS, GUARD, PHONE_SIZE, MIN_TEXELS, FAMILIES: POLICY_FAMILIES.map((f) => ({ ...f, profile: String(f.profile) })), COLOUR })).slice(0, 12);
 const MB = (b) => (b / 1048576).toFixed(2);
 
 // ---------------------------------------------------------------- discovery

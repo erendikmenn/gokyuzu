@@ -15,6 +15,7 @@ import { openSettings, openCredits, qualityHintSeen, markQualityHintSeen, qualit
 import { explainCrash } from './hints.js';
 import { loadSettings, saveSettings } from '../core/settings.js';
 import { goToMenu } from '../core/leave.js';
+import { activeMap } from '../maps/index.js';
 
 const MONO = 'ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace';
 const SANS = '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif';
@@ -336,7 +337,7 @@ export function createHUD(container) {
   helpBtn.addEventListener('click', () => pressKey(helpCode));
   menuBtn.addEventListener('click', goToMenu);
   setBtn.addEventListener('click', () => openSettings(root));
-  credLink.addEventListener('click', () => openCredits(root));
+  credLink.addEventListener('click', () => openCredits(root, activeMap()));
 
   // ---------- state ----------
   let def = null, category = 'airliner', spec = {};
@@ -1104,7 +1105,7 @@ export function createHUD(container) {
     if (onRunway && f.onGround) loc = `${(AIRPORTS[onRunway.airport] && AIRPORTS[onRunway.airport].code) || onRunway.airport} · Pist ${onRunway.id}`;
     else if (aptCache && aptCache.dist < 2200) loc = (AIRPORTS[aptCache.icao] && AIRPORTS[aptCache.icao].name) || aptCache.icao;
     else if (lm && ld < 1800) loc = `${LANDMARK_NAMES[lm.id] || lm.name} yakını`;
-    else loc = regionName(p.x, p.z, water);
+    else loc = (activeMap().regionName || regionName)(p.x, p.z, water);   // maps hook: another map's place names
     setText(iLoc, loc);
     if (aptCache) {
       const s2 = `${aptCache.code} ${fmtDist(aptCache.dist)} · ${String(Math.round(aptCache.brg) % 360).padStart(3, '0')}°`;

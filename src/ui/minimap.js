@@ -5,6 +5,7 @@ import { clamp, DEG, KT } from './util.js';
 import { AIRPORTS, LANDMARK_NAMES } from './data.js';
 import { shared } from './shared.js';
 import { loadBayMap, BRIDGES } from './baymap.js';
+import { activeMap } from '../maps/index.js';
 
 const N_X = 512;                      // samples across the map (x); z count follows the aspect ratio
 const SHOW_LANDMARKS = ['golden_gate_bridge', 'bay_bridge_west', 'alcatraz', 'salesforce_tower', 'sutro_tower', 'coit_tower'];
@@ -20,8 +21,13 @@ export function createMinimap() {
   const BUDGET = 3;                   // ms of work per time slice (never hitches the frame)
   // Preferred base layer: the baked aerial map (full detail from the first frame, no sampling at all).
   // Sampling the streamed terrain remains as the fallback when the bake is missing.
-  let baked = false;
-  loadBayMap().then((m) => { if (m) { img = m.img; bounds = { minX: m.meta.minX, maxX: m.meta.maxX, minZ: m.meta.minZ, maxZ: m.meta.maxZ }; baked = true; } });
+  let baked = false, bakeName = '';
+  const bakeOf = () => activeMap().mapImage || 'bay-map';   // maps hook: the flight's map (src/maps/index.js)
+  function bake(name) {
+    bakeName = name;
+    loadBayMap(name).then((m) => { if (m && bakeName === name) { img = m.img; bounds = { minX: m.meta.minX, maxX: m.meta.maxX, minZ: m.meta.minZ, maxZ: m.meta.maxZ }; baked = true; } });
+  }
+  bake(bakeOf());
 
   function regionBounds(world) {
     const r = (world && world.region && world.region.local) || REGION.bounds;
@@ -179,6 +185,7 @@ export function createMinimap() {
    * overlay(ctx, X, Y, scale): optional, drawn under the aircraft arrow (navigation hook: the route, src/ui/map.js).
    */
   function draw(ctx, M, f, world, hdg, pulse, overlay) {
+    if (bakeName !== bakeOf()) { img = null; baked = false; bake(bakeOf()); }
     maybeRebuild(world, f);
     const now = performance.now();
     const dt = clamp((now - lastT) / 1000, 0, 0.2);
@@ -260,7 +267,7 @@ export function createMinimap() {
     }
     ctx.font = `600 9.5px ${SANS}`;
     for (const l of landmarksOf(world)) {
-      if (!SHOW_LANDMARKS.includes(l.id)) continue;
+      if (!SHOW_LANDMARKS.includes(l.id) && !l.major) continue;
       const x = X(l.x), y = Y(l.z);
       if (x < 2 || x > M - 2 || y < 2 || y > M - 2) continue;
       ctx.beginPath(); ctx.arc(x, y, 2, 0, Math.PI * 2);
@@ -268,6 +275,8 @@ export function createMinimap() {
       if (span < 12500) label(LANDMARK_NAMES[l.id] || l.name, x, y, 'side', 'rgba(255,214,190,0.8)', 'rgba(6,12,22,0.7)');
     }
 
+    const places = activeMap().drawPlaces;   // maps hook: another map's place names (src/maps/<id>.js)
+    if (places) places(ctx, X, Y, (t, x, y, color, font) => { ctx.font = font; if (x > 2 && x < M - 2 && y > 2 && y < M - 2) label(t, x, y, 'center', color, 'rgba(6,12,22,0.7)'); }, span < 16000 ? 1 : 0);
     // navigation hook: the planned route (src/ui/map.js drawMinimapOverlay)
     if (overlay) overlay(ctx, X, Y, sc);
     // track line (where the velocity vector points)

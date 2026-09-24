@@ -3,17 +3,17 @@
 // progress. Lazily imported by src/app/main.js only when a mission is started (menu "Görevler" or ?mission=<id>), so
 // free flight pays nothing for it (its own chunk in the production bundle, with the markers and the mission UI).
 //
-//   const plan = planMission({ id, daily }, runways)          // → { mission, spawn, aircraft } | null
+//   const plan = await planMission({ id, daily }, runways, map)   // → { mission, spawn, aircraft, catalog } | null (map: src/maps/index.js id)
 //   const rt = createMissionRuntime(plan, ctx)                // after the flight model exists
 //   rt.resetFlight()                                           // main.js resetFlight(): the mission's start state
 //   rt.begin()                                                 // briefing (flight held until "Başla")
 //   rt.update(dt, { paused, view })                            // every frame, after flight.step
 //   rt.hold                                                    // true: main.js does not step the flight
 //   rt.claimCrash(flight)                                      // a water contact the ditching mission rates itself
-// ctx = { state, scene, camera, hud, input, audio, navRoute, landing, touch, via, resetFlight(), goToMenu(), leave(url), snapshot() }
+// ctx = { state, scene, camera, hud, input, audio, navRoute, landing, touch, via, resetFlight(), goToMenu(), leave(url), snapshot(), map (src/maps/index.js entry) }
 // Telemetry `mission` (CONTRACTS-SF.md §11): brief (via = menu | daily | link | ff), start, done, fail, quit, and the
 // players' choices on the cards: retry, next (to), menu (ph = brief | result).
-import { buildMission, MISSIONS, BRIDGES, recordResult, loadProgress, isUnlocked, AIRCRAFT_SHORT } from './catalog.js';
+import { loadMissionCatalog, AIRCRAFT_SHORT } from './catalog.js';
 import { createObjective } from './objectives.js';
 import { DEG, KT, FPM, clamp, dirOf } from './util.js';
 import { runwayEnds } from '../flight/fixedwing-autopilot.js';
@@ -40,18 +40,20 @@ export function resolveStart(start, ends) {
   return { x: start.x, z: start.z, heading: start.hdg * DEG, altitude: start.alt, speed: start.kt * KT, opts };
 }
 
-/** Mission request ({ id, daily }) → { mission, spawn (main.js spawn object), aircraft } or null for an unknown id. */
-export function planMission(req, runways) {
+/** Mission request ({ id, daily }) → { mission, spawn (main.js spawn object), aircraft, catalog } or null for an unknown id. */
+export async function planMission(req, runways, map = 'sf') {
   if (!req || !req.id) return null;
-  const mission = buildMission(req.id, req.daily || null);
+  const catalog = await loadMissionCatalog(map);
+  const mission = catalog && catalog.buildMission(req.id, req.daily || null);
   if (!mission) return null;
   const s = resolveStart(mission.start, runwayEnds(runways));
   const spawn = { id: `M-${mission.id}`, name: mission.title, x: s.x, z: s.z, heading: s.heading, altitude: s.altitude, airborne: s.altitude != null, mission: true };
-  return { mission, spawn, start: s, aircraft: mission.aircraft };
+  return { mission, spawn, start: s, aircraft: mission.aircraft, catalog };
 }
 
 export function createMissionRuntime(plan, ctx) {
   const { mission } = plan;
+  const { MISSIONS, BRIDGES, recordResult, loadProgress, isUnlocked } = plan.catalog;
   const { state } = ctx;
   const world = state.world;
   const ends = runwayEnds(world.runways);
@@ -67,7 +69,7 @@ export function createMissionRuntime(plan, ctx) {
   const objectives = mission.objectives.map((d) => createObjective(d, env));
   const groundAt = (x, z) => { const h = world.getGroundHeight(x, z); return Number.isFinite(h) ? h : 0; };
   const markers = createMarkers(ctx.scene);
-  const ui = createMissionUI(ctx.hud, { touch: !!ctx.touch, input: ctx.input, category: cat });
+  const ui = createMissionUI(ctx.hud, { touch: !!ctx.touch, input: ctx.input, category: cat, missions: MISSIONS });
   const idx = MISSIONS.findIndex((m) => m.id === mission.id);
   /** The next mission in the list that is unlocked (progress after this run), wrapping around. */
   function nextMission() {
@@ -259,7 +261,7 @@ export function createMissionRuntime(plan, ctx) {
     const r = result;
     shareP = import('../ui/share.js').then((mod) => mod.prepareMission({
       id: mission.id, day: mission.day, title: mission.title, aircraft: AIRCRAFT_SHORT[mission.aircraft] || mission.aircraft,
-      ok: r && r.ok, score: r ? r.score : 0, stars: r ? r.stars : 0, time: r ? r.time : 0, snapshot: ctx.snapshot,
+      ok: r && r.ok, score: r ? r.score : 0, stars: r ? r.stars : 0, time: r ? r.time : 0, snapshot: ctx.snapshot, map: ctx.map,
     })).then((h) => { shareH = h; return h; });
     shareP.catch((e) => console.warn('[missions] share', e));
   }

@@ -1,11 +1,10 @@
 // Baked Bay Area map (src/ui/assets/bay-map.jpg, see tools/bake_bay_map.py): shared loader for the HUD minimap
-// and the menu's spawn map card (runways, bridges, airport labels, clickable spawn markers).
+// and the menu's spawn map card (runways, bridges, airport labels, clickable spawn markers). Other maps have their own
+// bake (src/maps/index.js mapImage, e.g. ist-map.jpg from tools/bake_ist_map.py), labels and bridges.
 import { el, clamp } from './util.js';
 import { loadRunways } from './shared.js';
 import { AIRPORTS } from './data.js';
-
-const IMG_URL = new URL('./assets/bay-map.jpg', import.meta.url).href;
-const META_URL = new URL('./assets/bay-map.json', import.meta.url).href;
+import { activeMap } from '../maps/index.js';
 
 // bridge decks (local meters) — drawn as vectors, too thin for the 24 m/px bake
 export const BRIDGES = [
@@ -14,11 +13,13 @@ export const BRIDGES = [
   { name: 'Bay Bridge', a: [1036, -21789], b: [6572, -22847] },
 ];
 
-let mapPromise = null;
-/** Promise<{ img: HTMLImageElement, meta: {minX,maxX,minZ,maxZ,width,height} } | null> */
-export function loadBayMap() {
+const mapPromises = {};
+/** Promise<{ img: HTMLImageElement, meta: {minX,maxX,minZ,maxZ,width,height} } | null> of the active (or the given) map's bake. */
+export function loadBayMap(name = activeMap().mapImage || 'bay-map') {
+  let mapPromise = mapPromises[name];
   if (!mapPromise) {
-    mapPromise = fetch(META_URL)
+    const IMG_URL = new URL(`./assets/${name}.jpg`, import.meta.url).href;
+    mapPromise = mapPromises[name] = fetch(new URL(`./assets/${name}.json`, import.meta.url).href)
       .then((r) => (r.ok ? r.json() : null))
       .then((meta) => (meta ? new Promise((res) => {
         const img = new Image();
@@ -35,10 +36,11 @@ export function loadBayMap() {
 const CSS_PLANE = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M21 16v-2l-8-5V3.5A1.5 1.5 0 0 0 11.5 2 1.5 1.5 0 0 0 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5z"/></svg>';
 
 /**
- * Menu map card. opts: { spawns, onSelect(id), onHover(id|null) }.
+ * Menu map card. opts: { spawns, onSelect(id), onHover(id|null), map (another map's registry entry), runways (Promise) }.
  * Returns { el, setSelected(id), setHover(id) }.
  */
-export function createSpawnMap({ spawns = [], onSelect = () => {} } = {}) {
+export function createSpawnMap({ spawns = [], onSelect = () => {}, map = null, runways = null } = {}) {
+  const other = map && map.id !== 'sf';
   const root = el('div', 'gkm-map');
   const inner = el('div', 'gkm-map-in', root);
   const imgEl = el('img', 'gkm-map-img', inner);
@@ -68,7 +70,7 @@ export function createSpawnMap({ spawns = [], onSelect = () => {} } = {}) {
 
   function build(rw) {
     svg.setAttribute('viewBox', `${meta.minX} ${meta.minZ} ${meta.maxX - meta.minX} ${meta.maxZ - meta.minZ}`);
-    for (const b of BRIDGES) line(b.a, b.b, 'gkm-map-bridge');
+    for (const b of other ? map.bridges || [] : BRIDGES) line(b.a, b.b, 'gkm-map-bridge');
     for (const a of (rw && rw.airports) || []) {
       for (const r of a.runways || []) {
         const [e0, e1] = r.ends || [];
@@ -83,6 +85,14 @@ export function createSpawnMap({ spawns = [], onSelect = () => {} } = {}) {
       const dy = a.icao === 'KNGZ' ? -5.5 : a.icao === 'KSFO' ? 3 : 5;
       lab.style.left = `${px + dx}%`; lab.style.top = `${py + dy}%`;
     }
+    if (other) {   // another map: its water bodies / districts marked for the menu
+      for (const l of map.labels || []) {
+        if (!l.menu) continue;
+        const [lx, ly] = pct(l.x, l.z);
+        const t = el('span', l.k === 'water' ? 'gkm-map-lm' : 'gkm-map-city', labels, l.t);
+        t.style.left = `${lx}%`; t.style.top = `${ly}%`;
+      }
+    } else {
     const gg = pct(-9600, -22600);
     const t = el('span', 'gkm-map-lm', labels, 'Golden Gate');
     t.style.left = `${gg[0] + 8.5}%`; t.style.top = `${gg[1] - 1.5}%`;
@@ -92,6 +102,7 @@ export function createSpawnMap({ spawns = [], onSelect = () => {} } = {}) {
     const oak = pct(12500, -16500);
     const t3 = el('span', 'gkm-map-city', labels, 'Oakland');
     t3.style.left = `${oak[0]}%`; t3.style.top = `${oak[1]}%`;
+    }
 
     for (const s of spawns) {
       const [px, py] = pct(s.x, s.z);
@@ -119,7 +130,7 @@ export function createSpawnMap({ spawns = [], onSelect = () => {} } = {}) {
     capT.textContent = s ? (s.name || s.id) : '';
   }
 
-  Promise.all([loadBayMap(), loadRunways()]).then(([m, rw]) => {
+  Promise.all([loadBayMap(other ? map.mapImage : undefined), other ? runways : loadRunways()]).then(([m, rw]) => {
     if (!m) { root.classList.add('gkm-map-none'); return; }
     meta = m.meta;
     imgEl.src = m.img.src;

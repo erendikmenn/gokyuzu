@@ -563,7 +563,7 @@ function b737Cdu(env) {
       put(g, 1, 1, 'FROM', W); put(g, 1, 10, 'ALT', W); put(g, 1, 15, 'ATA', W); right(g, 1, 'FUEL ', W);
       const now = new Date();
       const hhmm = pad(now.getUTCHours(), 2) + pad(now.getUTCMinutes(), 2) + 'Z';
-      put(g, 2, 0, 'KSFO', W, true); put(g, 2, 14, hhmm, W, true); right(g, 2, (S.fuel * 2.2046 / 1000 + 0.9).toFixed(1), W, true);
+      put(g, 2, 0, navOrigin.icao, W, true); put(g, 2, 14, hhmm, W, true); right(g, 2, (S.fuel * 2.2046 / 1000 + 0.9).toFixed(1), W, true);
       put(g, 3, 1, 'TO', W); put(g, 3, 9, 'DTG', W); put(g, 3, 15, 'ETA', W); right(g, 3, 'FUEL ', W);
       if (dest) {
         const d = distTo(S.x, S.z, dest.x, dest.z) / NM;

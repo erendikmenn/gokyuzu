@@ -141,6 +141,9 @@ vec2 sfWaveSlope(vec2 p, float dist, vec2 gx, vec2 gy) {
 }
 `;
 
+// San Francisco's open sea (another map replaces these two lines, terrainMaterialState.ocean)
+const PACIFIC = `    float coastX = vSfWorld.z > -21200.0 ? -11100.0 : -9700.0;
+    float ocean = smoothstep(coastX + 500.0, coastX - 900.0, vSfWorld.x);`;
 // replaces <map_fragment>
 const FRAG_MAP = /* glsl */`
 {
@@ -248,7 +251,7 @@ const LIGHTS_BEGIN_SUNVIS = THREE.ShaderChunk.lights_fragment_begin
 let _id = 0;
 /** One material per tile; `tile` = { uImg: {value}, uImgXform: {value: Vector4} }. */
 const WATER_LEVEL = { simple: 0, medium: 1, high: 2 };
-export const terrainMaterialState = { water: 2 };
+export const terrainMaterialState = { water: 2, ocean: null };   // ocean: another map's open-sea GLSL (src/maps/<id>.js oceanGLSL)
 /** 'simple' | 'medium' | 'high' → applied to materials created afterwards; returns true if it changed. */
 export function setTerrainWaterQuality(w) {
   const v = WATER_LEVEL[w] ?? 2;
@@ -262,6 +265,7 @@ export function applyWaterDefine(m) {
 }
 
 export function createTerrainMaterial(shared, tile) {
+  const ocean = terrainMaterialState.ocean;
   const m = new THREE.MeshStandardMaterial({ roughness: 0.93, metalness: 0.0, color: 0xffffff });
   m.name = 'sf-terrain';
   m.defines = { SF_WATER: terrainMaterialState.water };
@@ -273,13 +277,13 @@ export function createTerrainMaterial(shared, tile) {
       .replace('#include <project_vertex>', '#include <project_vertex>\n' + VERT_MAIN);
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', '#include <common>\n' + FRAG_PARS)
-      .replace('#include <map_fragment>', FRAG_MAP)
+      .replace('#include <map_fragment>', ocean ? FRAG_MAP.replace(PACIFIC, ocean) : FRAG_MAP)
       .replace('#include <roughnessmap_fragment>', FRAG_ROUGH)
       .replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\n' + FRAG_NORMAL)
       .replace('#include <lights_physical_fragment>', '#include <lights_physical_fragment>\n' + FRAG_SPEC)
       .replace('#include <lights_fragment_begin>', LIGHTS_BEGIN_SUNVIS);
   };
-  m.customProgramCacheKey = () => 'sf-terrain-5';   // defines (SF_WATER) are part of three's program key
+  m.customProgramCacheKey = ocean ? () => 'sf-terrain-5o' : () => 'sf-terrain-5';   // defines (SF_WATER) are part of three's program key
   m.userData.sfId = _id++;
   return m;
 }

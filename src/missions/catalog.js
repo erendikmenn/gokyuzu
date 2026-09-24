@@ -269,99 +269,132 @@ export const MISSIONS = [
 
 function fmtFt(ft) { return String(Math.round(ft)).replace(/\B(?=(\d{3})+(?!\d))/g, '.'); }
 
-export const missionById = (id) => MISSIONS.find((m) => m.id === id) || null;
-
-/**
- * A playable mission: the definition built with its parameters (daily: the day's variation). Text placeholders
- * ({rw}, {alt}, …) in brief / goal are filled from the parameters.
- * → { id, def, title, aircraft, brief, goal, day, note, params, ...build(params) }
- */
-export function buildMission(id, day = null) {
-  const def = missionById(id);
-  if (!def) return null;
-  const d = parseDay(day);
-  const params = { ...def.params, ...(d && def.daily ? def.daily(rng(hashString(`gokyuzu-var-${d}-${id}`))) : {}) };
-  const built = def.build(params);
-  const fill = (s) => String(s || '').replace(/\{(\w+)\}/g, (m, k) => {
-    if (k === 'alt') return fmtFt(params.altFt);
-    if (k === 'altFt') return fmtFt(params.altFt);
-    if (k === 'dist') return (params.dist / 1000).toFixed(1).replace('.', ',').replace(',0', '');
-    if (k === 'side') return params.index === 1 ? 'sağ' : 'sol';
-    if (k === 'back') return params.rw === '01L' ? '19R' : '19L';
-    if (k === 'target') return built.targetName || '';
-    return params[k] != null ? String(params[k]) : m;
-  });
-  return {
-    ...built, id, def, day: d, params, title: def.title, aircraft: def.aircraft, level: def.level, minutes: def.minutes,
-    teaches: def.teaches, brief: fill(def.brief), goal: fill(def.goal), note: d && def.dailyNote ? def.dailyNote(params) : '',
-  };
-}
-
-// ---------------------------------------------------------------------------------------------------- daily mission
+// ------------------------------------------------------------------------------------ catalogs (one per map)
 const DAY0 = Date.UTC(2026, 0, 1);
 const dayIndex = (day) => Math.round((Date.UTC(+day.slice(0, 4), +day.slice(4, 6) - 1, +day.slice(6, 8)) - DAY0) / 86400e3);
-function cycleOrder(cycle) {
-  const ids = MISSIONS.map((m) => m.id);
-  const r = rng(hashString(`gokyuzu-daily-cycle-${cycle}`));
-  for (let i = ids.length - 1; i > 0; i--) { const j = Math.floor(r() * (i + 1)); [ids[i], ids[j]] = [ids[j], ids[i]]; }
-  return ids;
-}
+
 /**
- * The daily mission id for an Istanbul day ('YYYYMMDD'): every mission once per cycle of N days in a shuffled order
- * (the same for everyone), never the same mission two days running.
+ * The mission functions over one map's definitions (src/maps/index.js): San Francisco's are this module's exports;
+ * another map's come from loadMissionCatalog(id) (src/missions/<id>/catalog.js: MISSIONS in this file's format + BRIDGES).
+ * Progress is kept per map (localStorage `store`), the daily cycle is seeded per map (`seed`, '' = San Francisco).
  */
-export function dailyMissionId(day = istanbulDay()) {
-  const d = parseDay(day) || istanbulDay();
-  const n = MISSIONS.length, i = dayIndex(d);
-  const cycle = Math.floor(i / n), pos = ((i % n) + n) % n;
-  const order = cycleOrder(cycle);
-  // a new cycle must not start with yesterday's mission (the swap only touches positions 0 and 1, never the last one)
-  if (pos <= 1 && order[0] === cycleOrder(cycle - 1)[n - 1]) [order[0], order[1]] = [order[1], order[0]];
-  return order[pos];
-}
-/** Today's (or `day`'s) daily mission, built with the day's variation. */
-export function dailyMission(day = istanbulDay()) {
-  const d = parseDay(day) || istanbulDay();
-  return buildMission(dailyMissionId(d), d);
-}
+export function createCatalog({ missions, bridges = {}, store = 'gokyuzu.missions', seed = '', map = 'sf', build = null, dailyId = null }) {
+  const missionById = (id) => missions.find((m) => m.id === id) || null;
 
-// --------------------------------------------------------------------------------------------------------- progress
-const STORE = 'gokyuzu.missions';
-function readStore() {
-  try { const s = JSON.parse(localStorage.getItem(STORE) || 'null'); return s && typeof s === 'object' && s.m ? s : { v: 1, m: {}, daily: {} }; } catch { return { v: 1, m: {}, daily: {} }; }
-}
-function writeStore(s) { try { localStorage.setItem(STORE, JSON.stringify(s)); } catch { /* private mode */ } }
-
-/** { [id]: { stars, best, runs, done } } and { [day]: { id, stars, best } } */
-export function loadProgress() { const s = readStore(); return { missions: s.m, daily: s.daily || {} }; }
-export function totalStars(progress = loadProgress()) {
-  return Object.values(progress.missions).reduce((a, p) => a + (p && p.stars ? p.stars : 0), 0);
-}
-/** Unlocked in the menu (deep links and the daily mission always play). */
-export function isUnlocked(def, progress = loadProgress()) { return !def.unlock || totalStars(progress) >= def.unlock; }
-
-/** Record a finished run → { newBest, prevBest, prevStars }. Daily runs also count for the mission itself. */
-export function recordResult(id, { ok, score, stars, day = null }) {
-  const s = readStore();
-  const p = s.m[id] || (s.m[id] = { stars: 0, best: 0, runs: 0, done: false });
-  const prev = { prevBest: p.best || 0, prevStars: p.stars || 0 };
-  p.runs = (p.runs || 0) + 1;
-  let newBest = false;
-  if (ok) {
-    p.done = true;
-    if (score > (p.best || 0)) { p.best = score; newBest = true; }
-    p.stars = Math.max(p.stars || 0, stars || 0);
+  /**
+   * A playable mission: the definition built with its parameters (daily: the day's variation). Text placeholders
+   * ({rw}, {alt}, …) in brief / goal are filled from the parameters.
+   * → { id, def, title, aircraft, brief, goal, day, note, params, ...build(params) }
+   */
+  function buildMission(id, day = null) {
+    const def = missionById(id);
+    if (!def) return null;
+    const d = parseDay(day);
+    const params = { ...def.params, ...(d && def.daily ? def.daily(rng(hashString(`gokyuzu-var-${d}-${id}`))) : {}) };
+    const built = def.build(params);
+    const fill = (s) => String(s || '').replace(/\{(\w+)\}/g, (m, k) => {
+      if (k === 'alt') return fmtFt(params.altFt);
+      if (k === 'altFt') return fmtFt(params.altFt);
+      if (k === 'dist') return (params.dist / 1000).toFixed(1).replace('.', ',').replace(',0', '');
+      if (k === 'side') return params.index === 1 ? 'sağ' : 'sol';
+      if (k === 'back') return params.rw === '01L' ? '19R' : '19L';
+      if (k === 'target') return built.targetName || '';
+      return params[k] != null ? String(params[k]) : m;
+    });
+    return {
+      ...built, id, def, day: d, params, title: def.title, aircraft: def.aircraft, level: def.level, minutes: def.minutes,
+      teaches: def.teaches, brief: fill(def.brief), goal: fill(def.goal), note: d && def.dailyNote ? def.dailyNote(params) : '',
+    };
   }
-  if (day && ok) {
-    s.daily = s.daily || {};
-    const dd = s.daily[day] || (s.daily[day] = { id, stars: 0, best: 0 });
-    if (score > dd.best) dd.best = score;
-    dd.stars = Math.max(dd.stars, stars || 0);
-    const keys = Object.keys(s.daily).sort();
-    while (keys.length > 60) delete s.daily[keys.shift()];   // keep two months
+
+  // ---- daily mission ----
+  function cycleOrder(cycle) {
+    const ids = missions.map((m) => m.id);
+    const r = rng(hashString(`gokyuzu-${seed}daily-cycle-${cycle}`));
+    for (let i = ids.length - 1; i > 0; i--) { const j = Math.floor(r() * (i + 1)); [ids[i], ids[j]] = [ids[j], ids[i]]; }
+    return ids;
   }
-  writeStore(s);
-  return { newBest, ...prev };
+  /**
+   * The daily mission id for an Istanbul day ('YYYYMMDD'): every mission once per cycle of N days in a shuffled order
+   * (the same for everyone), never the same mission two days running.
+   */
+  function dailyMissionId(day = istanbulDay()) {
+    const d = parseDay(day) || istanbulDay();
+    const n = missions.length, i = dayIndex(d);
+    const cycle = Math.floor(i / n), pos = ((i % n) + n) % n;
+    const order = cycleOrder(cycle);
+    // a new cycle must not start with yesterday's mission (the swap only touches positions 0 and 1, never the last one)
+    if (pos <= 1 && order[0] === cycleOrder(cycle - 1)[n - 1]) [order[0], order[1]] = [order[1], order[0]];
+    return order[pos];
+  }
+  // a map module's own buildMission / dailyMissionId (its placeholders, its daily order) replace these
+  if (build) buildMission = build;
+  if (dailyId) dailyMissionId = dailyId;
+  /** Today's (or `day`'s) daily mission, built with the day's variation. */
+  function dailyMission(day = istanbulDay()) {
+    const d = parseDay(day) || istanbulDay();
+    return buildMission(dailyMissionId(d), d);
+  }
+
+  // ---- progress ----
+  function readStore() {
+    try { const s = JSON.parse(localStorage.getItem(store) || 'null'); return s && typeof s === 'object' && s.m ? s : { v: 1, m: {}, daily: {} }; } catch { return { v: 1, m: {}, daily: {} }; }
+  }
+  function writeStore(s) { try { localStorage.setItem(store, JSON.stringify(s)); } catch { /* private mode */ } }
+
+  /** { [id]: { stars, best, runs, done } } and { [day]: { id, stars, best } } */
+  function loadProgress() { const s = readStore(); return { missions: s.m, daily: s.daily || {} }; }
+  function totalStars(progress = loadProgress()) {
+    return Object.values(progress.missions).reduce((a, p) => a + (p && p.stars ? p.stars : 0), 0);
+  }
+  /** Unlocked in the menu (deep links and the daily mission always play). */
+  function isUnlocked(def, progress = loadProgress()) { return !def.unlock || totalStars(progress) >= def.unlock; }
+
+  /** Record a finished run → { newBest, prevBest, prevStars }. Daily runs also count for the mission itself. */
+  function recordResult(id, { ok, score, stars, day = null }) {
+    const s = readStore();
+    const p = s.m[id] || (s.m[id] = { stars: 0, best: 0, runs: 0, done: false });
+    const prev = { prevBest: p.best || 0, prevStars: p.stars || 0 };
+    p.runs = (p.runs || 0) + 1;
+    let newBest = false;
+    if (ok) {
+      p.done = true;
+      if (score > (p.best || 0)) { p.best = score; newBest = true; }
+      p.stars = Math.max(p.stars || 0, stars || 0);
+    }
+    if (day && ok) {
+      s.daily = s.daily || {};
+      const dd = s.daily[day] || (s.daily[day] = { id, stars: 0, best: 0 });
+      if (score > dd.best) dd.best = score;
+      dd.stars = Math.max(dd.stars, stars || 0);
+      const keys = Object.keys(s.daily).sort();
+      while (keys.length > 60) delete s.daily[keys.shift()];   // keep two months
+    }
+    writeStore(s);
+    return { newBest, ...prev };
+  }
+
+  return { map, MISSIONS: missions, BRIDGES: bridges, missionById, buildMission, dailyMissionId, dailyMission, loadProgress, totalStars, isUnlocked, recordResult };
+}
+
+/** San Francisco's catalog (the functions below). */
+export const SF_CATALOG = createCatalog({ missions: MISSIONS, bridges: BRIDGES });
+export const { missionById, buildMission, dailyMissionId, dailyMission, loadProgress, totalStars, isUnlocked, recordResult } = SF_CATALOG;
+
+const catalogs = {};
+/**
+ * The mission catalog of a map: San Francisco's at once, another map's from src/missions/<id>/catalog.js (its own chunk,
+ * bundled only when it exists). Resolves null when the map has no missions (yet): the menu tab and the panel hide.
+ */
+export function loadMissionCatalog(map = 'sf') {
+  if (map === 'sf') return Promise.resolve(SF_CATALOG);
+  if (!/^[a-z]{2,8}$/.test(map)) return Promise.resolve(null);
+  if (!catalogs[map]) {
+    catalogs[map] = import(`./${map}/catalog.js`)
+      .then((m) => (m.MISSIONS && m.MISSIONS.length ? createCatalog({ missions: m.MISSIONS, bridges: m.BRIDGES, store: `gokyuzu.missions.${map}`, seed: `${map}-`, map, build: m.buildMission, dailyId: m.dailyMissionId }) : null))
+      .catch((e) => { catalogs[map] = null; console.info(`[missions] no missions for ${map} yet`, e && e.message); return null; });
+  }
+  return catalogs[map];
 }
 
 export const AIRCRAFT_SHORT = { f16: 'F-16C', f22: 'F-22A', a320neo: 'A320neo', b737: '737-800', uh60: 'UH-60M' };

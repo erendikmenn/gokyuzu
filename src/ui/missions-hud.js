@@ -98,7 +98,7 @@ html.gk-mis .gkh-ccard small, html.gk-mis .gkh-ccard > i { display: none; }   /*
 }
 `;
 
-export function createMissionUI(hud, { touch = false, input = null, category = 'airliner' } = {}) {
+export function createMissionUI(hud, { touch = false, input = null, category = 'airliner', missions = MISSIONS } = {}) {
   injectPartsCSS();
   injectCSS('missions-hud', CSS);
   const root = el('div', 'gkq');
@@ -172,7 +172,7 @@ export function createMissionUI(hud, { touch = false, input = null, category = '
   function kicker(parent, m) {
     const k = el('div', 'gkq-kick', parent);
     if (m.day) { el('b', 'daily', k, 'Günün görevi'); el('span', null, k, dayLabel(m.day)); }
-    else el('b', null, k, `Görev ${MISSIONS.findIndex((x) => x.id === m.id) + 1}/${MISSIONS.length}`);
+    else el('b', null, k, `Görev ${missions.findIndex((x) => x.id === m.id) + 1}/${missions.length}`);
     el('span', null, k, AIRCRAFT_SHORT[m.aircraft] || m.aircraft);
     el('span', null, k, `~${m.minutes} dk`);
     el('span', null, k, LEVEL_LABEL[m.level] || '');

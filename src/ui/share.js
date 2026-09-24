@@ -34,9 +34,10 @@ const ICON = {
   down: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>',
 };
 
-/** Deep link to a mission (same origin and path as this page: staging links stay on staging). */
-export function missionLink(id, day = null) {
+/** Deep link to a mission (same origin and path as this page: staging links stay on staging); other maps: ?map=<id>. */
+export function missionLink(id, day = null, map = null) {
   const u = new URL(location.pathname, location.origin);
+  if (!id && map && map.id !== 'sf') u.searchParams.set('map', map.id);   // (a mission id names its map itself)
   if (id) u.searchParams.set('mission', id);
   if (id && day) u.searchParams.set('daily', day);
   return u.href;
@@ -79,7 +80,7 @@ export function renderCard(d) {
   ctx.fillStyle = shade; ctx.fillRect(0, 0, W, H);
   // brand
   ctx.fillStyle = '#ffa24a'; ctx.font = `800 26px ${FONT}`; ctx.fillText('GÖKYÜZÜ', 64, 84);
-  ctx.fillStyle = 'rgba(240, 246, 255, .7)'; ctx.font = `600 22px ${FONT}`; ctx.fillText('San Francisco Körfezi uçuş simülatörü', 210, 84);
+  ctx.fillStyle = 'rgba(240, 246, 255, .7)'; ctx.font = `600 22px ${FONT}`; ctx.fillText(d.subtitle || 'San Francisco Körfezi uçuş simülatörü', 210, 84);
   // kicker + title
   ctx.fillStyle = '#5cf2c8'; ctx.font = `800 24px ${FONT}`; ctx.fillText(String(d.kicker || '').toLocaleUpperCase('tr'), 64, 170);
   ctx.fillStyle = '#ffffff'; fit(ctx, d.title || '', W - 128, 66); ctx.fillText(d.title || '', 64, 244);
@@ -199,21 +200,21 @@ export function missionShareData({ id, day, title, aircraft, ok, score, stars, t
   return { url, kicker, text, big: ok ? fmtInt(score) : '—', bigSub: ok ? 'puan' : '', lines: ok ? [['Süre', fmtT(time)], ['Uçak', aircraft]] : [['Uçak', aircraft]] };
 }
 
-/** Prepared share of a mission result (see prepare). o = { id, day, title, aircraft, ok, score, stars, time, snapshot } */
+/** Prepared share of a mission result (see prepare). o = { id, day, title, aircraft, ok, score, stars, time, snapshot, map? } */
 export function prepareMission(o) {
   const d = missionShareData(o);
-  const canvas = renderCard({ kicker: d.kicker, title: o.title, stars: o.ok ? o.stars : 0, big: d.big, bigSub: d.bigSub, lines: d.lines, link: d.url, snapshot: o.snapshot });
+  const canvas = renderCard({ kicker: d.kicker, title: o.title, stars: o.ok ? o.stars : 0, big: d.big, bigSub: d.bigSub, lines: d.lines, link: d.url, snapshot: o.snapshot, subtitle: o.map && o.map.shareTitle });
   return prepare({ id: o.id, text: d.text, url: d.url, canvas, fileName: `gokyuzu-${o.id}.png` });
 }
 
 /** Prepared share of a landing card (src/missions/landing-score.js), without a snapshot (cheap, done when the card shows). */
-export function prepareLanding(card, { aircraft = '' } = {}) {
-  const url = missionLink(null);
+export function prepareLanding(card, { aircraft = '', map = null } = {}) {
+  const url = missionLink(null, null, map);
   const rw = card.runway ? card.runway.replace(/^K/, '') : '';
   const text = `Gökyüzü'nde ${aircraft ? `${aircraft} ile ` : ''}${rw ? `${rw} pistine ` : ''}"${card.label}" iniş: ${card.fpm} ft/dk, ${card.stars} yıldız. Sen daha yumuşak koyabilir misin?`;
   const lines = [['Dikey hız', `${card.fpm} ft/dk`]];
   if (card.cl != null) lines.push(['Merkez çizgi', `${String(card.cl).replace('.', ',')} m`]);
   if (card.tdz != null) lines.push(['Eşikten', `${card.tdz} m`]);
-  const canvas = renderCard({ kicker: `İniş · ${aircraft}${rw ? ` · ${rw}` : ''}`, title: card.label, stars: card.stars, big: `${card.points}`, bigSub: '/ 100', lines, link: url });
+  const canvas = renderCard({ kicker: `İniş · ${aircraft}${rw ? ` · ${rw}` : ''}`, title: card.label, stars: card.stars, big: `${card.points}`, bigSub: '/ 100', lines, link: url, subtitle: map && map.shareTitle });
   return prepare({ id: 'land', text, url, canvas, fileName: 'gokyuzu-inis.png' });
 }

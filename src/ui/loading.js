@@ -8,6 +8,7 @@ import { shared } from './shared.js';
 import { spawnLabel } from './menu.js';
 import { AIRCRAFT } from '../aircraft/registry.js';
 import { touchMode } from './touch-env.js';
+import { activeMap } from '../maps/index.js';
 
 const CSS = `
 .gkl { position: fixed; inset: 0; z-index: 40; overflow: hidden; color: var(--gk-fg); font-family: var(--gk-sans);
@@ -120,9 +121,11 @@ function describeChoice() {
   if (!id) return null;
   const info = AIRCRAFT_INFO[id];
   const sp = q.get('spawn') || '';
-  const m = sp.match(/^(K[A-Z]{3})-(.+)$/);
+  const m = sp.match(/^(K[A-Z]{3}|LT[A-Z]{2})-(.+)$/);
   let spawn = '';
-  if (m) spawn = `${AIRPORTS[m[1]] ? AIRPORTS[m[1]].short : m[1]} · Pist ${m[2]}`;
+  const own = (activeMap().spawns || []).find((s) => s.id === sp);   // maps hook: another map's start points
+  if (own) spawn = spawnText(own.name);
+  else if (m) spawn = `${AIRPORTS[m[1]] ? AIRPORTS[m[1]].short : m[1]} · Pist ${m[2]}`;
   else if (/^AIR/.test(sp)) spawn = { 'AIR-GGB': 'Golden Gate yaklaşımı', 'AIR-SFO-FINAL': 'SFO 28L son yaklaşma', 'AIR-CITY': 'Şehir merkezi üstü' }[sp] || 'Havada başlangıç';
   const entry = AIRCRAFT.find((a) => a.id === id);
   return { aircraft: entry ? entry.name : info ? info.short : id, spawn };
@@ -154,7 +157,7 @@ export function createLoadingScreen(container) {
   }
   const title = el('div', 'gkl-title', main);
   el('h1', null, title, 'Gökyüzü');
-  el('div', null, title, 'San Francisco Körfezi');
+  el('div', null, title, activeMap().title);
   const ch = describeChoice();
   if (ch) {
     const fl = el('div', 'gkl-flight', main);

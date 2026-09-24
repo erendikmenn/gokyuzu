@@ -294,16 +294,19 @@ export function openSettings(container) {
   return m.done;
 }
 
-/** Künye (credits + disclaimer). Resolves when closed. */
-export function openCredits(container) {
-  const m = modal(container, 'Künye', 'Gökyüzü SF · San Francisco Körfezi uçuş simülatörü');
+/** Künye (credits + disclaimer); map: another map's registry entry (src/maps/index.js: title, credits). Resolves when closed. */
+export function openCredits(container, map = null) {
+  const own = map && map.credits;
+  const m = modal(container, 'Künye', own ? `Gökyüzü · ${map.title} uçuş simülatörü` : 'Gökyüzü SF · San Francisco Körfezi uçuş simülatörü');
   const box = el('div', 'gkp-credits', m.card);
   const ul = el('ul', null, box);
   const rows = [
-    ['Harita verisi', '© OpenStreetMap katkıcıları (ODbL)'],
-    ['Arazi ve hava fotoğrafları', 'USGS 3DEP, USDA NAIP'],
-    ['Batimetri', 'NOAA'],
-    ['Bina verisi', 'DataSF'],
+    ...(own || [
+      ['Harita verisi', '© OpenStreetMap katkıcıları (ODbL)'],
+      ['Arazi ve hava fotoğrafları', 'USGS 3DEP, USDA NAIP'],
+      ['Batimetri', 'NOAA'],
+      ['Bina verisi', 'DataSF'],
+    ]),
     ['Yazılım', 'Three.js (MIT)'],
     ['Yazı tipi', 'B612 font (OFL)'],
     ['Sesli uyarılar', 'ElevenLabs ile üretildi; gerçek kişi sesi klonlanmadı'],

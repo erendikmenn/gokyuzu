@@ -3,7 +3,7 @@
 // Everything is draped on ctx.terrain (getHeight + small offsets); the layer implements the contract Layer interface.
 import * as THREE from 'three';
 import { isNetworkError, reportLoadFailure, retryDelay } from '../core/assets.js';
-import { readArrays, buildGround, buildStructures } from './airports_ground.js';
+import { readArrays, buildGround, buildStructures, airportFiles } from './airports_ground.js';
 import { buildLights, updateLights } from './airports_lights.js';
 import { buildSigns } from './airports_signs.js';
 import { loadBuildings, updateBuildingLights } from './airports_buildings.js';
@@ -11,10 +11,21 @@ import { buildProps, updateProps, setPropsDensity, addAgentLods } from './airpor
 import { buildFence, buildCables, buildFloodPools } from './airports_extras.js';
 import { Draper, meshJob, lightsJob, instancedJob, rigidJob } from './airports_drape.js';
 
-const BASE = 'assets/sf/airports/';
-const ICAOS = ['ksfo', 'kngz', 'koak'];
+const SF_ICAOS = ['ksfo', 'kngz', 'koak'];
 
 export async function createAirports(ctx) {
+  // the active map's airports (src/maps/index.js): San Francisco's three; another map's manifest.json in its
+  // <assets>/airports/ ({ airports?: ['ltfm', …] (default: every airport of runways.json), tex?: ground texture
+  // directory, props?: props GLB, as root-relative paths (e.g. San Francisco's generic ones); no file = no airports yet)
+  const BASE = ctx.map ? `${ctx.map.assets}airports/` : 'assets/sf/airports/';
+  let ICAOS = SF_ICAOS;
+  Object.assign(airportFiles, { base: BASE, tex: BASE + 'tex/', props: BASE + 'props.glb' });
+  if (ctx.map && ctx.map.id !== 'sf') {
+    const man = await ctx.loader.loadJSON(BASE + 'manifest.json');   // (missing: the world skips the layer)
+    ICAOS = man.airports || ((ctx.runways && ctx.runways.airports) || []).map((a) => a.icao.toLowerCase());
+    if (man.tex) airportFiles.tex = man.tex;
+    if (man.props) airportFiles.props = man.props;
+  }
   const group = new THREE.Group();
   group.name = 'airports';
   const airports = [];
@@ -68,7 +79,7 @@ export async function createAirports(ctx) {
     metas[icao] = { meta, A };
     const apt = { meta, root: new THREE.Group(), lights: null, fixtures: [], buildings: null, props: null };
     apt.root.name = `airport-${meta.icao}`;
-    const gridRot = meta.icao === 'KSFO' ? -27.42 * Math.PI / 180 : meta.icao === 'KNGZ' ? -75 * Math.PI / 180 : -21.7 * Math.PI / 180;
+    const gridRot = meta.gridRot ?? (meta.icao === 'KSFO' ? -27.42 * Math.PI / 180 : meta.icao === 'KNGZ' ? -75 * Math.PI / 180 : -21.7 * Math.PI / 180);
     const { group: ground } = buildGround(meta, A, ctx, { gridRot });
     apt.ground = ground;
     apt.root.add(ground);

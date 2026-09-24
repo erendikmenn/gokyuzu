@@ -298,7 +298,7 @@ export function pickScenario(category, spawn, flight) {
   const cat = category === 'fighter' || category === 'helicopter' ? category : 'airliner';
   const air = !!(spawn && spawn.altitude != null);
   if (cat === 'helicopter') return air ? { id: 'heli-air', steps: airborneSteps(cat) } : { id: 'heli-ground', steps: HELI_GROUND };
-  if (air && spawn.id === 'AIR-SFO-FINAL' && flight && flight.gearHandleDown) return { id: `${cat}-final`, steps: landingSteps(cat) };
+  if (air && (spawn.id === 'AIR-SFO-FINAL' || spawn.final) && flight && flight.gearHandleDown) return { id: `${cat}-final`, steps: landingSteps(cat) };
   if (air) return { id: `${cat}-air`, steps: airborneSteps(cat) };
   const steps = cat === 'fighter'
     ? [throttleStep(true), afterburnerStep, rotateStep, gearUpStep, freeStep('fighter')]

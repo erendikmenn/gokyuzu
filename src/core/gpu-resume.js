@@ -35,7 +35,7 @@ export function flightSnapshot(state) {
   const ap = f.autopilot || {};
   return {
     v: 1, t: Date.now(), alive: true,
-    aircraft: choice.aircraftId, spawn: choice.spawnId,
+    aircraft: choice.aircraftId, spawn: choice.spawnId, ...(choice.map && choice.map !== 'sf' ? { map: choice.map } : {}),   // maps hook
     x: r1(f.position.x), y: r1(f.position.y), z: r1(f.position.z),
     heading: r1(fin(f.heading)),                          // deg
     speed: r1(fin(f.airspeed)),                           // TAS m/s

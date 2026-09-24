@@ -1,11 +1,11 @@
-// High-zoom detail layer for the navigation map: the terrain's NAIP imagery pyramid (assets/sf/terrain/img/<L>/i_j.webp,
+// High-zoom detail layer for the navigation map: the terrain's imagery pyramid (assets/<map>/terrain/img/<L>/i_j.webp,
 // the same files the 3D terrain streams, so they usually come from the HTTP cache), restyled like the baked minimap
 // image (src/ui/tools/bake_bay_map.py: desaturated, darkened, cool tint) with canvas blend modes, water left transparent
 // so the base map's navy water and shelf show through. Tile existence comes from world.terrain.nodes (the terrain
 // quadtree); without it the layer stays empty and the base map alone is drawn.
 import { assetData } from '../core/assets.js';
+import { activeMap } from '../maps/index.js';
 
-const IMG_BASE = new URL('../../assets/sf/terrain/img/', import.meta.url).href;
 const KEY = (L, i, j) => L * 1048576 + i * 1024 + j;   // src/world-sf/terrain.js node key
 const MAX_TILES = 72;                                   // processed 512² canvases kept (≈ 1 MB each)
 const MAX_INFLIGHT = 4;
@@ -43,7 +43,7 @@ export function createDetailTiles() {
     const e = { state: 'load', canvas: null, used: frame, L: n.L, x0: n.x0, z0: n.z0, size: n.size };
     cache.set(key, e);
     inflight++;
-    assetData(`${IMG_BASE}${n.L}/${n.i}_${n.j}.webp`, 'blob')
+    assetData(new URL(`../../${activeMap().assets}terrain/img/${n.L}/${n.i}_${n.j}.webp`, import.meta.url).href, 'blob')
       .then((b) => createImageBitmap(b))
       .then((bmp) => { e.canvas = style(bmp); e.state = 'ready'; })
       .catch(() => { e.state = 'fail'; })

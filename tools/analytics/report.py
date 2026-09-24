@@ -5,6 +5,7 @@
     .venv/bin/python tools/analytics/report.py staging --days 30
     .venv/bin/python tools/analytics/report.py --sessions 50      # longer session list
     .venv/bin/python tools/analytics/report.py --hourly           # hour by hour (Türkiye time) instead of the report
+    .venv/bin/python tools/analytics/report.py --hourly --map ist # … only İstanbul flights (beacon columns)
 
 Downloads new log files (profile "gokyuzu-analytics", read-only on the log bucket) into data/analytics/<target>/
 (gitignored; the bucket itself deletes logs after 30 days) and prints players, sessions and minutes played.
@@ -13,6 +14,8 @@ without beacons (versions before telemetry, blocked requests), sessions rebuilt 
 Nobody is identified: a visitor is a salted hash of IP + browser (salt in ~/.config/gokyuzu/analytics_salt, never
 shared); raw IPs are never printed. Your own IPs (~/.config/gokyuzu/staging_ips) are marked "sen", headless test
 browsers "test". Countries come from the free DB-IP Lite database (CC BY 4.0, https://db-ip.com), looked up offline.
+Maps (src/maps/index.js): İstanbul beacons carry mp=ist (open / fly / mission / ffc); a session's map is its flight's
+(else the page's), minutes and heartbeats follow the session; sessions rebuilt from asset requests go by assets/<map>/.
 """
 import argparse
 import bisect
@@ -37,6 +40,15 @@ BUCKET = 'gokyuzu-sf-logs-<aws-account-id>-eu-central-1'
 CONFIG = Path.home() / '.config' / 'gokyuzu'
 SESSION_GAP = dt.timedelta(minutes=15)   # asset requests further apart than this start a new (approximate) session
 AIRCRAFT = {'f16': 'F-16', 'f22': 'F-22', 'a320neo': 'A320neo', 'b737': '737-800', 'uh60': 'UH-60M'}
+MAPS = {'sf': 'San Francisco', 'ist': 'İstanbul'}   # telemetry `mp` (absent = San Francisco)
+
+
+def session_map(evs):
+    """Map of a beacon session: its flight's `mp`, else the page's (open), else San Francisco."""
+    fly = next((q for _, q, _ in evs if q.get('t') == 'fly'), None)
+    if fly is not None:
+        return fly.get('mp') or 'sf'
+    return next((q.get('mp') for _, q, _ in evs if q.get('t') == 'open' and q.get('mp')), 'sf')
 EDGES = {   # CloudFront edge codes start with the nearest airport's IATA code
     'IST': 'İstanbul', 'SAW': 'İstanbul', 'FRA': 'Frankfurt', 'AMS': 'Amsterdam', 'LHR': 'Londra', 'LON': 'Londra',
     'MAN': 'Manchester', 'CDG': 'Paris', 'PAR': 'Paris', 'MRS': 'Marsilya', 'MUC': 'Münih', 'VIE': 'Viyana',
@@ -506,16 +518,32 @@ def release_hours():
     return out
 
 
-def report_hourly(hours, first_seen, beacons, visitors, requests):
+def report_maps(real, visitors):
+    """Per map: people who flew it, flights, minutes (session length) and active minutes (heartbeats)."""
+    rows = []
+    for m, name in MAPS.items():
+        fl = [s for s in real if s['aircraft'] and s['map'] == m]
+        if not fl:
+            continue
+        mins, act = sum(s['minutes'] for s in fl), sum(s['active'] or 0 for s in fl)
+        rows.append(f"{name} {len({s['vid'] for s in fl})} kişi · {len(fl)} uçuş · {fmt_min(mins)} (aktif {act} dk)")
+    print('Haritalar:', ' | '.join(rows) or '-')
+
+
+def report_hourly(hours, first_seen, beacons, visitors, requests, only=None):
     """Hour by hour (Türkiye time), players only: visitors, new visitors (first request in the window), players (a flight
     beacon or an aircraft model download), flights, touch flights, active minutes (heartbeats), take-offs, landings
     (runway), crashes, finished tutorials, fps, phone / X-Instagram share, errors, GB, and the missions columns: görev
     (people who started a mission), ffc (people who opened the free-flight panel), tamam (people who completed a mission
-    or a challenge; the landing entry left out)."""
+    or a challenge; the landing entry left out), ist (people who flew İstanbul). only = a map id: the beacon columns
+    count only that map's sessions (visitor / request columns stay for everyone)."""
     c = defaultdict(Counter)
     fps = defaultdict(list)
-    players, mis, ffc, done = (defaultdict(set) for _ in range(4))
+    players, mis, ffc, done, ist = (defaultdict(set) for _ in range(5))
     for evs in beacons.values():
+        m = session_map(evs)
+        if only and m != only:
+            continue
         for at, q, vid in evs:
             if visitors[vid]['who']:
                 continue
@@ -524,6 +552,8 @@ def report_hourly(hours, first_seen, beacons, visitors, requests):
                 c[h]['fly'] += 1
                 c[h]['touch'] += q.get('in') == 'touch'
                 players[h].add(vid)
+                if m == 'ist':
+                    ist[h].add(vid)
             elif t == 'hb':
                 c[h]['hb'] += 1
                 if (q.get('fps') or '').isdigit():
@@ -548,23 +578,26 @@ def report_hourly(hours, first_seen, beacons, visitors, requests):
     for vid, reqs in requests.items():
         if visitors[vid]['who']:
             continue
+        hours_of_map = {hour_of(at) for at, uri in reqs if uri.startswith(f'/assets/{only}/')} if only else None
         for at, uri in reqs:
             if uri.startswith('/assets/aircraft/') and uri.endswith('.glb') and not uri.endswith(('_lod.glb', '_cockpit.glb')):
-                players[hour_of(at)].add(vid)
+                if hours_of_map is None or hour_of(at) in hours_of_map:
+                    players[hour_of(at)].add(vid)
     new = Counter(hour_of(t) for t in first_seen.values())
     rel = release_hours()
     print(f"{'saat (TR)':<11}|{'ziyar.':>6}|{'yeni':>5}|{'oyna.':>5}|{'uçuş':>5}|{'dokun.':>6}|{'aktif dk':>8}|{'kalkış':>6}|{'iniş(pist)':>10}|{'kaza':>5}|"
-          f"{'eğit.bitti':>10}|{'fps':>4}|{'tel%':>4}|{'X/IG%':>5}|{'hata':>4}|{'GB':>5}|{'görev':>5}|{'ffc':>4}|{'tamam':>5}| yayın")
+          f"{'eğit.bitti':>10}|{'fps':>4}|{'tel%':>4}|{'X/IG%':>5}|{'hata':>4}|{'GB':>5}|{'görev':>5}|{'ffc':>4}|{'tamam':>5}|{'ist':>4}| yayın")
     for h in sorted(hours):
         r, k, n = hours[h], c[h], len(hours[h]['vis'])
         f = statistics.mean(fps[h]) if fps[h] else 0
         print(f"{h:%d.%m %H}:00|{n:6d}|{new[h]:5d}|{len(players[h]):5d}|{k['fly']:5d}|{k['touch']:6d}|{k['hb']:8d}|{k['takeoff']:6d}|"
               f"{k['land']:5d}({k['landrw']:2d})  |{k['crash']:5d}|{k['tutdone']:10d}|{f:4.0f}|{100 * len(r['phone']) / n:4.0f}|{100 * len(r['iab']) / n:5.0f}|"
-              f"{k['err']:4d}|{r['bytes'] / 1e9:5.1f}|{len(mis[h]):5d}|{len(ffc[h]):4d}|{len(done[h]):5d}| {rel.get(h, '')}")
+              f"{k['err']:4d}|{r['bytes'] / 1e9:5.1f}|{len(mis[h]):5d}|{len(ffc[h]):4d}|{len(done[h]):5d}|{len(ist[h]):4d}| {rel.get(h, '')}")
     tot = set().union(*(r['vis'] for r in hours.values())) if hours else set()
     print(f"Toplam tekil ziyaretçi {len(tot)} · görev başlatan {len(set().union(*mis.values())) if mis else 0} · paneli açan "
-          f"{len(set().union(*ffc.values())) if ffc else 0} · bitiren {len(set().union(*done.values())) if done else 0} kişi "
-          '(saatler Türkiye saati; kişiler anonim ziyaretçi kimliği; sen/test ve botlar hariç)')
+          f"{len(set().union(*ffc.values())) if ffc else 0} · bitiren {len(set().union(*done.values())) if done else 0} · İstanbul'da uçan "
+          f"{len(set().union(*ist.values())) if ist else 0} kişi" + (f' · yalnız {MAPS.get(only, only)} uçuşları' if only else '')
+          + ' (saatler Türkiye saati; kişiler anonim ziyaretçi kimliği; sen/test ve botlar hariç)')
 
 
 def fmt_min(m):
@@ -579,6 +612,7 @@ def main():
     ap.add_argument('--no-sync', action='store_true', help='use the already downloaded logs')
     ap.add_argument('--logs', type=Path, help='read the .gz logs from this folder instead (implies --no-sync)')
     ap.add_argument('--hourly', action='store_true', help='print the hour-by-hour table (Türkiye time) instead of the report')
+    ap.add_argument('--map', choices=list(MAPS), help='--hourly: count only this map\'s flights in the beacon columns')
     a = ap.parse_args()
 
     profile = os.environ.get('AWS_PROFILE_ANALYTICS', 'gokyuzu-analytics')
@@ -692,6 +726,7 @@ def main():
             'aircraft': fly.get('ac'), 'spawn': fly.get('sp'), 'load': fly.get('lt'), 'fps': round(statistics.mean(fps)) if fps else None,
             'gpu': first.get('gpu'), 'quality': fly.get('q') or first.get('q'), 'version': first.get('v') or fly.get('v'),
             'errors': [q.get('e') for _, q, _ in evs if q.get('t') == 'err' and q.get('x') != 'foreign'], 'exact': True,
+            'map': session_map(evs),
         })
         covered[vid].append((start - SESSION_GAP, end + SESSION_GAP))
 
@@ -713,13 +748,14 @@ def main():
             sessions.append({'took_off': None, 'landings': 0, 'runway_landings': 0, 'crashes': [], 'tut_steps': [], 'dead': [], 'fail': [], 'foreign': [],
                              'vid': vid, 'start': start, 'minutes': (end - start).total_seconds() / 60, 'active': None,
                              'aircraft': ac, 'spawn': None, 'load': None, 'fps': None, 'gpu': None, 'quality': None,
-                             'version': None, 'errors': [], 'exact': False})
+                             'version': None, 'errors': [], 'exact': False,
+                             'map': next((m for m in MAPS if any(p.startswith(f'/assets/{m}/') for _, p in g)), 'sf')})
 
     real = [s for s in sessions if not visitors[s['vid']]['who']]
     label = {'production': 'canlı (fs.erenailab.com)', 'staging': 'staging'}[a.target]
     print(f'\nGökyüzü SF · {label} · son {a.days} gün')
     if a.hourly:
-        report_hourly(hours, first_seen, beacons, visitors, requests)
+        report_hourly(hours, first_seen, beacons, visitors, requests, a.map)
         return
     if not sessions:
         print('Henüz kayıt yok. (Kayıtlar CloudFront\'tan 5–60 dakika gecikmeyle gelir.)')
@@ -734,6 +770,7 @@ def main():
         print(f'Oynama süresi: toplam {fmt_min(sum(mins))} · ortalama {fmt_min(statistics.mean(mins))} · medyan {fmt_min(statistics.median(mins))}')
     exact = sum(1 for s in real if s['exact'])
     print(f'(Kesin ölçüm: {exact} oturum oyun içi sinyallerden, {len(real) - exact} oturum dosya isteklerinden yaklaşık)')
+    report_maps(real, visitors)
 
     def top(counter, n=8):
         return ' · '.join(f'{k} {v}' for k, v in counter.most_common(n)) or '-'

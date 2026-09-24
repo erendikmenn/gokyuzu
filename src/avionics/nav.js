@@ -4,7 +4,7 @@
 import { DEG, NM, FT, clamp, wrap360, makeCanvas, touchCanvas, font } from './core.js';
 
 // ---------------------------------------------------------------- airports & runways
-const RUNWAYS_URL = new URL('../../data/sf/runways.json', import.meta.url).href;
+import { activeMap } from '../maps/index.js';
 let fallbackJSON = null, fetching = false;
 const prepared = new WeakMap();
 const EMPTY = { airports: [], runways: [], decl: 12.9 };
@@ -34,13 +34,13 @@ function prepare(json) {
   return P;
 }
 
-/** { airports, runways, decl } from world.runways (or data/sf/runways.json fetched once when no world is given). */
+/** { airports, runways, decl } from world.runways (or the active map's runways.json fetched once when no world is given). */
 export function navData(world) {
   const j = world && world.runways;
   if (j && Array.isArray(j.airports)) return prepare(j);
   if (!fallbackJSON && !fetching && typeof fetch === 'function') {
     fetching = true;
-    fetch(RUNWAYS_URL).then((r) => r.json()).then((d) => { fallbackJSON = d; }).catch(() => {});
+    fetch(new URL(`../../${activeMap().data}runways.json`, import.meta.url).href).then((r) => r.json()).then((d) => { fallbackJSON = d; }).catch(() => {});
   }
   return fallbackJSON ? prepare(fallbackJSON) : EMPTY;
 }
@@ -300,7 +300,7 @@ const TRAFFIC = [
   { id: 'ASA88', cx: -1000, cz: -9000, r: 12000, v: 150, alt: 3300, ph: 3.3, dir: -1, kind: 'airliner' },
   { id: 'BANDIT', cx: -9000, cz: -36000, r: 8000, v: 230, alt: 8500, ph: 0.8, dir: -1, kind: 'hostile' },
 ];
-const trafficOut = TRAFFIC.map((t) => ({ id: t.id, kind: t.kind, x: 0, z: 0, alt: 0, hdg: 0, gs: 0, vs: 0 }));
+let trafficOut = TRAFFIC.map((t) => ({ id: t.id, kind: t.kind, x: 0, z: 0, alt: 0, hdg: 0, gs: 0, vs: 0 }));
 /** Positions of the synthetic traffic at time t (s). Returned array is reused. */
 export function traffic(t) {
   for (let i = 0; i < TRAFFIC.length; i++) {
@@ -360,7 +360,7 @@ export function reliefFor(G, palette = 'chart') {
 }
 
 // ---------------------------------------------------------------- ILS (computed from runway geometry)
-const ILS_FREQ = { KSFO: ['109.55', '111.70', '108.90', '109.30', '111.30', '108.50', '110.75', '109.90'], KOAK: ['111.90', '108.70', '109.90', '110.90', '111.50', '109.30', '108.10', '110.30'], KNGZ: ['110.10', '109.10'] };
+let ILS_FREQ = { KSFO: ['109.55', '111.70', '108.90', '109.30', '111.30', '108.50', '110.75', '109.90'], KOAK: ['111.90', '108.70', '109.90', '110.90', '111.50', '109.30', '108.10', '110.30'], KNGZ: ['110.10', '109.10'] };
 const ilsOut = { valid: false, ident: '', freq: '', course: 0, courseTrue: 0, dme: 0, loc: 0, gs: 0, gsValid: false, runway: '', airport: '', elev: 0, thx: 0, thz: 0, ux: 0, uz: 0 };
 /**
  * Best ILS for the aircraft: a runway end ahead of it (within 25 NM, ±35° of track, inside the ±10° localizer sector).
@@ -523,4 +523,19 @@ export class LocalRelief {
   }
   /** Draw in world coordinates (after view.apply). */
   draw(g) { const s = this.shown; if (s) g.drawImage(this.front, s.x0, s.z0, s.size, s.size); }
+}
+
+// ---------------------------------------------------------------- other maps (src/maps/<id>.js activate())
+/** Origin shown by the CDU progress page. */
+export const navOrigin = { icao: 'KSFO' };
+/** Replace the San Francisco tables with another map's (landmarks, steerpoints, synthetic traffic, ILS frequencies). */
+export function setNavData({ origin, landmarks, steerpoints, traffic, ils }) {
+  if (origin) navOrigin.icao = origin;
+  if (landmarks) LANDMARKS.splice(0, LANDMARKS.length, ...landmarks);
+  if (steerpoints) STEERPOINTS.splice(0, STEERPOINTS.length, ...steerpoints);
+  if (traffic) {
+    TRAFFIC.splice(0, TRAFFIC.length, ...traffic);
+    trafficOut = TRAFFIC.map((t) => ({ id: t.id, kind: t.kind, x: 0, z: 0, alt: 0, hdg: 0, gs: 0, vs: 0 }));
+  }
+  if (ils) ILS_FREQ = ils;
 }

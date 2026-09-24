@@ -5,12 +5,12 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { isNetworkError } from '../core/assets.js';
+import { airportFiles } from './airports_ground.js';
 
-const BASE = 'assets/sf/airports/';
 let manifestP = null;
 export function assetManifest(loader) {
   if (!manifestP) {
-    manifestP = loader.loadJSON(BASE + 'manifest.json').catch((e) => {
+    manifestP = loader.loadJSON(airportFiles.base + 'manifest.json').catch((e) => {
       if (isNetworkError(e)) { manifestP = null; throw e; }   // connection lost: asked again by the next caller
       return {};                                              // not built: fallback extrusions
     });
@@ -29,7 +29,7 @@ export async function loadBuildings(meta, ctx, colliders) {
   let emissive = [];
   const drapeGroups = [];
   if (file) {
-    const gltf = await ctx.loader.loadGLTF(BASE + file);
+    const gltf = await ctx.loader.loadGLTF(airportFiles.base + file);
     const merged = groundAndMerge(gltf.scene, meta, ctx, { groups: drapeGroups });
     for (const m of merged) root.add(m);
     emissive = collectEmissive(merged);

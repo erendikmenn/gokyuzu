@@ -19,11 +19,16 @@ const minutes = () => ((performance.now() - t0) / 60000).toFixed(1);
 // envelope keys: a data field with one of these names would overwrite the session id / sequence (it did: the
 // tutorial's step seconds were sent as `s`), so data keys never replace them
 const RESERVED = new Set(['t', 's', 'n', 'm', 'v']);
+// map of the page (src/maps/index.js): `mp` on open / fly / mission / ffc, only for maps other than San Francisco
+let mapTag = '';
+const MAP_EVENTS = new Set(['open', 'fly', 'mission', 'ffc']);
+export function setTelemetryMap(id) { mapTag = id && id !== 'sf' ? id : ''; }
 
 function send(type, data = {}) {
   if (!enabled) return;
   const q = new URLSearchParams({ t: type, s: sid, n: String(seq++), m: minutes(), v: version });
   for (const [k, val] of Object.entries(data)) if (!RESERVED.has(k) && val !== undefined && val !== null && val !== '') q.set(k, String(val).slice(0, 120));
+  if (mapTag && MAP_EVENTS.has(type)) q.set('mp', mapTag);
   // keepalive lets the last beacon leave while the page unloads; failures are irrelevant to the player
   try { fetch(`_e?${q}`, { keepalive: true, cache: 'no-store', credentials: 'omit' }).catch(() => {}); } catch { /* ignore */ }
 }

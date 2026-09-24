@@ -44,11 +44,19 @@ export const PROFILES = {
  *   share    textures used by several GLBs of the family are written once to <dir>/shared/<name>.ktx2 and referenced
  *            by URI (one download, one GPU copy through the loader's KTX2 cache, src/core/assets.js)
  */
-export const FAMILIES = [
+const BASE_FAMILIES = [
   { id: 'aircraft', dir: 'assets/aircraft', depth: 2, profile: (f) => (/_lod\.glb$/.test(f) ? 'world' : 'hero') },
   { id: 'airports', dir: 'assets/sf/airports', depth: 1, profile: () => 'world', share: true },
   { id: 'landmarks', dir: 'assets/sf/landmarks', depth: 1, profile: () => 'world' },
 ];
+/** The policy key of converted GLBs (textures.mjs) covers these: San Francisco's families, as before the other maps. */
+export const POLICY_FAMILIES = BASE_FAMILIES;
+/** Every other map's airports and landmarks (src/maps/index.js, CONTRACTS-IST.md §3): San Francisco's settings. */
+export const MAP_FAMILIES = ['ist'].flatMap((m) => [
+  { id: `airports-${m}`, dir: `assets/${m}/airports`, depth: 1, profile: () => 'world', share: true },
+  { id: `landmarks-${m}`, dir: `assets/${m}/landmarks`, depth: 1, profile: () => 'world' },
+]);
+export const FAMILIES = [...BASE_FAMILIES, ...MAP_FAMILIES];
 
 /**
  * Encoder settings (KTX-Software `ktx create`): UASTC effort 2 of 4 + zstd 19; ETC1S (BasisLZ) quality 255, effort 3.

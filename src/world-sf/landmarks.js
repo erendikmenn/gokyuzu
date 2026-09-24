@@ -480,15 +480,16 @@ class Landmark {
 }
 
 export async function createLandmarks(ctx) {
+  const base = ctx.map ? `${ctx.map.assets}landmarks/` : BASE;   // the active map's (src/maps/index.js)
   const root = new THREE.Group();
   root.name = 'landmarks';
   const empty = { object: root, update() {}, heightAt: () => -Infinity, spanAt: (x, z, out = {}) => Object.assign(out, { bottom: -Infinity, top: -Infinity }), hitTest: () => null, ready: Promise.resolve() };
   let index;
   try {
-    index = await ctx.loader.loadJSON(`${BASE}index.json`);
+    index = await ctx.loader.loadJSON(`${base}index.json`);
   } catch (e) {
     if (isNetworkError(e)) throw e;   // connection lost, not a missing build
-    console.warn('[landmarks] no index.json yet', e);
+    (ctx.map && ctx.map.id !== 'sf' ? console.info : console.warn)(`[landmarks] no ${base}index.json yet`, e.message);
     return empty;
   }
   const sink = { warn: [], lamp: [] };

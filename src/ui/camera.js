@@ -23,7 +23,7 @@ const BIRD_KEY = 'gokyuzu.birdseye';   // localStorage: { trackUp }
 // Approximate control-tower cab positions (local meters) and eye heights above ground.
 // KSFO: the 2016 tower between terminals 1 and 2 (landmarks.json sfo_tower); KOAK: south-field tower;
 // KNGZ (fictional base): north apron. The eye sits a few meters off the cab, toward the field.
-const TOWERS = {
+export const TOWERS = {
   KSFO: { x: -749, z: 301, h: 60 },
   KOAK: { x: 13979, z: -10536, h: 42 },
   KNGZ: { x: 5325, z: -19016, h: 36 },

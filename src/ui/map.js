@@ -17,6 +17,7 @@ import { loadBayMap, BRIDGES } from './baymap.js';
 import { AIRPORTS, LANDMARK_NAMES } from './data.js';
 import { shared } from './shared.js';
 import { REGION } from '../geo.js';
+import { activeMap } from '../maps/index.js';
 import { runwayEnds } from '../flight/fixedwing-autopilot.js';
 import { NM } from '../nav/route.js';
 import { legSpeed, autoCruise, ROUTE_SPEED, FIXED_SPEED_KINDS } from '../nav/speed.js';
@@ -238,8 +239,10 @@ export function createNavMap({ hud, route }) {
   let W = 0, H = 0, dpr = 1;
   const view = { cx: 0, cz: -9000, s: 0.03 };
   let follow = true, viewInit = false, dirty = true, redrawT = 0, stripT = 0, loadingTiles = false;
-  let base = null;                               // { img, meta } baked bay map
-  loadBayMap().then((m) => { base = m; dirty = true; });
+  let base = null, baseName = '';                // { img, meta } baked bay map (maps hook: of the flight's map)
+  const bakeOf = () => activeMap().mapImage || 'bay-map';
+  function loadBase(name) { baseName = name; base = null; loadBayMap(name).then((m) => { if (baseName === name) { base = m; dirty = true; } }); }
+  loadBase(bakeOf());
   const tiles = createDetailTiles();
   const trail = new Float32Array(TRAIL_CAP * 2);
   let trailHead = 0, trailCount = 0, trailT = 0;
@@ -803,6 +806,7 @@ export function createNavMap({ hud, route }) {
   }
 
   function draw() {
+    if (baseName !== bakeOf()) loadBase(bakeOf());
     const s = view.s;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.fillStyle = '#0a1729';
@@ -885,7 +889,7 @@ export function createNavMap({ hud, route }) {
     // landmarks
     for (const l of landmarks()) {
       if (l.id === 'sfo_tower') continue;
-      const major = MAJOR_LANDMARKS.includes(l.id);
+      const major = MAJOR_LANDMARKS.includes(l.id) || !!l.major;
       if (!major && s < 0.045) continue;
       const x = X(l.x), y = Y(l.z);
       if (x < 2 || x > W - 2 || y < 2 || y > H - 2) continue;
@@ -894,6 +898,8 @@ export function createNavMap({ hud, route }) {
       ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(4,9,18,0.8)'; ctx.stroke();
       if (major || s > 0.06) label(LANDMARK_NAMES[l.id] || l.name, x, y, 'rgba(255,214,190,0.9)', `650 ${major ? 11.5 : 10.5}px ${SANS}`);
     }
+    const places = activeMap().drawPlaces;   // maps hook: another map's place names (src/maps/<id>.js)
+    if (places) places(ctx, X, Y, (t, x, y, color, font) => label(t, x, y, color, font, 'center'), s / 0.012, true);
     // track trail, route, aircraft
     const f = flight;
     drawTrail(ctx, trail, trailHead, trailCount, TRAIL_CAP, X, Y, 2.6);

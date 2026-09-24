@@ -7,9 +7,9 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { isNetworkError } from '../core/assets.js';
+import { airportFiles } from './airports_ground.js';
 
 const ROOT = new URL('../../', import.meta.url).href;
-const PROPS_URL = ROOT + 'assets/sf/airports/props.glb';
 const NEAR_DIST = 900;
 const NEAR_TRI_BUDGET = 0.7e6;
 
@@ -73,10 +73,10 @@ function normColorGeo(geo, fallback) {
 }
 
 // ---------------------------------------------------------------- props.glb library
-let libP = null;
+let libP = null, loggedMissing = false;
 function loadLibrary(ctx) {
   if (!libP) {
-    libP = ctx.loader.loadGLTF(PROPS_URL).then((gltf) => {
+    libP = ctx.loader.loadGLTF(ROOT + airportFiles.props).then((gltf) => {
       const lib = new Map();
       let shared = null;
       gltf.scene.updateMatrixWorld(true);
@@ -101,7 +101,7 @@ function loadLibrary(ctx) {
       bmat.name = 'apt-props';
       return { lib, bmat };
     });
-    libP.catch(() => { libP = null; });   // a failed download is tried again by the next airport
+    libP.catch((e) => { if (isNetworkError(e)) libP = null; });   // a failed download is tried again by the next airport (a missing file is not)
   }
   return libP;
 }
@@ -112,8 +112,8 @@ function loadAgentLod(id, ctx) {
   if (!agentCache.has(id)) {
     agentCache.set(id, (async () => {
       try {
-        // assets/sf/airports/manifest.json lists which agent LOD files existed at build time (no 404 probes)
-        const man = await ctx.loader.loadJSON('assets/sf/airports/manifest.json').catch(() => ({}));
+        // <map>/airports/manifest.json lists which agent LOD files existed at build time (no 404 probes)
+        const man = await ctx.loader.loadJSON(airportFiles.base + 'manifest.json').catch(() => ({}));
         if (man.lods && man.lods[id] === false && !(ctx.airportLodOverride && ctx.airportLodOverride[id])) return null;
         const mod = await import(`../aircraft/${id}/model.js`);
         const rel = (ctx.airportLodOverride && ctx.airportLodOverride[id]) || (mod.model && mod.model.lodUrl);
@@ -221,7 +221,7 @@ class NearSet {
 }
 
 export async function buildProps(meta, ctx, colliders) {
-  const L = await loadLibrary(ctx).catch((e) => { console.warn('[airports] props.glb', e.message); return null; });
+  const L = await loadLibrary(ctx).catch((e) => { if (!loggedMissing) (isNetworkError(e) ? console.warn : console.info)('[airports] props.glb', e.message); loggedMissing = !isNetworkError(e); return null; });
   if (!L) return null;
   const { lib, bmat } = L;
   const [ox, oz] = meta.origin;

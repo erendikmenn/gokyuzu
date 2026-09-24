@@ -21,7 +21,7 @@ export async function createCity(ctx, options = {}) {
     if (q0.cityShadows != null) opt.shadows = !!q0.cityShadows;
     if (q0.cityUnloadAfter != null && options.unloadAfter == null) opt.unloadAfter = q0.cityUnloadAfter;   // robustness: memory-limited devices drop passed tiles sooner
   }
-  const base = options.base || BASE;
+  const base = options.base || (ctx.map ? `${ctx.map.assets}city/` : BASE);   // the active map's (src/maps/index.js)
   const { terrain, focus = { x: 0, z: 0 } } = ctx;
   const getH = (x, z) => (terrain ? terrain.getHeight(x, z) : 0);
   const index = await assetData(base + 'index.json', 'json');

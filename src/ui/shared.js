@@ -1,4 +1,6 @@
 // Runtime state shared between the UI modules (camera rig ↔ HUD, menu → loading screen).
+import { activeMap } from '../maps/index.js';
+
 export const shared = {
   camera: null,          // THREE.PerspectiveCamera driven by the camera rig
   cameraMode: 'chase',   // current camera mode id
@@ -12,11 +14,11 @@ export const shared = {
 };
 
 let runwaysPromise = null;
-/** runways.json, from the world if it has it, else fetched once from the repo. */
+/** runways.json of the active map (src/maps/index.js), from the world if it has it, else fetched once from the repo. */
 export function loadRunways() {
   if (shared.runways) return Promise.resolve(shared.runways);
   if (!runwaysPromise) {
-    runwaysPromise = fetch(new URL('../../data/sf/runways.json', import.meta.url))
+    runwaysPromise = fetch(new URL(`../../${activeMap().data}runways.json`, import.meta.url))
       .then((r) => (r.ok ? r.json() : null))
       .then((j) => { if (j && !shared.runways) shared.runways = j; return shared.runways; })
       .catch(() => null);

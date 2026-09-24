@@ -1,4 +1,6 @@
-// Lead-owned: composes the SF world from the environment/terrain (W1), city (W2), landmarks (W3) and airports (W4).
+// Lead-owned: composes the world from the environment/terrain (W1), city (W2), landmarks (W3) and airports (W4), for the
+// active map (src/maps/index.js; default San Francisco): every file comes from its data/<id>/ and assets/<id>/. Another
+// map may still lack layers while it is built: a missing file (404 / 403) skips that layer (terrain: sea level).
 import * as THREE from 'three';
 import { createEnvironment } from './environment.js';
 import { createTerrain } from './terrain.js';
@@ -7,11 +9,13 @@ import { createLandmarks } from './landmarks.js';
 import { createAirports } from './airports.js';
 import { isNetworkError } from '../core/assets.js';
 
-export async function createSFWorld({ scene, renderer, camera, loader, quality = null, focus = { x: 0, z: 0 }, onProgress = () => {} }) {
+export async function createSFWorld({ scene, renderer, camera, loader, quality = null, focus = { x: 0, z: 0 }, onProgress = () => {}, map = null, runways: given = null }) {
+  const other = map && map.id !== 'sf', D = map ? map.data : 'data/sf/';
+  const optional = (p, empty) => (other ? p.catch((e) => { if (e && (e.status === 404 || e.status === 403)) return empty; throw e; }) : p);
   const [runways, landmarks, region] = await Promise.all([
-    loader.loadJSON('data/sf/runways.json'), loader.loadJSON('data/sf/landmarks.json'), loader.loadJSON('data/sf/region.json'),
+    given || optional(loader.loadJSON(D + 'runways.json'), { airports: [] }), optional(loader.loadJSON(D + 'landmarks.json'), { landmarks: [] }), loader.loadJSON(D + 'region.json'),
   ]);
-  const ctx = { scene, renderer, camera, loader, runways, landmarks, region, focus, quality };   // quality: src/core/quality.js preset (factories may read it at creation)
+  const ctx = { scene, renderer, camera, loader, runways, landmarks, region, focus, quality, map };   // quality: src/core/quality.js preset (factories may read it at creation)
   onProgress(0.05, 'Gökyüzü ve ışık');
   const environment = await createEnvironment(ctx);
   onProgress(0.15, 'Arazi ve hava fotoğrafları');
@@ -30,7 +34,8 @@ export async function createSFWorld({ scene, renderer, camera, loader, quality =
       layers.push(layer);
     } catch (e) {
       if (isNetworkError(e)) throw e;   // connection lost: main.js shows the connection error screen
-      console.error(`[world] ${label} failed to load`, e);
+      if (other && e && (e.status === 404 || e.status === 403)) console.info(`[world] ${map.id}: no ${label.toLowerCase()} yet (${e.message})`);
+      else console.error(`[world] ${label} failed to load`, e);
     }
   }
   onProgress(0.85, 'Detaylar yükleniyor');

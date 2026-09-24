@@ -5,7 +5,8 @@
 // (localStorage `gokyuzu.ffc`; the missions' `gokyuzu.missions` is untouched). No DOM, no three.js (Node tests); the game
 // glue is src/missions/ff-runtime.js.
 //
-//   const tr = createChallengeTracker({ aircraft, category, ends, bridges, spanAt, isOnRunway, isWater, hooks, emit })
+//   const tr = createChallengeTracker({ aircraft, category, ends, bridges, spanAt, isOnRunway, isWater, hooks, emit,
+//                                        challenges?, catalog? })   another map: its CHALLENGES + mission catalog (loadChallengeSet)
 //   tr.update(s)                 every flying frame; s = the runtime's flight sample (t, dt, x, y, z, px, py, pz, agl, gs, onGround, first, …)
 //   tr.onLanding(card, td)       final landing score (src/ui/landing.js onResult)
 //   tr.onDitch(d)                water landing the flight model rated survivable (fixed wing 'ditch' event)
@@ -29,7 +30,7 @@
 //   landing   every runway landing (landing card ≥ 1★): points × 20, the landing's stars
 //   emergency explicit start ("Başlat", airborne, fitting aircraft / place): inject the failure now; land safely
 //             (land objective on any runway; ditch objective; autorotation profile) → base + landing points
-import { buildMission, BRIDGES } from './catalog.js';
+import { buildMission, BRIDGES, SF_CATALOG, loadMissionCatalog } from './catalog.js';
 import { createObjective } from './objectives.js';
 import { FT, KT, FPM, fmtTime, fmtInt } from './util.js';
 
@@ -111,12 +112,12 @@ export const challengeById = (id) => CHALLENGES.find((c) => c.id === id) || null
 /** The challenges an aircraft can do (the panel lists only these). */
 export const challengesFor = (aircraft) => CHALLENGES.filter((c) => c.aircraft.includes(aircraft));
 
-/** The highest score a challenge can give (infra/leaderboard/build_rules.mjs adds a margin). */
-export function maxChallengeScore(c) {
+/** The highest score a challenge can give (infra/leaderboard/build_rules.mjs adds a margin); build = its map's buildMission. */
+export function maxChallengeScore(c, build = buildMission) {
   const sc = c.score || {};
   if (c.kind === 'bridge') return (sc.base || 0) + 500 + 300;
   if (c.kind === 'gates') {
-    const m = buildMission(c.mission), ms = m.score || {};
+    const m = build(c.mission), ms = m.score || {};
     return m.objectives[0].gates.length * ((ms.gate ?? 200) + (ms.gateAcc ?? 100)) + sc.par * sc.perSec;
   }
   if (c.kind === 'climb') return (sc.base || 0) + sc.par * sc.perSec;
@@ -127,16 +128,17 @@ export function maxChallengeScore(c) {
 }
 
 // ------------------------------------------------------------------------------------------------------- progress
-const STORE = 'gokyuzu.ffc';
-function readStore() {
-  try { const s = JSON.parse(localStorage.getItem(STORE) || 'null'); return s && typeof s === 'object' && s.e ? s : { v: 1, e: {} }; } catch { return { v: 1, e: {} }; }
+// per map: San Francisco `gokyuzu.ffc`, another map `gokyuzu.ffc.<id>`
+const storeKey = (map) => (map && map !== 'sf' ? `gokyuzu.ffc.${map}` : 'gokyuzu.ffc');
+function readStore(map) {
+  try { const s = JSON.parse(localStorage.getItem(storeKey(map)) || 'null'); return s && typeof s === 'object' && s.e ? s : { v: 1, e: {} }; } catch { return { v: 1, e: {} }; }
 }
-function writeStore(s) { try { localStorage.setItem(STORE, JSON.stringify(s)); } catch { /* private mode / Node */ } }
+function writeStore(s, map) { try { localStorage.setItem(storeKey(map), JSON.stringify(s)); } catch { /* private mode / Node */ } }
 /** { [id]: { best, stars, runs, done, ac } } */
-export function loadChallengeProgress() { return readStore().e; }
+export function loadChallengeProgress(map) { return readStore(map).e; }
 /** Record a finished run → { newBest, prevBest, prevStars }. */
-export function recordChallenge(id, { ok, score, stars, ac }) {
-  const s = readStore();
+export function recordChallenge(id, { ok, score, stars, ac }, map) {
+  const s = readStore(map);
   const p = s.e[id] || (s.e[id] = { best: 0, stars: 0, runs: 0, done: false });
   const prev = { prevBest: p.best || 0, prevStars: p.stars || 0 };
   p.runs = (p.runs || 0) + 1;
@@ -146,8 +148,22 @@ export function recordChallenge(id, { ok, score, stars, ac }) {
     if (score > (p.best || 0)) { p.best = score; p.ac = ac; newBest = true; }
     p.stars = Math.max(p.stars || 0, stars || 0);
   }
-  writeStore(s);
+  writeStore(s, map);
   return { newBest, ...prev };
+}
+
+/**
+ * A map's challenge set: San Francisco's at once; another map's from src/missions/<id>/challenges.js (CHALLENGES in
+ * this file's format; a bridge entry names its bridge in `bridge`, a pad entry its mission in `mission`) with its mission
+ * catalog. Boards: `board`, else ff-<id> (ids starting with "<map>-") / ff-<map>-<id>. null: no challenges (yet).
+ */
+export async function loadChallengeSet(map = 'sf') {
+  if (map === 'sf') return { map, challenges: CHALLENGES, catalog: SF_CATALOG };
+  const catalog = await loadMissionCatalog(map);
+  const mod = catalog && await import(`./${map}/challenges.js`).catch((e) => { console.info(`[challenges] none for ${map} yet`, e && e.message); return null; });
+  if (!mod || !mod.CHALLENGES || !mod.CHALLENGES.length) return null;
+  for (const c of mod.CHALLENGES) if (!c.board) c.board = c.id.startsWith(`${map}-`) ? `ff-${c.id}` : `ff-${map}-${c.id}`;
+  return { map, challenges: mod.CHALLENGES, catalog };
 }
 
 // -------------------------------------------------------------------------------------------------------- tracker
@@ -157,7 +173,8 @@ export function createChallengeTracker(o = {}) {
   const aircraft = o.aircraft || 'f16';
   const category = o.category || 'airliner';
   const ends = o.ends || [];
-  const bridges = o.bridges || BRIDGES;
+  const catalog = o.catalog || SF_CATALOG;
+  const bridges = o.bridges || catalog.BRIDGES || BRIDGES;
   const isOnRunway = o.isOnRunway || (() => false);
   const isWater = o.isWater || (() => false);
   const hooks = o.hooks || {};         // inject(kind, opts) → bool, clearFailure(kind), suspendRandom(on)
@@ -185,8 +202,8 @@ export function createChallengeTracker(o = {}) {
   // ---- Golden Gate: under the deck between the towers ----
   function bridgeEntry(def) {
     const e = base(def);
-    const b = bridges.golden_gate;
-    const obj = createObjective({ type: 'bridge', bridge: 'golden_gate', label: def.title }, env(def.score));
+    const bridge = def.bridge || 'golden_gate', b = bridges[bridge];
+    const obj = createObjective({ type: 'bridge', bridge, label: def.title }, env(def.score));
     obj.start();
     let cool = 0;
     Object.defineProperty(e, 'target', { get: () => obj.target });
@@ -216,7 +233,7 @@ export function createChallengeTracker(o = {}) {
   // ---- gates / rings: gate 1 starts the clock ----
   function gatesEntry(def) {
     const e = base(def);
-    const m = buildMission(def.mission);
+    const m = catalog.buildMission(def.mission);
     const od = m.objectives[0];
     const sc = { ...(m.score || {}), ...def.score };
     const obj = createObjective(od, env(sc));
@@ -315,7 +332,7 @@ export function createChallengeTracker(o = {}) {
   // ---- Alcatraz: hover over the pad, then land on it (UH-60) ----
   function alcatrazEntry(def) {
     const e = base(def);
-    const m = buildMission('alcatraz');
+    const m = catalog.buildMission(def.mission || 'alcatraz');
     const hd = m.objectives.find((x) => x.type === 'hover'), pd = m.objectives.find((x) => x.type === 'pad');
     const hover = createObjective(hd, env(def.score)), pad = createObjective(pd, env(def.score));
     hover.start(); pad.start();
@@ -409,7 +426,7 @@ export function createChallengeTracker(o = {}) {
       if (!s || s.onGround || s.agl < 15) return { ok: false, reason: 'Önce havalan' };
       const need = def.need || {};
       if (need.agl && s.agl < need.agl) return { ok: false, reason: `En az ${fmtFt(Math.round(need.agl / FT / 100) * 100)} ft yükseklikte başlat` };
-      if (need.water && !isWater(s.x, s.z)) return { ok: false, reason: 'Körfezin (suyun) üstündeyken başlat' };
+      if (need.water && !isWater(s.x, s.z)) return { ok: false, reason: need.waterText || 'Körfezin (suyun) üstündeyken başlat' };
       if (flight && flight.failures && flight.failures.active && flight.failures.active.size) return { ok: false, reason: 'Zaten bir arıza var' };
       return { ok: true, reason: '' };
     };
@@ -471,7 +488,7 @@ export function createChallengeTracker(o = {}) {
   }
 
   const MAKE = { bridge: bridgeEntry, gates: gatesEntry, climb: climbEntry, alcatraz: alcatrazEntry, landing: landingEntry, emergency: emergencyEntry };
-  const entries = challengesFor(aircraft).map((def) => MAKE[def.kind](def));
+  const entries = (o.challenges ? o.challenges.filter((c) => c.aircraft.includes(aircraft)) : challengesFor(aircraft)).map((def) => MAKE[def.kind](def));
   const byId = Object.fromEntries(entries.map((e) => [e.id, e]));
 
   return {
