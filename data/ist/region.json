@@ -1,0 +1,27 @@
+{
+  "name": "İstanbul",
+  "id": "ist",
+  "crs": "EPSG:32635",
+  "origin": {
+    "lon": 28.974167,
+    "lat": 41.025556,
+    "note": "Galata Kulesi"
+  },
+  "originUTM": [
+    665970.929,
+    4543471.274
+  ],
+  "bboxLonLat": [
+    28.62,
+    40.82,
+    29.4,
+    41.37
+  ],
+  "local": {
+    "minX": -29354,
+    "maxX": 34747,
+    "minZ": -37627,
+    "maxZ": 21924
+  },
+  "axes": "x = UTM easting - E0 (east +X); z = -(UTM northing - N0) (north -Z); y = meters above MSL"
+}
