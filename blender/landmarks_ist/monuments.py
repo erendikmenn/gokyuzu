@@ -16,7 +16,9 @@ gallery 51.65 m, roof 10.94 m (OSM); Kız Kulesi tower ≈30 m on its islet (OSM
 4 semi-domes with exedrae, 6 minarets (4 × 64 m / 3 şerefe, 2 × 54 m / 2 şerefe); Ayasofya dome Ø31 m / 55.6 m, 82 × 73 m,
 4 minarets ≈60 m; Süleymaniye dome Ø26.5 m / 53 m, 2 semi-domes, minarets 2 × 76 m (3 şerefe) + 2 × 56 m (2 şerefe);
 Yeni Cami dome Ø17.5 m / 36 m, 2 minarets 52 m (3 şerefe); Rumeli Hisarı towers Ø23.3 / 23.3 / 26.7 m, 28 / 22 / 21 m;
-Dolmabahçe Saat Kulesi 27 m; skyscraper heights from OSM (İstanbul Sapphire 238 m roof + antenna to 261 m).
+Dolmabahçe Saat Kulesi 27 m. Skyscrapers: skyline.py (named towers with their own forms, CTBUH / Wikipedia heights).
+Topkapı: palace buildings + Adalet Kulesi / Babüsselam / kitchens / Harem roofscape / courtyard trees + the Sur-ı Sultani
+land wall, its towers, Bâb-ı Hümâyûn and the sea wall to Sarayburnu (OSM).
 """
 import math
 import os
@@ -131,49 +133,101 @@ def build_kiz(lod):
 
 
 # ================================================================================================ Çamlıca Kulesi
-TV_PROFILE = [(-8, 12.5), (0, 12.5), (12, 10.5), (40, 8.2), (95, 7.2), (118, 7.6), (132, 10.5), (146, 16.0), (158, 18.6),
-              (170, 19.2), (182, 17.8), (192, 14.0), (199, 9.0), (203.5, 5.0)]
+# Küçük Çamlıca TV-Radyo Kulesi (Melike Altınışık Architects, 2020). Official table (camlicakule.istanbul via TR Wikipedia):
+# 203.5 m concrete + 165.5 m steel antenna = 369 m (587 m ASL), 45 floors at 4.5 m, observation 148.5 / 153 m, restaurant
+# 175.5–180 m. EN Wikipedia: elliptical core 13 × 16 m shrinking upward; two panoramic lifts in dark glazed slots on
+# opposite faces from base to top; GFRC off-white panels; "staggered elliptical levels near the top" (the tulip bud) whose
+# two halves bulge at different heights (no helical twist, no flared base: a plain shaft onto a low landscaped podium).
+# Half-widths below: measured on side views (Commons) calibrated to the 203.5 m concrete top (±15 %).
+TV_PROFILE = [(-8.0, 9.4), (0.0, 9.4), (35.0, 9.2), (38.0, 9.3), (40.0, 12.8), (55.0, 12.8), (56.5, 11.2), (58.0, 12.8),
+              (72.0, 12.8), (74.0, 9.4), (80.0, 9.2), (92.0, 8.8), (105.0, 9.1), (115.0, 11.0), (128.0, 14.6),
+              (140.0, 16.9), (150.0, 17.8), (160.0, 17.3), (170.0, 16.1), (178.0, 15.0), (185.0, 12.6), (190.0, 8.8),
+              (196.0, 6.1), (200.0, 4.2), (203.5, 2.4)]
+TV_BUD = (128.0, 197.0)          # floors with dark ribbon windows (observation / restaurant / technical): tvbud texture
+TV_COLLAR = (40.0, 72.0)         # louvred technical drums
+TV_ELLIPSE = 0.84                # minor / major half-axis (slots at the ends of the major axis, facing E and W)
+TV_SHIFT = 5.0                   # the north half's bud sits 5 m higher than the south half's
+
+
+def tv_half(z, north):
+    """Half-width along the major axis at height z for one half of the tower (bud shifted up / down)."""
+    zz = z - (TV_SHIFT if north else -TV_SHIFT) * float(np.clip((z - 110.0) / 30.0, 0.0, 1.0))
+    zs, rs = [p[0] for p in TV_PROFILE], [p[1] for p in TV_PROFILE]
+    return float(np.interp(min(zz, 203.5), zs, rs)) if z < 203.0 else TV_PROFILE[-1][1]
 
 
 def build_camlica_tv(lod):
     b = Build('camlica_kulesi', 'Çamlıca Kulesi', lod)
-    n = {0: 28, 1: 16, 2: 10}[lod]
-    prof = TV_PROFILE if lod < 2 else TV_PROFILE[::2] + [TV_PROFILE[-1]]
-    # four soft lobes in plan (the "tulip" leaves): radius modulation 1 + 0.07 cos 4θ above the neck
-    rings, zs = [], []
-    for z, r in prof:
-        k = 0.07 if z > 120 else 0.0
-        rings.append([(r * (1 + k * math.cos(4 * t)) * math.cos(t), r * (1 + k * math.cos(4 * t)) * math.sin(t))
-                      for t in np.linspace(0, 2 * math.pi, n + 1)[:-1]])
-        zs.append(z)
-    loft(b['white'], rings, zs, ts_u=6, ts_v=6, smooth=lod < 2, cap_top=True)
-    # glazed observation / restaurant bands
+    k = {0: 8, 1: 3, 2: 1}[lod]
+    dl = 0.075                                     # slot half-angle (rad)
+    prof = TV_PROFILE
+    if lod == 1:
+        prof = [p for p in TV_PROFILE if p[0] not in (-8.0, 35.0, 38.0, 56.5, 74.0, 80.0, 105.0, 160.0, 196.0)]
+    elif lod == 2:
+        prof = [p for p in TV_PROFILE if p[0] in (0.0, 38.0, 40.0, 72.0, 74.0, 92.0, 115.0, 150.0, 178.0, 190.0, 203.5)]
+    # ring: E slot (edge S, recess, edge N), north half samples, W slot, south half samples
+    angs = [(-dl, 'S', 1.0), (0.0, 'slot', 0.9), (dl, 'N', 1.0)]
+    angs += [(dl + (math.pi - 2 * dl) * (i + 1) / (k + 1), 'N', 1.0) for i in range(k)]
+    angs += [(math.pi - dl, 'N', 1.0), (math.pi, 'slot', 0.9), (math.pi + dl, 'S', 1.0)]
+    angs += [(math.pi + dl + (math.pi - 2 * dl) * (i + 1) / (k + 1), 'S', 1.0) for i in range(k)]
+    n = len(angs)
+
+    def ring_pts(z):
+        out = []
+        for a, side, f in angs:
+            if side == 'slot':
+                r = 0.5 * (tv_half(z, True) + tv_half(z, False)) * f
+            else:
+                r = tv_half(z, side == 'N')
+            out.append((r * math.cos(a), r * TV_ELLIPSE * math.sin(a), z))
+        return out
+    rings = [ring_pts(z) for z, _ in prof]
+    dark = (0.16, 0.18, 0.2)
+    for j in range(len(rings) - 1):
+        za, zb = prof[j][0], prof[j + 1][0]
+        zm = (za + zb) / 2
+        key = 'tvbud' if (TV_BUD[0] <= zm <= TV_BUD[1] or TV_COLLAR[0] <= zm <= TV_COLLAR[1]) and lod < 2 else 'white'
+        per = 0.0
+        for i in range(n):
+            i2 = (i + 1) % n
+            p0, p1, q1, q0 = rings[j][i], rings[j][i2], rings[j + 1][i2], rings[j + 1][i]
+            L = math.hypot(p1[0] - p0[0], p1[1] - p0[1])
+            slot = angs[i][1] == 'slot' or angs[i2][1] == 'slot'
+            col = dark if slot else None
+            b['white' if slot else key].quad(p0, p1, q1, q0, uv=[(per / 6, za / 4.5), ((per + L) / 6, za / 4.5), ((per + L) / 6, zb / 4.5),
+                                                                   (per / 6, zb / 4.5)], col=col)
+            per += L
+    b['white'].polygon(rings[-1])
+    # low landscaped podium (foyer, café, exhibition) merged into the hill
     if lod < 2:
-        for z0, z1 in ((148.5, 153.0), (175.5, 180.0)):
-            r0 = float(np.interp(z0, [p[0] for p in TV_PROFILE], [p[1] for p in TV_PROFILE])) + 0.25
-            r1 = float(np.interp(z1, [p[0] for p in TV_PROFILE], [p[1] for p in TV_PROFILE])) + 0.25
-            loft(b['glass'], [ring(r0 * 1.02, n), ring(r1 * 1.02, n)], [z0, z1], ts_u=12, ts_v=16)
-    # antenna mast: 165.5 m steel, tapering, with platforms
-    segs = [(203.5, 2.6), (260.0, 1.9), (310.0, 1.2), (350.0, 0.6), (369.0, 0.25)]
-    for (za, ra), (zb, rbb) in zip(segs[:-1], segs[1:]):
-        b['paint'].cylinder((0, 0, za), ra, zb - za, sides=8 if lod == 0 else 6, r_top=rbb, cap_top=zb == 369.0)
-        if lod == 0:
-            b['paint'].cylinder((0, 0, za - 0.6), ra + 0.9, 1.2, sides=8, cap_top=True, cap_bottom=True)
-    # red / white aviation bands on the upper mast
+        pod = [(24.0 * math.cos(t), 19.0 * math.sin(t)) for t in np.linspace(0, 2 * math.pi, {0: 16, 1: 8}[lod] + 1)[:-1]]
+        extrude(b['white'], pod, -4.0, 4.5, 6, 6, top=False)
+        b['white'].polygon([(x, y, 4.5) for x, y in pod], col=(0.62, 0.7, 0.58))
+    # steel antenna (dark grey): lattice cage on the lower part, five ring platforms, thin whip with red / white bands
+    st = b['steel']
+    sides = {0: 8, 1: 4, 2: 4}[lod]
+    segs = [(203.0, 2.2), (250.0, 1.8), (250.0, 1.5), (345.0, 1.1), (345.0, 0.45), (369.0, 0.12)]
+    for (za, ra), (zb, rbb) in zip(segs[::2], segs[1::2]):
+        st.cylinder((0, 0, za), ra, zb - za, sides=sides, r_top=rbb, cap_top=True, smooth=False)
+    if lod == 0:
+        for f in (0.15, 0.32, 0.48, 0.64, 0.84):
+            z = 203.5 + 165.5 * f
+            st.cylinder((0, 0, z - 0.7), 3.2 if f < 0.7 else 2.4, 1.4, sides=sides, cap_top=True, cap_bottom=True, smooth=False)
     if lod < 2:
-        for k in range(4):
-            z = 320 + 12 * k
-            r = float(np.interp(z, [p[0] for p in segs], [p[1] for p in segs])) + 0.05
-            b['red'].cylinder((0, 0, z), r, 6.0, sides=8, r_top=r * 0.95, cap_top=False)
-    # collision: stacked capsules (grounded)
+        for kk in range(3 if lod == 0 else 1):
+            z = 350.0 + 6.0 * kk
+            r = float(np.interp(z, [345.0, 369.0], [0.45, 0.12])) + 0.04
+            b['red'].cylinder((0, 0, z), r, 3.0, sides=4 if lod else 6, r_top=r * 0.9, cap_top=False, smooth=False)
+    # collision: capsules along the profile (grounded), the mast
     for (za, ra), (zb, rbb) in zip(TV_PROFILE[1:-1], TV_PROFILE[2:]):
-        b.ccap((0, 0, za), (0, 0, zb), max(ra, rbb) * 1.07, solid=True)
-    b.ccap((0, 0, 203.5), (0, 0, 369.0), 3.0, solid=True)
-    for z in (369.5, 330.0, 290.0, 250.0, 204.5):
+        b.ccap((0, 0, za), (0, 0, zb), max(ra, rbb) + 0.5, solid=True)
+    b.ccap((0, 0, 203.5), (0, 0, 369.0), 3.2, solid=True)
+    b.cbox((-24.0, -19.0, -4.0), (24.0, 19.0, 4.5))
+    for z in (369.5, 342.5, 309.5, 282.5, 228.5, 204.5):
         for ang in ((0.0,) if z > 360 else (0.0, math.pi)):
-            r = 0.0 if z > 360 else 3.0
-            b.light((r * math.cos(ang), r * math.sin(ang), z), '#ff2a14', size=7.0 if z > 360 else 5.0, period=1.5 if z > 300 else 0,
-                    phase=0.0)
+            r = 0.0 if z > 360 else 3.4
+            b.light((r * math.cos(ang), r * math.sin(ang), z), '#ff2a14', size=7.0 if z > 360 else 5.0,
+                    period=1.5 if z > 300 else 0, phase=0.0)
     return b
 
 
@@ -454,59 +508,331 @@ def tower_spire(b, x, y, g, shaft_w, shaft_h, top_h, spire_h, mat='white'):
     return top
 
 
+def simplify_line(pts, tol):
+    """Douglas–Peucker on [x, y, g] points (x, y only); keeps the ends."""
+    if len(pts) < 3 or tol <= 0:
+        return list(pts)
+    P = np.array([p[:2] for p in pts], float)
+    keep = np.zeros(len(P), bool)
+    keep[0] = keep[-1] = True
+    stack = [(0, len(P) - 1)]
+    while stack:
+        i, j = stack.pop()
+        if j <= i + 1:
+            continue
+        a, c = P[i], P[j]
+        d = c - a
+        L = float(np.hypot(*d)) or 1e-9
+        dist = np.abs(d[0] * (P[i + 1:j, 1] - a[1]) - d[1] * (P[i + 1:j, 0] - a[0])) / L
+        k = int(np.argmax(dist))
+        if dist[k] > tol:
+            m = i + 1 + k
+            keep[m] = True
+            stack += [(i, m), (m, j)]
+    return [p for p, k in zip(pts, keep) if k]
+
+
+def ribbon_wall(b, key, pts, h, t, closed=False, zb=-4.0, merlons=False):
+    """Continuous masonry wall along [x, y, g] points: outer / inner faces and the wall walk (6 triangles per segment),
+    every vertex anchored to its own design ground (the runtime re-snaps each one to the loaded terrain). Collision:
+    one box per segment."""
+    if closed and pts[0][:2] != pts[-1][:2]:
+        pts = list(pts) + [pts[0]]
+    P = np.array([p[:2] for p in pts], float)
+    n = len(P)
+    segd = [P[i + 1] - P[i] for i in range(n - 1)]
+    segn = [np.array([-d[1], d[0]]) / max(np.hypot(*d), 1e-6) for d in segd]
+    mb = b[key]
+    rows = []
+    per = 0.0
+    for i in range(n):
+        if closed and (i == 0 or i == n - 1):
+            nv = segn[0] + segn[-1]
+        else:
+            nv = segn[min(i, n - 2)] + segn[max(i - 1, 0)]
+        nv = nv / max(np.hypot(*nv), 1e-6)
+        cosh = max(0.5, float(np.dot(nv, segn[min(i, n - 2)])))
+        off = nv * (t / 2 / cosh)
+        g = pts[i][2]
+        mb.anchor = (float(P[i][0]), float(g), float(-P[i][1]))
+        if i:
+            per += float(np.hypot(*(P[i] - P[i - 1])))
+        rows.append((mb.add_verts([(P[i][0] + off[0], P[i][1] + off[1], g + zb), (P[i][0] + off[0], P[i][1] + off[1], g + h),
+                                   (P[i][0] - off[0], P[i][1] - off[1], g + h), (P[i][0] - off[0], P[i][1] - off[1], g + zb)]), per, g))
+    mb.anchor = None
+    for (a, ua, ga), (c, uc, gc) in zip(rows[:-1], rows[1:]):
+        u0, u1 = ua / 4.0, uc / 4.0
+        vb, vt = zb / 4.0, h / 4.0
+        # the side facing the offset normal (left of travel) and the other side, both outward; the walk on top
+        mb.face((c, a, a + 1, c + 1), [(u1, vb), (u0, vb), (u0, vt), (u1, vt)])
+        mb.face((a + 3, c + 3, c + 2, a + 2), [(u0, vb), (u1, vb), (u1, vt), (u0, vt)])
+        mb.face((a + 1, a + 2, c + 2, c + 1), [(u0, 0), (u0, t / 4.0), (u1, t / 4.0), (u1, 0)])
+    if b.meta:
+        for i in range(n - 1):
+            (xa, ya, ga), (xc, yc, gc) = pts[i][:3], pts[i + 1][:3]
+            L = math.hypot(xc - xa, yc - ya)
+            if L < 0.3:
+                continue
+            g = min(ga, gc)
+            mx, my = (xa + xc) / 2, (ya + yc) / 2
+            b.meta.anchor = (float(mx), float(g), float(-my))
+            b.meta.box((mx - L / 2, my - t / 2 - 0.2, g + zb), (mx + L / 2, my + t / 2 + 0.2, g + h + 0.8), b.name,
+                       math.atan2(yc - ya, xc - xa))
+        b.meta.anchor = None
+
+
+def tree(b, x, y, g, kind, r, lod):
+    """Courtyard tree (anchored, 8 triangles): cypress = slender 4-sided spindle, plane tree = broad 4-sided bicone
+    crown. Vertex colours tint the shared grass material (dark cypress / fresh plane-tree green)."""
+    set_anchor(b, x, y, g)
+    mb = anchored(b, 'grass')
+    a0 = r.uniform(0, math.pi)
+    if kind == 'c':
+        H = r.uniform(12.0, 18.0)
+        R = H * r.uniform(0.11, 0.14)
+        n, zm, zlo, col = 4, g + H * 0.28, g - 0.5, (0.62, 0.72, 0.62)
+    else:
+        H = r.uniform(13.0, 19.0)
+        R = H * r.uniform(0.36, 0.44)
+        n, zm, zlo, col = 4, g + H * 0.55, g + 1.5, (1.0, 1.0, 0.8)
+    ringp = [(x + R * math.cos(a0 + 2 * math.pi * k / n), y + R * math.sin(a0 + 2 * math.pi * k / n), zm) for k in range(n)]
+    T, B = (x, y, g + H), (x, y, zlo)
+    for k in range(n):
+        p, q = ringp[k], ringp[(k + 1) % n]
+        mb.tri(p, q, T, col=col)
+        mb.tri(q, p, B, col=tuple(c * 0.7 for c in col))
+    set_anchor(b, x, y, g)
+    return H
+
+
+def point_in(poly, x, y):
+    ins = False
+    n = len(poly)
+    for i in range(n):
+        (xa, ya), (xb, yb) = poly[i][:2], poly[(i + 1) % n][:2]
+        if (ya > y) != (yb > y) and x < xa + (y - ya) * (xb - xa) / (yb - ya + 1e-12):
+            ins = not ins
+    return ins
+
+
+def court_trees(s, lod, spacing=15.0, seed=517, cap=48):
+    """Trees of the palace courtyards: the mapped ones (OSM) + a deterministic scatter in the courts / gardens away from
+    the buildings (2nd court: cypress rows and plane trees; 3rd / 4th courts and gardens: mixed)."""
+    r = np.random.default_rng(seed)
+    out = [(x, y, g, k) for x, y, g, k in s.get('trees', [])]
+    blds = [np.array(bl['poly']) for bl in s['buildings']]
+    dens = {'Divan Meydanı': 1.0, 'Enderûn Avlusu': 0.35, 'Sofa-ı Hümâyûn': 0.8, 'Zülüflü Baltacılar Avlusu': 0.3,
+            'Fig Garden': 0.9, 'Elephant Garden': 0.9, 'Şimşirlik Bahçesi': 0.6}
+    for c in s.get('courts', []):
+        if c['name'] not in dens:
+            continue
+        P = c['poly']
+        A = np.array(P)
+        x0, y0 = A.min(axis=0)
+        x1, y1 = A.max(axis=0)
+        for gx in np.arange(x0 + spacing / 2, x1, spacing):
+            for gy in np.arange(y0 + spacing / 2, y1, spacing):
+                x, y = gx + r.uniform(-4, 4), gy + r.uniform(-4, 4)
+                if r.uniform() > dens[c['name']] or not point_in(P, x, y):
+                    continue
+                if any(point_in(bp, x, y) or np.min(np.hypot(bp[:, 0] - x, bp[:, 1] - y)) < 7.0 for bp in blds):
+                    continue
+                if any(math.hypot(x - t[0], y - t[1]) < 9.0 for t in out):
+                    continue
+                out.append((x, y, c['g'], 'c' if r.uniform() < 0.55 else 'p'))
+    return out[:cap]
+
+
+TOPKAPI_DOMES = {   # OSM id -> number of lead domes along the building's long axis (public photos / plans)
+    'w32396111': 1,    # Bâbüssaâde (Gate of Felicity): small dome over the gate, broad eaves
+    'w103907818': 0,   # Arz Odası: broad-eaved hipped roof
+    'w32396231': 1,    # III. Ahmed Kütüphanesi
+    'w32396296': 1,    # Bağdat Köşkü
+    'w969327995': 1,   # Revan Köşkü
+    'w335415776': 1,   # Sünnet Odası
+    'w32396205': 4,    # Kutsal Emanetler (Privy Chamber) domes
+    'w335402654': 3,   # Fatih Köşkü (Conqueror's pavilion / treasury)
+    'w103907772': 3,   # Dîvân-ı Hümâyûn (Kubbealtı): three domed chambers under the broad roof
+    'w32396236': 1,    # Ağalar Camii
+    'w261826733': 1,   # Beşir Ağa Camii
+    'w261824325': 1,   # Sofa Camii
+    'w335402652': 4,   # Dîvân-ı Hümâyûn Hazinesi (outer treasury: 8 domes in two rows)
+    'w103907804': 2,   # Has Oda Koğuşu
+}
+
+
+def palace_block(b, bl, H, lod, roof_h=None, eave=0.9, n_domes=0, wall='white', dome_scale=0.42):
+    """Palace building: whitewashed walls to H, lead hipped roof with eaves (flat lead top for long / irregular ones),
+    optional row of lead domes along the long axis."""
+    P = [tuple(p) for p in bl['poly']]
+    g = bl['g']
+    cx, cy, ang, hl, hs = obb(P)
+    set_anchor(b, cx, cy, g)
+    Ps = simplify_line([(x, y, 0) for x, y in P], 0.8 if lod == 0 else 2.0)
+    Ps = [p[:2] for p in Ps] if len(Ps) >= 4 else P
+    extrude(anchored(b, wall), Ps, g - 4.0, g + H, 6, 6, top=False, v0=g)
+    rh = roof_h if roof_h is not None else min(4.5, hs * 0.45)
+    area = abs(sum(Ps[i][0] * Ps[(i + 1) % len(Ps)][1] - Ps[(i + 1) % len(Ps)][0] * Ps[i][1] for i in range(len(Ps)))) / 2
+    fill = area / max(4 * hl * hs, 1e-6)
+    if rh > 0.2 and hl < 60 and fill > 0.72:
+        gable_hip(anchored(b, 'lead'), cx, cy, ang, hl + eave, hs + eave, g + H, rh)
+    else:
+        anchored(b, 'lead').polygon([(p[0], p[1], g + H) for p in ccw(Ps)])
+        rh = 0.0
+    top = g + H + rh
+    if n_domes:
+        u = V(math.cos(ang), math.sin(ang), 0)
+        dr = min(hs * dome_scale * 1.6, 2 * hl / n_domes * 0.42)
+        for k in range(n_domes):
+            p = V(cx, cy, 0) + u * (-hl + (k + 0.5) * 2 * hl / n_domes)
+            dome(anchored(b, 'lead'), (p[0], p[1], g + H + rh * 0.35), dr, dr * 0.8, seg=8 if lod == 0 else 6, rings_n=2)
+            top = max(top, g + H + rh * 0.35 + dr * 0.8)
+    if b.meta:
+        b.meta.box((cx - hl, cy - hs, g - 4.0), (cx + hl, cy + hs, top), b.name, ang)
+    return cx, cy, ang, hl, hs, g
+
+
 def build_topkapi(lod):
+    """Topkapı Sarayı as read from the air: the palace buildings inside the inner walls with their lead roofs and domes,
+    the Tower of Justice (Adalet Kulesi) with its conical spire, the Babüsselam gate towers, the kitchens' row of domes
+    and chimneys, the Harem's roofscape of small domes, cypress / plane trees in the courtyards, and the Sur-ı Sultani
+    land wall with its towers, the Bâb-ı Hümâyûn and the sea wall down to Sarayburnu."""
     s, o, h = site('topkapi')
     b = Build('topkapi', 'Topkapı Sarayı', lod)
+    r = np.random.default_rng(401)
     for bl in s['buildings']:
         nm = bl['name']
         if bl['id'] == s['adalet']:
+            # Adalet Kulesi: square stone shaft, windowed belvedere (1840s), lead cornice, tall octagonal lead spire
             cx, cy = np.mean(np.array(bl['poly']), axis=0)
-            set_anchor(b, cx, cy, bl['g'])
-            top = tower_spire(b, cx, cy, bl['g'], 7.5, 28.0, 6.0, 9.0)
-            b.light((cx, cy, top + 0.5), '#ff2a14', size=3.0, period=0)
+            g = bl['g']
+            set_anchor(b, cx, cy, g)
+            # (9 × 8 m in plan; no published height: ≈ 36 m to the spire tip from photos of the 2nd court)
+            a = 4.3
+            extrude(anchored(b, 'stone'), [(cx - a, cy - a), (cx + a, cy - a), (cx + a, cy + a), (cx - a, cy + a)], g - 3.0, g + 19.0, 4, 4, top=False)
+            nb = 8 if lod < 2 else 4
+            loft(anchored(b, 'drum'), [ring(a * 0.98, nb, math.pi / nb, c=(cx, cy))] * 2, [g + 19.0, g + 27.5], u_turns=nb * 2, ts_v=8.5, v0=g + 19.0)
+            if lod < 2:
+                anchored(b, 'lead').cylinder((cx, cy, g + 27.5), a * 1.12, 0.8, sides=8, cap_top=True)
+            cone(anchored(b, 'lead'), (cx, cy, g + 28.3), a * 0.95, 7.9, n=8 if lod < 2 else 4, u_turns=4, smooth=False)
+            if lod < 2:
+                anchored(b, 'lead').cylinder((cx, cy, g + 36.0), 0.25, 2.2, sides=4, r_top=0.02, cap_top=False, smooth=False)
+            b.ccap((cx, cy, g - 3.0), (cx, cy, g + 38.2), a * 1.3, solid=True)
+            b.light((cx, cy, g + 38.6), '#ff2a14', size=3.0, period=0)
             continue
         if bl['id'] == s['babusselam']:
-            cx, cy, ang, hl, hs, g = palace_building(b, bl, 11.0, roof_h=3.0)
+            cx, cy, ang, hl, hs, g = palace_block(b, bl, 12.0, lod, roof_h=2.5, eave=1.5)
             u = V(math.cos(ang), math.sin(ang), 0)
             w = V(-math.sin(ang), math.cos(ang), 0)
-            # the two octagonal gate towers with pointed lead caps, on the outer side of the gate building
+            # the two octagonal towers with tall pointed lead caps, flanking the gate on the 1st-courtyard side
+            dv = [c for c in s.get('courts', []) if c['name'] == 'Divan Meydanı']
+            cc = np.mean(np.array(dv[0]['poly']), axis=0) if dv else np.array([-23.0, -75.0])
+            outward = 1.0 if float(np.dot(w[:2], np.array([cx, cy]) - cc)) > 0 else -1.0
             for sgn in (-1, 1):
-                c = V(cx, cy, 0) + u * (sgn * min(hl - 3.0, 9.0)) + w * (-hs + 3.0)
-                loft(anchored(b, 'white'), [ring(3.6, 8, c=(c[0], c[1]))] * 2, [g - 2.0, g + 15.0], 3, 3)
-                cone(anchored(b, 'lead'), (c[0], c[1], g + 15.0), 4.0, 9.0, n=8, u_turns=4)
-                b.ccap((c[0], c[1], g - 2.0), (c[0], c[1], g + 24.0), 4.0, solid=True)
+                c = V(cx, cy, 0) + u * (sgn * 7.5) + w * (outward * (hs - 2.0))
+                nt = 8 if lod < 2 else 6
+                # (≈18 m of grey ashlar + a ≈10 m steep lead cone, photos; 1st-court side)
+                loft(anchored(b, 'stone'), [ring(3.4, nt, c=(c[0], c[1]))] * 2, [g - 2.0, g + 18.0], 3, 3)
+                if lod < 2:
+                    anchored(b, 'lead').cylinder((c[0], c[1], g + 18.0), 3.8, 0.6, sides=nt, cap_top=True)
+                cone(anchored(b, 'lead'), (c[0], c[1], g + 18.5), 3.7, 10.0, n=nt, u_turns=4, smooth=False)
+                if lod == 0:
+                    anchored(b, 'lead').cylinder((c[0], c[1], g + 28.3), 0.2, 1.8, sides=4, r_top=0.02, cap_top=False, smooth=False)
+                b.ccap((c[0], c[1], g - 2.0), (c[0], c[1], g + 28.5), 3.8, solid=True)
             continue
         if bl['id'] == s['kitchens']:
-            cx, cy, ang, hl, hs, g = palace_building(b, bl, 9.0, roof_h=0.0)
+            # Saray Mutfakları: the long kitchen wing on the 2nd courtyard; a row of ten kitchens, each under a pair of
+            # lead domes with tall chimneys rising from them
+            cx, cy, ang, hl, hs, g = palace_block(b, bl, 8.0, lod, roof_h=0.0)
             u = V(math.cos(ang), math.sin(ang), 0)
+            w = V(-math.sin(ang), math.cos(ang), 0)
             n = 10 if lod < 2 else 5
+            rows = (-0.25, 0.25) if lod == 0 else (0.0,)
             for k in range(n):
-                p = V(cx, cy, 0) + u * (-hl + (k + 0.5) * 2 * hl / n)
-                dome(anchored(b, 'lead'), (p[0], p[1], g + 9.0), min(hs, 2 * hl / n) * 0.42, 3.0, seg=10 if lod == 0 else 6, rings_n=2)
-                if lod < 2:
-                    anchored(b, 'white').box((p[0] - 0.8, p[1] - 0.8, g + 11.5), (p[0] + 0.8, p[1] + 0.8, g + 16.5))
+                for wf in rows:
+                    p = V(cx, cy, 0) + u * (-hl * 0.92 + (k + 0.5) * 1.84 * hl / n) + w * (wf * 2 * hs * 0.8)
+                    if not point_in(bl['poly'], p[0], p[1]):
+                        continue
+                    dr = min(hs * 0.42, 1.84 * hl / n * 0.44)
+                    dome(anchored(b, 'lead'), (p[0], p[1], g + 8.0), dr, dr * 0.75, seg=8 if lod == 0 else 6, rings_n=2)
+                    if lod < 2:
+                        anchored(b, 'white').cylinder((p[0], p[1], g + 8.0 + dr * 0.55), 0.9, dr * 0.2 + 6.0, sides=4,
+                                                      r_top=0.75, cap_top=True, smooth=False)
             continue
-        H = bl['height'] or (bl['levels'] * 4.5 if bl['levels'] else (13.0 if 'Harem' in nm else 9.0))
-        dome_d = None
-        if bl['kind'] == 'mosque' or 'Köşk' in nm or 'Arz' in nm or 'Kütüphane' in nm:
-            dome_d = 7.0 if 'Köşk' in nm or 'Arz' in nm else 9.0
-        palace_building(b, bl, H, dome_d=dome_d)
-    # palace wall along the outline (low, anchored per segment)
+        if bl['id'] == 'r4743322':
+            # Harem: the dense roofscape of ~300 rooms: base block, then a grid of lead hipped roofs and small domes at
+            # varied heights over the footprint, a few chimneys
+            P = [tuple(p) for p in bl['poly']]
+            g = bl['g']
+            cx, cy, ang, hl, hs = obb(P)
+            set_anchor(b, cx, cy, g)
+            Ps = [p[:2] for p in simplify_line([(x, y, 0) for x, y in P], 1.0 if lod == 0 else 2.5)]
+            extrude(anchored(b, 'white'), Ps, g - 4.0, g + 11.0, 6, 6, top=False, v0=g)
+            anchored(b, 'lead').polygon([(p[0], p[1], g + 11.0) for p in ccw(Ps)])
+            if lod < 2:
+                u = V(math.cos(ang), math.sin(ang), 0)
+                w = V(-math.sin(ang), math.cos(ang), 0)
+                cell = 18.0 if lod == 0 else 34.0
+                for i in np.arange(-hl + cell / 2, hl, cell):
+                    for j in np.arange(-hs + cell / 2, hs, cell):
+                        p = V(cx, cy, 0) + u * i + w * j
+                        if not point_in(P, p[0], p[1]):
+                            continue
+                        q = r.uniform()
+                        z0 = g + 11.0 + r.choice([0.0, 2.5, 4.0])
+                        if q < 0.45:
+                            if z0 > g + 11.1:
+                                anchored(b, 'white').box((p[0] - cell * 0.38, p[1] - cell * 0.38, g + 10.5), (p[0] + cell * 0.38, p[1] + cell * 0.38, z0),
+                                                         faces='xXyY')
+                            gable_hip(anchored(b, 'lead'), p[0], p[1], ang + r.choice([0.0, math.pi / 2]), cell * 0.45, cell * 0.34, z0, 3.2)
+                        else:
+                            dr = r.uniform(2.6, 4.2)
+                            if z0 > g + 11.1:
+                                anchored(b, 'white').box((p[0] - dr, p[1] - dr, g + 10.5), (p[0] + dr, p[1] + dr, z0), faces='xXyY')
+                            dome(anchored(b, 'lead'), (p[0], p[1], z0), dr, dr * 0.8, seg=6, rings_n=2)
+                        if lod == 0 and r.uniform() < 0.3:
+                            anchored(b, 'white').box((p[0] + 4.0, p[1] - 0.6, z0), (p[0] + 5.2, p[1] + 0.6, z0 + 4.5), faces='xXyYZ')
+            if b.meta:
+                b.meta.box((cx - hl, cy - hs, g - 4.0), (cx + hl, cy + hs, g + 18.5), b.name, ang)
+            continue
+        H = bl['height'] or (bl['levels'] * 4.5 if bl['levels'] else 9.0)
+        nd = TOPKAPI_DOMES.get(bl['id'], 0)
+        if bl['kind'] == 'mosque' and not nd:
+            nd = 1
+        if 'Mecidiye' in nm:
+            palace_block(b, bl, 11.0, lod, roof_h=1.2, eave=0.4)
+        elif bl['area'] < 60:
+            palace_block(b, bl, 6.0, lod, roof_h=2.0, eave=0.3)
+        else:
+            palace_block(b, bl, H, lod, eave=1.2 if nd == 0 else 0.8, n_domes=nd if lod == 0 else min(nd, 2 if lod == 1 else 1))
+    # Beşir Ağa / Sofa mosque minarets are city minarets (OSM towers): the inner palace wall along the castle outline
     W = s['walls']
     G = s['wall_g']
-    stepw = {0: 1, 1: 2, 2: 4}[lod]
-    pts = [(W[i][0], W[i][1], G[i]) for i in range(0, len(G), stepw)] + [(W[0][0], W[0][1], G[0])]
-    for (xa, ya, ga), (xb, yb, gb) in zip(pts[:-1], pts[1:]):
-        L = math.hypot(xb - xa, yb - ya)
-        if L < 0.5:
-            continue
-        g = min(ga, gb)
-        mx, my = (xa + xb) / 2, (ya + yb) / 2
-        set_anchor(b, mx, my, g)
-        d = V(xb - xa, yb - ya, 0) / L
-        anchored(b, 'rubble').obox(V(mx, my, g + 2.5), d, V(-d[1], d[0], 0), V(0, 0, 1), L / 2 + 0.5, 0.9, 6.5, ts=4.0, faces='yYxXZ')
+    inner = simplify_line([(W[i][0], W[i][1], G[i]) for i in range(len(G))], {0: 2.5, 1: 5.0, 2: 9.0}[lod])
+    ribbon_wall(b, 'rubble', inner, 9.0, 2.2, closed=True)
+    # Sur-ı Sultani land wall and the sea wall down to Sarayburnu, with their towers
+    for wl in s.get('sur', []):
+        pts = simplify_line(wl['pts'], {0: 2.5, 1: 6.5, 2: 9.0}[lod])
+        ribbon_wall(b, 'rubble', pts, min(wl['height'], 15.0), 3.5)
+    for t in s.get('wall_towers', []):
+        P = [tuple(p) for p in t['poly']]
+        cx, cy, ang, hl, hs = obb(P)
+        set_anchor(b, cx, cy, t['g'])
+        Ht = t['height'] or 16.0
+        c = V(cx, cy, 0)
+        u = V(math.cos(ang), math.sin(ang), 0)
+        w = V(-math.sin(ang), math.cos(ang), 0)
+        anchored(b, 'rubble').obox(c + V(0, 0, t['g'] + (Ht - 4.0) / 2), u, w, V(0, 0, 1), hl, hs, (Ht + 4.0) / 2, faces='xXyYZ')
         if b.meta:
-            b.meta.box((mx - L / 2, my - 1.0, g - 4.0), (mx + L / 2, my + 1.0, g + 9.0), b.name, math.atan2(d[1], d[0]))
+            b.meta.box((cx - hl, cy - hs, t['g'] - 4.0), (cx + hl, cy + hs, t['g'] + Ht), b.name, ang)
+    gt = s.get('gate')
+    if gt:
+        # Bâb-ı Hümâyûn: massive marble gate block with a lead roof line
+        palace_block(b, {'poly': gt['poly'], 'g': gt['g']}, 16.0, lod, roof_h=0.0, wall='stone')
+    # courtyard trees (LOD0 / LOD1)
+    if lod < 2:
+        for x, y, g, k in court_trees(s, lod, cap=48 if lod == 0 else 14):
+            tree(b, x, y, g, k, r, lod)
     return b
 
 
@@ -552,6 +878,8 @@ def build_dolmabahce(lod):
 
 # ================================================================================================ skyscrapers
 def build_skyline(key):
+    """A district's skyscrapers merged into two meshes per LOD (skyline.py): shared tinted curtain-wall glass + solid."""
+    import skyline as SK
     s = SKY[key]
 
     def fn(lod):
@@ -564,36 +892,21 @@ def build_skyline(key):
             set_anchor(b, cx, cy, g)
             if bl.get('tv'):
                 # TV tower (Endem): slim concrete shaft, pod, antenna
+                col, grey = SK.hexcol('#E8E8E4'), SK.hexcol('#B8BCBE')
                 r0 = max(4.0, min(hs, 9.0))
-                loft(anchored(b, 'white'), [ring(r0, 12, c=(cx, cy)), ring(r0 * 0.6, 12, c=(cx, cy))], [g - 4, g + H * 0.62], 6, 6)
-                loft(anchored(b, 'white'), [ring(r0 * 0.6, 12, c=(cx, cy)), ring(r0 * 1.7, 12, c=(cx, cy)), ring(r0 * 1.7, 12, c=(cx, cy)),
-                                            ring(r0 * 0.5, 12, c=(cx, cy))], [g + H * 0.62, g + H * 0.66, g + H * 0.72, g + H * 0.75], 6, 6, cap_top=True)
-                anchored(b, 'paint').cylinder((cx, cy, g + H * 0.75), 1.4, H * 0.25, sides=6, r_top=0.3, cap_top=True)
+                n = 12 if lod < 2 else 8
+                S = anchored(b, 'sky_solid')
+                SK.frustum(S, ring(r0, n, c=(cx, cy)), ring(r0 * 0.6, n, c=(cx, cy)), g - 4, g + H * 0.62, col, uv=False)
+                SK.frustum(S, ring(r0 * 0.6, n, c=(cx, cy)), ring(r0 * 1.7, n, c=(cx, cy)), g + H * 0.62, g + H * 0.66, col, uv=False)
+                SK.frustum(S, ring(r0 * 1.7, n, c=(cx, cy)), ring(r0 * 1.7, n, c=(cx, cy)), g + H * 0.66, g + H * 0.72, grey, uv=False)
+                SK.frustum(S, ring(r0 * 1.7, n, c=(cx, cy)), ring(r0 * 0.5, n, c=(cx, cy)), g + H * 0.72, g + H * 0.75, col, uv=False)
+                SK.cap(S, ring(r0 * 0.5, n, c=(cx, cy)), g + H * 0.75, col)
+                SK.mast(S, cx, cy, g + H * 0.75, H * 0.25, 1.4, 0.3, 6 if lod < 2 else 4, grey)
                 b.ccap((cx, cy, g - 4), (cx, cy, g + H * 0.75), r0 * 1.7, solid=True)
                 b.ccap((cx, cy, g + H * 0.75), (cx, cy, g + H), 1.5, solid=True)
                 b.light((cx, cy, g + H + 0.5), '#ff2a14', size=6.0, period=1.5)
                 continue
-            glass = 'glass' if i % 2 == 0 else 'glass2'
-            simplified = P if lod < 2 or len(P) <= 6 else None
-            if simplified is None:
-                u = V(math.cos(ang), math.sin(ang), 0)
-                w = V(-math.sin(ang), math.cos(ang), 0)
-                c = V(cx, cy, 0)
-                simplified = [tuple((c + u * (sx * hl) + w * (sy * hs))[:2]) for sx, sy in ((-1, -1), (1, -1), (1, 1), (-1, 1))]
-            extrude(anchored(b, glass), simplified, g - 5.0, g + H, ts_u=12.0, ts_v=14.4, top=False, v0=g)
-            anchored(b, 'concrete').polygon([(p[0], p[1], g + H) for p in ccw(simplified)])
-            if lod < 2:
-                # roof crown / plant storey
-                sh = [(cx + (p[0] - cx) * 0.8, cy + (p[1] - cy) * 0.8) for p in simplified]
-                extrude(anchored(b, 'concrete'), sh, g + H, g + H + min(6.0, H * 0.03), 4, 4, top=True)
-            top = g + H + min(6.0, H * 0.03)
-            if 'Sapphire' in bl['name']:
-                anchored(b, 'paint').cylinder((cx, cy, top), 0.9, 261.0 - (H + min(6.0, H * 0.03)), sides=6, r_top=0.25, cap_top=True)
-                top = g + 261.0
-                b.ccap((cx, cy, g + H), (cx, cy, top), 1.2, solid=True)
-            if b.meta:
-                b.meta.box((cx - hl, cy - hs, g - 5.0), (cx + hl, cy + hs, g + H + min(6.0, H * 0.03)), b.name, ang)
-            b.light((cx, cy, top + 1.0), '#ff2a14', size=6.0, period=1.5 if H > 200 else 0, phase=(i * 0.37) % 1)
+            SK.tower(b, bl, lod, i, anchored)
         return b
     export_landmark(key, s['name'], fn, (s['origin']['x'], s['origin']['z']), 0.0, base='absolute', dists=(3500, 16000),
                     extra={'anchored': True})

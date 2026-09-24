@@ -199,6 +199,24 @@ def slate_tex(lod, name='ist_slate', base='#4E555C', seed=351):
     return texture(f'{name}{lod}', f, 'jpg')
 
 
+def tvbud_tex(lod, seed=391):
+    """Çamlıca Kulesi upper body: off-white panels, a dark ribbon window band per floor (tile = 6 m × one 4.5 m floor),
+    fine vertical panel joints."""
+    size = 128 if lod == 0 else 64
+
+    def f():
+        h = w = size
+        img = srgb('#ECEBE6')[None, None, :] * (1 + 0.03 * fbm(h, w, seed, 4, 4))[:, :, None] * np.ones((h, w, 3))
+        yy, xx = np.mgrid[0:h, 0:w]
+        v = 1 - yy / h
+        win = (v > 0.18) & (v < 0.52)
+        img = np.where(win[:, :, None], srgb('#2A3137')[None, None, :] * (1 + 0.15 * fbm(h, w, seed + 1, 3, 8))[:, :, None], img)
+        img[:, ::max(1, w // 4)] *= 0.93
+        img[int(h * 0.1):int(h * 0.12)] *= 0.85
+        return img
+    return texture(f'ist_tvbud{lod}', f, 'jpg')
+
+
 def glass_facade(lod, name, frame='#9DA6AD', glass='#4F6B84', cols=4, rows=4, lit=0.2, seed=361, win_w=0.86, win_h=0.78):
     """Curtain-wall office facade: cols x rows panels per tile (tile = 12 m wide x 4 floors)."""
     size = 512 if lod == 0 else 128
@@ -210,12 +228,20 @@ def glass_facade(lod, name, frame='#9DA6AD', glass='#4F6B84', cols=4, rows=4, li
 _M = {}
 
 
+def hanger_mat(lod):
+    """Suspension hangers: thin light-grey ropes drawn semi-transparent (glTF BLEND) so a span of several hundred of
+    them reads as fine lines, not a truss. The `_cable` suffix keeps the runtime's ~1 px minimum rope width
+    (src/world-sf/landmarks.js widenRopes), the alpha falls with the LOD (0.42 near, 0.25 at 1.8–4.2 km, none beyond)."""
+    return material(f'ist{lod}_hanger_cable', color=lin('#BFC5C9'), rough=0.7, metal=0.0,
+                    alpha=0.42 if lod == 0 else 0.25, blend=True)
+
+
 def mats(lod):
-    """Shared İstanbul material set per LOD (textures 512² LOD0 / 128² LOD1 / flat colours LOD2)."""
+    """Shared İstanbul material set per LOD (textures 512² LOD0 / 128² LOD1 / flat colours LOD2 and coarser)."""
     if lod in _M:
         return _M[lod]
     p = f'ist{lod}_'
-    if lod == 2:
+    if lod >= 2:
         def flat(n, c, rough=0.8, **k):
             return material(p + n, color=lin(c), rough=rough, **k)
         M = {
@@ -243,6 +269,11 @@ def mats(lod):
             'grass': flat('grass', '#5E7244', rough=0.95),
             'warn': flat('warn_emit', '#992015', emissive=(1.0, 0.05, 0.02), emissive_strength=5.0),
             'lamp': flat('lamp_emit', '#E6DCC0', emissive=(1.0, 0.75, 0.42), emissive_strength=2.0),
+            'hanger': hanger_mat(lod),
+            'sky_glass': flat('sky_glass', '#B2BCC3', rough=0.2, metal=0.3),
+            'steel': flat('steel', '#4C5358', rough=0.45, metal=0.5),
+            'tvbud': flat('tvbud', '#C9CCCC', rough=0.6),
+            'sky_solid': flat('sky_solid', '#E6E6E4', rough=0.6),
         }
         _M[lod] = M
         return M
@@ -257,6 +288,10 @@ def mats(lod):
     sl = slate_tex(lod)
     ga, go, gn, ge = glass_facade(lod, 'ist_glass')
     g2a, _, _, g2e = glass_facade(lod, 'ist_glass2', frame='#B7BCC0', glass='#5D7B90', cols=3, rows=4, seed=367, win_w=0.9, win_h=0.82)
+    tvb = tvbud_tex(lod)
+    sa, so, _, se = tx.window_facade(f'ist_skyglass{lod}', size=256 if lod == 0 else 128, cols=4, rows=4, frame='#E4E7E9',
+                                     glass='#AEB9C1', win_w=0.9, win_h=0.76, seed=391, lit=0.2, recess=False,
+                                     glass_rough=0.08, streaks=0.0, glass_var=0.1)
     pa, _, _ = tx.paint_textures(base='#C3C8CB', name=f'ist_paint{lod}', seed=371, size=256 if lod == 0 else 64, seams=False)
     pw, _, _ = tx.paint_textures(base='#DADEE0', name=f'ist_paintw{lod}', seed=373, size=256 if lod == 0 else 64, seams=False)
     ca, _, _ = tx.concrete_textures(f'ist_concrete{lod}', base=(0.58, 0.56, 0.52), seed=375, size=256 if lod == 0 else 64)
@@ -290,6 +325,14 @@ def mats(lod):
         'grass': material(p + 'grass', color=lin('#5E7244'), rough=0.95),
         'warn': material(p + 'warn_emit', color=(0.6, 0.02, 0.01), emissive=(1.0, 0.05, 0.02), emissive_strength=5.0),
         'lamp': material(p + 'lamp_emit', color=(0.9, 0.8, 0.6), emissive=(1.0, 0.72, 0.38), emissive_strength=2.0),
+        'hanger': hanger_mat(lod),
+        # skyscrapers (skyline.py): one neutral curtain wall (4 panes × 4 floors per 12 × 16 m tile, night-lit windows)
+        # tinted per tower by vertex colours, and one flat solid material for crowns / spires / podiums
+        'sky_glass': material(p + 'sky_glass_emit', albedo=sa, rough_img=so, emissive_img=se, emissive_strength=0.9),
+        'sky_solid': material(p + 'sky_solid', color=lin('#E6E6E4'), rough=0.6),
+        'steel': material(p + 'steel', color=lin('#4C5358'), rough=0.45, metal=0.5),
+        # Çamlıca Kulesi bud / louvred collar: off-white GFRC panels with a dark ribbon window per 4.5 m floor
+        'tvbud': material(p + 'tvbud', albedo=tvb, rough=0.6),
     }
     _ = warm
     _M[lod] = M

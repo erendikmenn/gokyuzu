@@ -9,13 +9,17 @@ axis toward the eastern / Asian end (layout.json heading), +X to the right, +Z u
 and the ground profile under the deck come from OSM + Copernicus DEM (tools/geo/landmarks_ist_layout.py).
 
 Public figures used (see CONTRACTS-IST.md §6 Landmarks for sources):
-  15 Temmuz Şehitler (Boğaziçi) 1973: main span 1074 m, side spans on piers (Ortaköy 40+3×45+56, Beylerbeyi 4×63.75),
-    steel towers 165 m, legs 5.2→3.0 × 7.0 m, 3 portal beams (OSM building:part 50–55 / 120–125 / 152–155 m), deck box
-    28 × 3 m + walkways = 33.4 m, clearance 64 m at mid-span on a 17 900 m crest curve (≈56 m at the towers),
-    cables 0.58 m, sag 93 m, inclined zig-zag hangers from 59 clamps at 17.9 m.
+  15 Temmuz Şehitler (Boğaziçi) 1973: main span 1074 m, side spans on piers (Ortaköy 40+3×45+56 = 231 m, Beylerbeyi
+    4×63.75 = 255 m; steel box girders on columns, not suspended), steel towers 165 m, legs 5.2→3.0 × 7.0 m, 3 portal
+    beams (under the deck, mid-height, top; OSM building:part 50–55 / 120–125 / 152–157 m), deck box 28 × 3 m +
+    walkways = 33.4 m, clearance 64 m at mid-span on a 17 900 m crest curve (≈56 m at the towers), cables 0.58 m, sag
+    93 m (≈1:11.5), anchor blocks at the ends of the side viaducts (≈50 m elevation), 59 clamps at 17.9 m per cable.
+    Hangers: VERTICAL since the 2013–2019 IHI retrofit (the 1973 inclined zig-zag hangers were re-hung vertically: TR /
+    JA Wikipedia, MLIT JAPAN Construction International Award 2021) — twin ropes per clamp. Light grey-white paint.
   Fatih Sultan Mehmet 1988: main span 1090 m (only the main span suspended), towers on the slopes (base ≈ deck level,
-    top ≈ 165 m MSL), 2 cross beams, deck box 33.8 × 3 m + walkways = 39.4 m, clearance 64 m, vertical twin hangers
-    at 17.92 m, anchorages 210 m behind the towers (1510 m between anchorages).
+    top ≈ 165 m MSL; 98 m above the road), legs 5.0→3.0 × 4.0 m, 2 portal beams (mid-height above the deck and the
+    top, none under the deck), deck box 33.8 × 3 m + walkways = 39.4 m, clearance 64 m, vertical twin hangers (76 mm)
+    at 17.92 m, anchorages 210 m behind the towers (1510 m between anchorages) (KGM project sheets, DE Wikipedia).
   Yavuz Sultan Selim 2016: 378 + 1408 + 378 m hybrid cable-stayed suspension, A-shaped concrete towers ≈330 m MSL,
     crossbeam at 61 m, upper steel beam ≈268 m, deck 58.5 m wide, 5.5 m deep (underside ≈73 m at mid-span, ≈70 m at
     the towers), 22 + 22 stays per leg anchored 208–304 m, main cable saddles ≈305 m, low point ≈90 m, 34 pairs of
@@ -152,15 +156,15 @@ def pier(b, x, y, z_top, ground, w=4.0, d=4.0, mat='concrete', cap=None, yaw=0.0
         b.meta.box((x - w / 2, y - d / 2, ground - 25.0), (x + w / 2, y + d / 2, z_top), b.name, yaw)
 
 
-def lamp_row(b, deck, s0, s1, step, x, h=10.0, arm=1.8):
+def lamp_row(b, deck, s0, s1, step, x, h=10.0, arm=1.8, mat='paint'):
     """Street lamps along a deck edge: slim post + emissive head (LOD0) and glow lights (all LODs via meta)."""
     for s in np.arange(s0 + step / 2, s1, step):
         p = deck.path.at(s, x, 0.2)
         sgn = -1 if x > 0 else 1
         if b.lod == 0:
-            b['paint'].box((p[0] - 0.12, p[1] - 0.12, p[2]), (p[0] + 0.12, p[1] + 0.12, p[2] + h))
-            b['paint'].box((min(p[0], p[0] + sgn * arm) - 0.08, p[1] - 0.08, p[2] + h - 0.15),
-                           (max(p[0], p[0] + sgn * arm) + 0.08, p[1] + 0.08, p[2] + h))
+            b[mat].box((p[0] - 0.12, p[1] - 0.12, p[2]), (p[0] + 0.12, p[1] + 0.12, p[2] + h))
+            b[mat].box((min(p[0], p[0] + sgn * arm) - 0.08, p[1] - 0.08, p[2] + h - 0.15),
+                       (max(p[0], p[0] + sgn * arm) + 0.08, p[1] + 0.08, p[2] + h))
             b['lamp'].box((p[0] + sgn * arm - 0.35, p[1] - 0.2, p[2] + h - 0.35), (p[0] + sgn * arm + 0.35, p[1] + 0.2, p[2] + h - 0.15))
         b.light((p[0] + sgn * arm, p[1], p[2] + h - 0.3), '#ffc27a', size=5.0, period=0, intensity=0.7, kind='lamp')
 
@@ -216,13 +220,14 @@ class Suspension:
         sp, b, lod, br = self.spec, self.b, self.lod, self.br
         H = sp['half']
         s0, s1 = br['s0'], br['s1']
-        step = {0: 6.0, 1: 18.0, 2: 45.0}[lod]
+        step = {0: 6.0, 1: 18.0, 2: 45.0, 3: 90.0}[lod]
         deck = Deck([(0.0, s, self.road(s)) for s in stations(s0, s1, step)], sp['road_half'], sp['walk_half'],
                     sp['depth'], sp['bot_half'], sp['lanes'])
         self.deck = deck
-        deck.build(b, girder='paint')
+        tm = sp.get('tower_mat', 'paint')
+        deck.build(b, girder=tm)
         deck.collision(b)
-        # ---- towers
+        # ---- towers: tapered steel box legs (light grey-white paint), portal beams, saddle housings
         XL = sp['leg_x']
         for sc in (-H, H):
             gz = self.g(sc) if sp.get('tower_on_ground') else sp.get('tower_base', 0.0)
@@ -230,69 +235,75 @@ class Suspension:
             for sx in (-1, 1):
                 x = sx * XL
                 w0, w1 = sp['leg_w']
-                column(b['paint'], (x, sc, 0), w0, sp['leg_d'], zb, sp['tower_top'], w_top=w1, d_top=sp['leg_d'] * 0.92,
+                column(b[tm], (x, sc, 0), w0, sp['leg_d'], zb, sp['tower_top'], w_top=w1, d_top=sp['leg_d'] * 0.92,
                        ts=6.0, chamfer=0.6 if lod == 0 else 0.0)
                 b.cbox((x - w0 / 2, sc - sp['leg_d'] / 2, zb), (x + w0 / 2, sc + sp['leg_d'] / 2, sp['tower_top'] + 0.5))
                 b.light((x, sc, sp['tower_top'] + 1.0), '#ff2a14', size=6.0, period=1.5, phase=0.0 if sc < 0 else 0.75)
                 b.light((x + sx * 2.0, sc, sp['tower_top'] * 0.62), '#ff2a14', size=4.0, period=1.5, phase=0.0 if sc < 0 else 0.75)
                 # saddle housing
                 if lod < 2:
-                    b['paint'].box((x - 2.2, sc - 4.6, sp['tower_top'] - 0.2), (x + 2.2, sc + 4.6, sp['tower_top'] + 2.2))
+                    b[tm].box((x - 2.2, sc - 4.6, sp['tower_top'] - 0.2), (x + 2.2, sc + 4.6, sp['tower_top'] + 2.2))
                 # foundation plinth
-                b['concrete'].box((x - 5, sc - 7, zb), (x + 5, sc + 7, max(gz, 0.0) + 3.0))
+                if lod < 3:
+                    b['concrete'].box((x - 5, sc - 7, zb), (x + 5, sc + 7, max(gz, 0.0) + 3.0))
             for z0, z1 in sp['portals']:
                 xi = XL - sp['leg_w'][0] * 0.4
-                b['paint'].box((-xi, sc - sp['leg_d'] * 0.42, z0), (xi, sc + sp['leg_d'] * 0.42, z1))
+                b[tm].box((-xi, sc - sp['leg_d'] * 0.42, z0), (xi, sc + sp['leg_d'] * 0.42, z1),
+                          faces='xXyYzZ' if lod < 3 else 'yYzZ')
                 b.cbox((-xi, sc - sp['leg_d'] * 0.45, z0), (xi, sc + sp['leg_d'] * 0.45, z1))
-        # ---- main cables + backstays
-        sides = {0: 10, 1: 6, 2: 4}[lod]
-        csteps = {0: 8.0, 1: 24.0, 2: 60.0}[lod]
+        # ---- main cables + backstays (the smooth sag is what reads from afar; beyond the runtime's rope widening
+        # (≈4 km) the far LODs carry a slightly fatter tube so the curve stays about a pixel wide)
+        sides = {0: 10, 1: 6, 2: 4, 3: 3}[lod]
+        csteps = {0: 8.0, 1: 24.0, 2: 48.0, 3: 90.0}[lod]
+        cr = {0: sp['cable_r'], 1: sp['cable_r'], 2: max(sp['cable_r'], 0.8), 3: 1.5}[lod]
         zs, zlow = sp['saddle'], sp['cable_low']
         a_s0, a_s1 = sp['anchor_s']
         self.cables = {}
         for sx in (-1, 1):
             xc = sx * sp['cable_x']
             pts = [V(xc, s, zlow + (zs - zlow) * (s / H) ** 2) for s in stations(-H, H, csteps)]
-            tube(b['cable'], pts, sp['cable_r'], sides)
+            tube(b['cable'], pts, cr, sides)
             cable_caps(b, pts, 1.2, 3 if lod == 0 else 1)
             self.cables[sx] = pts
             for sc, sa in ((-H, a_s0), (H, a_s1)):
                 za = self.anchor_z(sa)
                 bs = [V(xc, sc, zs), V(xc, sa, za)]
-                tube(b['cable'], bs, sp['cable_r'] * 1.03, sides)
+                tube(b['cable'], bs, cr * 1.03, sides)
                 b.ccap(bs[0], bs[1], 1.2)
-        # anchorages
+        # anchorages: a concrete block per cable beside the approach road at the end of the side span (≈2/3 buried);
+        # the backstay enters its top
         for sa in (a_s0, a_s1):
             za = self.anchor_z(sa)
             ga = self.g(sa)
             L = sp['anchor_len']
             y0, y1 = (sa - L, sa + 8) if sa < 0 else (sa - 8, sa + L)
-            b['concrete'].box((-sp['cable_x'] - 6, y0, ga - 15), (sp['cable_x'] + 6, y1, za + 4))
-            b.cbox((-sp['cable_x'] - 6, y0, ga - 15), (sp['cable_x'] + 6, y1, za + 4))
-        # ---- hangers
-        if lod < 2:
-            hs = {0: 4, 1: 3}[lod]
-            hr = sp['hanger_r']
-            sp_h = sp['hanger_step']
-            n = int(round(2 * H / sp_h))
-            clamps = [-H + 2 * H * i / n for i in range(1, n)]
             for sx in (-1, 1):
-                xc, xd = sx * sp['cable_x'], sx * sp['hanger_x']
-                for i, s in enumerate(clamps):
-                    zc = zlow + (zs - zlow) * (s / H) ** 2
-                    feet = [s - sp_h / 2, s + sp_h / 2] if sp['inclined'] else [s]
-                    for sf in feet:
-                        top = V(xc, s, zc - 0.4)
-                        foot = V(xd, sf, self.road(sf) + 0.3)
-                        if top[2] - foot[2] < 1.0:
-                            continue
-                        if sp['inclined'] or lod == 0 or i % 2 == 0:
-                            b['cable'].tube([foot, top], hr, sides=hs, ts=4.0)
-                            if sp.get('twin') and lod == 0:
-                                b['cable'].tube([foot + V(0, 0.5, 0), top + V(0, 0.5, 0)], hr, sides=hs, ts=4.0)
-                        b.ccap(foot, top, 0.35)
-        # ---- approach piers (side spans on piers / portal legs)
-        for sp_s in sp.get('piers', []):
+                xa, xb = sorted((sx * (sp['walk_half'] - 0.5), sx * (sp['cable_x'] + 9.0)))
+                b['concrete'].box((xa, y0, ga - 15), (xb, y1, za + 2), faces='xXyYZ')
+                b.cbox((xa, y0, ga - 15), (xb, y1, za + 2))
+        # ---- hangers: thin semi-transparent ropes (istkit.hanger_mat) on LOD0 / LOD1 only; collision on LOD0 (meta)
+        hr = sp['hanger_r']
+        sp_h = sp['hanger_step']
+        n = int(round(2 * H / sp_h))
+        clamps = [-H + 2 * H * i / n for i in range(1, n)]
+        for sx in (-1, 1):
+            xc, xd = sx * sp['cable_x'], sx * sp['hanger_x']
+            for i, s in enumerate(clamps):
+                zc = zlow + (zs - zlow) * (s / H) ** 2
+                feet = [s - sp_h / 2, s + sp_h / 2] if sp['inclined'] else [s]
+                for sf in feet:
+                    top = V(xc, s, zc - 0.4)
+                    foot = V(xd, sf, self.road(sf) + 0.3)
+                    if top[2] - foot[2] < 1.0:
+                        continue
+                    if lod == 0:
+                        # twin ropes 0.5 m apart read as one line beyond ~100 m: one tube of their combined section
+                        b['hanger'].tube([foot, top], hr * (1.5 if sp.get('twin') else 1.0), sides=4, ts=4.0)
+                    elif lod == 1 and (sp['inclined'] or i % 2 == 0):     # vertical hangers: every other one
+                        b['hanger'].tube([foot, top], hr, sides=3, ts=4.0)
+                    b.ccap(foot, top, 0.35)
+        # ---- side spans: box girder on piers (not suspended; only the backstays pass over them)
+        for sp_s in (sp.get('piers', []) if lod < 3 else []):
             gz = self.g(sp_s)
             zt = self.road(sp_s) - sp['depth'] - 0.8
             if zt - gz < 2.0:
@@ -308,8 +319,8 @@ class Suspension:
                 b['concrete'].box((-sp['walk_half'], se - 6, gz - 20), (sp['walk_half'], se + 6, zt))
                 b.cbox((-sp['walk_half'], se - 6, gz - 20), (sp['walk_half'], se + 6, zt))
         # ---- lamps + traffic
-        lamp_row(b, deck, s0, s1, sp['lamp_step'], sp['road_half'] + 0.3)
-        lamp_row(b, deck, s0 + sp['lamp_step'] / 2, s1, sp['lamp_step'], -sp['road_half'] - 0.3)
+        lamp_row(b, deck, s0, s1, sp['lamp_step'], sp['road_half'] + 0.3, mat=tm)
+        lamp_row(b, deck, s0 + sp['lamp_step'] / 2, s1, sp['lamp_step'], -sp['road_half'] - 0.3, mat=tm)
         lanes(b, deck, s0, s1, 2, x0=1.4)
         return b
 
@@ -325,16 +336,16 @@ SPEC_BOGAZICI = dict(
     id='bogazici', name='15 Temmuz Şehitler Köprüsü', half=537.0, top_mid=67.8, crest_R=17900.0, depth=3.0,
     road_half=14.0, walk_half=16.7, bot_half=9.5, lanes=6, leg_x=19.0, leg_w=(5.2, 3.0), leg_d=7.0, tower_top=165.0,
     tower_base=2.0, portals=[(50.0, 55.0), (120.0, 125.0), (152.0, 157.0)], saddle=163.0, cable_low=70.5, cable_x=17.6,
-    cable_r=0.30, anchor_s=(-790.0, 830.0), anchor_len=35.0, hanger_step=17.9, hanger_x=16.2, hanger_r=0.045,
-    inclined=True, lamp_step=36.0,
+    cable_r=0.30, anchor_s=(-770.0, 795.0), anchor_len=35.0, hanger_step=17.9, hanger_x=16.9, hanger_r=0.04,
+    inclined=False, twin=True, lamp_step=36.0, tower_mat='paint_w',
     # Ortaköy side 40+3×45+56 (from the European tower), Beylerbeyi side 4×63.75
     piers=[-593.0, -638.0, -683.0, -728.0, 600.75, 664.5, 728.25, 792.0],
 )
 SPEC_FSM = dict(
     id='fsm', name='Fatih Sultan Mehmet Köprüsü', half=545.0, top_mid=67.8, crest_R=37000.0, depth=3.0,
     road_half=16.9, walk_half=19.7, bot_half=11.0, lanes=8, leg_x=22.0, leg_w=(5.0, 3.0), leg_d=4.0, tower_top=165.0,
-    tower_on_ground=True, portals=[(52.0, 58.0), (157.0, 163.0)], saddle=164.0, cable_low=70.5, cable_x=20.2,
-    cable_r=0.385, anchor_s=(-755.0, 755.0), anchor_len=35.0, hanger_step=17.92, hanger_x=18.4, hanger_r=0.045,
+    tower_on_ground=True, portals=[(111.0, 117.0), (157.0, 163.0)], saddle=164.0, cable_low=70.5, cable_x=20.2,
+    cable_r=0.385, anchor_s=(-755.0, 755.0), anchor_len=35.0, hanger_step=17.92, hanger_x=19.9, hanger_r=0.038,
     inclined=False, twin=True, lamp_step=36.0, piers=[],
 )
 
@@ -351,7 +362,7 @@ def build_suspension(key, spec):
     br = BR[key]
     # LOD0 is built first by export_landmark; its `bridge` block is known once LOD0 exists -> write after
     meta = export_landmark(spec['id'], spec['name'], fn, (br['origin']['x'], br['origin']['z']), br['heading'],
-                           base='absolute', dists=(3200, 13000), draco_bits=19)
+                           base='absolute', dists=(1800, 4200, 14000), draco_bits=19, lods=(0, 1, 2, 3))
     meta.d.update(holder['s'].meta_extra())
     meta.save()
 
@@ -396,7 +407,7 @@ class YSS:
     def build(self):
         b, lod, br = self.b, self.lod, self.br
         s0, s1 = br['s0'], br['s1']
-        step = {0: 8.0, 1: 24.0, 2: 60.0}[lod]
+        step = {0: 8.0, 1: 24.0, 2: 60.0, 3: 120.0}[lod]
         deck = Deck([(0.0, s, self.road(s)) for s in stations(s0, s1, step)], 22.0, self.WH, self.DEPTH - 1.0, 20.0, lanes=8,
                     dz_top=-1.0)
         self.deck = deck
@@ -422,11 +433,10 @@ class YSS:
         box_girder(b['paint'], P, self.WH - 0.2, 20.0, self.DEPTH - 1.0, col=AO, dz_top=-1.0)
         deck.collision(b, top_extra=1.5)
         # ---- A towers
-        sides = {0: 12, 1: 8, 2: 6}[lod]
         for sc in (-self.H, self.H):
             for sx in (-1, 1):
                 # leg: tapered section along an inclined axis (triangular 18 m at the base -> chamfered box)
-                segs = 6 if lod == 0 else 3
+                segs = {0: 6, 1: 3, 2: 3, 3: 2}[lod]
                 zs = np.linspace(-12.0, self.SADDLE, segs + 1)
                 for za, zb in zip(zs[:-1], zs[1:]):
                     wa = 13.0 - 6.5 * (za + 12) / (self.SADDLE + 12)
@@ -443,7 +453,8 @@ class YSS:
                 b.light((sx * self.leg_x(100.0) + sx * 5, sc, 100.0), '#ff2a14', size=5.0, period=1.5, phase=0.0 if sc < 0 else 0.75)
                 # foundation
                 gz = self.g(sc)
-                b['concrete'].box((sx * self.LEG_B - 12, sc - 14, -20), (sx * self.LEG_B + 12, sc + 14, max(gz, 0) + 2))
+                if lod < 3:
+                    b['concrete'].box((sx * self.LEG_B - 12, sc - 14, -20), (sx * self.LEG_B + 12, sc + 14, max(gz, 0) + 2))
             # crossbeam under the deck (61 m) and upper steel crossbeam (~268 m)
             xa = self.leg_x(55.0) - 5
             b['concrete'].box((-xa, sc - 6, 50.0), (xa, sc + 6, 62.0))
@@ -454,7 +465,7 @@ class YSS:
         # ---- stays: 22 main-span + 22 land-side per leg (anchored 208–304 m on the leg)
         rs = 0.09
         ssides = {0: 4, 1: 3}.get(lod, 3)
-        nst = 22 if lod < 2 else 6
+        nst = {0: 22, 1: 22, 2: 6, 3: 3}[lod]
         for sc in (-self.H, self.H):
             inward = -1 if sc > 0 else 1        # toward mid-span
             for sx in (-1, 1):
@@ -470,39 +481,40 @@ class YSS:
                     sl = sc - inward * (30.0 + 240.0 * t)
                     foot_l = V(sx * 9.0, sl, self.road(sl) + 0.3)
                     for f in (foot, foot_l):
-                        if lod == 2:
-                            b['cable'].tube([f, top], 0.35, sides=3, ts=4.0)
+                        if lod >= 2:
+                            b['cable'].tube([f, top], 0.35 if lod == 2 else 0.6, sides=3, ts=4.0)
                         else:
                             b['cable'].tube([f, top], rs, sides=ssides, ts=4.0)
                         b.ccap(f, top, 0.45)
         # ---- main cables (planes x = ±12 at the hangers, saddles at the leg tops) + backstays to the deck ends
-        sides_c = {0: 10, 1: 6, 2: 4}[lod]
-        cst = {0: 8.0, 1: 24.0, 2: 60.0}[lod]
+        sides_c = {0: 10, 1: 6, 2: 4, 3: 3}[lod]
+        cst = {0: 8.0, 1: 24.0, 2: 60.0, 3: 120.0}[lod]
+        crr = {0: 0.42, 1: 0.42, 2: 0.9, 3: 1.5}[lod]
         for sx in (-1, 1):
             pts = []
             for s in stations(-self.H, self.H, cst):
                 x = sx * (12.0 + (self.LEG_T - 12.0) * max(0.0, (abs(s) - self.HANG) / (self.H - self.HANG)))
                 pts.append(V(x, s, self.cable_z(s)))
-            tube(b['cable'], pts, 0.42, sides_c)
+            tube(b['cable'], pts, crr, sides_c)
             cable_caps(b, pts, 1.3, 3 if lod == 0 else 1)
             for sc, se in ((-self.H, s0 + 12.0), (self.H, s1 - 12.0)):
                 bs = [V(sx * self.LEG_T, sc, self.SADDLE), V(sx * 12.0, se, self.road(se) + 2.0)]
-                tube(b['cable'], bs, 0.42, sides_c)
+                tube(b['cable'], bs, crr, sides_c)
                 b.ccap(bs[0], bs[1], 1.3)
-            # hangers: 34 vertical pairs at ~24 m in the central part
-            if lod < 2:
-                n = 34
-                for i in range(n):
-                    s = -self.HANG + 2 * self.HANG * (i + 0.5) / n
-                    top = V(sx * 12.0, s, self.cable_z(s) - 0.5)
-                    foot = V(sx * 12.0, s, self.road(s) + 0.3)
-                    if top[2] - foot[2] > 1.0:
-                        b['cable'].tube([foot, top], 0.07, sides=4 if lod == 0 else 3, ts=4.0)
-                        if lod == 0:
-                            b['cable'].tube([foot + V(0, 0.8, 0), top + V(0, 0.8, 0)], 0.07, sides=4, ts=4.0)
-                        b.ccap(foot, top, 0.4)
+            # hangers: 34 vertical pairs at ~24 m in the central part (thin semi-transparent ropes, LOD0 / LOD1)
+            n = 34
+            for i in range(n):
+                s = -self.HANG + 2 * self.HANG * (i + 0.5) / n
+                top = V(sx * 12.0, s, self.cable_z(s) - 0.5)
+                foot = V(sx * 12.0, s, self.road(s) + 0.3)
+                if top[2] - foot[2] > 1.0:
+                    if lod < 2:
+                        b['hanger'].tube([foot, top], 0.07, sides=4 if lod == 0 else 3, ts=4.0)
+                    if lod == 0:
+                        b['hanger'].tube([foot + V(0, 0.8, 0), top + V(0, 0.8, 0)], 0.07, sides=4, ts=4.0)
+                    b.ccap(foot, top, 0.4)
         # ---- side-span piers (concrete counterweight decks)
-        for sgn in (-1, 1):
+        for sgn in ((-1, 1) if lod < 3 else ()):
             for k in (1, 2, 3):
                 s = sgn * (self.H + 95.0 * k)
                 if not (s0 + 20 < s < s1 - 20):
@@ -537,7 +549,7 @@ def build_yss():
         return y.b
     br = BR['yss']
     meta = export_landmark('yss', 'Yavuz Sultan Selim Köprüsü', fn, (br['origin']['x'], br['origin']['z']), br['heading'],
-                           base='absolute', dists=(3500, 14000), draco_bits=19)
+                           base='absolute', dists=(1800, 4200, 15000), draco_bits=19, lods=(0, 1, 2, 3))
     y = holder['y']
     meta.d['bridge'] = bridge_block(br, y.deck, -YSS.H, YSS.H, YSS.H, YSS.TOP)
     meta.save()

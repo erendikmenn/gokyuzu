@@ -318,6 +318,76 @@ def site_buildings(dem, els, origin, h, inside_poly, pred, default_h=9.0):
     return out
 
 
+def sliver_centreline(P, step=4.0):
+    """Centreline of a thin closed polygon (a wall mapped as an area, e.g. the Sur-ı Sultani): split the ring at its two
+    farthest vertices, resample both chains by arc length and average them."""
+    P = np.array(P, float)
+    if np.allclose(P[0], P[-1]):
+        P = P[:-1]
+    d = ((P[:, None, :] - P[None, :, :]) ** 2).sum(-1)
+    i, j = sorted(np.unravel_index(np.argmax(d), d.shape))
+    a = P[i:j + 1]
+    b = np.concatenate([P[j:], P[:i + 1]])[::-1]
+
+    def res(c, n):
+        L = np.concatenate([[0], np.cumsum(np.hypot(*np.diff(c, axis=0).T))])
+        t = np.linspace(0, L[-1], n)
+        return np.stack([np.interp(t, L, c[:, 0]), np.interp(t, L, c[:, 1])], axis=1)
+    n = max(2, int(max(np.hypot(*np.diff(a, axis=0).T).sum(), np.hypot(*np.diff(b, axis=0).T).sum()) / step))
+    return (res(a, n) + res(b, n)) / 2
+
+
+def topkapi_precinct(dem, els, o, W):
+    """Topkapı beyond the palace buildings: the Sur-ı Sultani land wall and the sea wall down to Sarayburnu (centrelines
+    with design ground), their towers and Bâb-ı Hümâyûn (OSM buildings the model replaces), the courtyards / gardens
+    (leisure polygons) and the mapped trees."""
+    from shapely.geometry import LineString, Point, Polygon
+    out = {'sur': [], 'courts': [], 'trees': [], 'wall_towers': [], 'gate': None}
+    lines = []
+    for e in els:
+        t = e.get('tags', {})
+        if e['type'] != 'way' or t.get('barrier') != 'city_wall':
+            continue
+        P = pts_of(e)
+        if len(P) < 3:
+            continue
+        closed = np.allclose(P[0], P[-1])
+        C = sliver_centreline(P) if closed and area(P[:-1]) < 0.02 * LineString(P).length ** 2 else np.array(P, float)
+        C = np.array(LineString(C).simplify(1.2).coords)
+        h = num(str(t.get('height', '')).split('-')[-1]) or 12.0
+        lines.append(LineString(C))
+        out['sur'].append({'id': osm_id(e), 'name': t.get('name', ''), 'height': h,
+                           'pts': [[round(float(x - o[0]), 2), round(float(-(z - o[1])), 2), round(dem.local(x, z), 1)]
+                                   for x, z in C]})
+    for e in els:
+        t = e.get('tags', {})
+        if e['type'] == 'way' and t.get('man_made') == 'tower' and 'building' in t and \
+                t.get('tower:type') in ('defensive', 'watchtower'):
+            P = pts_of(e)
+            c = centroid(P)
+            if lines and min(ln.distance(Point(c)) for ln in lines) < 25:
+                out['wall_towers'].append({'id': osm_id(e), 'poly': poly_model(o, 0.0, P), 'height': num(t.get('height')) or 16.0,
+                                           'g': ground_min(dem, P), 'zone': zone_of(P, 1.5)})
+        if e['type'] == 'way' and e['id'] == 335364925:           # Bâb-ı Hümâyûn (imperial gate of the 1st courtyard)
+            P = pts_of(e)
+            out['gate'] = {'id': osm_id(e), 'poly': poly_model(o, 0.0, P), 'g': ground_min(dem, P), 'zone': zone_of(P, 1.5)}
+        if e['type'] == 'way' and t.get('leisure') in ('park', 'garden') and t.get('name') in (
+                'Divan Meydanı', 'Enderûn Avlusu', 'Sofa-ı Hümâyûn', 'Zülüflü Baltacılar Avlusu', 'Fig Garden',
+                'Elephant Garden', 'Şimşirlik Bahçesi', 'Alay Meydanı', 'Sarayburnu Parkı'):
+            P = pts_of(e)
+            out['courts'].append({'id': osm_id(e), 'name': t['name'], 'poly': poly_model(o, 0.0, P),
+                                  'g': round(float(np.median([dem.local(x, z) for x, z in P])), 1)})
+    inner = Polygon(W).buffer(20)
+    for e in els:
+        t = e.get('tags', {})
+        if e['type'] == 'node' and t.get('natural') == 'tree':
+            x, z = lonlat_to_local(e['lon'], e['lat'])
+            if inner.contains(Point(x, z)):
+                kind = 'c' if t.get('leaf_type') == 'needleleaved' or 'Cupressus' in t.get('genus', '') else 'p'
+                out['trees'].append([round(x - o[0], 2), round(-(z - o[1]), 2), round(dem.local(x, z), 1), kind])
+    return out
+
+
 def sites(dem):
     S = {}
     # ---- mosques: frames from the OSM minarets (Simple 3D Buildings parts) and dome parts
@@ -454,6 +524,11 @@ def sites(dem):
                     'walls': poly_model(o, 0.0, W), 'wall_g': [round(dem.local(x, z), 1) for x, z in W[:-1] if True],
                     'buildings': blds, 'adalet': 'w335402653', 'babusselam': 'w335402649', 'kitchens': 'w32396096',
                     'osm': sorted(b['id'] for b in blds), 'zones': [b['zone'] for b in blds]}
+    S['topkapi'].update(topkapi_precinct(dem, els, o, W))
+    S['topkapi']['osm'] = sorted(set(S['topkapi']['osm']) | {t['id'] for t in S['topkapi']['wall_towers']} |
+                                 ({S['topkapi']['gate']['id']} if S['topkapi'].get('gate') else set()))
+    S['topkapi']['zones'] += [t['zone'] for t in S['topkapi']['wall_towers']] + (
+        [S['topkapi']['gate']['zone']] if S['topkapi'].get('gate') else [])
     # ---- Dolmabahçe Sarayı: the palace buildings (historic / palace / named parts of the palace)
     els = load('dolmabahce')
     keep_names = ('Dolmabahçe', 'Domabahçe', 'Daire', 'Köşk', 'Hareket', 'Hereke', 'Kapı', 'Uzun Yol', 'Kuşluk', 'Musahiban',
@@ -486,6 +561,8 @@ def tall_buildings(dem, min_h=150.0):
         h = num(t.get('height'))
         lv = num(t.get('building:levels'))
         H = h if h else (lv * 3.6 if lv else None)
+        if h and lv and h / lv > 6.5:        # a height tag that is an elevation (ÖzdilekPark: 262–275 over 35 storeys)
+            H = lv * 3.9
         if not H or H < min_h:
             continue
         P = pts_of(e)
@@ -511,6 +588,59 @@ def tall_buildings(dem, min_h=150.0):
     return res
 
 
+# Named towers modelled with their own form (blender/landmarks_ist/skyline.py SPECS, keyed): OSM ways whose footprints
+# are used (first = main outline, the rest = setback parts / second volumes). Positions / plans from OSM; heights and
+# forms from CTBUH Skyscraper Center, Wikipedia and the architects (CONTRACTS-IST.md §6.L).
+CURATED = {
+    # Levent – Maslak – Şişli – Zincirlikuyu – Gümüşsuyu
+    'sapphire': ['w673790538'],
+    'isbank1': ['w829881961', 'w829881962', 'w829881963', 'w829881964', 'w829881965', 'w829881966', 'w829881967'],
+    'isbank2': ['w829881972', 'w829881968'],
+    'isbank3': ['w829881977', 'w829881974'],
+    'kanyon': ['w905812925'],
+    'metrocity_a': ['w587036060'],
+    'metrocity_b': ['w587036063'],
+    'metrocity_c': ['w905762567'],
+    'akbank': ['w906490071', 'w906490072', 'w906490073'],
+    'sabanci2': ['w906490074', 'w906490075', 'w906490076'],
+    'suzer': ['w166702635'],
+    'zorlu_a': ['w1251363333'], 'zorlu_b': ['w1251363335'], 'zorlu_c': ['w1251363336'], 'zorlu_h': ['w1251363337'],
+    'trump_res': ['w1222286465'], 'trump_off': ['w1455454989'],
+    'spine': ['w991113248'],
+    'skyland_off': ['w559699014'], 'skyland_res': ['w559699016'],
+    'ozdilek_e': ['w1382836093'], 'ozdilek_w': ['w1467663791'], 'ozdilek_mall': ['w1467663783'],
+    # Ataşehir (İstanbul Finans Merkezi, Metropol, Varyap)
+    'tcmb': ['w1238012472'], 'metropol_a': ['w492519336'], 'vakif1': ['w922036224'], 'ziraat1': ['w1132948418'],
+    'ziraat2': ['w1132948419'], 'halk1': ['w883278828'], 'varyap_a': ['w363137498'],
+}
+# OSM parts / duplicates the curated forms replace (excluded from the city, not modelled on their own)
+CURATED_DROP = ['w1251733113', 'w1467663786', 'w1467663794', 'w1467663782', 'w1467663788', 'w1467663789', 'w1467663790',
+                'w829881969', 'w829881970', 'w829881971', 'w829881973', 'w829881975', 'w829881976']
+
+
+def curated_towers(dem):
+    """The CURATED towers from the OSM caches (tall / cbd_eu / cbd_as): main outline + parts, model-frame later."""
+    els = {}
+    for f in ('tall', 'cbd_eu', 'cbd_as'):
+        if os.path.exists(os.path.join(RAW, f'{f}.json')):
+            for e in load(f):
+                if e['type'] != 'node':
+                    els[osm_id(e)] = e
+    out = []
+    for key, ids in CURATED.items():
+        es = [els[i] for i in ids if i in els]
+        if not es or osm_id(es[0]) != ids[0]:
+            print(f'  curated {key}: OSM {ids[0]} missing (run landmarks_ist_pbf.py --only cbd_eu,cbd_as)')
+            continue
+        P = pts_of(es[0])
+        t = es[0].get('tags', {})
+        out.append({'id': ids[0], 'key': key, 'name': t.get('name', ''), 'pts': P, 'c': centroid(P),
+                    'h': num(t.get('height')) or (num(t.get('building:levels')) or 30) * 3.6, 'area': area(P),
+                    'parts': [{'id': osm_id(e), 'pts': pts_of(e), 'levels': num(e.get('tags', {}).get('building:levels')),
+                               'height': num(e.get('tags', {}).get('height'))} for e in es[1:]]})
+    return out
+
+
 def main():
     assert REGION_ID == 'ist', 'run with GEO_REGION=ist'
     dem = Dem()
@@ -526,7 +656,12 @@ def main():
     # skyscraper groups by district (nearest centre): European CBD (Levent / Maslak / Şişli / Skyland), Ataşehir, west
     districts = {'skyline_levent': (2200, -6500), 'skyline_atasehir': (11000, 3500), 'skyline_west': (-26500, -1500)}
     sky = {}
-    for bld in tall_buildings(dem):
+    cur = curated_towers(dem)
+    taken = {b['id'] for b in cur} | {p['id'] for b in cur for p in b['parts']} | set(CURATED_DROP)
+    generic = [b for b in tall_buildings(dem) if b['id'] not in taken]
+    for b in generic:
+        b['key'], b['parts'] = None, []
+    for bld in cur + generic:
         key = min(districts, key=lambda k: math.hypot(districts[k][0] - bld['c'][0], districts[k][1] - bld['c'][1]))
         sky.setdefault(key, []).append(bld)
     for key, g in list(sky.items()):
@@ -534,9 +669,14 @@ def main():
         sky[key] = {'name': {'skyline_levent': 'Levent – Maslak gökdelenleri', 'skyline_atasehir': 'Ataşehir gökdelenleri',
                              'skyline_west': 'Esenyurt – Beylikdüzü kuleleri'}[key],
                     'origin': {'x': o[0], 'z': o[1]}, 'heading': 0.0,
-                    'buildings': [{'id': b['id'], 'name': b['name'], 'height': round(b['h'], 1), 'poly': poly_model(o, 0.0, b['pts']),
-                                   'g': ground_min(dem, b['pts']), 'tv': 'TV' in b['name'] or 'Televizyon' in b['name']} for b in g],
-                    'osm': sorted(b['id'] for b in g), 'zones': [zone_of(b['pts'], 1.5) for b in g]}
+                    'buildings': [{'id': b['id'], 'key': b['key'], 'name': b['name'], 'height': round(b['h'], 1),
+                                   'poly': poly_model(o, 0.0, b['pts']), 'g': ground_min(dem, b['pts']),
+                                   'parts': [{'id': p['id'], 'poly': poly_model(o, 0.0, p['pts']), 'levels': p['levels'],
+                                              'height': p['height']} for p in b['parts']],
+                                   'tv': 'TV' in b['name'] or 'Televizyon' in b['name']} for b in g],
+                    'osm': sorted({b['id'] for b in g} | {p['id'] for b in g for p in b['parts']} |
+                                  (set(CURATED_DROP) if key == 'skyline_levent' else set())),
+                    'zones': [zone_of(b['pts'], 1.5) for b in g]}
         print(f"{key:18s} {len(g)} buildings, tallest {max(b['h'] for b in g):.0f} m ({max(g, key=lambda b: b['h'])['name']})")
     layout['skyline'] = sky
     os.makedirs(os.path.dirname(LAYOUT), exist_ok=True)

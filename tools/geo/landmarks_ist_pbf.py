@@ -6,7 +6,7 @@ Overpass was overloaded (504s), and the city pipeline already downloads the Turk
   way:      {type:'way', id, tags, geometry:[{lat, lon}, ...]}
   node:     {type:'node', id, tags, lat, lon}
   relation: {type:'relation', id, tags, rings:[{outer:[{lat,lon}...], inner:[[...]]}]}   (multipolygons, as areas)
-Usage:  GEO_REGION=ist .venv/bin/python tools/geo/landmarks_ist_pbf.py [pbf]
+Usage:  GEO_REGION=ist .venv/bin/python tools/geo/landmarks_ist_pbf.py [pbf] [--only name,name]
 Source: © OpenStreetMap contributors (ODbL).
 """
 import glob
@@ -36,13 +36,17 @@ BOXES = {
     'camlica': ((41.0315, 29.0650, 41.0375, 29.0760), 'site'),
     'camlica_tower': ((41.0150, 29.0550, 41.0420, 29.0850), 'tower'),
     'sultanahmet': ((41.0035, 28.9730, 41.0110, 28.9820), 'site'),
-    'topkapi': ((41.0080, 28.9780, 41.0160, 28.9880), 'site'),
+    'topkapi': ((41.0080, 28.9760, 41.0190, 28.9900), 'site'),   # palace + Sur-ı Sultani to Sarayburnu
     'suleymaniye': ((41.0145, 28.9615, 41.0180, 28.9670), 'site'),
     'yenicami': ((41.0160, 28.9700, 41.0182, 28.9728), 'site'),
     'dolmabahce': ((41.0360, 28.9950, 41.0425, 29.0060), 'site'),
     'rumelihisari': ((41.0825, 29.0535, 41.0875, 29.0595), 'site'),
     'haydarpasa': ((40.9945, 29.0165, 40.9990, 29.0220), 'site'),
     'tall': ((40.82, 28.62, 41.37, 29.40), 'tall'),
+    # business districts (skyline models): Şişli–Levent–Maslak–Zincirlikuyu–Gümüşsuyu and Ataşehir, down to 50 m / 14
+    # storeys, plus every named building / part (towers whose height / levels tags are missing)
+    'cbd_eu': ((41.030, 28.975, 41.125, 29.040), 'cbd'),
+    'cbd_as': ((40.975, 29.080, 41.010, 29.150), 'cbd'),
 }
 SITE_KEYS = ('building', 'building:part', 'man_made', 'historic', 'amenity', 'natural', 'bridge', 'bridge:support',
              'barrier', 'wall', 'tourism', 'leisure', 'place')
@@ -69,6 +73,13 @@ def wanted(kind, tags):
         return tags.get('natural') == 'coastline'
     if kind == 'tower':
         return tags.get('man_made') in ('tower', 'mast') or ('building' in tags and 'name' in tags) or 'building:part' in tags
+    if kind == 'cbd':
+        if 'building' in tags or 'building:part' in tags:
+            h, lv = num(tags.get('height')), num(tags.get('building:levels'))
+            if (h is not None and h >= 50) or (lv is not None and lv >= 14):
+                return True
+            return 'name' in tags      # named office / residential blocks (MetroCity A, Varyap: no usable levels tag)
+        return tags.get('man_made') in ('tower', 'mast') and (num(tags.get('height')) or 0) >= 50
     if kind == 'tall':
         if 'building' in tags or 'building:part' in tags:
             h, lv = num(tags.get('height')), num(tags.get('building:levels'))
@@ -85,7 +96,16 @@ def inside(bb, lon, lat):
 
 def main():
     assert REGION_ID == 'ist', 'run with GEO_REGION=ist'
-    pbf = sys.argv[1] if len(sys.argv) > 1 else None
+    args = sys.argv[1:]
+    only = None
+    if '--only' in args:
+        i = args.index('--only')
+        only = set(args[i + 1].split(','))
+        args = args[:i] + args[i + 2:]
+        for k in list(BOXES):
+            if k not in only:
+                del BOXES[k]
+    pbf = args[0] if args else None
     if not pbf:
         cands = sorted(p for g in PBF_GLOB for p in glob.glob(g))
         if not cands:
