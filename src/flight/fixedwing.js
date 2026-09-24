@@ -17,6 +17,8 @@
 //     tail skid; crash detection (hard touchdown, attitude, water, structure strike, world.hitTest obstacles)
 //   - warnings: stall, overspeed (VMO/MMO/VFE/VLE), gear, bank, sink rate, pull up (terrain + obstacle look-ahead);
 //     A320 FAC low energy + alpha floor (A.FLOOR / TOGA LK); fighters low speed / high AoA; crash cause (crashCause)
+//   - failures (failures.js API, effects in fixedwing-failures.js): engine / engineAll / fire / hydraulic / gear; flags
+//     engineFail, engineFire, hydraulic, gearUnsafe; belly / nacelle skids with a gear failure; airliner ditching
 //
 // Body axes (Three.js): nose -Z, up +Y, right wing +X. Internally p = -omega.z (roll right), q = omega.x (nose up),
 // r = -omega.y (yaw right). No DOM access: runs in Node (tests/fixedwing.test.mjs).
@@ -28,6 +30,8 @@ import { createPowerplant } from './fixedwing-engine.js';
 import { createFCS } from './fixedwing-fcs.js';
 import { createAutopilot, findApproach, approachGeometry, runwayEnds } from './fixedwing-autopilot.js';
 import { createLnav } from '../nav/lnav.js';
+import { FailureManager } from './failures.js';
+import { createFixedWingFailures, createFx } from './fixedwing-failures.js';
 
 const MAX_FRAME_DT = 0.25;
 const FT = 0.3048;
@@ -79,7 +83,8 @@ export class FixedWingModel {
     this.gear = 1; this.gearHandleDown = true; this.flaps = 0; this.flapsIndex = 0; this.flapsLabel = '';
     this.slats = 0; this.spoilers = 0; this.speedbrake = 0; this.reverser = 0; this.brakes = 0; this.fuel = 0;
     this.parkingBrake = false; this.autobrake = ''; this.groundSpeed = 0; this.mass = spec.mass.typical;
-    this.warnings = { stall: false, overspeed: false, gear: false, bank: false, sinkRate: false, pullUp: false };
+    this.warnings = { stall: false, overspeed: false, gear: false, bank: false, sinkRate: false, pullUp: false,
+      engineFail: false, engineFire: false, hydraulic: false, gearUnsafe: false };   // failure flags (fixedwing-failures.js)
     // A320 FAC / A-THR: low-energy warning ("SPEED SPEED SPEED"), alpha floor active (A.FLOOR), TOGA thrust locked
     // after alpha floor (TOGA LK); fighters: low speed / high AoA (see _updateWarnings)
     if (spec.fcs.law === 'airbus') Object.assign(this.warnings, { lowEnergy: false, alphaFloor: false, togaLock: false });
@@ -93,6 +98,8 @@ export class FixedWingModel {
     this.pendingThrottle = null;    // lever value the input module should adopt (reset / autopilot disconnect)
     this.law = spec.fcs.law;
     this.tailStrike = false;
+    this.ditched = false;           // airliner ditching: floating on the water after a survivable water landing
+    this.fx = createFx();           // failure effects read by the physics / control laws (fixedwing-failures.js)
 
     // ---- internal state ----
     this._pos = new THREE.Vector3(); this._quat = new THREE.Quaternion();
@@ -116,6 +123,9 @@ export class FixedWingModel {
     this._buildGeometry(contacts);
     this.fcs = createFCS(this);
     this.ap = createAutopilot(this);
+    // failures (CONTRACTS-SF.md §12): flight.failures API + per-type effects
+    this.failures = new FailureManager(this);
+    this._fl = createFixedWingFailures(this);
     // route following (src/nav): the host attaches a Route with setRoute(); `nav` = LNAV guidance (null without a route)
     this.route = null;
     this.nav = null;
@@ -200,6 +210,11 @@ export class FixedWingModel {
   }
 
   on(event, cb) { (this._handlers[event] ||= []).push(cb); }
+  // failures.js hooks
+  _failNormalize(kind, o) { return this._fl.normalize(kind, o); }
+  _failApply(kind, o, on) { this._fl.apply(kind, o, on); }
+  _failPhase() { return this._fl.phase(); }
+  _failRandomOpts(kind, rng, phase) { return this._fl.randomOpts(kind, rng, phase); }
   _emit(event, info) { for (const cb of this._handlers[event] || []) { try { cb(info); } catch (e) { console.error(e); } } }
 
   // ------------------------------------------------------------------------------------------ reset
@@ -227,6 +242,8 @@ export class FixedWingModel {
    */
   reset(start, world, opts = {}) {
     const spec = this.spec;
+    this.failures.reset();          // a new flight: no failures (missions inject after the reset)
+    this.ditched = false;
     this._resetInternals();
     this.fuel = clamp(opts.fuel ?? spec.mass.fuelTypical, 0, spec.mass.fuelCapacity);
     this.mass = opts.mass ?? spec.mass.typical;
@@ -400,8 +417,14 @@ export class FixedWingModel {
     const spec = this.spec, sys = this.sys;
     if (this.crashed && action !== 'lights') return;
     switch (action) {
+      case 'emergency': case 'fireHandle': case 'engineRestart': case 'apuStart': case 'gearAlternate':
+        // one press per frame (the key may reach the model through two routes)
+        if (this._emergAt === this._time && action === 'emergency') return false;
+        if (action === 'emergency') this._emergAt = this._time;
+        return this._fl.command(action);
       case 'gear': {
         if (sys.gearHandleDown && (this.wow || this.onGround)) { this._emit('warning', { type: 'gearLocked', on: true }); return; }
+        if (sys.gearHandleDown && this.fx.gearNoRetract) { this._emit('warning', { type: 'gearAltDown', on: true }); return; }
         sys.gearHandleDown = !sys.gearHandleDown;
         this._emit('gear', { down: sys.gearHandleDown });
         break;
@@ -423,6 +446,7 @@ export class FixedWingModel {
       case 'speedbrake': sys.speedbrakeCmd = !sys.speedbrakeCmd; break;
       case 'reverser': {
         if (!this.pp.hasRev) return;
+        if (!this.fx.reverser && !sys.reverserCmd) { this._emit('warning', { type: 'reverserInhibit', on: true }); return; }
         if (!sys.reverserCmd) {
           if (!this.wow || this._lever > 0.06) { this._emit('warning', { type: 'reverserInhibit', on: true }); return; }
           sys.reverserCmd = true;
@@ -437,7 +461,9 @@ export class FixedWingModel {
         break;
       }
       case 'lights': sys.lightsOn = !sys.lightsOn; break;
-      case 'autopilot': this.ap.toggle(); break;
+      case 'autopilot':
+        if (!this.fx.apAvail && !this.autopilot.on) { this._emit('warning', { type: 'apUnavailable', on: true }); this._emit('autopilot', { on: false, mode: null, refused: true }); return; }
+        this.ap.toggle(); break;
       case 'nav': this.engageNav(); break;
       default: break;
     }
@@ -473,6 +499,7 @@ export class FixedWingModel {
   // ------------------------------------------------------------------------------------------ step
   step(dt, input, world) {
     if (this.crashed) return;
+    if (this.ditched) { this._floatStep(dt, world); return; }
     const inp = input || {};
     this._acc += clamp(Number.isFinite(dt) ? dt : 0, 0, MAX_FRAME_DT);
     this._loadAcc = 0; this._loadN = 0;
@@ -484,13 +511,14 @@ export class FixedWingModel {
       this._substep(h, inp, world);
       this._acc -= h;
       this._time += h;
-      if (this.crashed) { this._acc = 0; break; }
+      if (this.crashed || this.ditched) { this._acc = 0; break; }
     }
     if (this._loadN > 0) {
       const g = this._loadAcc / this._loadN;
       this._gSmooth += (g - this._gSmooth) * clamp(dt / 0.1, 0, 1);
     }
     this._frameSystems(dt, inp, world);
+    if (!this.crashed) { this._fl.frame(dt); this.failures.frame(dt); }
     if (this.route) this.ap.frame(dt);
     this._updateReadouts(world, this.crashed ? 1 : this._acc / h);
   }
@@ -550,6 +578,7 @@ export class FixedWingModel {
     const Tc = thrust * Math.cos(dT), Ts = thrust * Math.sin(dT);
     _Fb.z -= Tc; _Fb.y -= Ts;
     _Tb.x += -(E.thrustLineY ?? 0) * Tc + (spec.fcs.tvc ? spec.fcs.tvc.arm : 0) * Ts;
+    if (this.pp.degraded) _Tb.y += this.pp.st.yaw;      // engine out: the live engine yaws the nose toward the dead one
 
     // ---- to world ----
     const pos = this._pos, quat = this._quat, vel = this.velocity, omega = this._omega;
@@ -654,6 +683,7 @@ export class FixedWingModel {
     mom.Lbase = qS * spec.span * (co.Cl + co.Cldr * act.rudder);
     mom.Lda = qS * spec.span * co.Clda;
     mom.Nbase = qS * spec.span * (co.Cn + co.Cnda * act.aileron);
+    if (this.pp.degraded && this.fx.thrustYawComp) mom.Nbase -= this.pp.st.yaw;   // FBW fighters know the thrust asymmetry
     mom.Ndr = qS * spec.span * co.Cndr;
   }
 
@@ -668,7 +698,10 @@ export class FixedWingModel {
     // autothrust
     if (this.apOut.active && this.apOut.power != null) { power = this.apOut.power; ab = 0; }
     // alpha floor (airbus): TOGA thrust whatever the lever position (A.FLOOR, then TOGA LK)
-    if (this.law === 'airbus') this._alphaFloor(lever, inp);
+    if (this.law === 'airbus') {
+      if (this.fx.law === 'normal') this._alphaFloor(lever, inp);
+      else this._floor = '';           // alternate / direct law: no alpha floor
+    }
     if (this._floor) { power = 1; ab = 0; }
     fcs.alphaFloor = !!this._floor;
     this._effLever = this._leverFromPower(power, ab);
@@ -717,7 +750,9 @@ export class FixedWingModel {
     const spec = this.spec, sys = this.sys;
     // gear (refuses to retract with weight on wheels: the handle is locked in command())
     const G = spec.gear;
-    sys.gear = moveToward(sys.gear, sys.gearHandleDown ? 1 : 0, h / (sys.gearHandleDown ? (G.extendTime ?? 8) : (G.retractTime ?? 8)));
+    const fx = this.fx;
+    if (fx.gearPath) this._fl.gear(h);   // failed legs / no hydraulic pressure / alternate extension
+    else sys.gear = moveToward(sys.gear, sys.gearHandleDown ? 1 : 0, h / (sys.gearHandleDown ? (G.extendTime ?? 8) : (G.retractTime ?? 8)));
     // flaps: fighters schedule automatically; airliners move between detents at the detent's travel time
     let target;
     if (this.fighter) target = (sys.gearHandleDown || sys.altFlaps) && this.ad.ias < (spec.limits.vfeAuto ?? 190) ? 1 : 0;
@@ -736,12 +771,13 @@ export class FixedWingModel {
         this._emit('flaps', { index: target, label: det[target].label, auto: true });
       }
     }
+    if (target > fx.flapMax) target = fx.flapMax;   // 737 alternate (electric) flaps: flaps 15 at most
     const from = sys.flapPos;
     if (from !== target) {
       const seg = target > from ? Math.floor(from) + 1 : Math.ceil(from);
       const det = spec.flapDetents[clamp(seg, 0, spec.flapDetents.length - 1)];
       const time = det.time ?? spec.flapTime ?? 5;
-      sys.flapPos = moveToward(from, target, h / time);
+      sys.flapPos = moveToward(from, target, (h / time) * fx.flapRate);   // hydraulic loss: slow / frozen
     }
     this.flapIndexTarget = target; this.flapIndexActual = sys.flapPos;
     // speedbrake / spoilers
@@ -755,8 +791,8 @@ export class FixedWingModel {
       if (sys.rtoArmed && onGround && idle && this.groundSpeed > 36) sys.groundSpoilers = true;
       if (sys.groundSpoilers && ((lever > 0.2 && !sys.reverserCmd) || !onGround && this._airTime > 1)) { sys.groundSpoilers = false; if (lever > 0.2) sys.gsArmed = false; }
       if (sys.groundSpoilers && this.groundSpeed < 0.3 && onGround) { sys.groundSpoilers = false; sys.gsArmed = false; }
-      const flight = sys.speedbrakeCmd ? (spec.speedbrakeMax ?? 0.5) : 0;
-      const tgt = sys.groundSpoilers ? 1 : onGround ? 0 : flight;
+      const flight = sys.speedbrakeCmd ? (spec.speedbrakeMax ?? 0.5) * fx.speedbrakeScale : 0;
+      const tgt = sys.groundSpoilers ? fx.groundSpoilerScale : onGround ? 0 : flight;
       sys.spoilers = moveToward(sys.spoilers, tgt, h / (sys.groundSpoilers ? 0.8 : 2));
       sys.speedbrake = sys.speedbrakeCmd ? 1 : 0;
       // autobrake: landing (armed by gear down in flight) and RTO (armed on the takeoff roll)
@@ -764,7 +800,7 @@ export class FixedWingModel {
       if (onGround && lever > 0.7 && this.groundSpeed < 30) { sys.rtoArmed = true; sys.autobrake = 'RTO'; }
       if (!onGround && this._airTime > 5) { sys.rtoArmed = false; if (sys.autobrake === 'RTO') sys.autobrake = ''; }
     } else {
-      sys.speedbrake = moveToward(sys.speedbrake, sys.speedbrakeCmd ? 1 : 0, h / (spec.speedbrakeTime ?? 1.5));
+      sys.speedbrake = moveToward(sys.speedbrake, sys.speedbrakeCmd ? fx.speedbrakeScale : 0, h / (spec.speedbrakeTime ?? 1.5));
       sys.spoilers = 0;
     }
     // canopy
@@ -779,7 +815,7 @@ export class FixedWingModel {
     let brake = pedal;
     if (sys.parkingBrake) brake = 1;
     sys.autobrakeActive = false;
-    if (onGround && sys.autobrake && !sys.parkingBrake) {
+    if (onGround && sys.autobrake && !sys.parkingBrake && fx.autobrake) {
       const rto = sys.autobrake === 'RTO';
       if (pedal > 0.6 || (!rto && lever > 0.2 && !sys.reverserCmd)) { sys.autobrake = ''; this._abLatched = false; }
       else {
@@ -847,7 +883,7 @@ export class FixedWingModel {
     const set = (k, on) => { if (w[k] !== on) { w[k] = on; this._emit('warning', { type: k, on }); } };
     // stall: 737 stick shaker ahead of the stall; FBW jets only when actually stalled
     let stall = this.stalled;
-    if (this.law === 'conventional' && air) stall = stall || ad.alpha > this.fcs.st.alphaForCL((spec.fcs.shakerCL ?? 0.9) * this.lp.CLmax);
+    if ((this.law === 'conventional' || this.fx.stallWarn) && air) stall = stall || ad.alpha > this.fcs.st.alphaForCL((spec.fcs.shakerCL ?? 0.9) * this.lp.CLmax);
     set('stall', air && stall);
     // overspeed: VMO/MMO, flaps VFE, gear VLE
     const vfe = this.vSpeeds.vfe;
@@ -871,6 +907,7 @@ export class FixedWingModel {
       set('togaLock', this._floor === 'TOGA LK');
       set('lowEnergy', this._lowEnergy());
     }
+    this._fl.warnings(set);          // engineFail, engineFire, hydraulic, gearUnsafe
     if (this.fighter) {
       // confirmed for 1 s (a keyboard rotation briefly overshoots 15° AoA with the gear down)
       const ls = this._fighterLowSpeed(air);
@@ -982,18 +1019,19 @@ export class FixedWingModel {
       const tiller = (G.steerMax ?? 70) * DEG / (1 + (gs / 6) ** 2);
       const steerMax = Math.max(tiller, (G.steerPedal ?? 7) * DEG);
       const pedalIn = this.apOut.active && this.apOut.pedal != null ? this.apOut.pedal : clamp(inp.yaw ?? 0, -1, 1);
-      const steer = sys.gear > 0.98 ? pedalIn * steerMax : 0;
-      this._steer = steer;
+      const fx = this.fx, legs = fx.gearPath;
       const locked = sys.gear > 0.98;
+      const steer = (legs ? this._noseLegDown() : locked) && fx.steer ? pedalIn * steerMax : 0;
+      this._steer = steer;
       for (const w of this._wheels) {
         w.contact = false; w.load = 0; w.comp = 0;
-        if (!locked) continue;
+        if (legs ? !(w.leg > 0.98) : !locked) continue;     // a leg that is not down and locked never touches
         _rw.copy(w.r).applyQuaternion(quat);
         _pw.copy(pos).add(_rw);
         const gh = groundAt(world, _pw.x, _pw.z);
         const pen = gh - _pw.y;
         if (pen <= 0) continue;
-        if (isWater(world, _pw.x, _pw.z)) { this._crash('Uçak suya düştü'); return true; }
+        if (isWater(world, _pw.x, _pw.z)) { if (!this._tryDitch(world)) this._crash('Uçak suya düştü'); return true; }
         this._groundNormal(world, _pw.x, _pw.z, gh, _n);
         if (_n.y < 0.6) { this._crash('Uçak araziye çarptı'); return true; }
         const d = pen * _n.y;
@@ -1013,7 +1051,7 @@ export class FixedWingModel {
         _wl.crossVectors(_wf, _n);
         const vLong = _vc.dot(_wf), vLat = _vc.dot(_wl);
         let mu = onRunway ? (G.rollingFriction ?? 0.015) : (G.rollingFrictionGrass ?? 0.05);
-        if (w.brake) mu += (G.brakeFriction ?? 0.45) * (onRunway ? 1 : 0.6) * sys.brake;
+        if (w.brake) mu += (G.brakeFriction ?? 0.45) * (onRunway ? 1 : 0.6) * sys.brake * fx.brakeScale;
         const muLat = onRunway ? (G.lateralFriction ?? 0.7) : 0.5;
         const kLong = N / 0.08, kLat = N / 0.06;
         const fLong = -clamp(vLong * kLong, -mu * N, mu * N);
@@ -1035,7 +1073,7 @@ export class FixedWingModel {
         const pent = ght - _pw.y;
         if (pent > 0) {
           _vc.crossVectors(_omegaW, _rw).add(vel);
-          if (isWater(world, _pw.x, _pw.z)) { this._crash('Uçak suya düştü'); return true; }
+          if (isWater(world, _pw.x, _pw.z)) { if (!this._tryDitch(world)) this._crash('Uçak suya düştü'); return true; }
           if ((!this._tailWas && _vc.y < -2.5) || pent > 0.6) { this._crash(sys.gear < 0.98 ? 'İniş takımları açılmadan gövde üzerine inildi' : 'Kuyruk yere sert çarptı'); return true; }
           let N = 8 * m * G0 * pent - 0.5 * m * _vc.y;
           if (N < 0) N = 0;
@@ -1048,6 +1086,12 @@ export class FixedWingModel {
         }
         if (this.tailStrike && !this._tailWas) this._emit('warning', { type: 'tailStrike', on: true });
         this._tailWas = this.tailStrike;
+      }
+      // gear failure: belly / nacelle / nose skids (a landing on them is survivable, see _skids)
+      if (fx.skid) {
+        const r = this._skids(world, h, onRunway);
+        if (r < 0) return true;
+        if (r > 0) anyContact = true;
       }
     }
     this.wow = mainLoad > 0.05 * m * G0 || (wheelContact && this._contact && this.groundSpeed < 1);
@@ -1098,6 +1142,92 @@ export class FixedWingModel {
     return false;
   }
 
+  _noseLegDown() {
+    for (const w of this._wheels) if (w.kind !== 'main') return w.leg > 0.98;
+    return true;
+  }
+
+  /**
+   * Gear failure: structure points under a leg that is not down (belly, nacelles, nose) slide on the ground like skids
+   * (friction 0.3 on a runway, 0.45 elsewhere) instead of ending the flight. Returns -1 crashed / ditched, 1 in
+   * contact, 0 clear. First contact emits 'touchdown' with belly: true.
+   */
+  _skids(world, h, onRunway) {
+    const pos = this._pos, quat = this._quat, vel = this.velocity, m = this.mass;
+    let hit = 0;
+    for (const s of this._structure) {
+      if (!s.skid) continue;
+      _rw.copy(s.r).applyQuaternion(quat);
+      _pw.copy(pos).add(_rw);
+      const pen = groundAt(world, _pw.x, _pw.z) - _pw.y;
+      if (pen <= 0) continue;
+      if (isWater(world, _pw.x, _pw.z)) { if (!this._tryDitch(world)) this._crash('Uçak suya düştü'); return -1; }
+      _vc.crossVectors(_omegaW, _rw).add(vel);
+      if ((!this._contact && _vc.y < -3.5) || pen > 0.8) { this._crash('Gövde yere sert çarptı'); return -1; }
+      let N = 10 * m * G0 * pen - 4 * m * _vc.y;
+      if (N < 0) N = 0;
+      _v1.set(0, N, 0);
+      _v3.set(_vc.x, 0, _vc.z);
+      const sp = _v3.length();
+      if (sp > 1e-4) _v1.addScaledVector(_v3, -Math.min((onRunway ? 0.3 : 0.45) * N, sp * m * 2) / sp);
+      _Fw.add(_v1); _Tw.add(_v2.crossVectors(_rw, _v1));
+      hit = 1;
+    }
+    if (hit && !this._contact && this._airTime > 1) {
+      const e = _euler.setFromQuaternion(quat, 'YXZ');
+      this._takeoffArmed = true;
+      this._emit('touchdown', { verticalSpeed: vel.y, onRunway: world && world.isOnRunway ? !!world.isOnRunway(pos.x, pos.z) : false,
+        pitch: e.x / DEG, roll: -e.z / DEG, belly: true });
+      this._airTime = 0;
+    }
+    return hit;
+  }
+
+  /**
+   * Airliner water landing with the gear up: survivable inside a ditching envelope (US Airways 1549: 125 KIAS, 9.5° nose
+   * up, 12.5 ft/s sink, wings level; Airbus: ≈11° pitch, minimum sink; beyond ≈900 ft/min the fuselage breaks up).
+   * Sink ≤ 4.6 m/s (900 fpm), pitch 2–16°, bank ≤ 10°, ≤ 190 KIAS. true = ditched: the aircraft floats from now on
+   * (flight.ditched, events 'ditch' { verticalSpeed, pitch, roll, ias } and 'touchdown' { water: true, ditched: true }).
+   */
+  _tryDitch(world) {
+    if (this.spec.category !== 'airliner' || this.sys.gear > 0.05 || this.ditched || this.crashed) return false;
+    const vel = this.velocity, e = _euler.setFromQuaternion(this._quat, 'YXZ');
+    const pitch = e.x / DEG, roll = -e.z / DEG, vs = vel.y;
+    const ias = this.ad.ias;
+    if (!(vs > -4.6 && pitch > 2 && pitch < 16 && Math.abs(roll) <= 10 && ias < 190 * KT)) return false;
+    this.ditched = true;
+    this._floatY = (this.spec.fuselageRadius || 2) * 0.35;
+    this._contact = true; this.onGround = true; this.stalled = false; this.wow = false;
+    for (const en of this.pp.engines) { en.n1 = 0; en.thrust = 0; en.fuelFlow = 0; en.afterburner = 0; }   // water ingestion
+    this.pp.st.thrust = 0;
+    for (const k in this.warnings) if (this.warnings[k]) { this.warnings[k] = false; this._emit('warning', { type: k, on: false }); }
+    if (this.autopilot.on) this.ap.disengage('ditch');
+    this._emit('ditch', { verticalSpeed: vs, pitch, roll, ias });
+    this._emit('touchdown', { verticalSpeed: vs, onRunway: false, pitch, roll, water: true, ditched: true });
+    return true;
+  }
+
+  /** Ditched: water drag slows the aircraft to a stop, it settles nose slightly up and wings level, floating. */
+  _floatStep(dt, world) {
+    dt = clamp(Number.isFinite(dt) ? dt : 0, 0, MAX_FRAME_DT);
+    if (dt <= 0) return;
+    const vel = this.velocity, pos = this._pos;
+    this._prevPos.copy(pos); this._prevQuat.copy(this._quat);
+    const gs = Math.hypot(vel.x, vel.z);
+    const k = gs > 1e-6 ? Math.max(0, gs - (0.0025 * gs * gs + 0.8) * dt) / gs : 0;
+    vel.x *= k; vel.z *= k; vel.y = 0;
+    pos.x += vel.x * dt; pos.z += vel.z * dt;
+    pos.y += (groundAt(world, pos.x, pos.z) + this._floatY - pos.y) * Math.min(1, dt / 1.5);
+    const e = _euler.setFromQuaternion(this._quat, 'YXZ');
+    const kk = Math.min(1, dt / 2.5);
+    _euler.set(e.x + (2 * DEG - e.x) * kk, e.y, e.z * (1 - kk), 'YXZ');
+    this._quat.setFromEuler(_euler);
+    this._omega.set(0, 0, 0);
+    this._time += dt;
+    this._contact = true;
+    this._updateReadouts(world, 1);
+  }
+
   _groundNormal(world, x, z, h0, out) {
     const hx = groundAt(world, x + 0.5, z) - h0;
     const hz = groundAt(world, x, z + 0.5) - h0;
@@ -1105,12 +1235,14 @@ export class FixedWingModel {
   }
 
   _checkStructure(world, h) {
+    const skid = this.fx.skid;
     for (const s of this._structure) {
-      if (s.kind === 'tail') continue;
+      if (s.kind === 'tail' || (skid && s.skid)) continue;
       _pw.copy(s.r).applyQuaternion(this._quat).add(this._pos);
       const g = groundAt(world, _pw.x, _pw.z);
       if (_pw.y < g) {
         const water = isWater(world, _pw.x, _pw.z);
+        if (water && this._tryDitch(world)) return true;
         let reason = s.reason;
         if (water) reason = 'Uçak suya düştü';
         else if (s.kind === 'belly' && this.sys.gear < 0.98) reason = 'İniş takımları açılmadan gövde üzerine inildi';

@@ -296,6 +296,9 @@ function createControls(hudRoot, { input, hud, getState }) {
   const bBrake = button('brake', 'brake', 'FREN', { onDown: () => { input.touch.brake = 1; }, onUp: () => { input.touch.brake = 0; }, title: 'Tekerlek freni' });
   const bHover = button('hover', 'hover', 'HOVER', { onDown: act('autopilot'), title: 'Havada asılı kal' });
   const bTilt = button('tilt', 'tilt', 'ORTALA', { onDown: () => { tilt.calibrate(); hud && hud.showMessage && hud.showMessage('Eğim ortalandı', 900); }, title: 'Eğimi ortala' });
+  // failures hook (src/flight/failures.js): emergency procedure (fire handle, alternate gear, APU, relight), shown while a failure is active
+  const bEmerg = button('emergency', null, 'ACİL', { onDown: act('emergency'), title: 'Acil durum prosedürü' });
+  bEmerg.b.style.display = 'none';
 
   // ---------- stick ----------
   const zone = el('div', 'gkx-zone', root);
@@ -541,7 +544,7 @@ function createControls(hudRoot, { input, hud, getState }) {
     sl.top = 26 * u; sl.H = Math.max(60, (sBot - sTop) - sl.top - 10 * u);
     buildMarks();
     // top right: AP, H.FREN (fixed wing) / FREN (helicopter), tilt centre
-    const topR = heli ? [bHover] : [bAP, bSB];
+    const topR = heli ? [bHover, bEmerg] : [bAP, bSB, bEmerg];
     if (tiltOn) topR.push(bTilt);
     let xr = W - R - B;
     for (const o of topR) { place(o.b, xr, T); xr -= B + gap; }
@@ -671,6 +674,9 @@ function createControls(hudRoot, { input, hud, getState }) {
       setState(bSB, (f.speedbrake || 0) > 0.05 || (f.spoilers || 0) > 0.3 ? 'amber' : '');
       setState(bAP, f.autopilot && f.autopilot.on ? 'on' : '');
     } else setState(bHover, f.autopilot && f.autopilot.on ? 'on' : '');
+    const fail = !!(f.failures && f.failures.active && f.failures.active.size);   // failures hook
+    if ((bEmerg.b.style.display !== 'none') !== fail) bEmerg.b.style.display = fail ? '' : 'none';
+    setState(bEmerg, fail ? 'hot' : '');
     setState(bBrake, input.state.brake > 0.05 || f.parkingBrake ? 'amber' : '');
     setSub(bBrake, f.parkingBrake ? 'PARK' : '');
     const cockpit = info.view === 'cockpit';

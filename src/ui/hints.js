@@ -9,6 +9,9 @@
 // ctx is the per-frame context of src/ui/tutorial.js (flight, input state, key labels, speeds in kt, view). Low-speed
 // rules follow the flight models' flags (src/flight: warnings.lowEnergy / alphaFloor / togaLock (A320), lowSpeed
 // (fighters), stall); the autopilot-disconnect rule polls the audio system (window.__audioSys.debug().apd).
+// Failures (src/flight/failures.js, flight.failures.active + warnings.engineFail / engineFire / hydraulic / gearUnsafe /
+// tailRotor + flight.failInfo) get their own warning hints with the memory items of the real type; {I} / ACİL is the
+// emergency key (fire handle, alternate gear, APU, relight).
 import { injectCSS } from './styles.js';
 import { el, richText, plainText, storageGet, storageSet } from './util.js';
 import { keySet } from './tutorial-keys.js';
@@ -64,8 +67,130 @@ function apDisconnectAlert() {
 /** "{Shift} / {9}" (thrust up, and the 90 % / MIL preset on a keyboard). */
 const thrUp9 = (k) => `${k.chip('thrUp')}${k.kb ? ' / {9}' : ''}`;
 
+// ---------- failures ----------
+/** Active failure record of a kind (flight.failures.active: Map kind → opts), or null. */
+const failure = (c, kind) => { const a = c.f.failures && c.f.failures.active; return (a && a.get(kind)) || null; };
+const failInfo = (c) => c.f.failInfo || {};
+/** The emergency key: I on a keyboard, the ACİL button on touch screens. */
+const emKey = (k) => (k.touch ? '{ACİL}' : '{I}');
+const SIDE = ['Sol', 'Sağ'];
+const engName = (c, i) => (c.cat === 'helicopter' ? `${i + 1} numaralı motor` : (c.f.engines || []).length > 1 ? `${SIDE[i] || 'Bir'} motor` : 'Motor');
+function allEnginesOut(c) {
+  if (failure(c, 'engineAll')) return true;
+  const e = c.f.engines;
+  if (!e || !e.length || !c.f.failures || !c.f.failures.active.size) return false;
+  for (let i = 0; i < e.length; i++) if (!(e[i].failed || e[i].running === false)) return false;
+  return true;
+}
+const specId = (c) => (c.spec && c.spec.id) || (c.f.spec && c.f.spec.id) || '';
+const kt = (ms) => Math.round((ms || 0) * MS_KT / 5) * 5;
+const FAILURE_RULES = [
+  {
+    // engine fire: fire handle / shutdown + extinguisher (F-16: no extinguisher, the fuel cut puts it out)
+    id: 'failFire', topic: 'failure', tone: 'warn', after: 0.4, cooldown: 12, cap: 6,
+    cond: (c) => !!warn(c).engineFire && !!failInfo(c).fireUnhandled,
+    text(k, c) {
+      const i = failInfo(c).fireIndex, n = engName(c, Math.max(0, i));
+      if (specId(c) === 'f16') return `Motor yangını! Motoru kapat: ${emKey(k)} (F-16'da söndürücü yok, yakıt kesilince söner), sonra süzülerek en yakın piste dön.`;
+      return `${n} yangını! Motoru kapatıp söndürücüyü boşalt: ${emKey(k)}. Kapatmazsan motor birazdan durur.`;
+    },
+  },
+  {
+    // both engines out, airliner: glide (A320 green dot / 737 VREF40+70), APU, nearest runway or the Bay (ditching)
+    id: 'failDual', topic: 'failure', tone: 'warn', after: 0.8, cooldown: 45, cap: 3,
+    cond: (c) => c.cat === 'airliner' && !c.f.onGround && allEnginesOut(c),
+    text(k, c) {
+      const f = c.f, gd = kt(f.vSpeeds && f.vSpeeds.greenDot);
+      const apu = f.apu === 'off' && failInfo(c).apuAvail ? ` ${emKey(k)} ile APU'yu çalıştır.` : '';
+      return specId(c) === 'a320neo'
+        ? `İki motor da durdu! Burnu indir, yeşil nokta hızını (≈${gd} kt) koru; RAT açıldı, alternatif kumanda.${apu} En yakın piste ya da körfeze süzül.`
+        : `İki motor da durdu! Burnu indir, ≈${gd} kt süzülme hızını koru; kumandalar ağırlaştı.${apu} En yakın piste ya da körfeze süzül.`;
+    },
+  },
+  {
+    // ditching memory items once low with both engines out
+    id: 'failDitch', topic: 'failure', tone: 'caution', after: 0.5, cooldown: 60, cap: 2,
+    cond: (c) => c.cat === 'airliner' && !c.f.onGround && allEnginesOut(c) && c.f.agl < 250 && c.f.agl > 20,
+    text: (k) => `Suya inmen gerekirse: iniş takımı yukarıda, burun ≈10° yukarıda ${k.chip('pitchUp')}, kanatlar düz, alçalmayı en aza indir.`,
+  },
+  {
+    // fighters: flameout (F-16 EPU, 200 KIAS glide, airstart envelope)
+    id: 'failFlameout', topic: 'failure', tone: 'warn', after: 0.8, cooldown: 45, cap: 3,
+    cond: (c) => c.cat === 'fighter' && !c.f.onGround && allEnginesOut(c) && !failInfo(c).relighting,
+    text(k, c) {
+      const f16 = specId(c) === 'f16', v = f16 ? 200 : 220;
+      const env = f16 ? '20.000 ft altında 170–400 kt, 30.000 ft altında 250–400 kt' : '30.000 ft altında 200–450 kt';
+      if (!failInfo(c).restartable) return `${f16 ? 'Motor durdu' : 'İki motor da durdu'}, yeniden çalışmaz: ${v} kt ile en yakın piste süzül, iniş takımını ${k.chip('gear')} ve ${emKey(k)} (alternatif) ile indir.`;
+      return `${f16 ? 'Motor sustu (flameout)' : 'İki motor da sustu'}! Burnu indir, ${v} kt süzülme hızını koru${f16 ? ', EPU çalışıyor' : ''}. Yeniden çalıştırmak için ${emKey(k)} (${env}).`;
+    },
+  },
+  {
+    // one engine of a twin: rudder toward the live engine, climb at V2, return
+    id: 'failEngine', topic: 'failure', tone: 'warn', after: 0.6, cooldown: 45, cap: 3,
+    cond: (c) => !!failure(c, 'engine') && !allEnginesOut(c) && !warn(c).engineFire,
+    text(k, c) {
+      const i = failure(c, 'engine').index || 0, n = engName(c, i);
+      if (c.cat === 'helicopter') return `${n} durdu: tek motorla güç sınırlı. Torku %100'ün altında tut ${k.chip('thrDown')}, ≈80 kt ileri hızı koru, yavaşça in.`;
+      if (c.cat === 'fighter') return `${n} durdu: uçuş kontrol sistemi yönü tutuyor. Tek motorla en yakın piste dön.`;
+      const ped = k.chip(i === 0 ? 'yawRight' : 'yawLeft');
+      return k.touch
+        ? `${n} arızalı: tam güç ver, kanatları düz tut, V2 hızında tırman; en yakın piste dön.`
+        : `${n} arızalı: dümenle yönü tut ${ped}, tam güç ver, V2 hızında tırman; en yakın piste dön.`;
+    },
+  },
+  {
+    // helicopter: both engines out → autorotation and flare
+    id: 'failAutorotation', topic: 'failure', tone: 'warn', after: 0.2, cooldown: 30, cap: 3,
+    cond: (c) => c.cat === 'helicopter' && !c.f.onGround && allEnginesOut(c),
+    text: (k) => `İki motor da durdu! Kolektifi hemen indir ${k.chip('thrDown')} (otorotasyon), rotor devrini koru. Yere ≈25 m kala burnu kaldır, sonra kolektifle yumuşat ${k.chip('thrUp')}.`,
+  },
+  {
+    // helicopter tail rotor: lower the collective (less torque), keep forward speed, run-on landing
+    id: 'failTailRotor', topic: 'failure', tone: 'warn', after: 0.3, cooldown: 30, cap: 3,
+    cond: (c) => c.cat === 'helicopter' && !!warn(c).tailRotor && !c.f.onGround,
+    text: (k) => `Kuyruk rotoru arızası! Kolektifi indir ${k.chip('thrDown')}: tork azalınca dönüş durur. ≈80 kt ileri hızla alçal, piste koşarak in.`,
+  },
+  {
+    // gear not down and locked: alternate extension, else a gear-up landing
+    id: 'failGear', topic: 'failure', tone: 'warn', after: 0.5, cooldown: 30, cap: 4,
+    cond: (c) => !!warn(c).gearUnsafe,
+    text(k, c) {
+      const fi = failInfo(c), g = failure(c, 'gear');
+      const which = g ? { nose: 'Burun iniş takımı', left: 'Sol ana iniş takımı', right: 'Sağ ana iniş takımı', all: 'İniş takımı' }[g.which] || 'İniş takımı' : 'İniş takımı';
+      if (!fi.gearAlt) return `${which} inmedi! Alternatif indirme: ${emKey(k)}. İnmezse takımsız inişe hazırlan.`;
+      if (!fi.gearAltOk) return `${which} alternatif sistemle de inmedi: takımsız iniş. Pistin ortasına en düşük alçalma hızıyla in${g && g.which === 'nose' ? ', burnu olabildiğince uzun havada tut' : ''}.`;
+      return `${which} alternatif sistemle iniyor… Kilitlenmesini bekle.`;
+    },
+  },
+  {
+    // hydraulic loss: what the real type loses
+    id: 'failHydraulic', topic: 'failure', tone: 'caution', after: 1, cooldown: 60, cap: 2,
+    cond: (c) => !!warn(c).hydraulic && !allEnginesOut(c),
+    text(k, c) {
+      const f = c.f, id = specId(c), sys = (failure(c, 'hydraulic') || {}).systems || '';
+      if (id === 'a320neo') {
+        const alt = f.controlLaw && f.controlLaw !== 'normal';
+        return `Hidrolik ${sys} kaybı${alt ? ': alternatif kumanda, korumalar yok' : ''}. ${/G/.test(sys) && /Y/.test(sys) ? 'Flaplar ve trim kilitli; ' : ''}iniş takımını ${k.chip('gear')} ${/G/.test(sys) ? `ve ${emKey(k)} (yerçekimiyle) ` : ''}indir, uzun pist seç.`;
+      }
+      if (id === 'b737') {
+        if (/A/.test(sys) && /B/.test(sys)) return `Hidrolik A ve B kaybı: kumandalar ağırlaştı (manuel kumanda), yumuşak hareket et. Flaplar yavaş (en fazla 15); iniş takımını ${k.chip('gear')} ve ${emKey(k)} ile elle indir.`;
+        return `Hidrolik ${sys} kaybı: yedek sistemler devrede. ${/A/.test(sys) ? `İniş takımını ${k.chip('gear')} ve ${emKey(k)} ile elle indir.` : 'Flaplar yavaş, en fazla 15.'}`;
+      }
+      if (/B/.test(sys)) return `Hidrolik B arızası: kumandalar A sistemiyle çalışıyor. İniş takımı için ${k.chip('gear')} sonra ${emKey(k)} (ALT GEAR); frenler zayıf.`;
+      return `Hidrolik ${sys} arızası: kumandalar diğer sistemle çalışıyor, daha yavaş${/A/.test(sys) ? '; hava freni çalışmaz' : ''}.`;
+    },
+  },
+  {
+    // a successful ditching
+    id: 'ditched', topic: 'failure', tone: 'info', after: 1.5, cooldown: 60, cap: 1,
+    cond: (c) => !!c.f.ditched,
+    text: () => 'Suya başarıyla inildi: uçak yüzüyor, tahliye başlayabilir.',
+  },
+];
+
 // id, topic, tone, after (s the condition must hold), cooldown (s), cap (per session), once (per browser), cond(c), text(k, c)
 const RULES = [
+  ...FAILURE_RULES,
   {
     // A320 FAC low-energy warning ("SPEED SPEED SPEED"): thrust is needed now
     id: 'lowEnergy', topic: 'stall', tone: 'warn', after: 0.3, cooldown: 20, cap: 4,

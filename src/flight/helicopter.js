@@ -15,6 +15,10 @@
 //  * AFCS (helicopter-afcs.js): SAS/FPS attitude hold + trim, turn coordination, hover / altitude hold modes.
 //  * Ground: struts with springs/dampers, brakes, castoring tail wheel, stiction, touchdown/hard landing, dynamic
 //    rollover, rotor/tail-rotor strikes (terrain, world.getObstacleHeight, world.hitTest), water ditching.
+//  * Failures (failures.js API): engine (one T700 out: the other at its contingency rating, ≈ 59 % of the dual-engine
+//    transmission torque), engineAll (autorotation: NR from the airflow, flare), fire (the engine fails after a delay
+//    unless shut down; fire handle + extinguisher), tailRotor ('drive': no tail-rotor thrust, the main-rotor torque yaws
+//    the nose right; 'fixed': pitch frozen). Flags engineFail, engineFire, tailRotor.
 //
 // Body axes (Three.js): nose -Z, up +Y, right +X. Aero sign convention: p = roll right, q = nose up, r = nose right.
 // No DOM access: runs in Node (tests/helicopter.test.mjs).
@@ -24,6 +28,7 @@ import {
 } from './helicopter-aero.js';
 import { AFCS } from './helicopter-afcs.js';
 import { createLnav } from '../nav/lnav.js';
+import { FailureManager } from './failures.js';
 
 const H = 1 / 120;             // internal fixed step (s)
 const MAX_FRAME_DT = 0.25;
@@ -131,12 +136,13 @@ export class HelicopterModel {
     this.throttle = 0; this.onGround = true; this.stalled = false; this.crashed = false; this.crashReason = '';
     this.crashCause = '';         // '' | 'collective' (collective lowered into a hard ground / water impact, see _crash)
     this.aileron = 0; this.elevator = 0; this.rudder = 0;
-    this.engines = [0, 1].map(() => ({ n1: 0, thrust: 0, afterburner: 0, fuelFlow: 0, power: 0, torque: 0, running: true }));
+    this.engines = [0, 1].map(() => ({ n1: 0, thrust: 0, afterburner: 0, fuelFlow: 0, power: 0, torque: 0, running: true, cause: '' }));
     this.gear = 1; this.gearHandleDown = true; this.flaps = 0; this.flapsIndex = 0; this.flapsLabel = '—';
     this.slats = 0; this.spoilers = 0; this.speedbrake = 0; this.reverser = 0; this.brakes = 0;
     this.fuel = spec.mass.fuel;
     this.warnings = { stall: false, overspeed: false, gear: false, bank: false, sinkRate: false, pullUp: false,
-      lowRotor: false, highRotor: false, overtorque: false, vrs: false, lowFuel: false };
+      lowRotor: false, highRotor: false, overtorque: false, vrs: false, lowFuel: false,
+      engineFail: false, engineFire: false, tailRotor: false };   // failure flags
     this.autopilot = { on: false, altitude: 0, heading: 0, speed: 0, mode: null, radar: false };   // altitude AGL when radar
     this.rotorRPM = 1; this.collective = 0; this.torque = 0;
     this.pendingThrottle = null;  // input.js lever sync request (adopted and cleared by the input module)
@@ -183,6 +189,12 @@ export class HelicopterModel {
     this._dyn = false;
 
     this._buildContacts(contacts);
+    // failures (CONTRACTS-SF.md §12)
+    this._fire = [{ on: false, t: 0, delay: 30, handle: false, ext: 0 }, { on: false, t: 0, delay: 30, handle: false, ext: 0 }];
+    this._trFail = '';             // '' | 'drive' | 'fixed' (tail rotor)
+    this._trPed = 0;               // frozen tail-rotor pedal ('fixed')
+    this.failInfo = { fireUnhandled: false, fireIndex: -1, restartable: false, relighting: false, gearAlt: false, gearAltOk: true, apuAvail: false, glideKt: 80 };
+    this.failures = new FailureManager(this);
     this._resetInternals();
   }
 
@@ -269,11 +281,91 @@ export class HelicopterModel {
     this._computeHoverTrim();
   }
 
-  /** Engine failure (i = 0 or 1, or 'both'); failed = false restores it. Emits 'warning' {type: 'engine', on}. */
+  /** Engine failure (i = 0 or 1, or 'both'); failed = false restores it (failures.inject / clear). Emits 'warning' {type: 'engine', on}. */
   failEngine(i, failed = true) {
-    const list = i === 'both' ? [0, 1] : [i];
-    for (const k of list) if (this.engines[k]) this.engines[k].running = !failed;
+    if (failed) this.failures.inject(i === 'both' ? 'engineAll' : 'engine', { index: i === 'both' ? 0 : i });
+    else this.failures.clear(i === 'both' ? undefined : this.failures.has('engineAll') ? 'engineAll' : 'engine');
     this._emit('warning', { type: 'engine', on: this.engines.some((e) => !e.running) });
+  }
+
+  // ---- failures.js hooks
+  _failNormalize(kind, o) {
+    const index = Number.isInteger(o.index) ? o.index : 0;
+    switch (kind) {
+      case 'engine': return index === 0 || index === 1 ? { index, restartable: false, cause: o.cause || 'failure' } : null;
+      case 'engineAll': return { restartable: false, cause: o.cause || 'failure' };
+      case 'fire': return index === 0 || index === 1 ? { index, delay: Number.isFinite(o.delay) ? Math.max(0, o.delay) : 30 } : null;
+      case 'tailRotor': return { mode: o.mode === 'fixed' ? 'fixed' : 'drive' };
+      default: return null;       // hydraulic / gear: not modelled on the UH-60 (fixed gear, transmission-driven hydraulics)
+    }
+  }
+  _failApply(kind, o, on) {
+    switch (kind) {
+      case 'engine': this.engines[o.index].running = !on; if (!on) this.engines[o.index].cause = ''; else this.engines[o.index].cause = o.cause; break;
+      case 'engineAll': for (const e of this.engines) { e.running = !on; e.cause = on ? o.cause : ''; } break;
+      case 'fire':
+        if (on) Object.assign(this._fire[o.index], { on: true, t: 0, delay: o.delay, handle: false, ext: 0 });
+        else for (const f of this._fire) { f.on = false; f.handle = false; }
+        break;
+      case 'tailRotor': this._trFail = on ? o.mode : ''; this._trPed = this._s.cPed; break;
+      default: break;
+    }
+    if (!on && !this.failures.active.size) {
+      for (const e of this.engines) { e.running = true; e.cause = ''; }
+      for (const f of this._fire) { f.on = false; f.handle = false; }
+      this._trFail = '';
+    }
+    this._failInfo();
+  }
+  _failInfo() {
+    const i = this._fire[0].on && !this._fire[0].handle ? 0 : this._fire[1].on && !this._fire[1].handle ? 1 : -1;
+    this.failInfo.fireIndex = i; this.failInfo.fireUnhandled = i >= 0;
+  }
+  _failPhase() {
+    if (this.crashed || this._contact) return 'parked';
+    const V = Math.hypot(this.velocity.x, this.velocity.z), vs = this.velocity.y;
+    if (this._airTime < 60 && this.agl < 150) return 'takeoff';
+    if (vs < -2 && (this.agl < 300 || V < 25)) return 'approach';
+    if (vs > 2.5) return 'climb';
+    if (vs < -2.5) return 'descent';
+    return 'cruise';
+  }
+  _failRandomOpts(kind, rng) {
+    const out = this.engines.some((e) => !e.running);
+    switch (kind) {
+      case 'engine': if (out) return null; return rng ? { index: rng() < 0.5 ? 0 : 1 } : true;
+      case 'engineAll': if (out) return null; return rng ? {} : true;
+      case 'fire': if (out) return null; return rng ? { index: rng() < 0.5 ? 0 : 1 } : true;
+      case 'tailRotor': if (this._trFail) return null; return rng ? { mode: rng() < 0.6 ? 'drive' : 'fixed' } : true;
+      default: return null;
+    }
+  }
+  /** Fire timers (per frame): the engine fails after the delay unless shut down; handle → agent → out after 4 s. */
+  _failFrame(dt) {
+    for (let i = 0; i < 2; i++) {
+      const f = this._fire[i];
+      if (!f.on) continue;
+      f.t += dt;
+      const e = this.engines[i];
+      if (!f.handle && e.running && f.t >= f.delay) {
+        e.running = false; e.cause = 'fire';
+        this.failures._set('engine', { index: i, restartable: false, cause: 'fire' });
+      }
+      if (f.handle && (f.ext += dt) >= 4) { f.on = false; f.handle = false; this.failures._drop('fire', { extinguished: true }); this._failInfo(); }
+    }
+  }
+  _failCommand(action) {
+    if (action === 'fireHandle' || action === 'emergency') {
+      const i = this._fire.findIndex((f) => f.on && !f.handle);
+      if (i < 0) { this._emit('warning', { type: 'noEmergency', on: true }); return false; }
+      const f = this._fire[i], e = this.engines[i];
+      f.handle = true; f.ext = 0;
+      if (e.running) { e.running = false; e.cause = 'shutdown'; this.failures._set('engine', { index: i, restartable: false, cause: 'shutdown' }); }
+      this._emit('warning', { type: 'fireHandle', on: true, index: i });
+      this._failInfo();
+      return true;
+    }
+    return false;
   }
 
   on(event, cb) { (this._handlers[event] ||= []).push(cb); }
@@ -403,6 +495,11 @@ export class HelicopterModel {
   /** Tail rotor with inflow state viT: adds force/moment into o (accumulate). */
   _tailRotorEval(viT) {
     const P = this.P, s = this._s, o = this._o;
+    if (this._trFail === 'drive') {
+      // tail-rotor drive failure: no thrust, no power (the main-rotor torque is no longer balanced)
+      o.Ttr = 0; o.Ptr = 0; o.vissT = 0; o.thT = 0; o.tauIT = 0.05; o.dTtrdped = 1;
+      return;
+    }
     const Om = Math.max(s.Om, 0.5) * P.gearT, OR = Om * P.RT, rho = s.rho, rhoA = rho * P.AT;
     const q0 = rhoA * OR * OR;
     const [tx, ty, tz] = P.tpos;
@@ -695,6 +792,7 @@ export class HelicopterModel {
   /** start: { x, z, heading (rad), altitude? (m MSL: airborne trimmed at speed), speed? (m/s) } */
   reset(start, world) {
     const P = this.P, s = this._s;
+    this.failures.reset();          // a new flight: no failures (missions inject after the reset)
     this._resetInternals();
     this.fuel = this.spec.mass.fuel;
     this.mass = this.spec.mass.empty + this._payload + this.fuel;
@@ -816,6 +914,10 @@ export class HelicopterModel {
         this._emit('afcs', { on: this.afcs.enabled });
         break;
       case 'stabilator': this.stabilatorAuto = !this.stabilatorAuto; break;
+      case 'emergency': case 'fireHandle':
+        if (action === 'emergency' && this._emergAt === this._stepCount) return false;   // one press per frame
+        if (action === 'emergency') this._emergAt = this._stepCount;
+        return this._failCommand(action);
       default: break;   // gear (fixed), flaps, speedbrake, reverser: not applicable
     }
   }
@@ -897,6 +999,7 @@ export class HelicopterModel {
       this._gSmooth += (g - this._gSmooth) * clamp(dt / 0.12, 0, 1);
     }
     this._backdriveLever(inp);
+    if (!this.crashed) { this._failFrame(dt); this.failures.frame(dt); }
     this._updateReadouts(world, this.crashed ? 1 : this._acc / H, dt);
   }
 
@@ -1000,6 +1103,7 @@ export class HelicopterModel {
     s.cLon += (ctl.cLon - s.cLon) * ks;
     s.cLat += (ctl.cLat - s.cLat) * ks;
     s.cPed += (ctl.cPed - s.cPed) * ks;
+    if (this._trFail === 'fixed') s.cPed = this._trPed;     // tail-rotor pitch frozen
     s.col = this._col;
     s.stab = moveToward(s.stab, this._stabilatorAngle(iasKt, this._col, q / DEG), h * 12 * DEG);
 
@@ -1379,6 +1483,9 @@ export class HelicopterModel {
     const x = o.vh > 1 ? o.Vn / o.vh : 0;
     set('vrs', air && x < -0.5 && x > -1.7 && o.u / Math.max(o.vh, 1) < 1.0 && vs < -3);
     set('lowFuel', this.fuel < 0.1 * this.spec.mass.fuel);
+    set('engineFail', !this.engines[0].running || !this.engines[1].running);
+    set('engineFire', this._fire[0].on || this._fire[1].on);
+    set('tailRotor', !!this._trFail);
     // pull up: terrain / obstacle look-ahead along the velocity (not in slow landing configurations)
     this._pullUpTimer -= dt;
     if (this._pullUpTimer <= 0) {

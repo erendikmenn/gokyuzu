@@ -12,6 +12,9 @@
 // Map: J opens / closes the navigation map (src/ui/map.js; M = mute, H = HUD are taken; J sits between them on the
 // home row and has the same label on the US and Turkish Q layouts). Esc closes the map before it can pause.
 // Direct cameras: Alt / Option + 1 … 7 fire on('cameraSelect', (id) => …) with the camera id (src/ui/camera-modes.js).
+// Emergency: I fires 'emergency' (failures, CONTRACTS-SF.md §12: fire handle, alternate gear, APU, relight — the model picks
+// the next useful item); it is also handed to window.__game.flight.command() here (the host routes only the classic
+// system actions; the model ignores a second call in the same frame).
 // Throttle sync: when the flight model publishes `pendingThrottle` (after a reset or an autopilot disconnect) the lever
 // adopts it (window.__game.flight, or call setThrottle()).
 // Touch source (phones / tablets, src/ui/touch.js): the on-screen stick, pedals and tilt write absolute axes into
@@ -53,7 +56,7 @@ const AXES = {
 
 const ACTION_KEYS = {
   KeyG: 'gear', KeyF: 'flapsDown', KeyV: 'flapsUp', KeyK: 'speedbrake', KeyN: 'reverser', KeyU: 'canopy',
-  KeyL: 'lights', KeyO: 'autopilot', KeyJ: 'map',
+  KeyL: 'lights', KeyO: 'autopilot', KeyJ: 'map', KeyI: 'emergency',
   KeyC: 'camera', Period: 'camera', Comma: 'cameraPrev', KeyT: 'view', KeyY: 'lookBack',
   KeyR: 'reset', KeyP: 'pause', Escape: 'pause', KeyH: 'hud', KeyM: 'mute', F1: 'help', Slash: 'help', IntlRo: 'help',
   Tab: 'menu',
@@ -108,7 +111,13 @@ export function createInput(target = globalThis.window) {
   let touchMode = false;
   let lastKind = 'kb';
 
-  const fire = (action, arg) => { for (const cb of handlers[action] || []) { try { cb(arg); } catch (e) { console.error(e); } } };
+  const fire = (action, arg) => {
+    for (const cb of handlers[action] || []) { try { cb(arg); } catch (e) { console.error(e); } }
+    if (action === 'emergency') {
+      const f = globalThis.__game && globalThis.__game.flight;
+      if (f && f.command) { try { f.command('emergency'); } catch (e) { console.error(e); } }
+    }
+  };
   const any = (codes) => codes.some((c) => down.has(c));
 
   function setLever(v) {
@@ -263,6 +272,7 @@ export function createInput(target = globalThis.window) {
       add('PEDAL', 'Kuyruk rotoru: şeridi sola / sağa kaydır, bırakınca ortalanır');
       add('HOVER', 'Otomatik havada asılı kalma (hover hold) aç / kapat · rota varsa rotayı uçar');
       add('FREN', 'Tekerlek freni (basılı tut)');
+      add('ACİL', 'Arıza varken görünür: motor yangınında motoru kapatır ve söndürür');
     } else {
       add('Sol çubuk', ftr ? 'Burun (g komutu) ve yatış · geri çek = burun yukarı' : 'Burun ve yatış · geri çek = burun yukarı');
       add('Sol çubuk ↔', 'Yerde burun tekerleğini de çevirir; havada dümeni uçak kendisi koordine eder');
@@ -275,6 +285,7 @@ export function createInput(target = globalThis.window) {
       add('AP', ftr ? 'Otopilot (irtifa / yön) aç / kapat' : 'Otopilot + otomatik gaz aç / kapat (iniş takımı inikken ILS yaklaşma)');
       add('AP açıkken', 'Çubuk irtifa ve yön hedefini, gaz sürgüsü hız hedefini değiştirir');
       add('FREN', 'Tekerlek freni (basılı tut)');
+      add('ACİL', 'Arıza varken görünür: yangında motoru kapat + söndür, takım inmezse alternatif indirme, APU, motoru yeniden çalıştır');
     }
     add('KAMERA', 'Kamera değiştir');
     add('KOKPİT', 'Kokpit / dış görünüm');
@@ -301,6 +312,7 @@ export function createInput(target = globalThis.window) {
       }
       add('1 … 9  ·  0', 'Kolektif %10 … %90  ·  %100');
       add('O', 'Otomatik havada asılı kalma (hover hold) aç / kapat · rota varsa rotayı uçar');
+      add('I', 'Acil durum: motor yangınında motoru kapat ve söndür');
     } else {
       add('W / S  ·  ↑ / ↓', ftr ? 'Burun aşağı / yukarı (g komutu)' : 'Burun aşağı / yukarı');
       add('A / D  ·  ← / →', 'Sola / sağa yatış');
@@ -324,6 +336,7 @@ export function createInput(target = globalThis.window) {
       add('O', ftr ? 'Otopilot (irtifa / yön) aç / kapa' : 'Otopilot + otomatik gaz aç / kapa (iniş takımı inikken ILS yaklaşma)');
       add('Otopilot açıkken', 'W/S irtifa hedefi, A/D yön hedefi, gaz tuşları hız hedefi; yaklaşmada çubuk otopilotu kapatır');
       add('Rota varken', 'O otopilotu rotada (LNAV) açar; A/D ile dönmek yön moduna (HDG) geçirir, rota haritada kalır');
+      add('I', 'Acil durum: yangında motoru kapat + söndür · takım inmezse alternatif indirme · APU · motoru yeniden çalıştır');
     }
     add('B / Boşluk', heli ? 'Tekerlek freni' : 'Fren (basılı tut)');
     add('L', 'Işıklar');

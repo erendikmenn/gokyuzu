@@ -12,6 +12,10 @@
 //   'conventional' 737: yoke = elevator around the stabilizer trim (elevator feel scales authority with speed),
 //                  aileron + spoilers direct, yaw damper; a mild keyboard assist auto-trims to hold the path and
 //                  levels the wings when released. The autopilot drives the NDI loops.
+// Failures (m.fx, fixedwing-failures.js): A320 alternate law (load-factor pitch without protections, direct roll, can
+// stall) and direct law (stick = elevator, THS by hand or frozen); 737 manual reversion (less authority, slow surfaces,
+// weaker assist, manual trim); fighters with one hydraulic system (slower surfaces); engine out on the airliners: the
+// pedals are the rudder with a limited yaw damper (no sideslip hold).
 //
 // Units: radians, rad/s, SI. Controls are normalized: elevator/aileron/rudder/trim/tvc in -1..1 (+ = nose up / roll
 // right / yaw right).
@@ -134,6 +138,10 @@ export function createFCS(m) {
   function pitchLaw(h, s, apOut) {
     const ad = m.ad;
     const lp = m.lp;
+    const fx = m.fx;
+    const altLaw = law === 'airbus' && fx.law !== 'normal';                            // alternate / direct law
+    const conv = law === 'conventional' || (altLaw && (fx.law === 'direct' || m.sys.gearHandleDown));   // direct pitch
+    st.conv = conv;
     // AoA limits of the law (config dependent for the airbus: alpha max just below the stall)
     let aMax, aMin = Math.max(lp.alphaStallNeg + 2 * DEG, (F.alphaMin ?? -10) * DEG);
     if (law === 'airbus' || law === 'conventional') {
@@ -142,7 +150,8 @@ export function createFCS(m) {
       st.alphaMax = alphaForCL((F.clAlphaMax ?? 0.92) * lp.CLmax);
       st.alphaProtA = alphaForCL((F.clAlphaProt ?? 0.80) * lp.CLmax);
       st.alphaFloorA = ad.M < 0.6 ? alphaForCL((F.clAlphaFloor ?? 0.87) * lp.CLmax) : 10;
-      if (law === 'airbus') {
+      if (altLaw) { st.alphaProt = false; aMax = lp.alphaStall + 10 * DEG; }   // alternate law: no alpha protection
+      else if (law === 'airbus') {
         // alpha protection: stick commands alpha between alpha prot (neutral) and alpha max (full aft)
         if (ad.alpha > st.alphaProtA) st.alphaProt = true;
         else if (ad.alpha < st.alphaProtA - 2 * DEG || s < -0.3) st.alphaProt = false;
@@ -163,23 +172,23 @@ export function createFCS(m) {
       st.nCmd = n;
       uAir = ndiPitch((F.Kq ?? 4) * (qCmd - ad.q));
       st.holding = false;
-    } else if (law === 'conventional') {
+    } else if (conv) {
       // yoke = elevator around the trim; the elevator feel limits authority at speed
       const dAlpha = Math.abs(m.mom.Mde) / Math.max(-m.mom.MalphaDim, 1);
       const nPerUnit = (ad.qbar * S * lp.CLa * dAlpha) / (m.mass * G0);
-      const auth = Math.min(1, (s >= 0 ? (F.pullG ?? 1.6) : (F.pushG ?? 1.2)) / Math.max(nPerUnit, 1e-3));
+      const auth = Math.min(1, (s >= 0 ? (F.pullG ?? 1.6) : (F.pushG ?? 1.2)) / Math.max(nPerUnit, 1e-3)) * fx.pitchAuth;
       uAir = m.act.trim + shape(s, expoP) * auth;
       qCmd = 0;
       // keyboard assist (like a control-wheel-steering / stability augmentation): once the yoke is released a
       // limited-authority elevator command holds the flight path (bank compensated to 30°) and the stabilizer
-      // trim slowly unloads it
-      if (!m.wow && Math.abs(s) < 0.03 && ad.V > 30) {
+      // trim slowly unloads it (737 only: the A320 direct law has none)
+      if (law === 'conventional' && !m.wow && Math.abs(s) < 0.03 && ad.V > 30) {
         st.assistT += h;
         const n = stickToN(h, 0, ad);
         const q = qFromN(pitchAttitudeLimit(n, ad), lp.alphaStall - 3 * DEG, aMin);
         const uHold = ndiPitch((F.Kq ?? 3) * (q - ad.q));
         const k = smoothstep(0.1, 1.0, st.assistT);
-        const A = F.assistPitch ?? 0.35;
+        const A = (F.assistPitch ?? 0.35) * fx.assistScale;
         uAir = m.act.trim + k * clamp(uHold - m.act.trim, -A, A);
         st.trimTarget = uHold;
         st.assist = k;
@@ -187,7 +196,7 @@ export function createFCS(m) {
     } else {
       // FBW
       let n;
-      const flareOk = law === 'airbus' && m.sys.gear > 0.9 && m.flapIndexActual >= (F.flareMinFlap ?? 2);
+      const flareOk = law === 'airbus' && !altLaw && m.sys.gear > 0.9 && m.flapIndexActual >= (F.flareMinFlap ?? 2);
       if (flareOk && !m.wow && m.agl < 15.2 && ad.vs < 1 && !apOut.active) {
         if (!st.flare) { st.flare = true; st.flareTheta = ad.theta; st.flareT = 0; }
       } else if (st.flare && (m.agl > 20 || m.wow || !flareOk)) st.flare = false;
@@ -198,7 +207,7 @@ export function createFCS(m) {
         st.holding = false;
       } else {
         let sEff = s;
-        if (law === 'airbus') {
+        if (law === 'airbus' && !altLaw) {
           // high speed protection above VMO+6 kt / MMO+0.01: the nose-down authority fades out and a nose-up
           // demand limits the speed to about VMO+16 kt with the stick held fully forward
           const vmo = spec.limits.vmo, mmo = spec.limits.mmo;
@@ -234,7 +243,7 @@ export function createFCS(m) {
     // for the others) unless the pilot pushes
     const noseUp = m.wow && m._wheels.some((w) => w.kind !== 'main' && !w.contact) && ad.theta > 0.3 * DEG;
     const derot = noseUp && s < 0.05 ? (F.rotDamping ?? 12) * 0.6 * (-(2 + Math.max(0, -s) * 4) * DEG - ad.q) : 0;
-    if (law === 'conventional') {
+    if (conv) {
       // keyboard assist on the takeoff roll: the rotation rate is limited (a full keyboard pull would over-rotate)
       uGround = uAir - (F.rotDamping ?? 12) * Math.max(0, ad.q - Math.max(0, s) * (F.rotRate ?? 4) * DEG) + derot;
     } else {
@@ -248,7 +257,7 @@ export function createFCS(m) {
     }
     const target = m.wow ? 0 : 1;
     st.blend = moveToward(st.blend, target, h * (target > st.blend ? 1 / (F.blendTime ?? 3) : 2.5));
-    if (law === 'conventional' && !(apOut.active && apOut.nCmd != null)) st.blend = target > 0 ? moveToward(st.blend, 1, h * 0.5) : 0;
+    if (conv && !(apOut.active && apOut.nCmd != null)) st.blend = target > 0 ? moveToward(st.blend, 1, h * 0.5) : 0;
     st.qCmd = qCmd;
     return lerp(uGround, uAir, st.blend);
   }
@@ -259,10 +268,14 @@ export function createFCS(m) {
     const I = m.I, w = m._omega;
     let pCmd;
     let direct = null;
+    const fx = m.fx;
+    const altLaw = law === 'airbus' && fx.law !== 'normal';
     if (apOut.active && apOut.pCmd != null) pCmd = apOut.pCmd;
-    else if (law === 'conventional') {
-      direct = s;
-      if (!m.wow && Math.abs(s) < 0.03 && ad.V > 30) {
+    else if (law === 'conventional' || altLaw) {
+      // conventional / Airbus alternate and direct law: stick = ailerons (+ spoilers)
+      direct = s * fx.rollAuth;
+      pCmd = null;
+      if (law === 'conventional' && !m.wow && Math.abs(s) < 0.03 && ad.V > 30) {
         // mild wing leveler (and back to 30° beyond 35° of bank)
         const phi = ad.phi;
         const aphi = Math.abs(phi);
@@ -302,7 +315,7 @@ export function createFCS(m) {
       const Lreq = I.roll * pdotDes - w.x * w.y * (I.yaw - I.pitch);
       const Lda = m.mom.Lda;
       ail = Math.abs(Lda) > 1 ? (Lreq - m.mom.Lbase) / Lda : Math.sign(pdotDes);
-      if (direct != null) ail = direct + clamp(ail, -(F.assistRoll ?? 0.25), F.assistRoll ?? 0.25);
+      if (direct != null) { const A = (F.assistRoll ?? 0.25) * fx.assistScale; ail = direct + clamp(ail, -A, A); }
     } else ail = direct;
     st.pCmd = pCmd ?? 0;
     // on the ground the FBW laws are direct (with the blend back to flight law after liftoff)
@@ -318,6 +331,13 @@ export function createFCS(m) {
     if (m.wow || ad.V < 25) return clamp(pedal, -1, 1);
     const V = Math.max(ad.V, 30);
     const rCoord = (G0 / V) * Math.sin(ad.phi) * Math.cos(ad.theta) + ad.p * Math.tan(clamp(ad.alpha, -0.5, 0.8));
+    if (m.fx.pedalDirect && !apOut.active) {
+      // engine out / degraded law (airliners): the pedals move the rudder, the yaw damper adds limited rate damping and
+      // turn coordination (no sideslip hold): the pilot holds the rudder against the live engine
+      const A = m.fx.yawAuth, Ndr = m.mom.Ndr;
+      const damp = Math.abs(Ndr) > 1 ? (I.yaw * (F.Kr ?? 2.5) * (rCoord - ad.r)) / Ndr : 0;
+      return clamp(pedal + clamp(damp, -A, A), -1, 1);
+    }
     const betaCmd = pedal * (F.betaMax ?? 8) * DEG;
     const rCmd = rCoord + (F.Kb ?? 1.5) * (ad.beta - betaCmd);
     const rdotDes = (F.Kr ?? 2.5) * (rCmd - ad.r);
@@ -350,21 +370,27 @@ export function createFCS(m) {
 
     // allocation: elevator (+ stabilizer trim) + thrust vectoring
     let elevCmd, trimNext = act.trim;
-    if (law === 'conventional' && !(apOut.active && apOut.nCmd != null)) {
+    const fx = m.fx;
+    if (st.conv && !(apOut.active && apOut.nCmd != null)) {
       // elevator = yoke deflection around the stabilizer; the assist moves the stabilizer (auto-trim)
       elevCmd = clamp(uReq - act.trim, -1, 1);
-      if (!m.wow && st.assist > 0 && st.trimTarget != null) {
-        const rate = (F.assistTrimRate ?? 0.25) * st.assist;
-        trimNext = moveToward(act.trim, clamp(st.trimTarget, F.trimRange[0], F.trimRange[1]), rate * h);
+      if (law === 'conventional') {
+        if (!m.wow && st.assist > 0 && st.trimTarget != null) {
+          const rate = (F.assistTrimRate ?? 0.25) * st.assist * fx.trimRate;
+          trimNext = moveToward(act.trim, clamp(st.trimTarget, F.trimRange[0], F.trimRange[1]), rate * h);
+        }
+      } else if (!m.wow && !fx.trimFrozen && hasTrim) {
+        // A320 direct law: "USE MAN PITCH TRIM" (the pilot trims the stick force out, slowly)
+        trimNext = moveToward(act.trim, clamp(uReq, F.trimRange[0], F.trimRange[1]), 0.03 * h);
       }
     } else if (hasTrim) {
-      // auto-trim: the stabilizer follows the demand so the elevator returns near neutral
-      if (!m.wow && !st.flare) trimNext = moveToward(act.trim, clamp(uReq, F.trimRange[0], F.trimRange[1]), (rates.trim ?? 0.1) * h);
+      // auto-trim: the stabilizer follows the demand so the elevator returns near neutral (THS frozen: G+Y lost)
+      if (!m.wow && !st.flare && !fx.trimFrozen) trimNext = moveToward(act.trim, clamp(uReq, F.trimRange[0], F.trimRange[1]), (rates.trim ?? 0.1) * h);
       elevCmd = clamp(uReq - trimNext, -1, 1);
     } else elevCmd = clamp(uReq, -1, 1);
 
     let tvcCmd = 0;
-    if (F.tvc && m.pp.st.thrust > 1000) {
+    if (F.tvc && fx.tvc && m.pp.st.thrust > 1000) {
       const deficit = (uReq - (trimNext + elevCmd)) * m.mom.Mde;
       const perUnit = m.pp.st.thrust * F.tvc.arm * Math.sin(F.tvc.max * DEG);
       tvcCmd = clamp(deficit / perUnit, -1, 1);
@@ -372,11 +398,12 @@ export function createFCS(m) {
     }
 
     // actuators (rate limited)
-    act.elevator = moveToward(act.elevator, elevCmd, (rates.elevator ?? 2) * h);
-    act.aileron = moveToward(act.aileron, ailCmd, (rates.aileron ?? 2.5) * h);
-    act.rudder = moveToward(act.rudder, rudCmd, (rates.rudder ?? 2) * h);
+    const rs = fx.rateScale;           // hydraulic loss: slower actuators
+    act.elevator = moveToward(act.elevator, elevCmd, (rates.elevator ?? 2) * h * rs);
+    act.aileron = moveToward(act.aileron, ailCmd, (rates.aileron ?? 2.5) * h * rs);
+    act.rudder = moveToward(act.rudder, rudCmd, (rates.rudder ?? 2) * h * rs);
     act.trim = trimNext;
-    act.tvc = moveToward(act.tvc, tvcCmd, (rates.tvc ?? 3) * h);
+    act.tvc = moveToward(act.tvc, tvcCmd, (rates.tvc ?? 3) * h * rs);
   }
 
   function reset({ gamma = 0, phi = 0, airborne = false } = {}) {

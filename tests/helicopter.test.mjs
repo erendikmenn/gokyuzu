@@ -987,6 +987,134 @@ let curve = [];
   note('Collective dumped after lift-off, hands off', `impact after ${a.crashT?.toFixed(1)} s, NR max ${(a.nrMax * 100).toFixed(0)} %`, 'autorotation without flare → hard landing');
 }
 
+// =================================================================================================
+// 33. failures API (CONTRACTS-SF.md §12): OEI, autorotation, tail rotor, fire, clear()
+// =================================================================================================
+{
+  const evs = (f) => f.events.filter((e) => e.e === 'failure');
+  // a) one engine out at 80 kt through the API: level flight on the other T700 at its contingency rating, flags + event
+  {
+    const f = make();
+    f.on('failure', (i) => f.events.push({ e: 'failure', ...i }));
+    f.reset({ x: 0, z: 0, heading: 0, altitude: 504, speed: 80 * KT }, flatWorld);
+    const inp = newInput();
+    fly(f, flatWorld, inp, 0.1);
+    const ok = f.failures.inject('engine', { index: 0 });
+    const st = {};
+    let pMax = 0;
+    fly(f, flatWorld, inp, 40, 1 / 60, (t) => {
+      leverForVs(st, f, inp, 1 / 60, clamp(0.1 * (504 - f.altitude), -2, 2));
+      stickForPitch(f, inp, clamp(0.3 * (f.airspeed / KT - 80) + 2, -8, 10));
+      if (t > 5) pMax = Math.max(pMax, f.engines[1].power);
+    });
+    check('33a. failures.inject("engine") at 80 kt: OEI level flight, the live T700 ≤ its 1,994 shp rating, ENG FAIL flag, N1 < 55 % (ENGINE 1 OUT voice)',
+      ok && !f.crashed && Math.abs(f.altitude - 504) < 25 && f.rotorRPM > 0.97 && pMax <= spec.engine.powerShp * 745.7 * 1.001 && f.warnings.engineFail
+        && f.engines[0].n1 < 0.55 && evs(f).some((e) => e.kind === 'engine' && e.on && e.index === 0),
+      `alt ${f.altitude.toFixed(0)} m, NR ${(f.rotorRPM * 100).toFixed(0)} %, engine 2 max ${(pMax / 745.7).toFixed(0)} shp, N1 ${(f.engines[0].n1 * 100).toFixed(0)} / ${(f.engines[1].n1 * 100).toFixed(0)} %`);
+  }
+  // b) both engines out (engineAll) at 80 kt: autorotation, flare, survivable touchdown (the 27b/c pilot)
+  {
+    const g = make();
+    g.reset({ x: 0, z: 0, heading: 0, altitude: GROUND + 700, speed: 80 * KT }, flatWorld);
+    const inp = newInput();
+    fly(g, flatWorld, inp, 0.1);
+    g.failures.inject('engineAll');
+    let phase = 'auto', td = null, I = 0, nrMin = 2, lowRotor = false;
+    fly(g, flatWorld, inp, 150, 1 / 60, (t, _f, i, dt) => {
+      if (t < 1.2) { inp.throttle = Math.max(0.08, inp.throttle - 0.6 * dt); if (g.warnings.lowRotor) lowRotor = true; return; }   // ≈1 s reaction: collective down
+      if (phase === 'auto') {
+        const e = g.rotorRPM - 1.02;
+        I = clamp(I + 0.3 * e * dt, -0.2, 0.4);
+        inp.throttle = clamp(0.08 + 2.0 * e + I, 0, 0.5);
+        stickForPitch(g, inp, clamp(0.4 * (g.airspeed / KT - 80) + 2, -10, 15));
+        if (t > 15) nrMin = Math.min(nrMin, g.rotorRPM);
+        if (g.agl < 25) phase = 'flare';
+      } else if (phase === 'flare') {
+        stickForPitch(g, inp, 22);
+        if (g.rotorRPM > 1.08) inp.throttle = clamp(inp.throttle + (g.rotorRPM - 1.08) * 3 * dt, 0, 1);
+        if (g.verticalSpeed > -1.5 || g.agl < 3) phase = 'level';
+      } else if (phase === 'level') {
+        stickForPitch(g, inp, 6);
+        const e = (g.agl < 2.5 ? -0.6 : -2.0) - g.verticalSpeed;
+        inp.throttle = clamp(inp.throttle + clamp(0.9 * e, -0.4, 1.2) * dt, 0, 1);
+        if (td && g.onGround) phase = 'rollout';
+      } else { inp.pitch = 0; inp.brake = 1; inp.throttle = Math.max(0, inp.throttle - 0.5 * dt); if (t - td.t > 20) return false; }
+      if (!td) { td = g.events.find((e) => e.e === 'touchdown') || null; if (td) td.t = t; }
+    });
+    check('33b. failures.inject("engineAll") at 80 kt / 700 m: collective down within ≈1 s, autorotation (NR ≥ 90 %), flare → survivable touchdown',
+      !!td && !g.crashed && td.verticalSpeed > -3.6 && nrMin > 0.9 && g.warnings.engineFail && g.engines.every((e) => !e.running),
+      td ? `touchdown ${td.verticalSpeed.toFixed(2)} m/s at ${td.groundSpeed.toFixed(1)} m/s, NR min ${(nrMin * 100).toFixed(0)} %, LOW ROTOR at entry ${lowRotor}` : `no touchdown; ${g.crashReason}`);
+  }
+  // c) tail-rotor drive failure: spins in the hover; in cruise the collective down (less torque) keeps it controllable
+  {
+    const run = (hover, colDown) => {
+      const f = make();
+      if (hover) hovering(f, flatWorld, GROUND + 30); else f.reset({ x: 0, z: 0, heading: 0, altitude: GROUND + 900, speed: 100 * KT }, flatWorld);
+      const inp = newInput();
+      fly(f, flatWorld, inp, 0.1);
+      const h0 = f.heading;
+      f.failures.inject('tailRotor');
+      let rMax = 0;
+      const st = {};
+      fly(f, flatWorld, inp, hover ? 8 : 30, 1 / 60, (t, _g, _i, dt) => {
+        if (hover) leverForVs(st, f, inp, dt, 0);
+        else {
+          if (colDown && t > 1) inp.throttle = Math.max(0.1, inp.throttle - 0.5 * dt);
+          else if (!colDown) leverForVs(st, f, inp, dt, 0);
+          stickForPitch(f, inp, clamp(0.3 * (f.airspeed / KT - 80) + 2, -8, 12));
+          inp.roll = clamp(0.05 * -f.roll, -1, 1);
+        }
+        if (t > (hover ? 0 : 8)) rMax = Math.max(rMax, Math.abs(f.angularVelocity.y) * DEG);
+      });
+      return { f, rMax, dh: Math.abs(unwrap(f.heading - h0)) };
+    };
+    const h = run(true, false), p = run(false, false), d = run(false, true);
+    check('33c. Tail-rotor drive failure: hover → uncontrolled spin (> 60°/s); cruise with power → yaws away; collective down → heading held (< 20°, < 30°/s)',
+      h.rMax > 60 && h.f.warnings.tailRotor && p.rMax > 60 && !d.f.crashed && d.dh < 20 && d.rMax < 30 && d.f.warnings.tailRotor,
+      `hover ${h.rMax.toFixed(0)}°/s; cruise with power ${p.rMax.toFixed(0)}°/s; collective down ${d.rMax.toFixed(0)}°/s, Δheading ${d.dh.toFixed(0)}°, torque ${(d.f.torque * 100).toFixed(0)} %`);
+  }
+  // d) engine fire: fails after the delay unless shut down; the fire handle (emergency) shuts it down and puts it out
+  {
+    const run = (handle) => {
+      const f = make();
+      f.on('failure', (i) => f.events.push({ e: 'failure', ...i }));
+      f.reset({ x: 0, z: 0, heading: 0, altitude: 504, speed: 80 * KT }, flatWorld);
+      const inp = newInput();
+      fly(f, flatWorld, inp, 0.1);
+      f.failures.inject('fire', { index: 1, delay: 6 });
+      const st = {};
+      fly(f, flatWorld, inp, 12, 1 / 60, (t, _g, _i, dt) => {
+        if (handle && Math.abs(t - 2) < 0.009) f.command('emergency');
+        leverForVs(st, f, inp, dt, 0); stickForPitch(f, inp, clamp(0.3 * (f.airspeed / KT - 80) + 2, -8, 10));
+      });
+      return f;
+    };
+    const a = run(false), b = run(true);
+    check('33d. Engine fire: unhandled → engine 2 fails after the delay (fire burns on); fire handle → shut down, extinguished',
+      a.warnings.engineFire && !a.engines[1].running && evs(a).some((e) => e.kind === 'engine' && e.cause === 'fire') && !b.warnings.engineFire && !b.engines[1].running
+        && evs(b).some((e) => e.kind === 'fire' && !e.on && e.extinguished) && !a.crashed && !b.crashed,
+      `unhandled: burning ${a.warnings.engineFire}, engine 2 ${a.engines[1].running ? 'running' : 'off'}; handled: burning ${b.warnings.engineFire}, engine 2 ${b.engines[1].cause}`);
+  }
+  // e) clear() restores everything; kinds the UH-60 does not have are refused
+  {
+    const f = make();
+    f.reset({ x: 0, z: 0, heading: 0, altitude: 504, speed: 80 * KT }, flatWorld);
+    const inp = newInput();
+    fly(f, flatWorld, inp, 0.1);
+    for (const k of ['engineAll', 'tailRotor', 'fire']) f.failures.inject(k);
+    fly(f, flatWorld, inp, 3, 1 / 60, () => { inp.throttle = 0.2; });
+    const before = f.failures.active.size;
+    f.failures.clear();
+    const st = {};
+    fly(f, flatWorld, inp, 25, 1 / 60, (t, _g, _i, dt) => { leverForVs(st, f, inp, dt, 0); stickForPitch(f, inp, clamp(0.3 * (f.airspeed / KT - 80) + 2, -8, 10)); inp.roll = clamp(0.05 * -f.roll, -1, 1); });
+    const refused = !f.failures.inject('hydraulic') && !f.failures.inject('gear') && !f.failures.supports('gear');
+    check('33e. clear(): engines run, tail rotor back (yaw rate ≈ 0), flags off, NR 100 %; hydraulic / gear refused on the UH-60',
+      before === 3 && f.failures.active.size === 0 && f.engines.every((e) => e.running) && !f.warnings.engineFail && !f.warnings.tailRotor && !f.warnings.engineFire
+        && Math.abs(f.angularVelocity.y) * DEG < 3 && Math.abs(f.rotorRPM - 1) < 0.02 && refused && !f.crashed,
+      `active ${before} → ${f.failures.active.size}, yaw rate ${(f.angularVelocity.y * DEG).toFixed(1)}°/s, NR ${(f.rotorRPM * 100).toFixed(0)} %, refused ${refused}`);
+  }
+}
+
 // ---- report ------------------------------------------------------------------------------------
 const w1 = Math.max(...results.map((r) => r.name.length));
 console.log('\nUH-60M helicopter flight model tests\n');

@@ -12,6 +12,7 @@ export const DEFAULT_SETTINGS = {
   atc: true,                // automatic ATC radio in solo mode
   tutorial: true,           // first-flight tutorial, opening key card and contextual hints (src/ui/tutorial.js)
   units: 'aviation',        // kt / ft (the only option for now)
+  failures: 'off',          // random failures in free flight: 'off' | 'rare' | 'realistic' (src/flight/failures.js)
 };
 
 export function loadSettings() {

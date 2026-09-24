@@ -19,6 +19,10 @@ export const FLAGS = {
   fighterLowSpeed: ['lowSpeed'],                    // fighter AoA > 15° with the gear down → F-16 low-speed warning tone
   lowRotor: ['lowRotor'],                           // UH-60 NR < 96 % → LOW ROTOR (the audio adds the WOW inhibit)
   fire: ['fire', 'engineFire', 'apuFire'],          // fire detection → 737 fire bell, A320 CRC, F-16 WARNING (ENG FIRE)
+  // failures (src/flight/failures.js): engine failed / shut down, hydraulic pressure low, gear not down and locked
+  engineFail: ['engineFail'],                       // A320 ENG FAIL (single chime) / ENG DUAL FAILURE (CRC); F-16 / F-22 / UH-60 by N1
+  hydraulic: ['hydraulic'],                         // A320 HYD LO PR (dual: CRC), F-16 HYD/OIL PRESS light → WARNING, F-22 caution
+  gearUnsafe: ['gearUnsafe'],                       // A320 L/G GEAR NOT DOWNLOCKED (CRC); 737 gear horn / F-16 TO/LDG CONFIG already by position
 };
 /** true when any of the flight-model flags listed under FLAGS[key] is set */
 const flag = (s, key) => FLAGS[key].some((k) => s.w[k]);
@@ -239,11 +243,12 @@ export function fwcA320(dir, { dh = 200, heights = [2500, 1000, 500, 400, 300, 2
       haT: -99, phase5: null, retard: false, retardNext: 0, gpwsT: -99, spdNext: 0, spdHeld: 0, athrPrev: null, fuelDone: false, fcuPrev: null,
       fcuChangeT: -99, captured: false, apprArmed: false, prevRaDec: 0, decT: 0, iasPrev: null, decel: 0 };
     stallRep.reset(); spdConf.reset(); fuelConf.reset();
+    S.l3 = { dual: false, hyd: false, gear: false, until: -99 }; S.l2 = { eng: false, hyd: false };
   }
   reset();
   return {
     name: 'fwc', files, loops, reset, debug: () => ({ phase5: S.phase5, retard: S.retard, captured: S.captured }),
-    update(s, io) {
+    update(s, io, f) {
       const now = io.now, ft = s.ft, dt = s.dt, kt = s.kt;
       const air = !s.onGround;
       const toga = s.thr >= 0.95;
@@ -332,8 +337,20 @@ export function fwcA320(dir, { dh = 200, heights = [2500, 1000, 500, 400, 300, 2
       const toConfig = !air && s.thr >= 0.75 && s.rev < 0.1 &&
         (s.flapsIndex === 0 || s.flapsIndex >= s.landIdx || s.speedbrake > 0.05 || s.parkBrake);
       const fire = flag(s, 'fire');                     // ENG / APU FIRE (level 3) when the flight model reports it
-      io.loop('crc', fire || (air ? !!s.w.overspeed || gearNotDown : toConfig),
-        fire ? 'fire' : air ? (s.w.overspeed ? 'overspeed' : 'gearNotDown') : 'toConfig');
+      // failures: ENG DUAL FAILURE, HYD G+Y / B+G / B+Y LO PR, L/G GEAR NOT DOWNLOCKED = level 3 (CRC until the crew
+      // acknowledges it: 5 s here); ENG 1(2) FAIL and a single HYD LO PR = level 2 (single chime)
+      const engF = flag(s, 'engineFail'), hydLow = flag(s, 'hydraulic');
+      const hy = f && f.hydraulics;
+      const hydLost = hy ? (hy.G === false) + (hy.Y === false) + (hy.B === false) : hydLow ? 1 : 0;
+      const l3d = air && engF && s.n1max < 0.18, l3h = air && hydLost >= 2, l3g = air && flag(s, 'gearUnsafe');
+      if ((l3d && !S.l3.dual) || (l3h && !S.l3.hyd) || (l3g && !S.l3.gear)) S.l3.until = now + 5;
+      S.l3.dual = l3d; S.l3.hyd = l3h; S.l3.gear = l3g;
+      const l2eng = air && engF && !l3d, l2hyd = air && hydLow && hydLost < 2;
+      if ((l2eng && !S.l2.eng) || (l2hyd && !S.l2.hyd)) io.tone(v('single_chime'), { tag: 'fwc:master_caution' });
+      S.l2.eng = l2eng; S.l2.hyd = l2hyd;
+      const lvl3 = now < S.l3.until && (l3d || l3h || l3g);
+      io.loop('crc', fire || lvl3 || (air ? !!s.w.overspeed || gearNotDown : toConfig),
+        fire ? 'fire' : lvl3 ? 'failure' : air ? (s.w.overspeed ? 'overspeed' : 'gearNotDown') : 'toConfig');
       // ---- single chime: A/THR OFF (not below 50 ft with idle levers), FUEL WING TK LO LVL (< 750 kg per wing, 30 s).
       //      A/THR engaged = autopilot A/THR or the alpha-floor modes (flight.athrMode A.FLOOR / TOGA LK): moving the levers
       //      out of TOGA LK disconnects the A/THR → single chime + AUTO FLT A/THR OFF
@@ -422,6 +439,7 @@ export function f16Vms(dir, { alowFt = 500, bingoKg = 680, fuelLowKg = 295 } = {
         engine: air && s.n1min < 0.55,
         canopy: air && s.canopy > 0.02,
         fire: air && flag(s, 'fire'),                    // ENG FIRE
+        hyd: air && flag(s, 'hydraulic'),                // HYD/OIL PRESS (system A or B low)
       };
       for (const [k, on] of Object.entries(lights)) {
         const L = S.lights[k] || (S.lights[k] = { t: null, said: false });
@@ -472,7 +490,7 @@ export function f22Icaws(dir, { fuelLowFrac = 0.12 } = {}) {
   const pullRep = repeater('icaw:pullup', v('v_pullup'), 100, 0.1, { system: 'icaws' });
   const gearRep = repeater('icaw:gear', v('v_gear'), 80, 4, { system: 'icaws' });
   let S;
-  const reset = () => { S = { fuelLow: false, eng: [false, false] }; pullRep.reset(); gearRep.reset(); };
+  const reset = () => { S = { fuelLow: false, eng: [false, false], fire: false, hyd: false }; pullRep.reset(); gearRep.reset(); };
   reset();
   return {
     name: 'icaws', files, loops: {}, reset,
@@ -488,6 +506,10 @@ export function f22Icaws(dir, { fuelLowFrac = 0.12 } = {}) {
       const low = s.fuelKg > 0 && s.fuelFrac < fuelLowFrac;
       if (low && !S.fuelLow && air) io.tone(v('caution'), { tag: 'icaw:fuel_low' });
       S.fuelLow = low;
+      // failures: engine fire / hydraulic low → ICAWS tone (the warning tone is not recorded: the caution tone stands in)
+      const fire = air && flag(s, 'fire'), hyd = air && flag(s, 'hydraulic');
+      if ((fire && !S.fire) || (hyd && !S.hyd)) io.tone(v('caution'), { tag: 'icaw:failure' });
+      S.fire = fire; S.hyd = hyd;
     },
   };
 }

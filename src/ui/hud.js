@@ -39,6 +39,12 @@ const WARNINGS = [
   ['sinkRate', 'SINK RATE', 'Alçalma hızı yüksek', 'amber'],
   ['bank', 'BANK ANGLE', 'Yatış açısı fazla', 'amber'],
   ['gear', 'GEAR', 'İniş takımı yukarıda', 'amber'],
+  // failures (src/flight/failures.js flags)
+  ['engineFire', 'ENG FIRE', 'Motor yangını', 'red'],
+  ['engineFail', 'ENG FAIL', 'Motor arızası', 'amber', 8],     // 5th: s shown after onset (the master caution acknowledged)
+  ['tailRotor', 'TAIL ROTOR', 'Kuyruk rotoru arızası', 'red'],
+  ['gearUnsafe', 'GEAR UNSAFE', 'Takım kilitlenmedi', 'red'],
+  ['hydraulic', 'HYD', 'Hidrolik basıncı düşük', 'amber', 8],
 ];
 
 const CSS = `
@@ -1221,11 +1227,13 @@ export function createHUD(container) {
   function updateWarnings(f) {
     const w = f.warnings || {};
     const air = !f.onGround && !f.crashed;
-    for (const [key] of WARNINGS) {
+    const now = performance.now() / 1000;
+    for (const [key, , , , ack] of WARNINGS) {
       let on = !!w[key];
       if (key === 'stall' && f.warnings === undefined) on = air && !!f.stalled;
       if (f.crashed) on = false;
       const e = warnEls[key];
+      if (ack) { if (!on) e.t0 = null; else { if (e.t0 == null) e.t0 = now; if (now - e.t0 > ack) on = false; } }
       if (e.on !== on) { e.on = on; e.w.classList.toggle('on', on); }
     }
   }

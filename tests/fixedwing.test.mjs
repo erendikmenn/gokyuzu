@@ -296,7 +296,7 @@ function idleAfterTakeoff(id, recover = null, secs = 90, idle = true) {
   const key = (type, code, extra = {}) => { for (const cb of listeners[type] || []) cb({ code, key: '', repeat: false, preventDefault() {}, target: null, ...extra }); };
   const inp = createInput(target);
   const acts = [];
-  for (const a of ['gear', 'flapsDown', 'flapsUp', 'speedbrake', 'reverser', 'canopy', 'lights', 'autopilot', 'camera', 'cameraPrev', 'view', 'lookBack', 'reset', 'pause', 'hud', 'mute', 'help', 'menu', 'map']) inp.on(a, () => acts.push(a));
+  for (const a of ['gear', 'flapsDown', 'flapsUp', 'speedbrake', 'reverser', 'canopy', 'lights', 'autopilot', 'camera', 'cameraPrev', 'view', 'lookBack', 'reset', 'pause', 'hud', 'mute', 'help', 'menu', 'map', 'emergency']) inp.on(a, () => acts.push(a));
   inp.setAircraft(SPECS.a320neo);
   // pitch ramps: a short tap is a small input, a long hold reaches full deflection, release returns to 0
   key('keydown', 'KeyS'); inp.update(0.05); const tap = inp.state.pitch;
@@ -324,9 +324,9 @@ function idleAfterTakeoff(id, recover = null, secs = 90, idle = true) {
     `MIL ${atDet}, AB ${inAB.toFixed(3)}, back ${backDet}`);
   // actions + momentary speedbrake + model throttle sync
   acts.length = 0;
-  for (const c of ['KeyG', 'KeyF', 'KeyV', 'KeyN', 'KeyU', 'KeyL', 'KeyO', 'KeyC', 'Comma', 'KeyT', 'KeyY', 'KeyR', 'KeyP', 'KeyH', 'KeyM', 'F1', 'Tab', 'KeyJ']) { key('keydown', c); key('keyup', c); }
+  for (const c of ['KeyG', 'KeyF', 'KeyV', 'KeyN', 'KeyU', 'KeyL', 'KeyO', 'KeyC', 'Comma', 'KeyT', 'KeyY', 'KeyR', 'KeyP', 'KeyH', 'KeyM', 'F1', 'Tab', 'KeyJ', 'KeyI']) { key('keydown', c); key('keyup', c); }
   key('keydown', 'KeyK'); for (let i = 0; i < 40; i++) inp.update(1 / 60); key('keyup', 'KeyK');
-  const all = ['gear', 'flapsDown', 'flapsUp', 'reverser', 'canopy', 'lights', 'autopilot', 'camera', 'cameraPrev', 'view', 'lookBack', 'reset', 'pause', 'hud', 'mute', 'help', 'menu', 'map'];
+  const all = ['gear', 'flapsDown', 'flapsUp', 'reverser', 'canopy', 'lights', 'autopilot', 'camera', 'cameraPrev', 'view', 'lookBack', 'reset', 'pause', 'hud', 'mute', 'help', 'menu', 'map', 'emergency'];
   const sbCount = acts.filter((a) => a === 'speedbrake').length;
   globalThis.__game = { flight: { pendingThrottle: 0.37 } };
   inp.update(0.016);
@@ -1013,6 +1013,360 @@ for (const id of IDS) {
       check(id, `Recovery ${label} → no crash, no stall, climbing`, r.recoveredAt != null && !r.crash && !r.stalled && r.f.verticalSpeed > 0 && r.f.agl > 60,
         `from ${r.recoveredAt?.toFixed(1)} s: ${(r.f.agl / FT).toFixed(0)} ft, V/S ${r.f.verticalSpeed.toFixed(1)} m/s, ${kt(r.f.ias).toFixed(0)} kt ${r.crash || ''}`);
     }
+  }
+}
+
+// ======================================================================================================
+// 15. failures (CONTRACTS-SF.md §12, src/flight/failures.js + fixedwing-failures.js)
+{
+  const { FailureManager, failureRate, RANDOM_RATES } = await import('../src/flight/failures.js');
+  const wrap180 = (d) => ((d % 360) + 540) % 360 - 180;
+  const events = (f) => { const ev = []; for (const e of ['failure', 'warning', 'crash', 'touchdown', 'ditch']) f.on(e, (i) => ev.push({ e, ...i })); return ev; };
+  /** Pitch pilot holding an IAS in a glide (flight path from the speed error). */
+  const glidePilot = (tgt) => (t, f, inp) => {
+    const gT = clamp(-3 + 0.35 * (f.ias - tgt) / KT, -15, 3);
+    const gam = Math.asin(clamp(f.verticalSpeed / f.airspeed, -1, 1)) * DEG;
+    inp.pitch = clamp(0.08 * (gT - gam) - 0.05 * f.ad.q * DEG, -1, 1);
+    inp.roll = clamp(0.05 * -f.roll, -1, 1);
+  };
+  /** Dual failure at 3.5 km, glide at `tgt` IAS: ratio over the part after 40 s. */
+  function glide(id, tgtFn, alt0 = 3500, secs = 160, mass) {
+    const f = model(id);
+    const w = flatWorld({ getGroundHeight: () => 0 });
+    f.reset({ x: 0, z: 0, heading: 0, altitude: alt0, speed: 120 }, w, mass ? { mass } : {});
+    const inp = input({ throttle: f.throttle });
+    f.step(0, inp, w);
+    f.failures.inject('engineAll');
+    inp.throttle = 0;
+    const tgt = tgtFn(f);
+    let d = 0, h0 = null, px = f.position.x, pz = f.position.z, iasSum = 0, n = 0;
+    fly(f, w, inp, secs, 1 / 60, (t, g, i) => {
+      glidePilot(tgt)(t, g, i);
+      const dd = Math.hypot(g.position.x - px, g.position.z - pz); px = g.position.x; pz = g.position.z;
+      if (t > 40) { if (h0 == null) h0 = g.position.y; d += dd; iasSum += g.ias; n++; }
+    });
+    return { f, ratio: d / (h0 - f.position.y), ias: iasSum / Math.max(n, 1) };
+  }
+  /** Take-off at 70 t (airliners), engine `idx` fails at V1 = VR − 4 kt; rudder pilot (heading + sideslip) or hands off the pedals. */
+  function v1Cut(id, rudder, idx = 0) {
+    const f = model(id);
+    f.reset({ x: 0, z: 0, heading: 0 }, world0, SPECS[id].category === 'airliner' ? { mass: 70000 } : {});
+    const ev = events(f);
+    const inp = input({ throttle: 1 });
+    let failed = false, rot = false, lof = null, I = 0, maxDev = 0, maxBeta = 0, tFail = 0;
+    fly(f, world0, inp, 95, 1 / 60, (t) => {
+      if (!failed && f.ias >= f.vSpeeds.vr - 4 * KT) { failed = f.failures.inject('engine', { index: idx }); tFail = t; }
+      const hErr = wrap180(f.heading);
+      if (rudder) {
+        if (f.onGround) inp.yaw = clamp(-0.15 * hErr - 0.05 * f.ad.r * DEG - 0.4 * f.position.x / 30, -1, 1);
+        else { I = clamp(I + (0.03 * f.sideslip - 0.01 * hErr) / 60, -1, 1); inp.yaw = clamp(I + 0.08 * f.sideslip - 0.03 * hErr, -1, 1); }
+      }
+      if (!rot && f.ias >= f.vSpeeds.vr) rot = true;
+      if (rot) {
+        if (f.onGround) inp.pitch = f.pitch < 11 ? Math.min(1, inp.pitch + 1.8 / 60) : clamp(0.2 * (11 - f.pitch), -1, 1);
+        else inp.pitch = clamp(0.12 * (clamp(12 + 0.6 * (f.ias - (f.vSpeeds.v2 + 10 * KT)) / KT, 3, 15) - f.pitch) - 0.12 * f.ad.q * DEG, -1, 1);
+      }
+      if (!f.onGround && lof == null) lof = t;
+      if (lof != null && t - lof > 5 && f.gearHandleDown) f.command('gear');
+      inp.roll = f.onGround ? 0 : clamp(0.05 * -f.roll - 0.02 * f.ad.p * DEG, -1, 1);
+      if (failed) { maxDev = Math.max(maxDev, Math.abs(hErr)); maxBeta = Math.max(maxBeta, Math.abs(f.sideslip)); }
+    });
+    return { f, ev, failed, maxDev, maxBeta, lof, tFail };
+  }
+  const world0 = flatWorld();
+
+  // ---- the API / no effects without an injected failure
+  for (const id of IDS) {
+    const f = model(id);
+    f.reset({ x: 0, z: 0, heading: 0, altitude: 1500, speed: 130 }, world0);
+    fly(f, world0, input({ throttle: f.throttle }), 20);
+    const w = f.warnings, flags = ['engineFail', 'engineFire', 'hydraulic', 'gearUnsafe'];
+    const unknown = f.failures.inject('tailRotor') || f.failures.inject('bogus') || f.failures.inject('engine', { index: 5 });
+    check(id, 'Failures API: nothing injected → no effects (fx neutral, engines symmetric, flags off); unknown kinds refused',
+      f.failures.active.size === 0 && !f.fx.any && !f.pp.degraded && f.controlLaw === 'normal' && flags.every((k) => w[k] === false) && !unknown
+        && f.engines.every((e) => e.thrust === f.engines[0].thrust) && f.failures.supports('engine') && !f.failures.supports('tailRotor'),
+      `active ${f.failures.active.size}, fx.any ${f.fx.any}, law ${f.controlLaw}, unknown refused ${!unknown}`);
+  }
+
+  // ---- engine failure at V1: twin airliners controllable with rudder, climbing; F-22 FBW compensates
+  for (const id of IDS.filter((x) => SPECS[x].category === 'airliner')) {
+    const a = v1Cut(id, true), b = v1Cut(id, false);
+    const f = a.f, ev = a.ev.find((e) => e.e === 'failure' && e.kind === 'engine');
+    note(id, 'Engine failure at V1 (70 t), rudder: after 95 s', `${(f.agl / FT).toFixed(0)} ft, ${(f.verticalSpeed / FPM).toFixed(0)} fpm, max Δhdg ${a.maxDev.toFixed(1)}°`, 'OEI 2nd segment ≥ 2.4 % gradient');
+    check(id, 'Engine failure at V1 → rudder keeps the heading (≤ 15°), OEI climb (> 400 fpm, > 700 ft), no crash; failure event + ENG FAIL flag',
+      a.failed && !f.crashed && a.maxDev < 15 && f.verticalSpeed / FPM > 400 && f.agl / FT > 700 && !!ev && f.warnings.engineFail && f.engines[0].thrust < 0 && f.engines[1].thrust > 0,
+      `max Δhdg ${a.maxDev.toFixed(1)}°, max β ${a.maxBeta.toFixed(1)}°, ${(f.agl / FT).toFixed(0)} ft at ${(f.verticalSpeed / FPM).toFixed(0)} fpm, ${kt(f.ias).toFixed(0)} kt, thrust ${(f.engines[0].thrust / 1000).toFixed(1)} / ${(f.engines[1].thrust / 1000).toFixed(1)} kN`);
+    check(id, 'Engine failure at V1 without rudder: the live engine yaws the aircraft toward the dead one (heading and sideslip far larger)',
+      b.maxDev > 3 * a.maxDev && b.maxBeta > 8 && wrap180(b.f.heading) < 0, `hands off pedals: max Δhdg ${b.maxDev.toFixed(0)}° (to the left), max β ${b.maxBeta.toFixed(1)}°`);
+  }
+  if (IDS.includes('f22')) {
+    const f = model('f22');
+    f.reset({ x: 0, z: 0, heading: 0, altitude: 3000, speed: 150 }, world0);
+    const inp = input({ throttle: 0.85 });
+    fly(f, world0, inp, 3);
+    const h0 = f.heading;
+    f.failures.inject('engine', { index: 1 });
+    let maxB = 0;
+    fly(f, world0, inp, 20, 1 / 60, () => { maxB = Math.max(maxB, Math.abs(f.sideslip)); });
+    check('f22', 'F-22 engine out in flight, pedals centred: the FBW compensates the thrust asymmetry (Δheading < 3°, β < 2°)',
+      Math.abs(wrap180(f.heading - h0)) < 3 && maxB < 2 && f.pp.st.yaw !== 0, `Δhdg ${wrap180(f.heading - h0).toFixed(2)}°, max β ${maxB.toFixed(2)}°`);
+  }
+
+  // ---- both engines out: glide at the real best-glide speed, ratio near the published figure
+  const GLIDE = { a320neo: [13.5, 17, '15.2:1 (FCOM: 2.5 NM / 1000 ft at green dot)'], b737: [15, 19, '≈17:1'] };
+  for (const id of IDS.filter((x) => GLIDE[x])) {
+    const g = glide(id, (f) => f.vSpeeds.greenDot);
+    const f = g.f, [lo, hi, real] = GLIDE[id];
+    note(id, 'Dual engine failure: glide ratio at green dot', `${g.ratio.toFixed(1)}:1 at ${kt(g.ias).toFixed(0)} KIAS`, real);
+    const sys = id === 'a320neo' ? f.rat && f.controlLaw === 'alternate' && !f.fx.apAvail : f.controlLaw === 'manual';
+    check(id, `Dual engine failure: glide ratio ${lo}–${hi} at green dot (±10 kt), windmilling N1, ${id === 'a320neo' ? 'RAT + alternate law, no AP' : 'manual reversion'}`,
+      g.ratio >= lo && g.ratio <= hi && Math.abs(g.ias - f.vSpeeds.greenDot) < 10 * KT && f.engines.every((e) => e.n1 < 0.2) && sys && !f.crashed,
+      `${g.ratio.toFixed(1)}:1, ${kt(g.ias).toFixed(0)} kt (green dot ${kt(f.vSpeeds.greenDot).toFixed(0)}), N1 ${f.engines.map((e) => (e.n1 * 100).toFixed(0)).join('/')} %, law ${f.controlLaw}, RAT ${f.rat}, hyd ${JSON.stringify(f.hydraulics)}`);
+    // APU start (emergency key): A320 yellow electric pump + PTU → normal law; 737 generator → electric pumps → controls back
+    const inp = input();
+    const ok = f.command('emergency');
+    fly(f, world0, inp, 1);
+    const starting = f.apu;
+    fly(f, flatWorld({ getGroundHeight: () => 0 }), inp, 52, 1 / 60, glidePilot(f.vSpeeds.greenDot));
+    check(id, 'Dual engine failure: emergency key starts the APU (50 s) → hydraulics and the normal control law come back',
+      ok && starting === 'start' && f.apu === 'on' && f.controlLaw === 'normal', `APU ${starting} → ${f.apu}, law ${f.controlLaw}, hyd ${JSON.stringify(f.hydraulics)}`);
+  }
+
+  // ---- F-16 flameout: 200 KIAS glide, EPU, airstart envelope
+  if (IDS.includes('f16')) {
+    const g = glide('f16', () => 200 * KT, 6000, 150);
+    const f = g.f;
+    note('f16', 'Flameout glide at 200 KIAS (12 t)', `${g.ratio.toFixed(1)}:1, ${kt(g.ias).toFixed(0)} KIAS`, '≈8–9:1 (T.O. 1F-16: 200 KIAS best glide)');
+    check('f16', 'Flameout: glide ratio 7–10.5 at 200 KIAS (±15 kt), EPU running, RPM < 55 % (VMS ENGINE warning), restartable',
+      g.ratio >= 7 && g.ratio <= 10.5 && Math.abs(g.ias / KT - 200) < 15 && f.epu && f.engines[0].n1 < 0.55 && f.failInfo.restartable && !f.crashed,
+      `${g.ratio.toFixed(1)}:1 at ${kt(g.ias).toFixed(0)} KIAS, EPU ${f.epu}, RPM ${(f.engines[0].n1 * 100).toFixed(0)} %, hyd ${JSON.stringify(f.hydraulics)}`);
+    // airstart: refused outside the envelope (150 KIAS), then at 250 KIAS below 20,000 ft the engine relights and spools up
+    const w = flatWorld({ getGroundHeight: () => 0 });
+    const inp = input();
+    fly(f, w, inp, 20, 1 / 60, glidePilot(150 * KT));
+    const ev = events(f);
+    const slow = f.command('engineRestart');
+    fly(f, w, inp, 25, 1 / 60, glidePilot(260 * KT));
+    const fast = f.command('emergency');
+    inp.throttle = 0.6;
+    fly(f, w, inp, 45, 1 / 60, glidePilot(260 * KT));
+    const restarted = ev.some((e) => e.e === 'failure' && !e.on && e.restarted);
+    check('f16', 'Airstart: refused at 150 KIAS (outside 170–400 KIAS), relights at 260 KIAS below 20,000 ft → RPM back, failure cleared, EPU off',
+      !slow && ev.some((e) => e.type === 'restartEnvelope') && fast && restarted && f.engines[0].n1 > 0.8 && f.engines[0].thrust > 5000 && !f.epu && !f.warnings.engineFail,
+      `slow ${slow}, fast ${fast}, restarted ${restarted}, RPM ${(f.engines[0].n1 * 100).toFixed(0)} %, thrust ${(f.engines[0].thrust / 1000).toFixed(1)} kN at ${(f.altitude / FT).toFixed(0)} ft`);
+  }
+
+  // ---- engine fire: fails after the delay unless the fire handle is pulled (emergency key)
+  for (const id of IDS) {
+    const run = (handle) => {
+      const f = model(id);
+      f.reset({ x: 0, z: 0, heading: 0, altitude: 3000, speed: 150 }, world0);
+      const ev = events(f);
+      const inp = input({ throttle: f.throttle });
+      fly(f, world0, inp, 1);
+      const idx = SPECS[id].engines - 1;
+      f.failures.inject('fire', { index: idx, delay: 8 });
+      fly(f, world0, inp, 2);
+      const warned = f.warnings.engineFire;
+      if (handle) f.command('emergency');
+      fly(f, world0, inp, 13);
+      return { f, ev, warned, idx };
+    };
+    const a = run(false), b = run(true);
+    const failA = a.ev.find((e) => e.e === 'failure' && e.kind === 'engine' && e.cause === 'fire');
+    const outB = b.ev.find((e) => e.e === 'failure' && e.kind === 'fire' && !e.on && e.extinguished);
+    check(id, 'Engine fire: warning; unhandled → the engine fails after the delay; fire handle → shut down, fire out, no more fire warning',
+      a.warned && failA && a.f.warnings.engineFire && a.f.engines[a.idx].n1 < 0.5 && b.warned && outB && !b.f.warnings.engineFire && b.f.warnings.engineFail && !b.f.failInfo.fireUnhandled,
+      `unhandled: failed ${!!failA}, still burning ${a.f.warnings.engineFire}; handled: out ${!!outB}, engine ${b.f.failures.active.get('engine')?.cause}`);
+  }
+
+  // ---- hydraulic failures change the control response
+  if (IDS.includes('a320neo')) {
+    const rollRate = (inject) => {
+      const f = model('a320neo');
+      f.reset({ x: 0, z: 0, heading: 0, altitude: 2000, speed: 130 }, world0);
+      const inp = input({ throttle: f.throttle });
+      fly(f, world0, inp, 1);
+      if (inject) f.failures.inject('hydraulic', { systems: 'G+Y' });
+      fly(f, world0, inp, 1);
+      const law = f.controlLaw;
+      let pMax = 0;
+      fly(f, world0, inp, 3, 1 / 60, () => { inp.roll = 0.5; pMax = Math.max(pMax, f.ad.p * DEG); });
+      inp.roll = 0;
+      const phi0 = f.roll;
+      fly(f, world0, inp, 4);
+      return { f, law, pMax, drift: f.roll - phi0 };
+    };
+    const n = rollRate(false), a = rollRate(true);
+    // flaps frozen, THS frozen, gear only by gravity; direct law with the gear handle down
+    const f = a.f;
+    const flap0 = f.sys.flapPos;
+    f.command('flapsDown');
+    f.command('gear');
+    fly(f, world0, input({ throttle: f.throttle }), 12);
+    check('a320neo', 'Hydraulic G+Y: alternate law (roll direct: half stick ≠ the 7.5°/s rate command), flaps + gear frozen, direct law with the gear handle down',
+      a.law === 'alternate' && n.law === 'normal' && Math.abs(a.pMax - n.pMax) > 2 && f.sys.flapPos === flap0 && f.gear < 0.02 && f.controlLaw === 'alternate' && f.fcs.st.conv && f.warnings.hydraulic,
+      `normal ${n.pMax.toFixed(1)}°/s → alternate ${a.pMax.toFixed(1)}°/s; flaps ${flap0} → ${f.sys.flapPos}, gear ${f.gear.toFixed(2)}, pitch direct ${f.fcs.st.conv}`);
+  }
+  if (IDS.includes('b737')) {
+    const pull = (inject) => {
+      const f = model('b737');
+      f.reset({ x: 0, z: 0, heading: 0, altitude: 2000, speed: 130 }, world0);
+      const inp = input({ throttle: f.throttle });
+      fly(f, world0, inp, 1);
+      if (inject) f.failures.inject('hydraulic', { systems: 'A+B' });
+      fly(f, world0, inp, 1);
+      let gMax = 0, pMax = 0;
+      fly(f, world0, inp, 3, 1 / 60, () => { inp.pitch = 0.6; inp.roll = 0.5; gMax = Math.max(gMax, f.gForce); pMax = Math.max(pMax, f.ad.p * DEG); });
+      return { f, gMax, pMax };
+    };
+    const n = pull(false), m = pull(true);
+    check('b737', 'Hydraulic A+B: manual reversion — the same yoke gives < 60 % of the g and roll rate (heavy tab-driven controls)',
+      m.f.controlLaw === 'manual' && (m.gMax - 1) < 0.6 * (n.gMax - 1) && m.pMax < 0.6 * n.pMax && m.f.fx.flapMax === 5,
+      `Δg ${(n.gMax - 1).toFixed(2)} → ${(m.gMax - 1).toFixed(2)}, roll rate ${n.pMax.toFixed(1)} → ${m.pMax.toFixed(1)}°/s, alternate flaps ≤ ${SPECS.b737.flapDetents[m.f.fx.flapMax].label}`);
+  }
+  if (IDS.includes('f16')) {
+    const f = model('f16');
+    f.reset({ x: 0, z: 0, heading: 0, altitude: 1500, speed: 110 }, world0);
+    const inp = input({ throttle: f.throttle });
+    fly(f, world0, inp, 1);
+    f.failures.inject('hydraulic');                 // default: system B
+    f.command('gear');
+    fly(f, world0, inp, 12);
+    const stuck = f.gear;
+    const alt = f.command('emergency');             // ALT GEAR (pneumatic)
+    fly(f, world0, inp, 12);
+    check('f16', 'Hydraulic B: controls on system A (slower surfaces), gear does not extend normally, ALT GEAR (emergency key) extends it, no retraction',
+      f.fx.rateScale < 1 && f.fx.rateScale > 0.3 && stuck < 0.02 && alt && f.gear > 0.98 && (f.command('gear'), f.gearHandleDown),
+      `rate ×${f.fx.rateScale}, gear ${stuck.toFixed(2)} → ALT GEAR ${f.gear.toFixed(2)}, hyd ${JSON.stringify(f.hydraulics)}`);
+  }
+
+  // ---- gear failure: blocks the extension; alternate extension; belly / nose-up landings are skids, not crashes
+  for (const id of IDS) {
+    const run = (alternate) => {
+      const f = model(id);
+      f.reset({ x: 0, z: 0, heading: 0, altitude: 1000, speed: 110 }, world0);
+      const inp = input({ throttle: f.throttle });
+      fly(f, world0, inp, 1);
+      f.failures.inject('gear', { which: 'all', alternate });
+      f.command('gear');
+      fly(f, world0, inp, 20);
+      const r = { g1: f.gear, unsafe: f.warnings.gearUnsafe, legs: f._wheels.every((w) => w.leg < 0.02) };
+      r.alt = f.command('emergency');
+      fly(f, world0, inp, 35);
+      r.g2 = f.gear; r.f = f;
+      return r;
+    };
+    const a = run(true), b = run(false);
+    check(id, 'Gear failure: handle down does not extend it (GEAR UNSAFE); alternate extension frees it; with no alternate it stays up',
+      a.g1 < 0.02 && a.unsafe && a.legs && a.alt && a.g2 > 0.98 && !a.f.warnings.gearUnsafe && b.g2 < 0.02 && b.f.warnings.gearUnsafe,
+      `after 20 s ${a.g1.toFixed(2)} (unsafe ${a.unsafe}) → alternate ${a.g2.toFixed(2)}; no alternate: ${b.g2.toFixed(2)}`);
+  }
+  /** Manual approach to the test runway with a gear failure (or over water), flare, stop. */
+  function failApproach(id, { which = 'all', water = false, flareH = 12, inject = true, lowerGear = false, pitchTarget = 10 } = {}) {
+    const e0 = water ? 0 : ELEV;
+    const w = flatWorld({ runways: TEST_RUNWAYS, getGroundHeight: () => e0, isWater: () => water, isOnRunway: (x, z) => !water && Math.abs(x) < 30 && z < 50 && z > -4050 });
+    const f = model(id);
+    const d0 = 5000;
+    f.reset({ x: 0, z: d0, heading: 0, altitude: e0 + (d0 + 300) * Math.tan(3 * RAD), speed: 70 }, w, { approach: true, gearDown: false });
+    if (inject) f.failures.inject('gear', { which, alternate: false });
+    if (lowerGear) f.command('gear');
+    const ev = events(f);
+    const inp = input({ throttle: f.throttle });
+    const vapp = f.vSpeeds.vapp;
+    let flare = false, th0 = 0, I = f.throttle, td = null;
+    fly(f, w, inp, 200, 1 / 60, (t) => {
+      td = td || ev.find((x) => x.e === 'touchdown');
+      if (!td) {
+        const agl = f.position.y - e0 - f.gearHeight, gsAlt = (f.position.z + 300) * Math.tan(3 * RAD);
+        if (!flare && agl < flareH) { flare = true; th0 = f.pitch; }
+        if (!flare) {
+          const vsT = -f.airspeed * Math.tan(3 * RAD) + 0.15 * (gsAlt - agl);
+          const gam = Math.asin(clamp(f.verticalSpeed / f.airspeed, -1, 1)) * DEG, gT = Math.asin(clamp(vsT / f.airspeed, -0.3, 0.3)) * DEG;
+          inp.pitch = clamp(0.1 * (gT - gam) - 0.08 * f.ad.q * DEG, -1, 1);
+          I = clamp(I + 0.04 * (vapp - f.ias) / 60, 0, 1); inp.throttle = clamp(I + 0.05 * (vapp - f.ias), 0, 1);
+        } else { inp.throttle = 0; inp.pitch = clamp(0.1 * ((water ? pitchTarget : th0 + 4) - f.pitch) - 0.08 * f.ad.q * DEG, -1, 1); }
+        inp.roll = clamp(0.05 * -f.roll, -1, 1); inp.yaw = clamp(-0.02 * f.position.x, -0.5, 0.5);
+      } else { inp.pitch = 0; inp.throttle = 0; inp.brake = 1; inp.roll = clamp(0.05 * -f.roll, -1, 1); }
+      if (td && (f.ditched ? Math.hypot(f.velocity.x, f.velocity.z) < 0.3 : f.groundSpeed < 0.3)) return false;
+    });
+    return { f, ev, td };
+  }
+  for (const id of IDS.filter((x) => SPECS[x].category === 'airliner')) {
+    const a = failApproach(id, { which: 'all' });
+    const b = failApproach(id, { which: 'nose', lowerGear: true });
+    check(id, 'Gear stuck up: belly / nacelle landing slides to a stop (touchdown belly: true), no crash; nose gear up: rests on the nose, no crash',
+      !a.f.crashed && a.td && a.td.belly && a.f.groundSpeed < 0.5 && !b.f.crashed && b.td && b.f.groundSpeed < 0.5 && b.f.pitch < -3,
+      `belly: ${a.td ? `${a.td.verticalSpeed.toFixed(2)} m/s` : 'no touchdown'} ${a.f.crashReason}; nose up: pitch ${b.f.pitch.toFixed(1)}° ${b.f.crashReason}`);
+    // ditching (both engines out over the Bay): gear up, ≈10° nose up, gentle sink → floats; a steep water impact → crash
+    const d = failApproach(id, { water: true, inject: false, flareH: 3 });
+    const e = failApproach(id, { water: true, inject: false, flareH: 0, pitchTarget: -2 });
+    const dEv = d.ev.find((x) => x.e === 'ditch');
+    check(id, 'Ditching: gear up, nose up, gentle sink → floats (flight.ditched, "ditch" event), no crash; a nose-low water impact → crash',
+      d.f.ditched && !d.f.crashed && !!dEv && Math.hypot(d.f.velocity.x, d.f.velocity.z) < 0.5 && e.f.crashed && /suya/.test(e.f.crashReason),
+      `ditch ${dEv ? `${(dEv.verticalSpeed / FPM).toFixed(0)} fpm, ${dEv.pitch.toFixed(1)}°, ${kt(dEv.ias).toFixed(0)} kt` : 'none'}; nose low: ${e.f.crashReason}`);
+  }
+
+  // ---- clear() restores everything
+  for (const id of IDS) {
+    const f = model(id);
+    f.reset({ x: 0, z: 0, heading: 0, altitude: 1500, speed: 120 }, world0);
+    const ev = events(f);
+    const inp = input({ throttle: f.throttle });
+    fly(f, world0, inp, 1);
+    for (const [k, o] of [['engineAll', {}], ['fire', { index: 0, delay: 1 }], ['hydraulic', {}], ['gear', { which: 'all' }]]) f.failures.inject(k, o);
+    f.command('gear');
+    fly(f, world0, inp, 30, 1 / 60, glidePilot(f.vSpeeds.vls + 40 * KT));
+    const kinds = [...f.failures.active.keys()];
+    const broken = f.fx.any && f.pp.degraded && f.warnings.engineFail && f.warnings.hydraulic && f.gear < 0.02;
+    f.failures.clear();
+    inp.throttle = 0.7;
+    fly(f, world0, inp, 15, 1 / 60, glidePilot(f.vSpeeds.vls + 40 * KT));
+    const off = ev.filter((x) => x.e === 'failure' && !x.on).map((x) => x.kind);
+    const w = f.warnings;
+    check(id, 'clear(): every failure off (events), engines symmetric again, normal law, flags off, gear extends, controls / flaps back',
+      broken && f.failures.active.size === 0 && !f.fx.any && !f.pp.degraded && f.controlLaw === 'normal' && !w.engineFail && !w.engineFire && !w.hydraulic && !w.gearUnsafe
+        && f.gear > 0.98 && f.engines.every((e) => Math.abs(e.thrust - f.engines[0].thrust) < 1 && e.n1 > 0.5) && kinds.every((k) => off.includes(k)) && !f.rat && f.apu === 'off',
+      `before: ${kinds.join('+')}, after: active ${f.failures.active.size}, law ${f.controlLaw}, gear ${f.gear.toFixed(2)}, N1 ${f.engines.map((e) => (e.n1 * 100).toFixed(0)).join('/')} %, off events ${off.join(',')}`);
+  }
+
+  // ---- random failures: rates, 60 s grace, suspension, only one at a time
+  {
+    // statistics of the scheduler with a stub model (phase fixed, each failure cleared right away)
+    const stubRun = (mode, phase, hours, suspended = false) => {
+      const stub = { crashed: false, _handlers: {}, _emit() {}, _failNormalize: (k, o) => o, _failApply() {}, _failPhase: () => phase, _failRandomOpts: () => ({}) };
+      const mgr = new FailureManager(stub);
+      Object.assign(mgr.random, { source: 'manual', mode, suspended });
+      mgr.random.seed(12345);
+      let n = 0, first = Infinity;
+      for (let s = 0; s < hours * 3600; s++) { mgr.frame(1); if (mgr.active.size) { n++; first = Math.min(first, mgr.random.elapsed); mgr.clear(); } }
+      return { n, first };
+    };
+    const rare = stubRun('rare', 'cruise', 100), realC = stubRun('realistic', 'cruise', 100), realT = stubRun('realistic', 'takeoff', 100);
+    const off = stubRun('off', 'takeoff', 20), susp = stubRun('rare', 'takeoff', 20, true), parked = stubRun('rare', 'parked', 20);
+    const ok = (n, rate, h) => Math.abs(n - rate * h) < 4 * Math.sqrt(rate * h);
+    note('common', 'Random failures per hour: Nadir / Gerçekçi cruise / Gerçekçi take-off', `${(rare.n / 100).toFixed(2)} / ${(realC.n / 100).toFixed(2)} / ${(realT.n / 100).toFixed(2)}`,
+      `${RANDOM_RATES.rare.perHour} / ${RANDOM_RATES.realistic.perHour.cruise} / ${RANDOM_RATES.realistic.perHour.takeoff} (1 per 30 min; phase weighted)`);
+    check('common', 'Random failures: Nadir ≈ 2/h (1 per 30 min), Gerçekçi phase weighted (take-off ≫ cruise), none in the first 60 s / off / suspended / parked',
+      ok(rare.n, failureRate('rare', 'cruise'), 100) && ok(realC.n, failureRate('realistic', 'cruise'), 100) && ok(realT.n, failureRate('realistic', 'takeoff'), 100)
+        && rare.first >= 60 && off.n === 0 && susp.n === 0 && parked.n === 0 && realT.n > 5 * realC.n,
+      `rare ${rare.n}/100 h, realistic cruise ${realC.n}, take-off ${realT.n}; first after ${rare.first} s; off ${off.n}, suspended ${susp.n}, parked ${parked.n}`);
+    // with a real model: the host settings path (window.__game), a failure appears, the tutorial holds it
+    const id = IDS[0];
+    const f = model(id);
+    f.reset({ x: 0, z: 0, heading: 0, altitude: 3000, speed: 130 }, world0);
+    const ev = events(f);
+    globalThis.__game = { flight: f, settings: { failures: 'rare' }, onboarding: { tutorialActive: true } };
+    f.failures.random.seed(7); f.failures.random.source = 'auto';
+    fly(f, world0, input({ throttle: f.throttle }), 400);
+    const duringTut = f.failures.active.size;
+    globalThis.__game.onboarding.tutorialActive = false;
+    let t0 = null;
+    fly(f, world0, input({ throttle: f.throttle }), 3600, 1 / 10, () => { if (f.failures.active.size) { t0 = f.failures.random.elapsed; return false; } });
+    const rnd = ev.find((x) => x.e === 'failure' && x.on && x.random);
+    delete globalThis.__game;
+    check('common', `Random failures on a real ${id}: settings "rare" from window.__game, none while the tutorial runs, one within an hour (random: true event)`,
+      duringTut === 0 && !!rnd && t0 > 60, `tutorial: ${duringTut}, then ${rnd ? rnd.kind : 'none'} after ${t0?.toFixed(0)} s (${f.failures.random.last?.phase})`);
   }
 }
 

@@ -1,5 +1,10 @@
 // Turbofan powerplant: spool dynamics, thrust vs Mach / altitude from spec tables, afterburner stages,
 // thrust reversers and fuel flow. All engines of an aircraft are driven by the same lever (symmetric thrust).
+// Failures (fixedwing-failures.js): an engine with `out` set produces no thrust but windmilling drag (pp.windmill:
+// fan / inlet area × drag coefficient × dynamic pressure) and its N1 winds down to the windmill N1; a relit engine
+// (`xs` ≥ 0) spools up on its own from idle until it has caught up with the others. While any engine is out or
+// catching up (`degraded`) the engines are computed one by one and `st.yaw` holds the thrust yawing moment
+// Σ arm_i × T_i (body torque about +Y in N m, arm = lateral engine position, + right: nose toward the dead engine).
 //
 // spec.engine = {
 //   thrust: N,            SL static maximum dry thrust per engine (TOGA for airliners, MIL for fighters)
@@ -24,7 +29,11 @@ export function createPowerplant(spec) {
   const hasAB = !!(E.thrustAB && E.wet);
   const hasRev = !!E.reverseEff;
 
-  const engines = Array.from({ length: count }, () => ({ n1: E.n1Idle ?? 0.2, thrust: 0, afterburner: 0, fuelFlow: 0, nozzle: 0, reverser: 0 }));
+  const engines = Array.from({ length: count }, () => ({ n1: E.n1Idle ?? 0.2, thrust: 0, afterburner: 0, fuelFlow: 0, nozzle: 0, reverser: 0,
+    // failure state (written by fixedwing-failures.js): out = not producing thrust (failed / shut down / relighting),
+    // startN1 ≥ 0: N1 the relight has reached, xs ≥ 0: own spool while catching up after a relight, arm: lateral position (m)
+    out: false, startN1: -1, xs: -1, arm: 0, failed: false, fire: false }));
+  const wm = { area: 0, cd: 0, n1k: 0.35, n1max: 0.3 };   // windmilling (set by the failure module per type)
   const st = {
     x: 0,            // spool: 0 idle ... 1 max dry
     ab: 0,           // afterburner 0..1
@@ -35,10 +44,14 @@ export function createPowerplant(spec) {
     thrust: 0,       // total net thrust (N, + forward)
     fuelFlow: 0,     // total kg/s
     tmil: 0, tidle: 0, twet: 0,
+    yaw: 0,          // thrust yawing moment (body torque about +Y, N m) while degraded
   };
 
   const pp = {
-    engines, st, count, hasAB, hasRev,
+    engines, st, count, hasAB, hasRev, windmill: wm,
+    degraded: false, // some engine out or catching up: per-engine thrust (see updateDegraded)
+    /** Recompute `degraded` after an engine state change. */
+    refresh() { pp.degraded = engines.some((e) => e.out || e.xs >= 0); if (!pp.degraded) st.yaw = 0; },
     /** Thrust fraction x^exp for a lever power fraction (inverse used by trim). */
     spoolFor(power) { return Math.pow(clamp(power, 0, 1), 1 / exp); },
     /** Max dry / wet / idle thrust (per engine) at altitude h and Mach M, sigma = density ratio. */
@@ -107,6 +120,7 @@ export function createPowerplant(spec) {
       const n1Idle = E.n1Idle ?? 0.2, n1Max = E.n1Max ?? 1;
       const n1 = fuelOk ? n1Idle + (n1Max - n1Idle) * st.x : 0;
       const nozzle = hasAB ? (st.ab > 0 ? 0.3 + 0.7 * st.ab : clamp(0.85 - st.x, 0, 1) * 0.85) : 0;
+      if (pp.degraded) return updateDegraded(h, air, fuelOk, xCmd, tEach, ff, n1, nozzle, n1Idle, n1Max);
       for (const e of engines) {
         e.n1 = e.n1 + (n1 - e.n1) * Math.min(1, h * 30);
         e.thrust = tEach;
@@ -118,5 +132,42 @@ export function createPowerplant(spec) {
       return st.thrust;
     },
   };
+
+  /** Engines one by one (some out or catching up after a relight). Returns the total net thrust (N). */
+  function updateDegraded(h, air, fuelOk, xCmd, tEach, ff, n1, nozzle, n1Idle, n1Max) {
+    const qbar = 0.7 * 101325 * air.delta * air.M * air.M;
+    const dWm = wm.cd * wm.area * qbar;                       // windmilling drag of a dead engine
+    const n1Wm = clamp(wm.n1k * air.M, 0, wm.n1max);
+    let total = 0, yaw = 0, ffTot = 0, busy = false;
+    for (const e of engines) {
+      let t, n1t, f, ab, kN1;
+      if (e.out) {
+        busy = true;
+        t = e.thrust + (-dWm - e.thrust) * Math.min(1, h / 0.8); f = 0; ab = 0;   // thrust runs down in ≈1 s
+        n1t = e.startN1 >= 0 ? Math.max(e.startN1, n1Wm) : n1Wm;
+        kN1 = Math.min(1, h / (e.startN1 >= 0 ? 0.5 : 2.5));   // run-down ≈ 2.5 s time constant
+      } else if (e.xs >= 0) {
+        busy = true;
+        // relit: own spool from idle toward the common command (same acceleration law), then back in step
+        const dx = xCmd - e.xs;
+        const rate = dx > 0 ? Math.min(dx * 3, accel[0] + accel[1] * e.xs) : Math.max(dx * 3, -(decel[0] + decel[1] * e.xs));
+        e.xs = clamp(e.xs + rate * h, 0, 1);
+        const xi = e.xs;
+        if (Math.abs(e.xs - st.x) < 0.005) e.xs = -1;
+        t = fuelOk ? pp.thrustAt(xi, 0, st.rev) : Math.min(st.tidle, 0) * 0.5;
+        const dryi = Math.max(0, st.tidle + (st.tmil - st.tidle) * Math.pow(xi, exp));
+        f = fuelOk ? (E.ffIdle ?? 0.1) * Math.sqrt(Math.max(air.delta, 0.05)) + (E.tsfc ?? 1e-5) * dryi * (1 + (E.tsfcMach ?? 1) * air.M) * Math.sqrt(air.theta) : 0;
+        ab = 0;
+        n1t = fuelOk ? n1Idle + (n1Max - n1Idle) * xi : 0;
+        kN1 = Math.min(1, h * 30);
+      } else { t = tEach; f = ff; ab = st.ab; n1t = n1; kN1 = Math.min(1, h * 30); }
+      e.n1 += (n1t - e.n1) * kN1;
+      e.thrust = t; e.afterburner = ab; e.fuelFlow = f; e.nozzle = e.out ? 0.72 : nozzle; e.reverser = st.rev;
+      total += t; yaw += e.arm * t; ffTot += f;
+    }
+    st.thrust = total; st.yaw = yaw; st.fuelFlow = ffTot;
+    if (!busy) { pp.degraded = false; st.yaw = 0; }
+    return total;
+  }
   return pp;
 }

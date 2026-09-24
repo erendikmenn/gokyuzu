@@ -31,6 +31,8 @@ const VOLUMES = [
   ['ambient', 'Ortam'],
 ];
 const HUD_MODES = [['full', 'Tam'], ['compact', 'Sade'], ['off', 'Kapalı']];
+// random failures in free flight (src/flight/failures.js RANDOM_RATES)
+const FAILURE_MODES = [['off', 'Kapalı'], ['rare', 'Nadir'], ['realistic', 'Gerçekçi']];
 
 const CSS = `
 .gkp { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; padding: 24px;
@@ -259,6 +261,10 @@ export function openSettings(container) {
     });
     c.appendChild(tiltNote);
   }
+  // failures hook: random failures in free flight (never during the tutorial or the first 60 s; missions have their own)
+  el('div', null, c, 'Rastgele arızalar').style.cssText = 'padding: 9px 0 7px; font-size: 14px';
+  const fails = segmented(c, FAILURE_MODES, s.failures || 'off', (id) => { s.failures = id; commit(); }, 'Rastgele arızalar');
+  el('div', 'gkp-note', c, 'Serbest uçuşta motor, yangın, hidrolik ve iniş takımı arızaları. Nadir: ortalama 30 dakikada bir. Gerçekçi: daha seyrek, çoğu kalkışta ve yaklaşmada. Acil durum tuşu: I (dokunmatik: ACİL).');
   const tutNote = el('div', 'gkp-note', c);
   const tutReset = el('button', 'gkp-link', tutNote, 'Tamamlanan eğitimleri sıfırla');
   tutReset.type = 'button';
@@ -278,11 +284,11 @@ export function openSettings(container) {
   okb.type = 'button';
   okb.addEventListener('click', m.close);
   reset.addEventListener('click', () => {
-    s = { ...s, quality: auto, volumes: { ...DEFAULT_SETTINGS.volumes }, invertPitch: DEFAULT_SETTINGS.invertPitch, atc: DEFAULT_SETTINGS.atc, tutorial: DEFAULT_SETTINGS.tutorial, hudMode: null };
+    s = { ...s, quality: auto, volumes: { ...DEFAULT_SETTINGS.volumes }, invertPitch: DEFAULT_SETTINGS.invertPitch, atc: DEFAULT_SETTINGS.atc, tutorial: DEFAULT_SETTINGS.tutorial, hudMode: null, failures: DEFAULT_SETTINGS.failures };
     commit();
     qs.set(s.quality); updateNote();
     for (const [key, { r, show }] of Object.entries(sliders)) { r.value = String(Math.round((s.volumes[key] ?? 1) * 100)); show(); }
-    inv.set(s.invertPitch); if (atc) atc.set(s.atc); tut.set(s.tutorial !== false); hud.set('compact');
+    inv.set(s.invertPitch); if (atc) atc.set(s.atc); tut.set(s.tutorial !== false); hud.set('compact'); fails.set(s.failures);
     if (tiltSw && s.tilt) { s.tilt = false; commit(); tiltSw.set(false); }
   });
   return m.done;
