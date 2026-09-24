@@ -1,11 +1,12 @@
-"""Build the aerial imagery tile pyramid (512 px WebP, alpha = land coverage) for the terrain quadtree.
+"""Build the aerial imagery tile pyramid (512 px WebP, alpha = land coverage) for the terrain quadtree (per map).
 
-Inputs : data/sf/raw/naip/{core1,mid4,far16}/*.jpg (imagery_download.py), data/sf/cache/terrain/water_final.pkl and
-         assets/sf/terrain/index.json (terrain_build.py)
-Outputs: assets/sf/terrain/img/<L>/<i>_<j>.webp and the node image flags in index.json.
+Inputs : sf : data/sf/raw/naip/{core1,mid4,far16}/*.jpg (imagery_download.py)
+         ist: data/ist/_cache/raw/s2/{core4,mid8,far16}/*.png (imagery_download.py -> imagery_s2.py, already graded)
+         <cache>/water_final.pkl and <assets>/terrain/index.json (terrain_build.py)
+Outputs: <assets>/terrain/img/<L>/<i>_<j>.webp and the node image flags in index.json.
 Pipeline: grade colors -> premultiply by land alpha (water pixels are rendered by the water shader) -> 2x2 box pyramid
-(core 1 m, mid 4 m spliced with the core, far 16 m spliced with mid) -> per tile un-premultiply + push-pull fill of
-water pixels (so mipmaps never bleed foreign colors into the coast) -> WebP.
+(core at IMG_CORE, mid spliced with the core, far spliced with mid; sf: 1 m / 4 m / 16 m, ist: 4 m / 8 m / 16 m)
+-> per tile un-premultiply + push-pull fill of water pixels (so mipmaps never bleed foreign colors into the coast) -> WebP.
 Only missing tiles are encoded unless --force. Publishes h.next -> h and index.json atomically at the end.
 Usage: .venv/bin/python tools/geo/imagery_build.py [--force]
 """
@@ -15,12 +16,13 @@ import numpy as np
 from PIL import Image
 from rasterio import features
 from affine import Affine
-from terrain_common import RAW, CACHE, OUT, ROOT_SIZE, ROOT_MIN_X, ROOT_MIN_Z, CORE, MID
+from terrain_common import (RAW, CACHE, OUT, ROOT_SIZE, ROOT_MIN_X, ROOT_MIN_Z, CORE, MID, FAR, IMG_CORE, IMG_MID,
+                            IMG_FAR, IMAGERY_SOURCE)
 
 Image.MAX_IMAGE_PIXELS = None
 T0 = time.time()
 PX = 512
-IMG_CORE, IMG_MID, IMG_FAR = 8, 6, 4
+SRC_DIR, SRC_EXT = ('naip', 'jpg') if IMAGERY_SOURCE == 'naip' else ('s2', 'png')
 
 
 def log(*a):
@@ -47,8 +49,10 @@ def build_lut():
 
 
 def grade(rgb):
-    """In-place-ish grade of an (H, W, 3) uint8 array in row chunks."""
+    """In-place-ish grade of an (H, W, 3) uint8 array in row chunks (Sentinel-2 canvases are graded by imagery_s2.py)."""
     global LUT
+    if IMAGERY_SOURCE != 'naip':
+        return rgb
     if LUT is None:
         LUT = build_lut()
     H = rgb.shape[0]
@@ -73,7 +77,7 @@ def load_canvas(name, nx, nz, px, crop=None):
     a = np.zeros((H, W, 3), np.uint8)
     for j in range(nz):
         for i in range(nx):
-            p = os.path.join(RAW, 'naip', name, f'{i}_{j}.jpg')
+            p = os.path.join(RAW, SRC_DIR, name, f'{i}_{j}.{SRC_EXT}')
             a[j * px:(j + 1) * px, i * px:(i + 1) * px] = np.asarray(Image.open(p).convert('RGB'))
     if crop:
         a = a[:crop[0], :crop[1]]
@@ -179,42 +183,45 @@ def main():
                 jobs.append((L, i, j))
     log('tiles to write', len(jobs), 'kept', len(have))
     if jobs:
-        log('core canvas 1 m')
-        cw, ch = int(CORE['x1'] - CORE['x0']), int(CORE['z1'] - CORE['z0'])
-        c8 = load_canvas('core1', 19, 19, 2048, crop=(ch, cw))
-        grade(c8)
-        a8 = land_alpha(water, CORE['x0'], CORE['z0'], 1.0, c8.shape[:2])
-        premultiply(c8, a8)
-        G[8] = (c8, a8, CORE['x0'], CORE['z0'], 1.0)
+        res_of = lambda L: ROOT_SIZE / (1 << L) / PX      # m per pixel of level L
+
+        def canvas(kind, area, L):
+            res = res_of(L)
+            w, h = int(area['x1'] - area['x0']) // int(res), int(area['z1'] - area['z0']) // int(res)
+            log(f'{kind} canvas {res:g} m')
+            c = load_canvas(f'{kind}{int(res)}', -(-w // 2048), -(-h // 2048), 2048, crop=(h, w))
+            grade(c)
+            al = land_alpha(water, area['x0'], area['z0'], res, c.shape[:2])
+            premultiply(c, al)
+            return c, al
+
+        def splice(dst, src, area_dst, area_src, res):
+            ox, oz = int((area_src['x0'] - area_dst['x0']) / res), int((area_src['z0'] - area_dst['z0']) / res)
+            dst[oz:oz + src.shape[0], ox:ox + src.shape[1]] = src
+
+        # core at IMG_CORE, box pyramid down to IMG_MID (sf: L8 1 m, L7)
+        c, a = canvas('core', CORE, IMG_CORE)
+        G[IMG_CORE] = (c, a, CORE['x0'], CORE['z0'], res_of(IMG_CORE))
         log('core pyramid')
-        c7, a7 = down2(c8, a8)
-        G[7] = (c7, a7, CORE['x0'], CORE['z0'], 2.0)
-        c6c, a6c = down2(c7, a7)
-
-        log('mid canvas 4 m')
-        c6 = load_canvas('mid4', 8, 8, 2048)
-        grade(c6)
-        a6 = land_alpha(water, MID['x0'], MID['z0'], 4.0, c6.shape[:2])
-        premultiply(c6, a6)
-        ox, oz = int((CORE['x0'] - MID['x0']) / 4), int((CORE['z0'] - MID['z0']) / 4)
-        c6[oz:oz + c6c.shape[0], ox:ox + c6c.shape[1]] = c6c
-        a6[oz:oz + a6c.shape[0], ox:ox + a6c.shape[1]] = a6c
-        G[6] = (c6, a6, MID['x0'], MID['z0'], 4.0)
-        c5, a5 = down2(c6, a6)
-        G[5] = (c5, a5, MID['x0'], MID['z0'], 8.0)
-        c4m, a4m = down2(c5, a5)
-
-        log('far canvas 16 m')
-        c4 = load_canvas('far16', 4, 4, 2048)
-        grade(c4)
-        a4 = land_alpha(water, ROOT_MIN_X, ROOT_MIN_Z, 16.0, c4.shape[:2])
-        premultiply(c4, a4)
-        ox, oz = int((MID['x0'] - ROOT_MIN_X) / 16), int((MID['z0'] - ROOT_MIN_Z) / 16)
-        c4[oz:oz + c4m.shape[0], ox:ox + c4m.shape[1]] = c4m
-        a4[oz:oz + a4m.shape[0], ox:ox + a4m.shape[1]] = a4m
-        G[4] = (c4, a4, ROOT_MIN_X, ROOT_MIN_Z, 16.0)
-        c, a = c4, a4
-        for L in (3, 2, 1, 0):
+        for L in range(IMG_CORE - 1, IMG_MID, -1):
+            c, a = down2(c, a)
+            G[L] = (c, a, CORE['x0'], CORE['z0'], res_of(L))
+        cc, ac = down2(c, a)
+        # mid at IMG_MID with the core spliced in, pyramid down to IMG_FAR (sf: L6 4 m, L5)
+        c, a = canvas('mid', MID, IMG_MID)
+        splice(c, cc, MID, CORE, res_of(IMG_MID))
+        splice(a, ac, MID, CORE, res_of(IMG_MID))
+        G[IMG_MID] = (c, a, MID['x0'], MID['z0'], res_of(IMG_MID))
+        for L in range(IMG_MID - 1, IMG_FAR, -1):
+            c, a = down2(c, a)
+            G[L] = (c, a, MID['x0'], MID['z0'], res_of(L))
+        cm, am = down2(c, a)
+        # far (whole root) at IMG_FAR with mid spliced in, then down to the root (sf: L4 16 m)
+        c, a = canvas('far', FAR, IMG_FAR)
+        splice(c, cm, FAR, MID, res_of(IMG_FAR))
+        splice(a, am, FAR, MID, res_of(IMG_FAR))
+        G[IMG_FAR] = (c, a, ROOT_MIN_X, ROOT_MIN_Z, res_of(IMG_FAR))
+        for L in range(IMG_FAR - 1, -1, -1):
             c, a = down2(c, a)
             G[L] = (c, a, ROOT_MIN_X, ROOT_MIN_Z, ROOT_SIZE / (1 << L) / PX)
     res = []
@@ -253,6 +260,8 @@ def main():
     if 2 in G:
         Image.fromarray(np.dstack([G[2][0], G[2][1]])).save(os.path.join(prev, 'L2.png'))
         Image.fromarray(np.dstack([G[4][0], G[4][1]])).resize((2048, 2048)).save(os.path.join(prev, 'L4.png'))
+        if IMG_FAR < IMG_MID and IMAGERY_SOURCE != 'naip':
+            Image.fromarray(np.dstack([G[IMG_MID][0], G[IMG_MID][1]])).save(os.path.join(prev, f'L{IMG_MID}.png'))
     log('done')
 
 

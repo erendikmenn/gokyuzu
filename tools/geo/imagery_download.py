@@ -1,16 +1,20 @@
-"""Download USGS NAIP orthoimagery (public domain) directly in EPSG:32610.
+"""Download the imagery for the terrain pipeline (per map, terrain_common.py).
+
+sf (GEO_REGION unset): USGS NAIP orthoimagery (public domain) directly in EPSG:32610.
 
   core: 1 m/px over CORE  (2048 m boxes = 2048 px)
   mid : 4 m/px over MID   (8192 m boxes)
   far : 16 m/px over the whole quadtree root (32768 m boxes)
 Pixel-is-area: box edges = tile edges, so texel centers sit at (i + 0.5) * res like a GPU texture.
 Cached as JPEG (q95) in data/sf/raw/naip/<set>/<i>_<j>.jpg. Re-runnable.
+ist (GEO_REGION=ist): Sentinel-2 L2A composite (imagery_s2.py: STAC items, band windows, cloud-masked median, graded
+  canvases core4 / mid8 / far16 as 2048 px PNG tiles in data/ist/_cache/raw/s2/); the argument is ignored there.
 Usage: .venv/bin/python tools/geo/imagery_download.py [core|mid|far|all]
 """
 import os, sys
 from concurrent.futures import ThreadPoolExecutor
 import requests
-from terrain_common import RAW, CORE, MID, FAR, local_to_utm_box, fetch
+from terrain_common import RAW, CORE, MID, FAR, EPSG, IMAGERY_SOURCE, local_to_utm_box, fetch
 
 URL = 'https://imagery.nationalmap.gov/arcgis/rest/services/USGSNAIPImagery/ImageServer/exportImage'
 
@@ -25,7 +29,7 @@ def jobs(area, res, px, name):
             x0 = area['x0'] + i * span
             z0 = area['z0'] + j * span
             bbox = local_to_utm_box(x0, z0, x0 + span, z0 + span)
-            params = dict(bbox=','.join(f'{v:.3f}' for v in bbox), bboxSR=32610, imageSR=32610, size=f'{px},{px}',
+            params = dict(bbox=','.join(f'{v:.3f}' for v in bbox), bboxSR=EPSG, imageSR=EPSG, size=f'{px},{px}',
                           format='jpg', bandIds='0,1,2', compressionQuality=95,
                           interpolation='RSP_BilinearInterpolation', f='image')
             out.append((params, os.path.join(RAW, 'naip', name, f'{i}_{j}.jpg')))
@@ -34,6 +38,10 @@ def jobs(area, res, px, name):
 
 def main():
     which = sys.argv[1] if len(sys.argv) > 1 else 'all'
+    if IMAGERY_SOURCE == 'sentinel2':
+        import imagery_s2
+        sys.argv = sys.argv[:1] + ['all']
+        return imagery_s2.main()
     todo = []
     if which in ('far', 'all'):
         todo += jobs(FAR, 16.0, 2048, 'far16')

@@ -1,0 +1,3 @@
+# terrain / imagery downloads and intermediates (tools/geo/terrain_*.py, imagery_*.py): reproducible, never committed
+*
+!.gitignore

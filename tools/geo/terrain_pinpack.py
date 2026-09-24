@@ -10,11 +10,15 @@ Also writes assets/sf/terrain/index.bin: deflate of u32 headerLength + header JS
   i16 hmin dm, i16 hmax dm (little endian).
 And the cacheable height files assets/sf/terrain/hz/ (terrain_heightfiles.py) the game streams instead of range requests
 into h/<L>.bin; their layout goes into the "heightFiles" entry of index.json and index.bin.
+Areas: <data>/runways.json airports + <data>/landmarks.json landmarks (sf). For ist, whatever of the other pipelines'
+files exists (data/ist/runways.json, landmarks.json, bridges.json) plus the terrain's own airport runways
+(data/ist/terrain_airports.json) and a few fixed landmark points (bridges, towers), so the pack is complete before the
+airports / landmarks data land; re-run it after they change.
 Usage: .venv/bin/python tools/geo/terrain_pinpack.py   (after terrain_build.py + imagery_build.py published index.json)
 """
 import os, json, zlib, struct
 import numpy as np
-from terrain_common import ROOT, OUT
+from terrain_common import ROOT, OUT, REGION_ID, DATA_DIR, RUNWAYS_JSON, LANDMARKS_JSON
 import terrain_heightfiles
 
 Q = 0.1
@@ -44,6 +48,43 @@ def write_index_json(d):
     os.replace(tmp, os.path.join(OUT, 'index.json'))
 
 
+# ist landmarks pinned even before data/ist/landmarks.json exists: (name, lon, lat, kind)
+IST_LANDMARKS = [('Yavuz Sultan Selim Köprüsü', 29.1106, 41.2032, 'bridge'), ('15 Temmuz Şehitler Köprüsü', 29.0350, 41.0452, 'bridge'),
+                 ('Fatih Sultan Mehmet Köprüsü', 29.0617, 41.0913, 'bridge'), ('Galata Köprüsü', 28.9737, 41.0197, 'bridge'),
+                 ('Haliç Metro Köprüsü', 28.9661, 41.0233, 'bridge'), ('Galata Kulesi', 28.974167, 41.025556, 'tower'),
+                 ('Kız Kulesi', 29.004097, 41.021083, 'tower'), ('Çamlıca Kulesi', 29.0690, 41.0283, 'tower'),
+                 ('Sultanahmet / Ayasofya', 28.9790, 41.0070, 'mosque'), ('Süleymaniye', 28.9639, 41.0162, 'mosque'),
+                 ('Çamlıca Camii', 29.0707, 41.0275, 'mosque'), ('Dolmabahçe', 29.0001, 41.0391, 'palace'),
+                 ('Rumeli Hisarı', 29.0560, 41.0847, 'fort'), ('Maslak / Levent', 29.0110, 41.0810, 'towers')]
+
+
+def pin_sources():
+    """(runways, landmarks) dicts in the sf file layouts; ist merges what exists (see the module docstring)."""
+    if REGION_ID == 'sf':
+        return (json.load(open(os.path.join(ROOT, 'data', 'sf', 'runways.json'))),
+                json.load(open(os.path.join(ROOT, 'data', 'sf', 'landmarks.json'))))
+    from geo import lonlat_to_local
+    rw = json.load(open(RUNWAYS_JSON)) if os.path.exists(RUNWAYS_JSON) else {'airports': []}
+    have = {a['icao'] for a in rw['airports']}
+    tpath = os.path.join(DATA_DIR, 'terrain_airports.json')
+    if os.path.exists(tpath):
+        for a in json.load(open(tpath))['airports']:
+            if a['icao'] not in have and a['runways']:
+                rw['airports'].append({'icao': a['icao'], 'runways': [{'ends': r['ends']} for r in a['runways']]})
+    lm = json.load(open(LANDMARKS_JSON)) if os.path.exists(LANDMARKS_JSON) else {'landmarks': []}
+    lm = {'landmarks': [l for l in lm.get('landmarks', []) if 'x' in l and 'z' in l]}
+    bpath = os.path.join(DATA_DIR, 'bridges.json')
+    if os.path.exists(bpath):
+        b = json.load(open(bpath))
+        for br in (b.get('bridges', b) if isinstance(b, dict) else b):
+            if isinstance(br, dict) and 'x' in br and 'z' in br:
+                lm['landmarks'].append({'x': br['x'], 'z': br['z'], 'kind': 'bridge'})
+    for name, lon, lat, kind in IST_LANDMARKS:
+        x, z = lonlat_to_local(lon, lat)
+        lm['landmarks'].append({'name': name, 'x': x, 'z': z, 'kind': kind})
+    return rw, lm
+
+
 def main():
     d = json.load(open(os.path.join(OUT, 'index.json')))
     # small cacheable height files (hz/) first: index.json / index.bin must only name files that exist
@@ -57,8 +98,7 @@ def main():
         rank[(L, r[1], r[2])] = cnt.get(L, 0)
         cnt[L] = cnt.get(L, 0) + 1
     N = {(r[0], r[1], r[2]): r for r in d['nodes']}
-    rw = json.load(open(os.path.join(ROOT, 'data', 'sf', 'runways.json')))
-    lm = json.load(open(os.path.join(ROOT, 'data', 'sf', 'landmarks.json')))
+    rw, lm = pin_sources()
     groups = []
     ap = []
     for a in rw['airports']:

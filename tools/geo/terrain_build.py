@@ -1,9 +1,13 @@
-"""Build the streaming terrain quadtree (heights + water flags) from the cached 3DEP/OSM downloads.
+"""Build the streaming terrain quadtree (heights + water flags) from the cached DEM/OSM downloads (per map, terrain_common.py).
 
-Inputs : data/sf/raw/3dep/{core2,far16}/*.tif (terrain_download.py), data/sf/cache/terrain/water.pkl (terrain_water.py),
-         data/sf/runways.json
-Outputs: assets/sf/terrain/h.next/<L>.bin + data/sf/cache/terrain/index_terrain.json (published by imagery_build.py),
-         assets/sf/terrain/water_depth.png, data/sf/cache/terrain/*.npy (processed grids)
+Inputs : sf : data/sf/raw/3dep/{core2,far16}/*.tif (terrain_download.py), data/sf/cache/terrain/water.pkl
+              (terrain_water.py), data/sf/runways.json
+         ist: data/ist/_cache/raw/copdem/{core,far16}.tif (terrain_download.py), data/ist/_cache/terrain/water.pkl,
+              the OSM landcover (terrain_osm.py; DSM building / canopy removal, terrain_dsm.py) and the airport surfaces
+              (terrain_airports.py: OSM runways / taxiways / aprons, runway end elevations)
+Outputs: <assets>/terrain/h.next/<L>.bin + <cache>/index_terrain.json (published by imagery_build.py),
+         <assets>/terrain/water_depth.png, <cache>/*.npy (processed grids)
+The core grid ("h2", spacing D2) is 2 m for sf and 8 m for ist; everything outside the core comes from the 16 m grid.
 See assets/sf/terrain/README.md for the format.
 Usage: .venv/bin/python tools/geo/terrain_build.py
 """
@@ -14,21 +18,22 @@ from rasterio import features
 from affine import Affine
 from scipy import ndimage
 from shapely.geometry import box, Polygon, Point
-from terrain_common import (RAW, CACHE, OUT, ROOT, ROOT_SIZE, ROOT_MIN_X, ROOT_MIN_Z, CORE, MID, GRID, SUN_EL, SUN_AZ)
+from terrain_common import (RAW, CACHE, OUT, ROOT, ROOT_SIZE, ROOT_MIN_X, ROOT_MIN_Z, CORE, MID, GRID, SUN_EL, SUN_AZ,
+                            CORE_RES, MAX_CORE, MAX_MID, MAX_FAR, IMG_CORE, IMG_MID, IMG_FAR, EPS, EPS_DEFAULT,
+                            DEM_SOURCE, RUNWAYS_JSON)
 
 T0 = time.time()
 def log(*a):
     print(f'[{time.time() - T0:6.1f}s]', *a, flush=True)
 
-D2, D16 = 2.0, 16.0
+D2, D16 = CORE_RES, 16.0      # core grid spacing (2 m sf, 8 m ist), global grid spacing
 NX2 = int((CORE['x1'] - CORE['x0']) / D2) + 1
 NZ2 = int((CORE['z1'] - CORE['z0']) / D2) + 1
 N16 = int(ROOT_SIZE / D16) + 1
 CORE_OFF16 = (int((CORE['x0'] - ROOT_MIN_X) / D16), int((CORE['z0'] - ROOT_MIN_Z) / D16))
-MAX_CORE, MAX_MID, MAX_FAR = 10, 7, 6
-IMG_CORE, IMG_MID, IMG_FAR = 8, 6, 4   # deepest imagery level per area (see imagery_build.py)
-EPS = {9: 1.0}            # m: a node is refined only if its geometric error exceeds this (per level)
-EPS_DEFAULT = 0.4
+KC = MAX_CORE - 7         # core pyramid steps D2 -> 16 m (3 sf, 1 ist); level MAX_CORE - k uses P[k]
+K8 = int(round(np.log2(8.0 / D2)))   # core pyramid index of the 8 m grid (baked sun shadows)
+assert D2 * (1 << KC) == D16 and KC >= 1
 TILE_BYTES = 8 + 67 * 67 * 2 + (67 * 67 + 7) // 8 + 65 * 65
 RUNWAY_SHOULDER = 60.0
 BLEND = 150.0
@@ -132,9 +137,14 @@ def sun_vis(ex):
 
 
 def main():
-    runways = json.load(open(os.path.join(ROOT, 'data', 'sf', 'runways.json')))
     water = pickle.load(open(os.path.join(CACHE, 'water.pkl'), 'rb'))
-    rw_land = runway_polys(runways, RUNWAY_SHOULDER)
+    if DEM_SOURCE == '3dep':
+        runways = json.load(open(RUNWAYS_JSON))
+        rw_land = runway_polys(runways, RUNWAY_SHOULDER)
+    else:
+        import terrain_airports
+        apts = terrain_airports.load()
+        rw_land = [(a, None, p) for a in apts for p in a['runway_polys'](RUNWAY_SHOULDER)]
     land_force = [p for _, _, p in rw_land]
     sea = water['sea']
     for p in land_force:
@@ -145,7 +155,11 @@ def main():
 
     # ---------------- core 2 m ----------------
     log('loading core mosaic')
-    h2 = load_mosaic('core2', 10, 2048)[:NZ2, :NX2].copy()
+    if DEM_SOURCE == '3dep':
+        h2 = load_mosaic('core2', 10, 2048)[:NZ2, :NX2].copy()
+    else:   # Copernicus DSM resampled to the core grid; buildings / canopy removed (with the 16 m grid, same correction)
+        import terrain_dsm
+        h2, h16_clean = terrain_dsm.load_clean(NX2, NZ2)
     core_box = box(CORE['x0'] - 50, CORE['z0'] - 50, CORE['x1'] + 50, CORE['z1'] + 50)
     log('rasterize water (core)')
     sea2 = rasterize([(sea.intersection(core_box), 1)], CORE['x0'], CORE['z0'], D2, h2.shape).astype(bool)
@@ -165,7 +179,7 @@ def main():
         ring_lab = ndimage.grey_dilation(lake2, size=5)
         ring_lab[(lake2 > 0) | sea2] = 0
         ring = np.array(ndimage.median(h2, ring_lab, ids))
-        level = np.where(p90 - p10 > 0.6, ring - 0.3, med)
+        level = np.where(p90 - p10 > 0.6, ring - 0.3, med) if DEM_SOURCE == '3dep' else med
         level = np.where(np.isnan(level), med, level)
         lut = np.zeros(lake2.max() + 1, np.float32)
         lut[ids] = level
@@ -175,7 +189,9 @@ def main():
     h2 = np.where(water2, wl2, h2).astype(np.float32)
 
     # ---------------- airports: flatten aerodrome + runway rectangles to the airport elevation ----------------
-    for apt in runways['airports']:
+    if DEM_SOURCE != '3dep':   # ist: sloped airport surfaces through the runway profiles (terrain_airports.py)
+        h2 = terrain_airports.flatten(apts, h2, water2, CORE['x0'], CORE['z0'], D2, log)
+    for apt in (runways['airports'] if DEM_SOURCE == '3dep' else []):
         elev = apt['elevation']
         cx, cz = apt['center']['x'], apt['center']['z']
         R = 5000
@@ -208,7 +224,8 @@ def main():
     band = (~water2) & (dl <= 3.5)
     hs = ndimage.gaussian_filter(h2, 1.3)
     wr = np.clip(1.0 - (dl - 1.0) / 3.0, 0.0, 1.0).astype(np.float32)
-    rw_core = rasterize([(q, 1) for _, _, q in runway_polys(runways, 3.0)],
+    rw_pave = runway_polys(runways, 3.0) if DEM_SOURCE == '3dep' else [(a, None, q) for a in apts for q in a['runway_polys'](3.0)]
+    rw_core = rasterize([(q, 1) for _, _, q in rw_pave],
                         CORE['x0'], CORE['z0'], D2, h2.shape).astype(bool)   # runway pavement (+3 m) stays exact
     band &= ~rw_core
     h2 = np.where(band, h2 + (np.minimum(hs, h2) - h2) * wr, h2).astype(np.float32)
@@ -216,7 +233,7 @@ def main():
 
     # ---------------- far 16 m ----------------
     log('loading far mosaic')
-    h16 = np.pad(load_mosaic('far16', 4, 2048), ((0, 1), (0, 1)), mode='edge')
+    h16 = np.pad(load_mosaic('far16', 4, 2048), ((0, 1), (0, 1)), mode='edge') if DEM_SOURCE == '3dep' else h16_clean
     sea16 = rasterize([(sea, 1)], ROOT_MIN_X, ROOT_MIN_Z, D16, h16.shape).astype(bool)
     lake16 = rasterize([(g, i + 1) for i, g in enumerate(lakes)], ROOT_MIN_X, ROOT_MIN_Z, D16, h16.shape, np.int32)
     lake16[sea16] = 0
@@ -232,10 +249,10 @@ def main():
     bathy16 = np.where(sea16, np.maximum(-h16, 0.0), 0).astype(np.float32)
     h16 = np.where(~np.isnan(wl16), wl16, h16).astype(np.float32)
 
-    # ---------------- core pyramid (P0 = 2 m ... P3 = 16 m) ----------------
+    # ---------------- core pyramid (P0 = D2 ... P[KC] = 16 m; sf: 2, 4, 8, 16 m) ----------------
     log('core pyramid')
     P, W = [h2], [wl2]
-    for k in range(3):
+    for k in range(KC):
         wk = W[-1][::2, ::2]
         pk = filter_down(P[-1])
         pk = np.where(~np.isnan(wk), wk, pk).astype(np.float32)
@@ -245,8 +262,8 @@ def main():
     ox, oz = CORE_OFF16
     G7 = h16.copy()
     WL7 = wl16.copy()
-    G7[oz:oz + P[3].shape[0], ox:ox + P[3].shape[1]] = P[3]
-    WL7[oz:oz + P[3].shape[0], ox:ox + P[3].shape[1]] = W[3]
+    G7[oz:oz + P[KC].shape[0], ox:ox + P[KC].shape[1]] = P[KC]
+    WL7[oz:oz + P[KC].shape[0], ox:ox + P[KC].shape[1]] = W[KC]
     G, GW = {7: G7}, {7: WL7}
     for L in range(6, -1, -1):
         wk = GW[L + 1][::2, ::2]
@@ -256,7 +273,7 @@ def main():
 
     # ---------------- baked sun visibility (terrain cast shadows for the fixed late-afternoon sun) ----------------
     log('sun shadows (core 8 m)')
-    vis_core = sun_vis(sun_excess(P[2], 8.0, 5000.0))        # core at 8 m (same grid as P[2])
+    vis_core = sun_vis(sun_excess(P[K8], 8.0, 5000.0))       # core at 8 m (same grid as P[K8])
     log('sun shadows (root 32 m)')
     vis_glob = sun_vis(sun_excess(G[6], 32.0, 24000.0))      # whole root at 32 m (G[6])
     np.save(os.path.join(CACHE, 'sunvis_core8.npy'), vis_core)
@@ -282,12 +299,13 @@ def main():
     log('errors')
     err = {}
     # core levels vs 2 m
-    for L, k in ((7, 3), (8, 2), (9, 1)):
+    for k in range(KC, 0, -1):          # sf: (L7, P3), (L8, P2), (L9, P1)
+        L = MAX_CORE - k
         up = upsample(P[k], 1 << k)[:NZ2, :NX2]
         d = np.abs(up - P[0])
         err[('core', L)] = block_max(d, 64 << k)
         del up, d
-    err[('core', 10)] = np.zeros(((NZ2 - 1) // 64, (NX2 - 1) // 64), np.float32)
+    err[('core', MAX_CORE)] = np.zeros(((NZ2 - 1) // 64, (NX2 - 1) // 64), np.float32)
     # global levels vs 16 m grid (G7)
     for L in range(0, 7):
         f = 1 << (7 - L)
@@ -338,7 +356,7 @@ def main():
         if L <= 7:
             w = GW[L][j * 64:j * 64 + 65, i * 64:i * 64 + 65]
         else:
-            k, s = 10 - L, 1 << (L - 7)
+            k, s = MAX_CORE - L, 1 << (L - 7)
             w = W[k][(j - COZ * s) * 64:(j - COZ * s) * 64 + 65, (i - CO * s) * 64:(i - CO * s) * 64 + 65]
         wt = ~np.isnan(w)
         return 2 if wt.all() else (1 if wt.any() else 0)
@@ -381,7 +399,7 @@ def main():
         if L <= 7:
             arr, warr, bi, bj = G[L], GW[L], i * 64, j * 64
         else:
-            k = 10 - L
+            k = MAX_CORE - L
             s = 1 << (L - 7)
             arr, warr = P[k], W[k]
             bi, bj = (i - CO * s) * 64, (j - COZ * s) * 64
@@ -422,6 +440,11 @@ def main():
     log('water info texture')
     import terrain_waterinfo
     terrain_waterinfo.main()
+
+    if DEM_SOURCE != '3dep':   # ground class map for a close-range detail branch (terrain_landcover.py; unused by sf)
+        import terrain_landcover
+        terrain_landcover.write_class_map(lambda x0, z0, d, shape: rasterize(
+            [(sea, 1)] + [(g, 1) for g in lakes], x0 + d / 2, z0 + d / 2, d, shape).astype(bool))
 
     # ---------------- caches for the imagery build ----------------
     np.save(os.path.join(CACHE, 'h2.npy'), h2)
