@@ -51,6 +51,7 @@ function gpuName(renderer) {
 export function startTelemetry({ build, renderer, quality, state, extra = {} }) {
   version = (build && build.version) || '';
   getState = state;
+  if (!enabled) return;   // off (localhost, ?telemetry=0, DNT / GPC): no GPU name query (a synchronous GL round trip), no timer
   send('open', {
     w: innerWidth, h: innerHeight, dpr: devicePixelRatio.toFixed(2), q: quality, lang: navigator.language,
     gpu: gpuName(renderer), ref: document.referrer ? new URL(document.referrer).hostname : '',

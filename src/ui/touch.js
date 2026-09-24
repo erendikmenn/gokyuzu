@@ -22,7 +22,7 @@
 import { injectCSS, BASE_CSS } from './styles.js';
 import { el, clamp } from './util.js';
 import { shared } from './shared.js';
-import { touchMode, isPhoneSize } from './touch-env.js';
+import { touchMode, isPhoneSize, mobileOS } from './touch-env.js';
 import { getTilt } from './touch-tilt.js';
 import { CAMERA_NAMES } from './camera-modes.js';
 import { loadSettings } from '../core/settings.js';
@@ -143,6 +143,18 @@ html.gk-touch #app canvas { touch-action: none; }
 .gkx-rot h2 { margin: 0; font-size: 22px; font-weight: 800; letter-spacing: -.01em; }
 .gkx-rot p { margin: 0; max-width: 300px; font-size: 14.5px; line-height: 1.5; color: rgba(226, 236, 250, .8); }
 
+/* Android (Chromium): no backdrop blur over the live 3D view. Every blurred element (12 control buttons, the slider,
+   the tapes, the autopilot strip…) costs the compositor an extra render pass of the screen area behind it, every
+   frame: measured in Chromium at a phone's pixel ratio 3 and the 30 fps flight cap, the GPU process spends 150–180 ms
+   of CPU per second with the blur and 55–65 without (M4 Max; several times that on a phone). The glass keeps its tint,
+   a little denser. iOS / iPadOS keep the blur (WebKit hands it to the system compositor). */
+html.gk-touch.gk-noblur * { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
+html.gk-touch.gk-noblur .gkx-glass { background: linear-gradient(180deg, rgba(16, 26, 42, .7), rgba(6, 11, 20, .68)); }
+html.gk-touch.gk-noblur .gkh-tape { background: linear-gradient(180deg, rgba(10, 18, 32, .5), rgba(4, 9, 18, .56)); }
+html.gk-touch.gk-noblur .gkh.gkh-compact .gkh-tape { background: linear-gradient(180deg, rgba(10, 18, 32, .26), rgba(4, 9, 18, .34)); }
+html.gk-touch.gk-noblur .gkh-panel { background: linear-gradient(180deg, rgba(16, 26, 42, .66), rgba(6, 11, 20, .64)); }
+html.gk-touch.gk-noblur .gkn-win { background: rgba(7, 13, 24, .95); }
+
 /* the rest of the game UI in touch mode */
 html.gk-touch .gkh-map, html.gk-touch .gkh-sys, html.gk-touch .gkh-info, html.gk-touch .gkc, html.gk-touch .gkt-f1, html.gk-touch .gkh-pinfo, html.gk-touch .gkh-pbtn kbd { display: none !important; }
 html.gk-touch .gkt-stack { left: var(--gkx-mid-x, 50%); bottom: var(--gkx-mid-b, 12px); max-width: var(--gkx-mid-w, calc(100vw - 32px)); }
@@ -215,6 +227,7 @@ export function createTouchControls(hudRoot, { input, hud, getState = () => ({})
     injectCSS('touch', CSS);
     const html = document.documentElement;
     html.classList.add('gk-touch');
+    if (mobileOS() === 'android') html.classList.add('gk-noblur');   // (see the CSS: backdrop blur is a compositor pass per frame)
     shared.touchMode = true;
     if (input && input.setTouchMode) input.setTouchMode(true);
     // iOS Safari: no pinch / double-tap page zoom over the game
@@ -451,9 +464,9 @@ function createControls(hudRoot, { input, hud, getState }) {
   el('span', 'l', ped, '◀ PEDAL');
   el('span', 'r', ped, 'PEDAL ▶');
   const pedKnob = el('b', null, ped);
-  const pd = { pid: null, v: 0 };
+  const pd = { pid: null, v: 0, r: null };
   function pedSet(clientX) {
-    const r = ped.getBoundingClientRect();
+    const r = pd.r || (pd.r = ped.getBoundingClientRect());   // measured once per touch (no layout read per move)
     const half = Math.max(20, r.width / 2 - 22);
     const v = clamp((clientX - (r.left + r.width / 2)) / half, -1, 1);
     pd.v = Math.abs(v) < 0.08 ? 0 : v;
@@ -462,7 +475,7 @@ function createControls(hudRoot, { input, hud, getState }) {
   ped.addEventListener('pointerdown', (e) => {
     if (pd.pid != null) return;
     e.preventDefault(); e.stopPropagation();
-    pd.pid = e.pointerId;
+    pd.pid = e.pointerId; pd.r = null;
     try { ped.setPointerCapture(e.pointerId); } catch { /* synthetic pointer */ }
     ped.classList.add('live');
     pedSet(e.clientX);
@@ -479,10 +492,12 @@ function createControls(hudRoot, { input, hud, getState }) {
     let d0 = 0;
     canvas.addEventListener('pointerdown', (e) => { if (e.pointerType === 'touch') { pts.set(e.pointerId, [e.clientX, e.clientY]); if (pts.size === 2) d0 = 0; } });
     canvas.addEventListener('pointermove', (e) => {
-      if (!pts.has(e.pointerId)) return;
-      pts.set(e.pointerId, [e.clientX, e.clientY]);
+      const q = pts.get(e.pointerId);
+      if (!q) return;
+      q[0] = e.clientX; q[1] = e.clientY;
       if (pts.size !== 2) return;
-      const [a, b] = [...pts.values()];
+      let a = null, b = null;
+      for (const v of pts.values()) { if (a) b = v; else a = v; }
       const d = Math.hypot(a[0] - b[0], a[1] - b[1]);
       if (d0 > 0 && d > 0) canvas.dispatchEvent(new WheelEvent('wheel', { deltaY: Math.log(d0 / d) * 600, deltaMode: 0, bubbles: true, cancelable: true }));
       d0 = d;
@@ -653,6 +668,8 @@ function createControls(hudRoot, { input, hud, getState }) {
   }
 
   let wasPaused = false;
+  // last values written to the DOM: update() only touches what changed (the lever position includes the layout's sl.top / sl.H)
+  const ui = { top: NaN, fill: NaN, ab: null, rev: null, txtRev: null, txtAb: null, pct: NaN, fail: false, fs: null };
   function update(dt, f, info = {}) {
     if (f !== flightRef.f) setAircraft(f);
     if (!f) return;
@@ -671,16 +688,22 @@ function createControls(hudRoot, { input, hud, getState }) {
     if (flightRef.cat === 'helicopter') input.touch.yaw = pd.v * Math.abs(pd.v) * 0.5 + pd.v * 0.5;
     else input.touch.yaw = f.onGround ? px : 0;
     // slider readout (the lever may also move by keys, a reset or the hover hold)
+    // (DOM written only on change: a still lever costs no style work)
     const rev = revCmd();
     const lever = input.state.throttle;
     const p = posOf(lever, rev);
-    handle.style.top = `${(sl.top + (1 - p) * sl.H).toFixed(1)}px`;
-    fill.style.height = `${(clamp(p, 0, 1) * 100).toFixed(1)}%`;
-    const ab = flightRef.det && lever > flightRef.det + 0.004;
-    thr.classList.toggle('ab', !!ab);
-    thr.classList.toggle('rev', rev);
-    const txt = rev ? 'REV' : ab ? 'AB' : `${Math.round(lever * 100)}`;
-    if (handle.textContent !== txt) handle.textContent = txt;
+    const top = Math.round((sl.top + (1 - p) * sl.H) * 10), fillH = Math.round(clamp(p, 0, 1) * 1000);
+    if (top !== ui.top) { ui.top = top; handle.style.top = `${(top / 10).toFixed(1)}px`; }
+    if (fillH !== ui.fill) { ui.fill = fillH; fill.style.height = `${(fillH / 10).toFixed(1)}%`; }
+    const ab = !!(flightRef.det && lever > flightRef.det + 0.004);
+    if (ab !== ui.ab) { ui.ab = ab; thr.classList.toggle('ab', ab); }
+    if (rev !== ui.rev) { ui.rev = rev; thr.classList.toggle('rev', rev); }
+    const pct = Math.round(lever * 100);
+    if (rev !== ui.txtRev || ab !== ui.txtAb || pct !== ui.pct) {
+      ui.txtRev = rev; ui.txtAb = ab; ui.pct = pct;
+      const txt = rev ? 'REV' : ab ? 'AB' : `${pct}`;
+      if (handle.textContent !== txt) handle.textContent = txt;
+    }
     // button states
     if (flightRef.cat !== 'helicopter') {
       const g = Number.isFinite(f.gear) ? f.gear : (f.gearHandleDown ? 1 : 0);
@@ -691,7 +714,7 @@ function createControls(hudRoot, { input, hud, getState }) {
       setState(bAP, f.autopilot && f.autopilot.on ? 'on' : '');
     } else setState(bHover, f.autopilot && f.autopilot.on ? 'on' : '');
     const fail = !!(f.failures && f.failures.active && f.failures.active.size);   // failures hook
-    if ((bEmerg.b.style.display !== 'none') !== fail) bEmerg.b.style.display = fail ? '' : 'none';
+    if (fail !== ui.fail) { ui.fail = fail; bEmerg.b.style.display = fail ? '' : 'none'; }
     setState(bEmerg, fail ? 'hot' : '');
     setState(bBrake, input.state.brake > 0.05 || f.parkingBrake ? 'amber' : '');
     setSub(bBrake, f.parkingBrake ? 'PARK' : '');
@@ -699,7 +722,8 @@ function createControls(hudRoot, { input, hud, getState }) {
     setState(bView, cockpit ? 'on' : '');
     const cam = shared.cameraMode || '';
     if (cam !== lastCam) { lastCam = cam; setSub(bCam, (CAMERA_NAMES[cam] || '').toLocaleUpperCase('tr')); }
-    if (bFull) bFull.b.style.display = document.fullscreenElement ? 'none' : '';
+    const fs = !!document.fullscreenElement;
+    if (bFull && fs !== ui.fs) { ui.fs = fs; bFull.b.style.display = fs ? 'none' : ''; }
     // tutorial focus: the controls named on the current tutorial card pulse
     const chips = shared.tutorialChips || '';
     if (chips !== tutKey) { tutKey = chips; highlight(chips); }

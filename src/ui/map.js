@@ -966,6 +966,7 @@ export function createNavMap({ hud, route }) {
     open(src = 'key') {
       if (isOpen || !flight) return;                     // only in flight (J is live in the menu too)
       isOpen = true;
+      shared.mapOpen = true;                             // the HUD under the map window stops redrawing (src/ui/hud.js)
       root.classList.add('open');
       layout();
       if (!viewInit && flight) {
@@ -982,6 +983,7 @@ export function createNavMap({ hud, route }) {
     close() {
       if (!isOpen) return;
       isOpen = false;
+      shared.mapOpen = false;
       root.classList.remove('open');
       closePop(); sel = null; hover = null; gesture = null; pointers.clear();
       cur.classList.remove('on');

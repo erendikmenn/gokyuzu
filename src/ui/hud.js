@@ -211,6 +211,30 @@ const NAV_CSS = `
 `;
 
 // ---------- helpers ----------
+// Canvas font strings, built once per (weight, size, family) instead of a template string per call (per-frame garbage).
+const FONTS = new Map();
+function F(weight, px, mono) {
+  const k = weight * 4096 + px * 16 + (mono ? 1 : 0);
+  let s = FONTS.get(k);
+  if (s === undefined) { s = `${weight} ${px}px ${mono ? MONO : SANS}`; FONTS.set(k, s); }
+  return s;
+}
+// Redraw rates of the 2D canvases (Hz, wall clock, so 90 / 120 Hz displays do not draw more): the tapes and readouts
+// 30 Hz unless the conformal pitch ladder shares their canvas (full HUD, chase camera: every frame, it moves with the
+// camera), the systems panel and the minimap 15 Hz, everything 5 Hz under the open big map. Panels the touch layout
+// hides (minimap, systems, info) are not drawn at all.
+const HZ_TAPES = 30, HZ_PANELS = 15, HZ_COVERED = 5, HZ_TEXT = 10;
+// tape label scratch (value, position pairs) and cached label strings: no arrays / strings built per frame
+const LAB_MAX = 64, LAB = new Float64Array(LAB_MAX * 2);
+const NUM_STR = new Map();
+function numStr(v) {
+  let s = NUM_STR.get(v);
+  if (s === undefined) { s = String(v); if (NUM_STR.size > 4096) NUM_STR.clear(); NUM_STR.set(v, s); }
+  return s;
+}
+const CARD = { 0: 'K', 90: 'D', 180: 'G', 270: 'B' };
+const DASH_NEG = [7, 6];
+const HDG_LAB = Array.from({ length: 36 }, (_, i) => String(i).padStart(2, '0'));   // heading tape labels per 10°
 const _q = new THREE.Quaternion(), _qc = new THREE.Quaternion();
 const _v = new THREE.Vector3(), _f = new THREE.Vector3(), _r = new THREE.Vector3(), _u = new THREE.Vector3(), _d = new THREE.Vector3();
 const _e = new THREE.Euler(0, 0, 0, 'YXZ');
@@ -360,6 +384,59 @@ export function createHUD(container) {
   const setCls = (node, cls, on) => { const m = clsCache.get(node) || {}; if (m[cls] !== on) { m[cls] = on; clsCache.set(node, m); node.classList.toggle(cls, on); } };
   const setOpacity = (node, o) => { const v = Math.round(o * 100) / 100; if (opCache.get(node) !== v) { opCache.set(node, v); node.style.opacity = String(v); } };
 
+  // ---------- redraw scheduling ----------
+  const T_TAPES = 0, T_SYS = 1, T_MAP = 2, T_TEXT = 3;
+  const lastDraw = [-1e9, -1e9, -1e9, -1e9];
+  let redrawAll = true, wasCovered = false, panelsWere = true;   // redrawAll: canvases resized / cleared, view changed
+  let lastChange = 0;                                   // time of the last update whose signature() changed
+  function due(k, hz, now) {
+    if (redrawAll || (lastDraw[k] < lastChange && now - lastDraw[k] >= 1000 / hz - 4)) { lastDraw[k] = now; return true; }
+    return false;
+  }
+  // What the canvases show, as numbers: a canvas drawn after the last change is not redrawn (paused, a mission card, a
+  // frozen crash, parked with the engines steady: nothing is drawn at all). Written into a fixed array (no garbage).
+  const SIG_N = 40, sigA = new Float64Array(SIG_N), sigB = new Float64Array(SIG_N);
+  let sigCur = sigA, sigPrev = sigB, sigDirty = true;
+  function signature(f) {
+    const q = sigCur; let i = 0;
+    const p = f.position, o = f.quaternion, v = f.velocity, ap = f.autopilot, w = f.warnings, n = f.nav;
+    q[i++] = p.x; q[i++] = p.y; q[i++] = p.z;
+    q[i++] = o ? o.x : 0; q[i++] = o ? o.y : 0; q[i++] = o ? o.z : 0; q[i++] = o ? o.w : 0;
+    q[i++] = v ? v.x : 0; q[i++] = v ? v.y : 0; q[i++] = v ? v.z : 0;
+    q[i++] = num(f.ias); q[i++] = num(f.gForce); q[i++] = num(f.agl); q[i++] = num(f.throttle); q[i++] = num(f.gear);
+    q[i++] = num(f.flaps) + (f.onGround ? 10 : 0) + (f.crashed ? 20 : 0) + (f.stalled ? 40 : 0) + (f.parkingBrake ? 80 : 0);
+    q[i++] = num(f.speedbrake) + 2 * num(f.spoilers) + 4 * num(f.reverser) + 8 * num(f.brakes);
+    q[i++] = num(f.fuel); q[i++] = num(f.torque) + 3 * num(f.rotorRPM) + 9 * num(f.collective);
+    const e0 = Array.isArray(f.engines) && f.engines[0];
+    q[i++] = e0 ? num(e0.n1) + 2 * num(e0.afterburner) : 0;
+    q[i++] = ap ? (ap.on ? 1 : 0) + 2 * (ap.athr ? 1 : 0) + 4 * (ap.lnav ? 1 : 0) : 0;
+    q[i++] = ap ? num(ap.altitude) : 0; q[i++] = ap ? num(ap.heading) : 0; q[i++] = ap ? num(ap.speed) : 0;
+    q[i++] = w ? (w.stall ? 1 : 0) + (w.overspeed ? 2 : 0) : 0;
+    q[i++] = n && n.valid ? n.dist + 1e6 * n.index : -1; q[i++] = n && n.valid ? n.brg : 0;
+    q[i++] = aptCache ? aptCache.brg + 1000 * aptCache.dist : -1;
+    const cam = compact() ? null : shared.camera, cq = cam && cam.quaternion;   // (camera: the full HUD's pitch ladder)
+    q[i++] = cq ? cq.x : 0; q[i++] = cq ? cq.y : 0; q[i++] = cq ? cq.z : 0; q[i++] = cq ? cq.w : 0; q[i++] = cam ? num(cam.fov) : 0;
+    q[i++] = (shared.lookingBack ? 1 : 0) + 2 * minimap.version;
+    let same = !sigDirty;
+    if (same) for (let k = 0; k < i; k++) if (q[k] !== sigPrev[k]) { same = false; break; }
+    sigCur = sigPrev; sigPrev = q; sigDirty = false;
+    return !same;
+  }
+  const html = document.documentElement;
+  const panelsHidden = () => html.classList.contains('gk-touch');   // touch.js CSS hides minimap / systems / info
+  const NO_DASH = [];
+  function prep(c, canvas, k, ox, oy) {
+    c.setTransform(1, 0, 0, 1, 0, 0);
+    c.clearRect(0, 0, canvas.width, canvas.height);
+    c.setTransform(k, 0, 0, k, ox, oy);
+    c.lineJoin = 'round'; c.lineCap = 'round'; c.textBaseline = 'middle'; c.setLineDash(NO_DASH); c.globalAlpha = 1;
+    ctx = c;
+  }
+  function drawMinimap(f, world) {
+    mctx.setTransform(dpr * pscale, 0, 0, dpr * pscale, 0, 0);
+    minimap.draw(mctx, MAP_DU, f, world, att.hdg, pulse, navHooks && navHooks.overlay);
+  }
+
   // ---------- layout ----------
   let s = 1, pscale = 1, dpr = 1, vw = 0, vh = 0, mapPx = MAP_DU, sysW = 0, sysH = 0;
   let touchInsets = null;                               // touch hook: { left, right, top, bottom } px kept free for the controls
@@ -374,6 +451,7 @@ export function createHUD(container) {
     };
   }
   function layout() {
+    redrawAll = true;                                   // (canvas sizes are set below: their content is cleared)
     vw = container.clientWidth || window.innerWidth;
     vh = container.clientHeight || window.innerHeight;
     s = clamp(Math.min(vh / 900, vw / 1240), 0.6, 2.4);
@@ -505,7 +583,7 @@ export function createHUD(container) {
     const az = att.hdg * DEG;
     ctx.save();
     ctx.beginPath(); ctx.rect(-300, -262, 600, 520); ctx.clip();
-    ctx.font = `600 12px ${MONO}`;
+    ctx.font = F(600, 12, 1);
     const lo = Math.max(-90, Math.floor((att.pitch - 40) / 10) * 10), hi = Math.min(90, Math.ceil((att.pitch + 40) / 10) * 10);
     // nose projection for fading
     _dir.set(0, 0, -1).applyQuaternion(f.quaternion);
@@ -532,11 +610,11 @@ export function createHUD(container) {
       }
       const major = true;
       const x0 = 52, x1 = 104;
-      if (p < 0) ctx.setLineDash([7, 6]);
+      if (p < 0) ctx.setLineDash(DASH_NEG);
       ctx.moveTo(cx - ux * x1, cy - uy * x1); ctx.lineTo(cx - ux * x0, cy - uy * x0);
       ctx.moveTo(cx + ux * x0, cy + uy * x0); ctx.lineTo(cx + ux * x1, cy + uy * x1);
       stroke(ctx, 1.2, C.fg);
-      ctx.setLineDash([]);
+      ctx.setLineDash(NO_DASH);
       if (major) {
         // end ticks point toward the horizon
         const tx = -uy * (p > 0 ? 7 : -7), ty = ux * (p > 0 ? 7 : -7);
@@ -622,19 +700,34 @@ export function createHUD(container) {
   }
   let lastFlapIdx = 0;
 
+  // speed tape helpers (hoisted: no closures per frame); tk / tppk = the tape's current speed and scale
+  let tk = 0, tppk = 1;
+  function band(a, b, color) {
+    const ya = -(a - tk) * tppk, yb = -(b - tk) * tppk;
+    ctx.fillStyle = color; ctx.fillRect(SPD.x1 - 6, Math.min(ya, yb), 5, Math.abs(yb - ya));
+  }
+  function bug(v, label, color) {
+    if (!v) return;
+    const x1 = SPD.x1;
+    const y = -(v - tk) * tppk;
+    if (Math.abs(y) > SPD.h / 2 - 4) return;
+    ctx.beginPath(); ctx.moveTo(x1 - 1, y); ctx.lineTo(x1 - 9, y - 5); ctx.lineTo(x1 - 9, y + 5); ctx.closePath();
+    ctx.fillStyle = color; ctx.fill();
+    ctx.font = F(700, 10, 1); ctx.textAlign = 'right';
+    if (Math.abs(y) > 20) text(ctx, label, x1 - 12, y - 9, color);
+  }
+  const NO_VSP = {};
+
   function drawSpeedTape(f, kt) {
     const { x1, w, h } = SPD;
     const ppk = category === 'fighter' ? 1.6 : category === 'helicopter' ? 3.6 : 2.6;
+    tk = kt; tppk = ppk;
     const step = category === 'fighter' ? 10 : 5;
     const labStep = category === 'fighter' ? 50 : category === 'helicopter' ? 10 : 20;
     const x0 = x1 - w, top = -h / 2;
     tapeBg(x0, top, w, h);
     ctx.save();
     ctx.beginPath(); ctx.rect(x0, top, w, h); ctx.clip();
-    const band = (a, b, color) => {
-      const ya = -(a - kt) * ppk, yb = -(b - kt) * ppk;
-      ctx.fillStyle = color; ctx.fillRect(x1 - 6, Math.min(ya, yb), 5, Math.abs(yb - ya));
-    };
     speedLimits(f);
     if (!f.onGround) {
       if (lim.lo) band(0, lim.lo, 'rgba(255,77,79,0.85)');
@@ -646,28 +739,19 @@ export function createHUD(container) {
     }
     ctx.beginPath();
     const vlo = Math.max(0, Math.floor((kt - h / 2 / ppk) / step) * step), vhi = kt + h / 2 / ppk;
-    const labels = [];
+    let nl = 0;
     for (let v = vlo; v <= vhi; v += step) {
       const y = -(v - kt) * ppk;
       const major = v % (step * 2) === 0;
       ctx.moveTo(x1 - 8, y); ctx.lineTo(x1 - (major ? 20 : 13), y);
-      if (v % labStep === 0) labels.push([v, y]);
+      if (v % labStep === 0 && nl < LAB_MAX) { LAB[nl * 2] = v; LAB[nl * 2 + 1] = y; nl++; }
     }
     stroke(ctx, 1.2, C.fg);
-    ctx.font = `600 13px ${MONO}`;
+    ctx.font = F(600, 13, 1);
     ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
-    for (const [v, y] of labels) if (Math.abs(y) > 19 && Math.abs(y) < h / 2 - 7) text(ctx, String(v), x1 - 25, y, C.fg);
+    for (let i = 0; i < nl; i++) { const y = LAB[i * 2 + 1]; if (Math.abs(y) > 19 && Math.abs(y) < h / 2 - 7) text(ctx, numStr(LAB[i * 2]), x1 - 25, y, C.fg); }
     // bugs: VR (ground), VREF (approach), AP speed
-    const bug = (v, label, color) => {
-      if (!v) return;
-      const y = -(v - kt) * ppk;
-      if (Math.abs(y) > h / 2 - 4) return;
-      ctx.beginPath(); ctx.moveTo(x1 - 1, y); ctx.lineTo(x1 - 9, y - 5); ctx.lineTo(x1 - 9, y + 5); ctx.closePath();
-      ctx.fillStyle = color; ctx.fill();
-      ctx.font = `700 10px ${MONO}`; ctx.textAlign = 'right';
-      if (Math.abs(y) > 20) text(ctx, label, x1 - 12, y - 9, color);
-    };
-    const vsp = f.vSpeeds || {};
+    const vsp = f.vSpeeds || NO_VSP;
     if (category !== 'helicopter') {
       if (f.onGround && num(f.throttle) > 0.2 || f.onGround && kt > 30) {
         bug(toKt(vsp.vr || spec.vRotate), 'VR', C.cyan);
@@ -698,10 +782,10 @@ export function createHUD(container) {
     ctx.fillStyle = C.boxBg; ctx.fill();
     const bad = !!(f.warnings && (f.warnings.stall || f.warnings.overspeed)) || !!f.stalled;
     ctx.lineWidth = 1.4; ctx.strokeStyle = bad ? C.warn : C.accent; ctx.stroke();
-    ctx.font = `700 21px ${MONO}`; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+    ctx.font = F(700, 21, 1); ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
     const ktShown = category === 'helicopter' && kt < 20 && !f.onGround ? '<20' : String(Math.round(kt));
     text(ctx, ktShown, bx1 - 6, 1, bad ? C.warn : C.fg, false);
-    ctx.font = `650 11px ${SANS}`;
+    ctx.font = F(650, 11, 0);
     ctx.textAlign = 'left'; text(ctx, 'HIZ', x0 + 2, top - 13, C.dim);
     ctx.textAlign = 'right'; text(ctx, 'KT', x1 - 2, top - 13, C.dim);
   }
@@ -730,16 +814,16 @@ export function createHUD(container) {
     }
     ctx.beginPath();
     const lo = Math.floor((ft - h / 2 / ppf) / step) * step, hi = ft + h / 2 / ppf;
-    const labels = [];
+    let nl = 0;
     for (let v = lo; v <= hi; v += step) {
       const y = -(v - ft) * ppf;
       const major = v % (step * 2) === 0;
       ctx.moveTo(x0 + 3, y); ctx.lineTo(x0 + (major ? 15 : 9), y);
-      if (v % lab === 0) labels.push([v, y]);
+      if (v % lab === 0 && nl < LAB_MAX) { LAB[nl * 2] = v; LAB[nl * 2 + 1] = y; nl++; }
     }
     stroke(ctx, 1.2, C.fg);
-    ctx.font = `600 13px ${MONO}`; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
-    for (const [v, y] of labels) if (Math.abs(y) > 19 && Math.abs(y) < h / 2 - 7) text(ctx, String(v), x1 - 8, y, C.fg);
+    ctx.font = F(600, 13, 1); ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+    for (let i = 0; i < nl; i++) { const y = LAB[i * 2 + 1]; if (Math.abs(y) > 19 && Math.abs(y) < h / 2 - 7) text(ctx, numStr(LAB[i * 2]), x1 - 8, y, C.fg); }
     const ap = f.autopilot;
     if (ap && ap.on && Number.isFinite(ap.altitude)) {
       const tft = ap.altitude * FT;
@@ -751,10 +835,10 @@ export function createHUD(container) {
     }
     ctx.restore();
     if (ap && ap.on && Number.isFinite(ap.altitude)) {
-      ctx.font = `700 13px ${MONO}`; ctx.textAlign = 'right';
+      ctx.font = F(700, 13, 1); ctx.textAlign = 'right';
       text(ctx, String(Math.round(ap.altitude * FT / 10) * 10), x1, top - 13, C.cyan);
     } else {
-      ctx.font = `650 11px ${SANS}`;
+      ctx.font = F(650, 11, 0);
       ctx.textAlign = 'left'; text(ctx, 'İRTİFA', x0 + 2, top - 13, C.dim);
       ctx.textAlign = 'right'; text(ctx, 'FT', x1 - 2, top - 13, C.dim);
     }
@@ -764,7 +848,7 @@ export function createHUD(container) {
     ctx.lineTo(bx0, 6); ctx.lineTo(bx0, bh); ctx.lineTo(bx1, bh); ctx.closePath();
     ctx.fillStyle = C.boxBg; ctx.fill();
     ctx.lineWidth = 1.4; ctx.strokeStyle = C.accent; ctx.stroke();
-    ctx.font = `700 20px ${MONO}`; ctx.textAlign = 'right';
+    ctx.font = F(700, 20, 1); ctx.textAlign = 'right';
     text(ctx, String(Math.round(ft / (ft > 10000 ? 10 : 1)) * (ft > 10000 ? 10 : 1)), bx1 - 6, 1, C.fg, false);
     drawVSI(f);
   }
@@ -784,7 +868,7 @@ export function createHUD(container) {
     for (const v of ticks) { const y = map(v); const l = Math.abs(v) === 500 ? 4 : 7; ctx.moveTo(x, y); ctx.lineTo(x + l, y); }
     ctx.moveTo(x - 3, 0); ctx.lineTo(x + 9, 0);
     stroke(ctx, 1, C.dim);
-    ctx.font = `600 10px ${MONO}`; ctx.textAlign = 'left';
+    ctx.font = F(600, 10, 1); ctx.textAlign = 'left';
     for (const v of ticks) if (Math.abs(v) >= 1000) text(ctx, String(Math.abs(v / 1000)), x + 10, map(v), C.dim);
     const y = map(fpm);
     ctx.beginPath(); ctx.moveTo(x + 1, 0); ctx.lineTo(x + 1, y);
@@ -801,20 +885,20 @@ export function createHUD(container) {
     ctx.save();
     ctx.beginPath(); ctx.rect(x0, y0, w, h); ctx.clip();
     ctx.beginPath();
-    const labels = [];
+    let nl = 0;
     const lo = Math.floor((hdg - w / 2 / ppd) / 5) * 5, hi = hdg + w / 2 / ppd;
     for (let d = lo; d <= hi; d += 5) {
       const x = (d - hdg) * ppd, dd = wrap360(d);
       ctx.moveTo(x, yb - 2); ctx.lineTo(x, yb - 2 - (dd % 10 === 0 ? 9 : 5));
-      if (dd % 30 === 0) labels.push([dd, x]);
+      if (dd % 30 === 0 && nl < LAB_MAX) { LAB[nl * 2] = dd; LAB[nl * 2 + 1] = x; nl++; }
     }
     stroke(ctx, 1.1, C.fg);
-    const card = { 0: 'K', 90: 'D', 180: 'G', 270: 'B' };
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    for (const [dd, x] of labels) {
+    for (let i = 0; i < nl; i++) {
+      const dd = LAB[i * 2], x = LAB[i * 2 + 1];
       if (Math.abs(x) < 42) continue;
-      if (card[dd]) { ctx.font = `750 15px ${SANS}`; text(ctx, card[dd], x, y0 + 12, dd === 0 ? '#ff9a6a' : C.fg); }
-      else { ctx.font = `600 12px ${MONO}`; text(ctx, String(dd / 10).padStart(2, '0'), x, y0 + 12, C.dim); }
+      if (CARD[dd]) { ctx.font = F(750, 15, 0); text(ctx, CARD[dd], x, y0 + 12, dd === 0 ? '#ff9a6a' : C.fg); }
+      else { ctx.font = F(600, 12, 1); text(ctx, HDG_LAB[dd / 10] ?? String(dd / 10).padStart(2, '0'), x, y0 + 12, C.dim); }
     }
     ctx.restore();
     const lim = w / 2 - 8;
@@ -826,7 +910,7 @@ export function createHUD(container) {
       if (Math.abs(rel * ppd) <= lim) { ctx.moveTo(bx, yb + 2); ctx.lineTo(bx - 6, yb + 10); ctx.lineTo(bx + 6, yb + 10); ctx.closePath(); }
       else { const sg = Math.sign(rel); ctx.moveTo(bx + sg * 8, yb + 6); ctx.lineTo(bx - sg * 3, yb); ctx.lineTo(bx - sg * 3, yb + 12); ctx.closePath(); }
       fill(ctx, C.accent);
-      ctx.font = `700 10.5px ${SANS}`; ctx.textAlign = 'center';
+      ctx.font = F(700, 10.5, 0); ctx.textAlign = 'center';
       text(ctx, apt.code, bx, yb + 20, C.accent);
     }
     // navigation hook: bearing to the active route waypoint (magenta diamond)
@@ -851,22 +935,23 @@ export function createHUD(container) {
     ctx.lineWidth = 1.4; ctx.strokeStyle = C.accent; ctx.stroke();
     ctx.beginPath(); ctx.moveTo(-6, yb - 2); ctx.lineTo(0, yb + 5); ctx.lineTo(6, yb - 2);
     ctx.fillStyle = C.accent; ctx.fill();
-    ctx.font = `700 19px ${MONO}`; ctx.textAlign = 'center';
+    ctx.font = F(700, 19, 1); ctx.textAlign = 'center';
     text(ctx, String(Math.round(hdg) % 360).padStart(3, '0'), 0, y0 + h / 2 - 1, C.fg, false);
   }
 
   function readout(label, value, x0, x1, y, color = C.fg, big = false) {
-    ctx.font = `650 11px ${SANS}`; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    ctx.font = F(650, 11, 0); ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
     text(ctx, label, x0 + 2, y, C.dim);
-    ctx.font = `700 ${big ? 18 : 16}px ${MONO}`; ctx.textAlign = 'right';
+    ctx.font = F(700, big ? 18 : 16, 1); ctx.textAlign = 'right';
     text(ctx, value, x1 - 2, y, color);
   }
 
+  // route each readout to its column (compact mode draws the columns into separate canvases)
+  let wantL = true, wantR = true;
+  function ro(label, value, x0, x1, yy, color, big) { if (x0 < 0 ? wantL : wantR) readout(label, value, x0, x1, yy, color, big); }
   function drawReadouts(f, kt, side) {
     const y = SPD.h / 2 + 22;
-    const wantL = side !== 'R', wantR = side !== 'L';
-    // route each readout to its column (compact mode draws the columns into separate canvases)
-    const ro = (label, value, x0, x1, yy, color, big) => { if (x0 < 0 ? wantL : wantR) readout(label, value, x0, x1, yy, color, big); };
+    wantL = side !== 'R'; wantR = side !== 'L';
     const sx0 = SPD.x1 - SPD.w, sx1 = SPD.x1, ax0 = ALT.x0, ax1 = ALT.x0 + ALT.w;
     const fpm = num(f.verticalSpeed) * FPM;
     const vsStr = `${fpm > 5 ? '+' : ''}${Math.round(fpm / 10) * 10}`;
@@ -891,8 +976,8 @@ export function createHUD(container) {
         const yy = y + 34;
         ctx.beginPath(); ctx.roundRect(ax0, yy - 16, ALT.w, 32, 7);
         ctx.fillStyle = C.boxBg; ctx.fill(); ctx.lineWidth = 1.3; ctx.strokeStyle = ra < 50 ? C.caution : C.accent; ctx.stroke();
-        ctx.font = `650 10px ${SANS}`; ctx.textAlign = 'left'; text(ctx, 'RAD', ax0 + 7, yy, C.dim, false);
-        ctx.font = `700 19px ${MONO}`; ctx.textAlign = 'right';
+        ctx.font = F(650, 10, 0); ctx.textAlign = 'left'; text(ctx, 'RAD', ax0 + 7, yy, C.dim, false);
+        ctx.font = F(700, 19, 1); ctx.textAlign = 'right';
         text(ctx, ra < 1500 ? String(Math.round(ra)) : '----', ax1 - 7, yy + 1, ra < 50 ? C.caution : C.fg, false);
       }
     } else {
@@ -928,12 +1013,12 @@ export function createHUD(container) {
     const tv = t(v);
     c.beginPath(); c.moveTo(cx + Math.cos(tv) * (r * 0.25), cy + Math.sin(tv) * (r * 0.25)); c.lineTo(cx + Math.cos(tv) * (r + 4), cy + Math.sin(tv) * (r + 4));
     c.lineWidth = 2.4; c.strokeStyle = col; c.lineCap = 'round'; c.stroke();
-    c.font = `650 9.5px ${SANS}`; c.textAlign = 'center'; c.textBaseline = 'middle';
+    c.font = F(650, 9.5, 0); c.textAlign = 'center'; c.textBaseline = 'middle';
     c.fillStyle = C.dim; c.fillText(o.label, cx, cy + r * 0.62);
-    c.font = `700 ${o.big ? 16 : 14}px ${MONO}`;
+    c.font = F(700, o.big ? 16 : 14, 1);
     c.fillStyle = col; c.fillText(o.text, cx, cy + r * 0.2 + (o.big ? 1 : 0));
     if (o.tag) {
-      c.font = `800 9px ${SANS}`;
+      c.font = F(800, 9, 0);
       const tw = c.measureText(o.tag).width + 8;
       c.beginPath(); c.roundRect(cx - tw / 2, cy - r * 0.45 - 7, tw, 14, 3);
       c.fillStyle = o.tagColor || C.green; c.fill();
@@ -948,7 +1033,7 @@ export function createHUD(container) {
   }
   function pill(c, x, y, label, state) {
     // state: 0 off, 1 on (amber), 2 on (green), 3 on (orange/AB), 4 red
-    c.font = `750 9.5px ${SANS}`;
+    c.font = F(750, 9.5, 0);
     const w = c.measureText(label).width + 14, h = 17;
     c.beginPath(); c.roundRect(x, y, w, h, 8.5);
     const colors = [null, C.caution, C.green, C.ab, C.warn];
@@ -962,7 +1047,7 @@ export function createHUD(container) {
     const g = num(f.gear, 1);
     const handle = f.gearHandleDown !== undefined ? !!f.gearHandleDown : g > 0.5;
     const state = g > 0.99 ? 'down' : g < 0.01 ? 'up' : 'transit';
-    c.font = `650 9.5px ${SANS}`; c.textAlign = 'left'; c.textBaseline = 'middle';
+    c.font = F(650, 9.5, 0); c.textAlign = 'left'; c.textBaseline = 'middle';
     c.fillStyle = C.dim; c.fillText('TEKER', x, y + 6);
     const bx = x + 42;
     for (let i = 0; i < 3; i++) {
@@ -973,7 +1058,7 @@ export function createHUD(container) {
       else { c.lineWidth = 1; c.strokeStyle = 'rgba(255,255,255,0.22)'; c.stroke(); }
     }
     c.fillStyle = handle ? C.fg : C.dim;
-    c.font = `700 10px ${MONO}`;
+    c.font = F(700, 10, 1);
     c.fillText(state === 'up' ? 'YUKARI' : state === 'down' ? 'AŞAĞI' : 'HAREKET', bx + 44, y + 6);
   }
 
@@ -990,18 +1075,18 @@ export function createHUD(container) {
     if (category === 'fighter') {
       const det = clamp(num(spec.abDetent, 0.9), 0.5, 1);
       const ab = eng.some((e) => num(e.afterburner) > 0.02) || thr > det + 0.005;
-      c.font = `650 9.5px ${SANS}`; c.textAlign = 'left'; c.fillStyle = C.dim; c.fillText('GAZ', 14, 20);
+      c.font = F(650, 9.5, 0); c.textAlign = 'left'; c.fillStyle = C.dim; c.fillText('GAZ', 14, 20);
       hbar(c, 48, 15, W - 116, 10, thr, ab ? C.ab : 'rgba(92,242,200,0.85)', [det]);
       c.fillStyle = 'rgba(255,138,61,0.28)'; c.fillRect(48 + det * (W - 116), 15, (1 - det) * (W - 116), 10);
-      c.font = `700 14px ${MONO}`; c.textAlign = 'right'; c.fillStyle = ab ? C.ab : C.fg;
+      c.font = F(700, 14, 1); c.textAlign = 'right'; c.fillStyle = ab ? C.ab : C.fg;
       c.fillText(`${Math.round(thr * 100)}%`, W - 14, 20);
       // RPM per engine
-      c.font = `650 9.5px ${SANS}`; c.textAlign = 'left'; c.fillStyle = C.dim; c.fillText('RPM', 14, 45);
-      c.font = `700 13px ${MONO}`; c.fillStyle = C.fg;
+      c.font = F(650, 9.5, 0); c.textAlign = 'left'; c.fillStyle = C.dim; c.fillText('RPM', 14, 45);
+      c.font = F(700, 13, 1); c.fillStyle = C.fg;
       const rpms = (eng.length ? eng : [{ n1: thr }]).map((e) => `${Math.round(num(e.n1) * 100)}%`).join('  ');
       c.fillText(rpms, 48, 45);
-      c.font = `650 9.5px ${SANS}`; c.fillStyle = C.dim; c.textAlign = 'right'; c.fillText('YAKIT', W - 78, 45);
-      c.font = `700 12px ${MONO}`; c.fillStyle = C.fg; c.fillText(fuelStr, W - 14, 45);
+      c.font = F(650, 9.5, 0); c.fillStyle = C.dim; c.textAlign = 'right'; c.fillText('YAKIT', W - 78, 45);
+      c.font = F(700, 12, 1); c.fillStyle = C.fg; c.fillText(fuelStr, W - 14, 45);
       gearLights(c, 14, 62, f);
       let x = 14;
       const y = H - 30;
@@ -1015,10 +1100,10 @@ export function createHUD(container) {
       arcGauge(c, 138, 64, 36, nr, { min: 0, max: 120, green: [95, 101], red: 107, label: 'NR %', text: String(Math.round(nr)), big: true, fillColor: 'rgba(111,216,255,0.85)' });
       // collective
       const col = clamp(Number.isFinite(f.collective) ? f.collective : thr, 0, 1);
-      c.font = `650 9.5px ${SANS}`; c.textAlign = 'left'; c.fillStyle = C.dim; c.fillText('KOLEKTİF', 14, H - 40);
+      c.font = F(650, 9.5, 0); c.textAlign = 'left'; c.fillStyle = C.dim; c.fillText('KOLEKTİF', 14, H - 40);
       hbar(c, 72, H - 45, 104, 9, col, 'rgba(92,242,200,0.85)');
-      c.font = `650 9.5px ${SANS}`; c.fillStyle = C.dim; c.fillText('YAKIT', 14, H - 20);
-      c.font = `700 12px ${MONO}`; c.fillStyle = C.fg; c.fillText(fuelStr, 72, H - 20);
+      c.font = F(650, 9.5, 0); c.fillStyle = C.dim; c.fillText('YAKIT', 14, H - 20);
+      c.font = F(700, 12, 1); c.fillStyle = C.fg; c.fillText(fuelStr, 72, H - 20);
       // hover drift display: ground velocity in the body frame (fwd = up), rim = 20 kt
       const hx = W - 62, hy = 70, hr = 44;
       c.beginPath(); c.arc(hx, hy, hr, 0, Math.PI * 2); c.fillStyle = 'rgba(3,8,14,0.5)'; c.fill();
@@ -1039,8 +1124,8 @@ export function createHUD(container) {
         c.beginPath(); c.moveTo(hx, hy); c.lineTo(hx + vx, hy + vy); c.lineWidth = 2.4; c.strokeStyle = C.accent; c.lineCap = 'round'; c.stroke();
         c.beginPath(); c.arc(hx + vx, hy + vy, 3.5, 0, Math.PI * 2); c.fillStyle = C.accent; c.fill();
       }
-      c.font = `650 9px ${SANS}`; c.textAlign = 'center'; c.fillStyle = C.dim; c.fillText('SÜRÜKLENME', hx, hy + hr + 12);
-      c.font = `700 9px ${SANS}`; c.fillStyle = C.faint; c.fillText('20 kt', hx + hr - 10, hy - hr + 4);
+      c.font = F(650, 9, 0); c.textAlign = 'center'; c.fillStyle = C.dim; c.fillText('SÜRÜKLENME', hx, hy + hr + 12);
+      c.font = F(700, 9, 0); c.fillStyle = C.faint; c.fillText('20 kt', hx + hr - 10, hy - hr + 4);
     } else {
       // airliner: N1 per engine (up to 2 shown), flaps, gear, spoilers
       const list = eng.length ? eng.slice(0, 2) : [{ n1: thr }];
@@ -1050,20 +1135,20 @@ export function createHUD(container) {
         arcGauge(c, 48 + i * 82, 58, 32, n1, { min: 0, max: 110, red: 104, label: 'N1 %', text: n1.toFixed(1), tag: rev > 0.5 ? 'REV' : rev > 0.02 ? 'REV' : null, tagColor: rev > 0.5 ? C.green : C.caution });
       });
       const x0 = 186;
-      c.font = `650 9.5px ${SANS}`; c.textAlign = 'left'; c.fillStyle = C.dim;
+      c.font = F(650, 9.5, 0); c.textAlign = 'left'; c.fillStyle = C.dim;
       c.fillText('FLAP', x0, 20);
-      c.font = `750 15px ${MONO}`; c.fillStyle = num(f.flaps) > 0.02 ? C.cyan : C.fg;
+      c.font = F(750, 15, 1); c.fillStyle = num(f.flaps) > 0.02 ? C.cyan : C.fg;
       c.fillText(String(f.flapsLabel ?? '—'), x0, 38);
       hbar(c, x0, 50, W - x0 - 14, 6, num(f.flaps), 'rgba(111,216,255,0.85)');
-      c.font = `650 9.5px ${SANS}`; c.fillStyle = C.dim; c.fillText('SPOILER', x0, 72);
+      c.font = F(650, 9.5, 0); c.fillStyle = C.dim; c.fillText('SPOILER', x0, 72);
       hbar(c, x0, 80, W - x0 - 14, 6, Math.max(num(f.spoilers), num(f.speedbrake)), 'rgba(255,176,32,0.9)');
       gearLights(c, 14, H - 58, f);
       let x = 14;
       const y = H - 30;
-      c.font = `650 9.5px ${SANS}`; c.textAlign = 'left'; c.fillStyle = C.dim; c.fillText('GAZ', x0, 102);
-      c.font = `700 12px ${MONO}`; c.fillStyle = C.fg; c.fillText(`${Math.round(thr * 100)}%`, x0 + 32, 102);
-      c.font = `650 9.5px ${SANS}`; c.fillStyle = C.dim; c.fillText('YAKIT', x0, 120);
-      c.font = `700 12px ${MONO}`; c.fillStyle = C.fg; c.fillText(fuelStr, x0 + 40, 120);
+      c.font = F(650, 9.5, 0); c.textAlign = 'left'; c.fillStyle = C.dim; c.fillText('GAZ', x0, 102);
+      c.font = F(700, 12, 1); c.fillStyle = C.fg; c.fillText(`${Math.round(thr * 100)}%`, x0 + 32, 102);
+      c.font = F(650, 9.5, 0); c.fillStyle = C.dim; c.fillText('YAKIT', x0, 120);
+      c.font = F(700, 12, 1); c.fillStyle = C.fg; c.fillText(fuelStr, x0 + 40, 120);
       const ap = f.autopilot;
       x = pill(c, x, y, 'AP', ap && ap.on ? 2 : 0);
       x = pill(c, x, y, f.parkingBrake ? 'PARK' : 'FREN', brakes || f.parkingBrake ? 1 : 0);
@@ -1088,9 +1173,10 @@ export function createHUD(container) {
     return { icao: best.icao, code: (AIRPORTS[best.icao] && AIRPORTS[best.icao].code) || best.icao, dist: bd, brg };
   }
   let aptCache = null;
-  function updateInfo(f, world) {
+  function updateInfo(f, world, shown = true) {
     const p = f.position;
-    aptCache = nearestAirport(world, p);
+    aptCache = nearestAirport(world, p);               // (also the heading tape's airport bug)
+    if (!shown) return;                                 // info panel hidden (touch layout) or under the map
     const lms = world && world.landmarks && Array.isArray(world.landmarks.landmarks) ? world.landmarks.landmarks : [];
     let lm = null, ld = Infinity;
     for (const l of lms) {
@@ -1229,7 +1315,8 @@ export function createHUD(container) {
     const w = f.warnings || {};
     const air = !f.onGround && !f.crashed;
     const now = performance.now() / 1000;
-    for (const [key, , , , ack] of WARNINGS) {
+    for (let i = 0; i < WARNINGS.length; i++) {       // (indexed: no iterator / destructuring garbage per frame)
+      const key = WARNINGS[i][0], ack = WARNINGS[i][4];
       let on = !!w[key];
       if (key === 'stall' && f.warnings === undefined) on = air && !!f.stalled;
       if (f.crashed) on = false;
@@ -1353,6 +1440,7 @@ export function createHUD(container) {
   }
 
   function applyVisibility() {
+    redrawAll = true;
     const cockpit = view === 'cockpit';
     setCls(ext, 'gkh-off', !visible || cockpit);
     setCls(center, 'gkh-off', cinematic);
@@ -1415,55 +1503,62 @@ export function createHUD(container) {
       camBar.update(visible);   // camera selector hook: active camera, hidden with the HUD
       if (!visible) return;
       updateWarnings(f);
-      if (view === 'cockpit') { updateStrip(f, kt, ft); return; }
-      if (cinematic) updateStrip(f, kt, ft);
+      const covered = !!shared.mapOpen;
+      if (covered !== wasCovered) { wasCovered = covered; redrawAll = true; }
+      const panels = !panelsHidden();
+      if (panels !== panelsWere) { panelsWere = panels; redrawAll = true; infoTimer = 0; }
+      if (signature(f) || (panels && minimap.settling)) lastChange = now;   // (a canvas drawn since then shows this state)
+      // DOM text (cockpit strip, autopilot FMA) at HZ_TEXT: formatted and compared 10 times a second, not every frame,
+      // and once more after the flight stops changing (pause) so the frozen values are the last ones
+      const textDue = due(T_TEXT, HZ_TEXT, now);
+      if (view === 'cockpit') { if (textDue) updateStrip(f, kt, ft); redrawAll = false; return; }
+      if (cinematic && textDue) updateStrip(f, kt, ft);
 
-      // exterior instruments
+      // exterior instruments. Canvases are redrawn at their rates (HZ_TAPES / HZ_PANELS; HZ_COVERED under the open big
+      // map, which leaves only a dimmed margin of them visible); panels the touch layout hides are not drawn at all.
+      const hzTapes = covered ? HZ_COVERED : HZ_TAPES, hzPanels = covered ? HZ_COVERED : HZ_PANELS;
       if (cinematic) {
-        drawSystems(f);
+        if (panels && due(T_SYS, hzPanels, now)) drawSystems(f);
         infoTimer -= dt;
-        if (infoTimer <= 0) { infoTimer = 0.25; updateInfo(f, infoArg.world); }
-        mctx.setTransform(dpr * pscale, 0, 0, dpr * pscale, 0, 0);
-        minimap.draw(mctx, MAP_DU, f, infoArg.world, att.hdg, pulse, navHooks && navHooks.overlay);
+        if (infoTimer <= 0) { infoTimer = 0.25; updateInfo(f, infoArg.world, panels); }
+        if (panels && due(T_MAP, hzPanels, now)) drawMinimap(f, infoArg.world);
+        redrawAll = false;
         return;
       }
-      const prep = (c, canvas, k, ox, oy) => {
-        c.setTransform(1, 0, 0, 1, 0, 0);
-        c.clearRect(0, 0, canvas.width, canvas.height);
-        c.setTransform(k, 0, 0, k, ox, oy);
-        c.lineJoin = 'round'; c.lineCap = 'round'; c.textBaseline = 'middle'; c.setLineDash([]); c.globalAlpha = 1;
-        ctx = c;
-      };
       if (compact() && colBox.L) {
         // compact: edge columns, no attitude symbology
-        const { L, R: Rb, T } = colBox;
-        prep(lctx, cvL, dpr * L.k, -L.x0 * dpr * L.k, -L.y0 * dpr * L.k);
-        drawSpeedTape(f, kt); drawReadouts(f, kt, 'L');
-        prep(rctx, cvR, dpr * Rb.k, -Rb.x0 * dpr * Rb.k, -Rb.y0 * dpr * Rb.k);
-        drawAltTape(f, ft); drawReadouts(f, kt, 'R');
-        prep(tctx, cvT, dpr * T.k, -T.x0 * dpr * T.k, -T.y0 * dpr * T.k);
-        drawHeadingTape(f, aptCache);
-        ctx = mainCtx;
-      } else {
-        const k = dpr * s;
-        prep(mainCtx, cv, k, cv.width / 2, cv.height / 2);
-        const mode = shared.cameraMode;
-        // attitude symbology only where it is meaningful: chase camera, airborne or rolling fast
-        const attA = f.onGround ? smoothstep(25, 70, kt) : 1;
-        if ((mode === 'chase' || !shared.camera) && !shared.lookingBack && f.quaternion && attA > 0.01) {
-          attAlpha = attA; ctx.globalAlpha = attA; drawAttitude(f); ctx.globalAlpha = 1;
+        if (due(T_TAPES, hzTapes, now)) {
+          const { L, R: Rb, T } = colBox;
+          prep(lctx, cvL, dpr * L.k, -L.x0 * dpr * L.k, -L.y0 * dpr * L.k);
+          drawSpeedTape(f, kt); drawReadouts(f, kt, 'L');
+          prep(rctx, cvR, dpr * Rb.k, -Rb.x0 * dpr * Rb.k, -Rb.y0 * dpr * Rb.k);
+          drawAltTape(f, ft); drawReadouts(f, kt, 'R');
+          prep(tctx, cvT, dpr * T.k, -T.x0 * dpr * T.k, -T.y0 * dpr * T.k);
+          drawHeadingTape(f, aptCache);
+          ctx = mainCtx;
         }
-        drawSpeedTape(f, kt);
-        drawAltTape(f, ft);
-        drawHeadingTape(f, aptCache);
-        drawReadouts(f, kt);
+      } else {
+        const mode = shared.cameraMode;
+        // attitude symbology only where it is meaningful: chase camera, airborne or rolling fast; it is conformal with
+        // the camera, so the canvas is redrawn every frame while it shows it
+        const attA = f.onGround ? smoothstep(25, 70, kt) : 1;
+        const withAtt = (mode === 'chase' || !shared.camera) && !shared.lookingBack && !!f.quaternion && attA > 0.01;
+        if (withAtt && !covered ? ((redrawAll || lastDraw[T_TAPES] < lastChange) && (lastDraw[T_TAPES] = now, true)) : due(T_TAPES, hzTapes, now)) {
+          const k = dpr * s;
+          prep(mainCtx, cv, k, cv.width / 2, cv.height / 2);
+          if (withAtt) { attAlpha = attA; ctx.globalAlpha = attA; drawAttitude(f); ctx.globalAlpha = 1; }
+          drawSpeedTape(f, kt);
+          drawAltTape(f, ft);
+          drawHeadingTape(f, aptCache);
+          drawReadouts(f, kt);
+        }
       }
-      drawSystems(f);
-      updateFMA(f);
+      if (panels && due(T_SYS, hzPanels, now)) drawSystems(f);
+      if (textDue) updateFMA(f);
       infoTimer -= dt;
-      if (infoTimer <= 0) { infoTimer = 0.25; updateInfo(f, infoArg.world); }
-      mctx.setTransform(dpr * pscale, 0, 0, dpr * pscale, 0, 0);
-      minimap.draw(mctx, MAP_DU, f, infoArg.world, att.hdg, pulse, navHooks && navHooks.overlay);
+      if (infoTimer <= 0) { infoTimer = 0.25; updateInfo(f, infoArg.world, panels); }
+      if (panels && due(T_MAP, hzPanels, now)) drawMinimap(f, infoArg.world);
+      redrawAll = false;
     },
     showMessage(textStr, ms = 1500) {
       const str = String(textStr ?? '');

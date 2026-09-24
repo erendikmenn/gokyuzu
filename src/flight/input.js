@@ -69,6 +69,7 @@ const GP_ACTIONS = {
   [GP.L3]: 'reverser', [GP.R3]: 'view', [GP.UP]: 'gear', [GP.DOWN]: 'speedbrake', [GP.LEFT]: 'autopilot', [GP.RIGHT]: 'hud',
   [GP.HOME]: 'help',
 };
+const GP_ACTION_LIST = Object.entries(GP_ACTIONS).map(([b, a]) => [Number(b), a]);
 
 const DIGITS = {};
 for (let i = 0; i <= 9; i++) { DIGITS[`Digit${i}`] = i; DIGITS[`Numpad${i}`] = i; }
@@ -99,8 +100,9 @@ export function createInput(target = globalThis.window) {
   const handlers = {};
   const state = { pitch: 0, roll: 0, yaw: 0, throttle: 0, brake: 0 };
   const kb = { pitch: 0, roll: 0, yaw: 0, brake: 0 };
-  let gpPrev = [];
+  const gpPrev = [];
   let gamepadConnected = false;
+  let padSeen = false, padPollT = 0;   // a pad has been seen (per-frame polling) / seconds to the next probe
   let mode = 'airliner';            // 'airliner' | 'fighter' | 'helicopter'
   let detent = null;                // afterburner detent (fighters)
   let abArmed = false;              // fresh throttle-up press at the detent → allowed into AB
@@ -182,6 +184,7 @@ export function createInput(target = globalThis.window) {
   const releaseAll = () => down.clear();
 
   if (target && target.addEventListener) {
+    target.addEventListener('gamepadconnected', () => { padSeen = true; });
     target.addEventListener('keydown', onKeyDown);
     target.addEventListener('keyup', onKeyUp);
     target.addEventListener('blur', releaseAll);
@@ -197,13 +200,22 @@ export function createInput(target = globalThis.window) {
   }
 
   function readGamepad(dt) {
+    // navigator.getGamepads() costs a snapshot of every pad per call: before the page has seen a pad (the
+    // 'gamepadconnected' event, which browsers fire with the first input from a pad; getGamepads() lists nothing
+    // before that either) it is asked once a second, not every frame
+    if (!padSeen) {
+      padPollT -= dt;
+      if (padPollT > 0) return null;
+      padPollT = 1;
+    }
     const nav = globalThis.navigator;
     let pads = null;
     try { pads = nav && nav.getGamepads ? nav.getGamepads() : null; } catch { pads = null; }
     let pad = null;
     if (pads) for (const p of pads) if (p && p.connected) { pad = p; break; }
     gamepadConnected = !!pad;
-    if (!pad) { gpPrev = []; return null; }
+    if (pad) padSeen = true;
+    if (!pad) { gpPrev.length = 0; return null; }
     const ax = (i) => deadzone(pad.axes[i] || 0);
     const btn = (i) => pad.buttons[i] || { pressed: false, value: 0 };
     const pressed = (i) => btn(i).pressed;
@@ -219,8 +231,10 @@ export function createInput(target = globalThis.window) {
     gpTriggerIdle = rt < 0.1 && lt < 0.1 && Math.abs(ax(3)) < 0.1;
     if (Math.abs(thr) > 0.05) moveLever(thr * (mode === 'helicopter' ? COLLECTIVE_RATE : THROTTLE_RATE) * 1.5 * dt);
 
-    for (const [b, action] of Object.entries(GP_ACTIONS)) if (edge(Number(b))) { fire(action); lastKind = 'pad'; }
-    gpPrev = pad.buttons.map((b) => b.pressed);
+    for (const [b, action] of GP_ACTION_LIST) if (edge(b)) { fire(action); lastKind = 'pad'; }
+    const bs = pad.buttons;
+    gpPrev.length = bs.length;
+    for (let i = 0; i < bs.length; i++) gpPrev[i] = bs[i].pressed;
     if (Math.abs(ax(0)) + Math.abs(ax(1)) + rt + lt > 0.3) lastKind = 'pad';
     return {
       pitch: ax(1),                       // stick back (+) = nose up

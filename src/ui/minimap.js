@@ -9,6 +9,7 @@ import { activeMap } from '../maps/index.js';
 
 const N_X = 512;                      // samples across the map (x); z count follows the aspect ratio
 const SHOW_LANDMARKS = ['golden_gate_bridge', 'bay_bridge_west', 'alcatraz', 'salesforce_tower', 'sutro_tower', 'coit_tower'];
+const DASH_TRACK = [3, 4], NO_DASH = [];
 const SANS = '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif';
 
 export function createMinimap() {
@@ -17,7 +18,8 @@ export function createMinimap() {
   const builtAt = { x: 0, z: 0 };
   let bounds = null;
   let span = 9000;                    // meters shown across (smoothed)
-  let lastT = 0;
+  let lastT = 0, settling = false;    // settling: the zoom still eases toward its target (the HUD keeps redrawing)
+  let version = 0;                    // base image changes (the HUD redraws a frozen minimap when it arrives)
   const BUDGET = 3;                   // ms of work per time slice (never hitches the frame)
   // Preferred base layer: the baked aerial map (full detail from the first frame, no sampling at all).
   // Sampling the streamed terrain remains as the fallback when the bake is missing.
@@ -25,7 +27,7 @@ export function createMinimap() {
   const bakeOf = () => activeMap().mapImage || 'bay-map';   // maps hook: the flight's map (src/maps/index.js)
   function bake(name) {
     bakeName = name;
-    loadBayMap(name).then((m) => { if (m && bakeName === name) { img = m.img; bounds = { minX: m.meta.minX, maxX: m.meta.maxX, minZ: m.meta.minZ, maxZ: m.meta.maxZ }; baked = true; } });
+    loadBayMap(name).then((m) => { if (m && bakeName === name) { img = m.img; bounds = { minX: m.meta.minX, maxX: m.meta.maxX, minZ: m.meta.minZ, maxZ: m.meta.maxZ }; baked = true; version++; } });
   }
   bake(bakeOf());
 
@@ -71,7 +73,7 @@ export function createMinimap() {
       if (row < NZ) { setTimeout(sample, 16); return; }
       const dist = shoreDistance(wat, NX, NZ);
       paint(hts, wat, dist, NX, NZ, cx, cz, (canvas) => {
-        if (!baked) { img = canvas; bounds = B; }
+        if (!baked) { img = canvas; bounds = B; version++; }
       building = false;
         // a flat stub terrain (no relief, no water) is probably a placeholder: re-sample later
         flatRetry = hmax - hmin < 0.5 && !wat.some((v) => v) ? performance.now() + 30000 : 0;
@@ -185,7 +187,7 @@ export function createMinimap() {
    * overlay(ctx, X, Y, scale): optional, drawn under the aircraft arrow (navigation hook: the route, src/ui/map.js).
    */
   function draw(ctx, M, f, world, hdg, pulse, overlay) {
-    if (bakeName !== bakeOf()) { img = null; baked = false; bake(bakeOf()); }
+    if (bakeName !== bakeOf()) { img = null; baked = false; version++; bake(bakeOf()); }
     maybeRebuild(world, f);
     const now = performance.now();
     const dt = clamp((now - lastT) / 1000, 0, 0.2);
@@ -193,6 +195,7 @@ export function createMinimap() {
     const gs = f.velocity ? Math.hypot(f.velocity.x, f.velocity.z) : (f.airspeed || 0);
     const target = clamp(5200 + gs * KT * 24, 5200, 24000);
     span += (target - span) * (1 - Math.exp(-dt * 0.8));
+    settling = Math.abs(target - span) > 0.05;   // (m: far below a pixel, so a frozen map matches a converged one)
 
     const px = f.position.x, pz = f.position.z;
     const sc = M / span;
@@ -283,7 +286,7 @@ export function createMinimap() {
     if (f.velocity && gs > 3) {
       const vx = f.velocity.x / gs, vz = f.velocity.z / gs;
       ctx.beginPath(); ctx.moveTo(M / 2, M / 2); ctx.lineTo(M / 2 + vx * M * 0.7, M / 2 + vz * M * 0.7);
-      ctx.setLineDash([3, 4]); ctx.lineWidth = 1.2; ctx.strokeStyle = 'rgba(92,242,200,0.55)'; ctx.stroke(); ctx.setLineDash([]);
+      ctx.setLineDash(DASH_TRACK); ctx.lineWidth = 1.2; ctx.strokeStyle = 'rgba(92,242,200,0.55)'; ctx.stroke(); ctx.setLineDash(NO_DASH);
     }
     // aircraft arrow
     ctx.save();
@@ -316,5 +319,5 @@ export function createMinimap() {
     return pulse;
   }
 
-  return { draw, get ready() { return !!img; } };
+  return { draw, get ready() { return !!img; }, get settling() { return settling; }, get version() { return version; } };
 }

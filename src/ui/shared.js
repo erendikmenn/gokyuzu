@@ -9,6 +9,7 @@ export const shared = {
   birdseyeBearing: 0,    // bird's-eye camera: bearing of screen-up (rad, 0 = north, clockwise)
   birdseyeTrackUp: false,   // bird's-eye camera: track-up (true) or north-up
   hudVisible: true,      // HUD not "Kapalı" (set by the HUD camera selector; the bird's-eye ring hides with it)
+  mapOpen: false,        // the big map (src/ui/map.js) covers the HUD
   choice: null,          // last menu choice { aircraftId, spawnId, aircraftName, spawnName }
   runways: null,         // runways.json (fetched lazily when the world proxy has none)
 };
