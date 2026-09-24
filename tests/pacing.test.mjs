@@ -78,6 +78,8 @@ for (const hz of [60, 90, 120, 144]) {
   check('pre-warm (warming = true): no draw', warm.draws === 0);
   const now = run(p, { mode: 'loading', secs: 0.1, t0: 13000, o: { warming: 'render' } });
   check("pre-warm frame (warming = 'render'): drawn at once", now.draws >= 5);
+  const cov = run(p, { mode: 'covered', secs: 2, t0: 12000 });
+  check(`opaque screen (portrait prompt): nothing drawn, streaming at ${PACE.overlaySim} steps/s`, cov.draws === 0 && near(cov.simFps, PACE.overlaySim, 0.6), `${cov.draws} draws, ${cov.simFps.toFixed(1)} steps/s`);
   const pause = run(p, { mode: 'overlay', secs: 5, t0: 14000 });
   check(`pause / mission card: ${PACE.overlay} draws/s, ${PACE.overlaySim} simulation steps/s`, near(pause.fps, PACE.overlay, 0.3) && near(pause.simFps, PACE.overlaySim, 0.5), `${pause.fps.toFixed(1)} / ${pause.simFps.toFixed(1)}`);
   const drag = run(p, { mode: 'overlay', secs: 2, t0: 19000, o: { interacting: true } });

@@ -30,7 +30,19 @@ export function probeGpuName() {
   }
 }
 
-/** Pure classification (unit-testable): { kind: 'phone'|'tablet'|'desktop', os, tier, gpu, memoryGB, touch }. */
+/**
+ * Browser engine: 'webkit' (Safari, and every browser on iOS / iPadOS), 'gecko' (Firefox), else 'blink'. WebKit's real
+ * memory footprint is 2.5–4× what the game's GPU meter counts (docs/perf/findings-2026-09.md T5), see quality.js.
+ */
+export function browserEngine(ua = '', ios = false) {
+  if (ios) return 'webkit';
+  if (/Firefox\//.test(ua) && !/Seamonkey/.test(ua)) return 'gecko';
+  if (/Chrome\/|Chromium\/|CriOS|Edg\/|OPR\//.test(ua)) return 'blink';
+  if (/AppleWebKit/.test(ua)) return 'webkit';
+  return 'blink';
+}
+
+/** Pure classification (unit-testable): { kind: 'phone'|'tablet'|'desktop', os, tier, engine, gpu, memoryGB, touch }. */
 export function classifyDevice({ ua = '', platform = '', maxTouchPoints = 0, gpu = '', deviceMemory = null, screenW = 0, screenH = 0 } = {}) {
   const iPhone = /iPhone|iPod/.test(ua);
   const iPadUA = /iPad/.test(ua);
@@ -55,7 +67,7 @@ export function classifyDevice({ ua = '', platform = '', maxTouchPoints = 0, gpu
   else if (/Apple (M\d|GPU)/i.test(g)) tier = 'apple';
   else if (/(NVIDIA|GeForce|RTX|Quadro|Radeon RX|Radeon Pro|Radeon \d{3,4}M? ?X|Arc\(TM\) A\d)/i.test(g)) tier = 'discrete';
   else if (/(Intel|UHD|Iris|Radeon(\(TM\))? Graphics|Radeon Vega|Vega \d|Mali|Adreno|PowerVR)/i.test(g)) tier = 'integrated';
-  return { kind, os, tier, gpu: g, memoryGB: deviceMemory || null, touch: maxTouchPoints > 0 };
+  return { kind, os, tier, engine: browserEngine(ua, os === 'ios' || os === 'ipados'), gpu: g, memoryGB: deviceMemory || null, touch: maxTouchPoints > 0 };
 }
 
 /** The running device (memoized). */

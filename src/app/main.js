@@ -79,7 +79,15 @@ renderer.shadowMap.type = THREE.PCFShadowMap;
 app.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.3, 80000);
+// Light stand-ins while the world loads: every aircraft brings a landing SpotLight and main.js a cockpit PointLight, but
+// only once its model is loaded, after the world's layers have compiled their shaders (city, airports ... precompile at
+// creation). Three.js keys programs by light counts, so those programs were compiled again after the start (e.g. the
+// city's far material ~1 s into the flight). Same counts from the first shader on; removed when the aircraft's own
+// lights are in the scene (prepareAircraft). Nothing is drawn while they exist (frame pacing: no draws while loading).
+const lightStandIns = [new THREE.SpotLight(0xffffff, 0), new THREE.PointLight(0xffffff, 0)];
+for (const l of lightStandIns) { scene.add(l); if (l.target) scene.add(l.target); }
+// far plane 80 km (?far=<m> for draw-distance experiments; the sky dome, clouds and aerial perspective follow it)
+const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.3, params.has('far') ? Math.max(5000, Number(params.get('far')) || 80000) : 80000);
 scene.add(camera);
 function onResize() {
   const w = window.innerWidth, h = window.innerHeight;
@@ -270,6 +278,7 @@ async function prepareAircraft(id, { lodOk }) {
   state.cockpitFill = new THREE.PointLight(0xfff0dc, 0, 3.5, 2);
   state.cockpitFill.position.copy(rig.eye.pilot).add(new THREE.Vector3(0, 0.35, 0.25));
   rig.object.add(state.cockpitFill);
+  for (const l of lightStandIns) { scene.remove(l); if (l.target) scene.remove(l.target); }   // the aircraft's own lights take over (same count)
   state.texQueue.push(...texturesIn(rig.object));   // uploaded one per frame while the world is still loading
   return prepared;
 }
@@ -499,6 +508,18 @@ async function prewarm() {
   state.prewarmInfo = Object.assign(info, { totalMs: state.prewarmMs, programs2: renderer.info.programs.length });
 }
 
+/**
+ * The rig's lights stay in the light list whatever their intensity: a rig that hides its landing SpotLight while it is
+ * off (A320) changed the scene's light count at every landing-light switch, and three.js recompiles every lit program
+ * for a new count (a freeze at take-off and on approach, seconds long in WebKit, which compiles on the main thread).
+ * Off = intensity 0: the same picture.
+ */
+function keepLightCount(rig) {
+  let list = rig.__lights;
+  if (!list) { list = rig.__lights = []; rig.object.traverse((o) => { if (o.isLight) list.push(o); }); }
+  for (const l of list) if (!l.visible) l.visible = true;
+}
+
 function setupShadows(root) {
   root.traverse((o) => {
     if (!o.isMesh) return;
@@ -629,13 +650,18 @@ const interact = () => { lastInteraction = performance.now(); };
 for (const ev of ['pointerdown', 'wheel', 'keydown', 'touchstart', 'touchmove']) addEventListener(ev, interact, { capture: true, passive: true });
 addEventListener('pointermove', (e) => { if (e.buttons || e.pointerType === 'touch') interact(); }, { capture: true, passive: true });
 document.addEventListener('visibilitychange', () => { simAcc = 0; });   // (no catch-up step after a hidden period)
-// cockpit displays (2D canvas → texture uploads, plan 4.4): 15 Hz on phones, 30 Hz elsewhere
-const displayInterval = quality.deviceClass === 'phone' ? 1 / 15 : 1 / 30;
+// cockpit displays (2D canvas → texture uploads, plan 4.4): 15 Hz on phones, 20 Hz in WebKit (each canvas upload costs
+// 20–60× more there: findings T2), 30 Hz elsewhere
+const displayInterval = quality.deviceClass === 'phone' ? 1 / 15 : detectDevice().engine === 'webkit' ? 1 / 20 : 1 / 30;
 const lastCamPose = new THREE.Vector3(), lastCamQ = new THREE.Quaternion(), lastAcPos = new THREE.Vector3();
+// opaque screens over a running page: the phone's portrait prompt "Telefonu yan çevir" (src/ui/touch.js; it pauses the
+// flight and covers everything) — nothing is drawn under it
+const coverEls = [...document.querySelectorAll('.gkx-rot')];
 /** What the loop is doing now (frame-pacing.js modes). */
 function paceMode(now) {
   if (document.hidden) return 'hidden';
   if (!state.readyAt) return loading && !loadFailed ? 'loading' : 'idle';
+  for (const el of coverEls) if (el.classList.contains('on')) return 'covered';
   if (state.paused || (state.mission && state.mission.hold)) return 'overlay';
   if (navMap.isOpen) return 'map';
   const f = state.flight;
@@ -687,6 +713,8 @@ function frame(ts) {
   // recovers like after a context loss; texture releases, GPU budget and the flight snapshot run in gpu.tick
   if (draw && state.warming !== true) {
     if (state.readyAt) paceShadows(t0);
+    const env = state.world && state.world.environment;
+    if (env && env.beforeRender) env.beforeRender();   // shadow cascades drawn this frame (environment-shadows.js)
     try { renderer.render(scene, camera); gpu.renderOk(); } catch (e) { gpu.renderFailed(e); }
     renderCount++;
     pacer.drawn(ts, mode, t0 - state.readyAt > 8000);   // (the first seconds of a flight stream and compile: not judged)
@@ -727,6 +755,7 @@ function simulate(dt, t0) {
     const vis = flight.getVisualState();
     const rdt = state.warming ? 0 : dt;   // pre-warm frames place aircraft and camera without advancing their animations
     rig.update(rdt, vis);
+    keepLightCount(rig);
     cameraRig.update(rdt, flight);
     guardCamera();   // robustness hook
     rig.setView(cameraRig.view);

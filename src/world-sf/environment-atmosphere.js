@@ -72,7 +72,8 @@ const vec3 ATM_BO = ${v3(A.betaO)};
 float atmPhaseR(float mu) { return 3.0 / (16.0 * ATM_PI) * (1.0 + mu * mu); }
 float atmPhaseM(float mu) {
   float g = ATM_G, g2 = g * g;
-  return 3.0 / (8.0 * ATM_PI) * ((1.0 - g2) * (1.0 + mu * mu)) / ((2.0 + g2) * pow(max(1.0 + g2 - 2.0 * g * mu, 1e-4), 1.5));
+  float x = max(1.0 + g2 - 2.0 * g * mu, 1e-4);
+  return 3.0 / (8.0 * ATM_PI) * ((1.0 - g2) * (1.0 + mu * mu)) / ((2.0 + g2) * x * sqrt(x));   // (x^1.5 without pow)
 }
 `;
 }
@@ -214,16 +215,22 @@ export function patchAerialPerspective(p) {
   const S = p.sunDir, C = p.sunColor, Am = p.ambient;
   const v3 = (a) => `vec3(${a.map((x) => x.toFixed(6)).join(',')})`;
   const C_ = THREE.ShaderChunk;
+  // per vertex (the same values the fragments computed, moved where they are linear or constant): the camera → vertex
+  // ray in world space (was a view → world rotation per fragment) and exp(-h0 / H) of the camera height for the three
+  // scale heights (a per-camera constant; 3 of the ~12 exp / pow per fragment). Same picture, cheaper on every class.
+  const H3 = `vec3(${[ATMO.HR, ATMO.HM, ATMO.HH].map((x) => x.toFixed(1)).join(',')})`;
   C_.fog_pars_vertex = /* glsl */`
 #ifdef USE_FOG
   varying float vFogDepth;
-  varying vec3 vFogView;
+  varying vec3 vFogRay;
+  varying vec3 vFogCamOD;
 #endif
 `;
   C_.fog_vertex = /* glsl */`
 #ifdef USE_FOG
   vFogDepth = - mvPosition.z;
-  vFogView = mvPosition.xyz;
+  vFogRay = mvPosition.xyz * mat3(viewMatrix);
+  vFogCamOD = exp(-max(cameraPosition.y, -5.0) / ${H3});
 #endif
 `;
   C_.fog_pars_fragment = /* glsl */`
@@ -231,7 +238,8 @@ export function patchAerialPerspective(p) {
   #define SF_AERIAL 1
   uniform vec3 fogColor;
   varying float vFogDepth;
-  varying vec3 vFogView;
+  varying vec3 vFogRay;
+  varying vec3 vFogCamOD;
   #ifdef FOG_EXP2
     uniform float fogDensity;
   #else
@@ -247,13 +255,14 @@ export function patchAerialPerspective(p) {
   const vec3 SF_SUN_DIR = ${v3([S.x, S.y, S.z])};
   const vec3 SF_SUN_E = ${v3(C)};
   const vec3 SF_AMB = ${v3(Am)};
-  float sfOD(float h0, float h1, float D, float dy, float H) {
+  // e0 = exp(-h0 / H) (per camera, from the vertex stage)
+  float sfOD(float h0, float h1, float D, float dy, float H, float e0) {
     float x = D * dy;
     if (abs(x) < 1e-3 * H) return D * exp(-0.5 * (h0 + h1) / H);
-    return (exp(-h0 / H) - exp(-h1 / H)) * H / dy;
+    return (e0 - exp(-h1 / H)) * H / dy;
   }
   vec3 sfAerial(vec3 col) {
-    vec3 ray = vFogView * mat3(viewMatrix);
+    vec3 ray = vFogRay;
     float D = length(ray);
     if (D < 0.5) return col;
     vec3 dir = ray / D;
@@ -265,9 +274,9 @@ export function patchAerialPerspective(p) {
     #else
       float haze = fogNear;
     #endif
-    float odR = sfOD(h0, h1, D, dy, ATM_HR);
-    float odM = sfOD(h0, h1, D, dy, ATM_HM);
-    float odH = sfOD(h0, h1, D, dy, ATM_HH) * haze;
+    float odR = sfOD(h0, h1, D, dy, ATM_HR, vFogCamOD.x);
+    float odM = sfOD(h0, h1, D, dy, ATM_HM, vFogCamOD.y);
+    float odH = sfOD(h0, h1, D, dy, ATM_HH, vFogCamOD.z) * haze;
     vec3 tau = ATM_BR * odR + vec3(ATM_BME * odM + ATM_BHE * odH);
     float mu = dot(dir, SF_SUN_DIR);
     vec3 sR = ATM_BR * odR;

@@ -58,6 +58,7 @@ export function createCloudLayer(THREE, { sunDir, sunE, amb }) {
   const uniforms = THREE.UniformsUtils.merge([THREE.UniformsLib.fog, {
     uTime: { value: 0 }, uSunDir: { value: sunDir.clone() }, uSunE: { value: new THREE.Vector3(...sunE) },
     uAmb: { value: new THREE.Vector3(...amb) }, uCamPos: { value: new THREE.Vector3() },
+    uFade: { value: new THREE.Vector2(76000, 40000) },   // distance fade (start of nothing, full): inside the far plane
   }]);
   const mat = new THREE.ShaderMaterial({
     name: 'sf-clouds',
@@ -84,7 +85,7 @@ export function createCloudLayer(THREE, { sunDir, sunE, amb }) {
       #include <common>
       #include <fog_pars_fragment>
       #include <logdepthbuf_pars_fragment>
-      uniform float uTime; uniform vec3 uSunDir; uniform vec3 uSunE; uniform vec3 uAmb; uniform vec3 uCamPos;
+      uniform float uTime; uniform vec3 uSunDir; uniform vec3 uSunE; uniform vec3 uAmb; uniform vec3 uCamPos; uniform vec2 uFade;
       varying vec3 vWorld;
       ${NOISE_GLSL}
       #ifndef SF_CLOUD_Q
@@ -113,11 +114,13 @@ export function createCloudLayer(THREE, { sunDir, sunE, amb }) {
         vec3 ray = vWorld - uCamPos;
         float dist = length(ray);
         vec3 dir = ray / max(dist, 1.0);
+        // distance / grazing fade first: where it alone leaves nothing (a <= fade), skip the noise (same result)
+        float fade = smoothstep(uFade.x, uFade.y, dist) * smoothstep(0.0, 0.035, abs(dir.y));
+        if (fade < 0.003) discard;
         float d = sfCloudDens(p, uTime);
         vec2 q = vec2(dot(p, vec2(0.93, 0.37)) / 9000.0, dot(p, vec2(-0.37, 0.93)) / 2200.0);
         float ci = smoothstep(0.63, 0.88, sfFbm3(q + uTime * 0.0004)) * 0.3 * smoothstep(0.45, 0.7, sfVNoise(p / 30000.0 + 1.1));
-        float a = clamp(d * 0.95 + ci, 0.0, 1.0);
-        a *= smoothstep(76000.0, 40000.0, dist) * smoothstep(0.0, 0.035, abs(dir.y));
+        float a = clamp(d * 0.95 + ci, 0.0, 1.0) * fade;
         if (a < 0.003) discard;
       #if SF_CLOUD_Q >= 2
         vec2 sdir = normalize(uSunDir.xz + 1e-5);
@@ -154,6 +157,7 @@ export function createCloudLayer(THREE, { sunDir, sunE, amb }) {
     update(time, camera) {
       uniforms.uTime.value = time;
       uniforms.uCamPos.value.copy(camera.position);
+      uniforms.uFade.value.set(Math.min(76000, camera.far * 0.95), Math.min(40000, camera.far * 0.5));
       mesh.position.set(camera.position.x, CLOUD_H, camera.position.z);
     },
   };

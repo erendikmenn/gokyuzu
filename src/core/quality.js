@@ -74,6 +74,15 @@ export const DEVICE_CAPS = {
   software: { pixelRatioMax: 1, shadowMapSize: 1024, maxImageryTiles: 120, textureMaxSize: 1024, gpuBudgetMB: 800, lazyCockpit: true },
 };
 
+/**
+ * GPU-meter budgets for WebKit phones / tablets (docs/perf/findings-2026-09.md T5). WebKit's WebContent + GPU process
+ * footprint was 2.5–4× the meter (≈ 270 MB for any WebGL page + 2.5 × meter); iOS kills the page or drops the context on
+ * the footprint. Budgets from the footprint that held on the owner's iPad (medium, meter 0.8–1.0 GB → ~2.8 GB) and that
+ * failed (high, meter 1.3–1.4 GB → ~3.7 GB), phones from the low preset's 1.5–2.2 GB: tablet ≈ 3.0 GB, phone ≈ 2.1 GB.
+ */
+export const WEBKIT_FOOTPRINT_MB = { tablet: 3000, phone: 2100 };
+export const webkitMeterBudget = (footprintMB) => Math.round((footprintMB - 270) / 2.5);
+
 /** Device-class key into DEVICE_CAPS (null = no extra caps). */
 export function capClass(d = detectDevice()) {
   if (d.kind === 'phone' || d.kind === 'tablet') return d.kind;
@@ -89,7 +98,7 @@ const resolved = new Map();
 export function resolveQuality(id, device = detectDevice()) {
   const base = QUALITY[id] || QUALITY.high;
   const cls = capClass(device);
-  const key = `${base.id}|${cls}`;
+  const key = `${base.id}|${cls}|${device.engine || ''}`;
   if (resolved.has(key)) return resolved.get(key);
   const q = { ...base };
   const caps = cls ? DEVICE_CAPS[cls] : null;
@@ -100,6 +109,7 @@ export function resolveQuality(id, device = detectDevice()) {
     }
     if (q.shadowCascades < 2 && q.shadowMapSize > 2048) q.shadowMapSize = 2048;
   }
+  if (device.engine === 'webkit' && WEBKIT_FOOTPRINT_MB[cls]) q.gpuBudgetMB = Math.min(q.gpuBudgetMB, webkitMeterBudget(WEBKIT_FOOTPRINT_MB[cls]));
   q.deviceClass = cls || 'desktop';
   resolved.set(key, q);
   return q;

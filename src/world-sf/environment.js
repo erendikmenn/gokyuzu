@@ -5,6 +5,7 @@ import { SunLight } from 'three/addons/lights/SunLight.js';
 import { ATMO, sunTransmittance, createSkyLUT, SKY_LUT_SAMPLE, atmoGLSL, patchAerialPerspective } from './environment-atmosphere.js';
 import { NOISE_GLSL, CLOUD_GLSL, createCloudLayer } from './environment-clouds.js';
 import { createFogBank, loadBankHeight } from './environment-fogbank.js';
+import { createShadowEconomy } from './environment-shadows.js';
 
 const D2R = Math.PI / 180;
 const NO_BANK = { inside: 0, topAbove: 0 };
@@ -101,7 +102,8 @@ export async function createEnvironment(ctx) {
   dome.frustumCulled = false;
   dome.renderOrder = -1000;
   dome.scale.setScalar(60000);
-  dome.onBeforeRender = (r, s, cam) => { dome.position.copy(cam.position); dome.updateMatrixWorld(); };
+  // (inside the far plane: 60 km, or less when the far plane is nearer; the dome's colour depends on direction only)
+  dome.onBeforeRender = (r, s, cam) => { dome.position.copy(cam.position); dome.scale.setScalar(Math.min(60000, cam.far * 0.9)); dome.updateMatrixWorld(); };
   scene.add(dome);
 
   // ---------------- environment map (PMREM of the sky, ground-ish lower hemisphere) ----------------
@@ -139,6 +141,8 @@ export async function createEnvironment(ctx) {
   sun.shadow.normalBias = 0.35;
   sun.shadow.radius = 1.5;
   scene.add(sun);
+  // depth-only atlas, a real single cascade on 1-cascade presets, the far cascade every second frame (environment-shadows.js)
+  const shadowEco = createShadowEconomy(renderer, sun);
   // weak hemisphere fill for non-PBR (Lambert/Phong) materials, which ignore scene.environment
   const hemi = new THREE.HemisphereLight(new THREE.Color(ambient[0] * 1.6, ambient[1] * 1.7, ambient[2] * 2.1), new THREE.Color(0.18, 0.17, 0.15), 0.15);
   hemi.name = 'sf-hemi';
@@ -172,15 +176,22 @@ export async function createEnvironment(ctx) {
       if (sun.shadow.mapSize.x !== size) {
         sun.shadow.mapSize.set(size, size);
         if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; }   // reallocated on the next shadow pass
+        shadowEco.reset();
       }
-      // SunLight always renders 2 cascades (fixed in three's shader); "1 cascade" = short shadow range, so the second
-      // cascade covers little and its caster pass is cheap
+      // shadowCascades 1 = a short shadow range (500 m) for both cascades; the far one is re-rendered every second frame
+      // (environment-shadows.js). A real single cascade (only the near ~130 m, same texel size) is available as
+      // quality.shadowSingleCascade / ?shadowsingle=1 but not used by any preset: it removes the shadows of airport lamps
+      // and buildings at 130–500 m on tablets (refshots tablet-ist-free-ltfm), a visible change.
       sun.shadow.camera.far = (qq.shadowCascades || 2) >= 2 ? shadowDist : Math.min(shadowDist, 500);
+      shadowEco.setCascades(qq.shadowSingleCascade || q.get('shadowsingle') === '1' ? 1 : 2);
       clouds.setQuality(qq.clouds || 'high');
       if (bank) bank.setQuality(qq.clouds || 'high');
       quality = qq;
     },
     get quality() { return quality; },
+    /** Right before the frame is drawn (main.js): shadow-map cascades for this frame. */
+    beforeRender() { shadowEco.beforeRender(); },
+    shadowEco,
     /** Show/hide the Golden Gate fog bank (also removes the in-fog visibility effect). */
     setFogBank(on) { if (bank) bank.mesh.visible = !!on; },
     get fogBankEnabled() { return !!bank && bank.mesh.visible; },

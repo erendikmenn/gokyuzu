@@ -50,6 +50,14 @@ check('desktop Mac keeps the full "high" preset', qm.shadowMapSize === 4096 && q
 const qp = resolveQuality('low', phone);
 check('phone budget below tablet budget below desktop "low"', qp.gpuBudgetMB < resolveQuality('low', ipad).gpuBudgetMB && resolveQuality('low', ipad).gpuBudgetMB <= QUALITY.low.gpuBudgetMB, `${qp.gpuBudgetMB} / ${resolveQuality('low', ipad).gpuBudgetMB} / ${QUALITY.low.gpuBudgetMB}`);
 check('resolveQuality is memoized (identity stable for main.js)', resolveQuality('medium', ipad) === resolveQuality('medium', ipad));
+// WebKit footprint (render agent, docs/perf/findings-2026-09.md T5): meter budgets for iOS / iPadOS, not for Chromium
+const engines = [['iPadOS Safari', ipad, 'webkit'], ['macOS Safari', mac, 'webkit'], ['iPhone', phone, 'webkit'],
+  ['Chrome on a Mac', classifyDevice(cases[2][1]), 'blink'], ['Android Chrome', classifyDevice(cases[4][1]), 'blink'],
+  ['Firefox', classifyDevice(cases[9][1]), 'gecko'], ['Chrome on iOS', classifyDevice({ ua: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) CriOS/140', maxTouchPoints: 5 }), 'webkit']];
+check('browser engine: Safari / every iOS browser = webkit, Chrome / Android = blink, Firefox = gecko', engines.every(([, d, e]) => d.engine === e), engines.map(([n, d]) => `${n}: ${d.engine}`).join(', '));
+const tabWK = resolveQuality('medium', ipad), tabBlink = resolveQuality('medium', { ...ipad, engine: 'blink' });
+check('WebKit tablet: meter budget for a ~3 GB footprint (below the Chromium tablet budget)', tabWK.gpuBudgetMB < tabBlink.gpuBudgetMB && tabWK.gpuBudgetMB > 1000 && tabWK.gpuBudgetMB < 1200, `${tabWK.gpuBudgetMB} vs ${tabBlink.gpuBudgetMB}`);
+check('WebKit phone: meter budget for a ~2.1 GB footprint; desktop Safari unchanged', qp.gpuBudgetMB < 800 && qp.gpuBudgetMB > 650 && resolveQuality('high', mac).gpuBudgetMB === QUALITY.high.gpuBudgetMB, `${qp.gpuBudgetMB}`);
 check('every preset has a budget and release policy', Object.values(QUALITY).every((q) => q.gpuBudgetMB > 0 && q.maxImageryTiles > 0 && q.releaseImages === true));
 check('quality steps: ultra → high → medium → low → none', lowerQuality('ultra') === 'high' && lowerQuality('medium') === 'low' && lowerQuality('low') === null);
 

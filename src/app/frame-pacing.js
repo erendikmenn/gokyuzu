@@ -5,6 +5,7 @@
 // Phones heat up and drain; nothing is gained by drawing a scene nobody sees. Rates (frames per second, 0 = no draw):
 //
 //   tab hidden, menu (no world yet), error / graphics notice          0
+//   an opaque screen over the flight (phone portrait prompt)           0 (the world streams at 15 steps / s)
 //   loading screen                                                     0 (streaming keeps going every frame; the pre-warm
 //                                                                        frame draws at once). Drawing the half-built
 //                                                                        world there compiled the sky, clouds and fog bank
@@ -59,7 +60,7 @@ export function flightCap(deviceClass, setting) {
 /**
  * createFramePacer({ deviceClass, setting, enabled })
  *   raf(ts)            once per rAF callback: returns the real time since the previous callback (s, clamped)
- *   decide(ts, mode, o) → { sim, draw }; mode: 'hidden' | 'idle' | 'loading' | 'overlay' | 'map' | 'parked' | 'flight';
+ *   decide(ts, mode, o) → { sim, draw }; mode: 'hidden' | 'idle' | 'loading' | 'covered' | 'overlay' | 'map' | 'parked' | 'flight';
  *                        o.interacting (overlay boost), o.warming (true: no draw; 'render': draw now)
  *   drawn(ts, mode, judge)  after a drawn frame: the tablet 60 → 30 fallback (judge = false: start-up seconds, ignored)
  *   setSetting(v)      player's fps setting changed
@@ -98,6 +99,7 @@ export function createFramePacer({ deviceClass = 'desktop', setting = null, enab
     const c = cap(ts);
     switch (mode) {
       case 'hidden': case 'idle': return [-1, -1];
+      case 'covered': return [PACE.overlaySim, -1];
       case 'loading': return [0, o.warming === true || !(PACE.loading > 0) ? -1 : PACE.loading];
       case 'overlay': return o.interacting ? [c, c] : [c > 0 ? Math.min(c, PACE.overlaySim) : PACE.overlaySim, PACE.overlay];
       case 'map': return [c, PACE.overlay];
@@ -132,7 +134,7 @@ export function createFramePacer({ deviceClass = 'desktop', setting = null, enab
     decide(ts, mode, o = {}) {
       stats.mode = mode;
       if (!enabled) { stats.target = 0; return { sim: mode !== 'hidden', draw: mode !== 'hidden' && !(mode === 'loading' && o.warming === true) }; }
-      if (o.warming === 'render' || (stalled && mode !== 'hidden' && mode !== 'idle' && mode !== 'loading')) return { sim: true, draw: true };
+      if (o.warming === 'render' || (stalled && mode !== 'hidden' && mode !== 'idle' && mode !== 'loading' && mode !== 'covered')) return { sim: true, draw: true };
       const [simFps, drawFps] = targets(ts, mode, o);
       stats.target = drawFps; stats.cap = cap(ts); stats.locked30 = ts < lockUntil;
       const draw = due(ts, D, drawFps);
