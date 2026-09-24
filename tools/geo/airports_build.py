@@ -2,7 +2,13 @@
 
 Usage: .venv/bin/python tools/geo/airports_build.py [ksfo] [koak] [kngz]   (default: all)
        GEO_REGION=ist .venv/bin/python tools/geo/airports_build.py [ltfm] [ltfj] [ltba]
-       (İstanbul: data/ist/runways.json from tools/geo/airports_runways.py, OSM from airports_fetch.py)
+       (İstanbul: data/ist/runways.json from tools/geo/airports_runways.py, OSM from airports_fetch.py; the İstanbul
+       models -- LTFM terminal / piers / tulip tower, SAW terminals and tower, LTBA towers, Turkish Technic hangar
+       lettering -- go to assets/ist/airports/_cache/models_<icao>.json (tools/geo/airports_ist_models.py) and are
+       built by tools/geo/airports_ist_blender.py, which runs blender/airports/build_buildings.py unchanged:
+         .venv/bin/python tools/geo/airports_ist_atlas.py
+         GEO_REGION=ist Blender -b -P tools/geo/airports_ist_blender.py -- ltfm|ltfj|ltba
+         node tools/assets/textures.mjs --only assets/ist/airports)
 
 Per airport it produces
   surfaces  (draped meshes, x/z relative to the airport origin; runtime samples terrain heights per vertex)
@@ -20,6 +26,9 @@ from shapely.ops import unary_union, nearest_points, substring
 from shapely import affinity
 from airports_lib import *
 import airports_osm as osm
+if REGION_ID == 'ist':
+    import airports_ist_models as IM
+    from geo import lonlat_to_local
 
 RUNWAYS = json.load(open(os.path.join(DATA_DIR, 'runways.json')))
 
@@ -176,10 +185,12 @@ class Airport:
             s = s_des
             if let:
                 tp, tw = text_polygon(let, h=gh)
-                polys_white.append(ef.to_poly(tp, s, -tw / 2))
+                if c.get('designation', True):
+                    polys_white.append(ef.to_poly(tp, s, -tw / 2))
                 s += gh + 4.6 * sc
             tp, tw = text_polygon(num, h=gh, gap=3.0 * sc)
-            polys_white.append(ef.to_poly(tp, s, -tw / 2))
+            if c.get('designation', True):       # (a departure-only runway's far end has no designator: LTFM 09)
+                polys_white.append(ef.to_poly(tp, s, -tw / 2))
             s += gh
             cl_bounds.append(s + 12.2)
             # aiming point + touchdown zone
@@ -298,7 +309,7 @@ class Airport:
                 t = -hw + 1.0 + (rf.w - 2.0) * k / nl
                 x, z = ef.P(0.3, t)
                 self.light(x, z, 0.1, L_END_R, h_back)
-                if disp <= 1:
+                if disp <= 1 and c.get('thr_lights', True):
                     self.light(x, z, 0.1, L_THR_G, (h_land + 180) % 360)
             if disp > 1:
                 # green wing bars at the displaced threshold
@@ -984,6 +995,8 @@ def osm_airport(icao, cfg):
     terms = [g for g, t, i, ty in osm.polygons(el, lambda t: t.get('aeroway') == 'terminal' or t.get('building') == 'terminal')]
     stands = list(osm.lines(el, lambda t: t.get('aeroway') == 'parking_position'))
     jets = list(osm.lines(el, lambda t: t.get('aeroway') == 'jet_bridge'))
+    if cfg.get('extra_jets'):          # İstanbul: bridges derived from the terminal's fixed links + stands
+        jets += cfg['extra_jets'](el, terms, stands, jets)
     ap.build_stands(stands, jets, terms, wide_refs=cfg.get('wide_refs', ()))
     return ap, el
 
@@ -1169,8 +1182,94 @@ def osm_tower(ap, el, name, oid=None, default_h=60.0):
     return i
 
 
-def ist_airport(icao, cfg, tower_name, tower_id=None, core=None):
+def fixed_link_jets(el, terms, stands, jets, max_d=62.0):
+    """Jet bridges at the contact stands of a terminal whose OSM data maps the fixed links (building:part corridors
+    from the pier, min_height > 0, long and narrow) but not the bridges (LTFM: 69 links, 1 bridge). Each link's outer
+    end is the rotunda; the bridge goes to the L1 door of the stand whose nose-in lead-in line ends nearest with the
+    rotunda on the aircraft's left (the side of the passenger doors). Returns OSM-like (LineString, tags, id) tuples for
+    build_stands: pier end -> rotunda -> parked cab near the door."""
+    if not terms:
+        return []
+    term = unary_union(terms)
+    cand = []
+    for g, t, oid, typ in osm.polygons(el, lambda t: t.get('building:part') and t.get('min_height')):
+        if g.intersects(term):
+            cand.append((g, t, oid, typ))
+    # the terminal body without its fixed links (OSM's terminal outline includes them)
+    term = term.difference(unary_union([c[0] for c in cand]).buffer(0.3)) if cand else term
+    links = []
+    for g, t, oid, typ in cand:
+        try:
+            if float(t.get('min_height', 0)) < 4:
+                continue
+        except ValueError:
+            continue
+        mrr = g.minimum_rotated_rectangle
+        c = list(mrr.exterior.coords)[:4]
+        e0, e1 = np.subtract(c[1], c[0]), np.subtract(c[2], c[1])
+        if np.linalg.norm(e1) > np.linalg.norm(e0):
+            ends = (np.add(c[0], c[1]) / 2, np.add(c[2], c[3]) / 2)
+            L, W = np.linalg.norm(e1), np.linalg.norm(e0)
+        else:
+            ends = (np.add(c[1], c[2]) / 2, np.add(c[3], c[0]) / 2)
+            L, W = np.linalg.norm(e0), np.linalg.norm(e1)
+        if not (20 < L < 90 and W < 14):
+            continue
+        a, b = ends
+        if Point(*a).distance(term) > Point(*b).distance(term):
+            a, b = b, a
+        if Point(*a).distance(term) > 3 or Point(*b).distance(term) < 15:
+            continue
+        links.append((np.array(a), np.array(b), oid))
+    # stand stop points and heading (same convention as build_stands: end nearest the terminal, last 8 m)
+    stops = []
+    for ln, tags, wid in stands:
+        c = list(ln.coords)
+        if Point(c[0]).distance(term) < Point(c[-1]).distance(term):
+            c = c[::-1]
+        lc = LineString(c)
+        end = np.array(c[-1])
+        prev = np.array(lc.interpolate(max(0, lc.length - 8)).coords[0])
+        d = end - prev
+        if np.linalg.norm(d) < 1e-3 or Point(*end).distance(term) > 70:
+            continue
+        stops.append((end, d / np.linalg.norm(d), wid))
+    # stands that already have an OSM bridge
+    taken = set()
+    for ln, tags, wid in jets:
+        e = np.array(ln.coords[-1]) if Point(ln.coords[0]).distance(term) < Point(ln.coords[-1]).distance(term) else np.array(ln.coords[0])
+        best = min(stops, key=lambda s: np.linalg.norm(s[0] - e), default=None)
+        if best is not None and np.linalg.norm(best[0] - e) < 45:
+            taken.add(best[2])
+    out, used = [], {}
+    for a, q, oid in sorted(links, key=lambda l: l[2]):
+        best, bd = None, max_d
+        for p, f, wid in stops:
+            v = q - p
+            left = np.array([f[1], -f[0]])                # left of the direction of travel (x east, z south)
+            if v @ left < 8 or v @ f < -20:
+                continue
+            dd = float(np.linalg.norm(v)) + 25.0 * used.get(wid, 0)
+            if dd < bd and wid not in taken:
+                best, bd = (p, f, wid, left), dd
+        if best is None:
+            # no stand on its left: a parked bridge pointing out of the link (drawn, never docked)
+            d = (q - a) / max(1e-6, np.linalg.norm(q - a))
+            out.append((LineString([tuple(a), tuple(q), tuple(q + d * 14.0)]), {'ref': f'fl{oid}x'}, f'fl{oid}'))
+            continue
+        p, f, wid, left = best
+        k = used.get(wid, 0)
+        used[wid] = k + 1
+        # parked cab: beside the L1 door (a second bridge on the same stand: the L2 door of a wide-body, 20 m aft)
+        e = p - f * (3.0 + 20.0 * k) + left * 3.4
+        out.append((LineString([tuple(a), tuple(q), tuple(e)]), {'ref': f'fl{oid}' + ('b' if k else '')}, f'fl{oid}'))
+    print(f'fixed-link jet bridges: {len(out)} of {len(links)} links, {sum(1 for v in used.values() if v > 1)} stands with two')
+    return out
+
+
+def ist_airport(icao, cfg, tower_name, tower_id=None, core=None, skip=(), overrides=None):
     ap, el = osm_airport(icao, cfg)
+    ap.el = el
     zone = airport_zone(ap)
     ad = [g for g, t, i, ty in osm.polygons(el, lambda t: t.get('aeroway') == 'aerodrome')]
     if core is not None:
@@ -1179,12 +1278,56 @@ def ist_airport(icao, cfg, tower_name, tower_id=None, core=None):
         # terminal / cargo / maintenance areas inside the aerodrome fence (not the neighbourhoods around it)
         zone = unary_union([zone, unary_union(ad).buffer(0).intersection(ap.paved.buffer(700))])
     tid = osm_tower(ap, el, tower_name, tower_id)
-    collect_buildings(ap, el, zone, skip_ids=(tid,) if tid else ())
+    collect_buildings(ap, el, zone, skip_ids=((tid,) if tid else ()) + tuple(skip), overrides=overrides)
+    # the generic blocks (OSM building=yes / industrial) are built in the 'service' style (same walls and roof, a lower
+    # parapet, no rooftop units): the rooftop boxes cost more triangles than the terminal models add (phones)
+    for b in ap.buildings:
+        if b['kind'] == 'industrial':
+            b['kind'] = 'service'
+
     for p, t, i in osm.nodes(el, lambda t: t.get('aeroway') == 'windsock'):
         ap.props.append({'t': 'windsock', 'x': round(p[0] - ap.origin[0], 2), 'z': round(p[1] - ap.origin[1], 2), 'h': 0})
     ap.lines_extra['gridRot'] = grid_rot(ap)
     ap.structures_zone = zone
     return ap
+
+
+def ist_tower_models(ap, design=None):
+    """The airport's control tower(s) as İstanbul models (tools/geo/airports_ist_models.py) in place of the shared
+    builder's tower_generic: position / height from the 'tower_generic' structures osm_tower() made; cab floor / top /
+    radius written back (tower camera, collider). design: {structure name: callable(name, centre, top) -> (FM, dims)}."""
+    out = []
+    for st in ap.structures:
+        if st['kind'] != 'tower_generic':
+            continue
+        c = (st['x'] + ap.origin[0], st['z'] + ap.origin[1])
+        fn = (design or {}).get(st['name'])
+        if fn:
+            fm, dims = fn(f'tower_ist_{len(out)}', c, st['top'])
+        else:
+            fm, dims = IM.generic_tower(f'tower_ist_{len(out)}', c, st['top'])
+        st.update({'cab0': dims['cab0'], 'top': dims['top'], 'r': dims['r'],
+                   'collide': [st['x'], st['z'], round(min(dims['r'], 9.0), 2), dims['top']]})
+        out.append(fm)
+    return out
+
+
+# Turkish Technic hangars (OSM names; locations: LTFM way 849830032 base-maintenance hangars opened Oct 2020 and way
+# 639777798 the THY line-maintenance hangar ("THY HANGAR" on the AIP aerodrome chart); LTFJ HABOM ways 403537679 /
+# 403537677 (turkishtechnic.com Sabiha Gökçen facilities, AIP ADC Apron 5 / MRO apron); LTBA ways 120681429,
+# 120681440, 315036879 (AIP ADC "THY TECHNIC HANGAR", Aircraft Maintenance Aprons 1 and 2)). Their apron faces get the
+# TURKISH TECHNIC lettering over the doors in the company's hangar style (wordmark on the door header, as on its
+# Esenboğa hangar, Wikimedia Commons "Turkish Technic Esenboğa Hangar.jpg"; the letter colour of the 2023 logo).
+TT_NAME = ('Turkish Technic', 'Türk Hava Yolları Teknik', 'THY Teknik')
+
+
+def tt_signs(ap):
+    out = []
+    for b in ap.buildings:
+        if b['kind'] == 'hangar' and any(n in (b.get('name') or '') for n in TT_NAME):
+            out.append(IM.hangar_signs(b, ap.origin, 'tt_dark'))
+    print(f'{ap.icao}: Turkish Technic lettering on {len(out)} hangars')
+    return out
 
 
 def all_ends(icao, **kw):
@@ -1209,8 +1352,88 @@ def build_ltfm():
         'taxi_width': 23.0, 'taxilane_width': 18.0,
         'radius': 5500,
     }
-    ap = ist_airport('LTFM', cfg, 'İstanbul Havalimanı kulesi', 572703385)
+    # RWY 09 (AIP AD 2.14 / ADC): departures only, no approach lights, no PAPI, no threshold lights ("THR LGT NIL");
+    # centreline and edge lights, red end lights. The AIP has no "27": that end gets no designator.
+    cfg['ends']['09'] = {'thr_lights': False}
+    cfg['ends']['27'] = {'thr_lights': False, 'designation': False, 'marking': 'V'}
+    el = osm.load('ltfm')
+    # the terminal: OSM maps the whole outline (aeroway=terminal, with the fixed links) and its building:parts (main
+    # hall 45 m, landside canopy 36-45 m, three piers 27 m); the model is built from the parts, the outline only
+    # keeps the city away
+    outline = max(osm.polygons(el, lambda t: t.get('aeroway') == 'terminal'), key=lambda r: r[0].area)
+    zone_t = outline[0].buffer(80)
+    parts = [(g, t, i, ty) for g, t, i, ty in osm.polygons(el, lambda t: t.get('building:part') and t.get('height'))
+             if zone_t.contains(g.representative_point())]
+    fh = lambda t, k: float(str(t.get(k, 0)).replace('m', '').strip() or 0)
+    hall = max((r for r in parts if fh(r[1], 'height') >= 40 and not fh(r[1], 'min_height')), key=lambda r: r[0].area)
+    canopy = [r for r in parts if fh(r[1], 'min_height') >= 20 and r[0].area > 5000]
+    piers = [r for r in parts if 20 <= fh(r[1], 'height') < 40 and not fh(r[1], 'min_height') and r[0].area > 15000]
+    cfg['extra_jets'] = fixed_link_jets
+    ap = ist_airport('LTFM', cfg, 'İstanbul Havalimanı kulesi', 572703385, skip=(outline[2],))
     add_windsocks(ap, ('34R', '35L', '16L', '17R'))
+    remove = []
+    for g, t, i, ty in [hall] + canopy + piers:
+        kind = 'terminal' if (g, t, i, ty) in [hall] + canopy else 'pier'
+        key = f'{ty[0]}{i}'
+        ap.add_building(g, fh(t, 'height') - 0.5, kind, name='terminal binası (İstanbul Havalimanı)', minh=fh(t, 'min_height'), osm_id=key)
+        ap.exclude_ids.append(key)
+        remove.append(f'{kind}_{key}')
+    # the landside multi-storey car parks are mapped as building:parts only (collect_buildings skips parts)
+    for g, t, i, ty in osm.polygons(el, lambda t: t.get('building:part') and (t.get('parking') or t.get('building') == 'garages')):
+        key = f'{ty[0]}{i}'
+        if key in ap.exclude_ids:
+            continue
+        lv = fh(t, 'building:levels') or 3
+        ap.add_building(g, lv * 3.2 + 0.8, 'garage', name='otopark binası', osm_id=key)
+        ap.exclude_ids.append(key)
+    # jet bridges from the fixed links: a second bridge on a stand serves a wide-body's L2 door, else stays parked
+    for jb in ap.jetbridges:
+        if jb['ref'].startswith('fl') and ((jb['ref'].endswith('b') and not jb['wide']) or jb['ref'].endswith('x')):
+            jb['occ'] = False
+            if jb['ref'].endswith('x'):
+                jb['sp'] = jb['sh'] = None
+    docked = {tuple(jb['sp']) for jb in ap.jetbridges if jb.get('sp')}
+    for st in ap.stands:
+        st['jb'] = (st['x'], st['z']) in docked
+    models = IM.ltfm_terminal(hall[0], canopy[0][0] if canopy else Polygon(), [r[0] for r in piers])
+    # TWR-1 (the tulip, OSM way 572703385, 90 m, mid-field between the 16/34 and 17/35 pairs; AIP ADC "TWR-1"):
+    # elliptical plan from the OSM outline. TWR-2 (OSM way 596215849, east of the terminal next to pier F/G; ADC
+    # "TWR-2"): 45 m (tr.wikipedia İstanbul Havalimanı), a plain concrete tower on its technical block.
+    twr1 = next(g for g, t, i, ty in osm.polygons(el, lambda t: t.get('man_made') == 'tower') if i == 572703385)
+    mrr = twr1.minimum_rotated_rectangle
+    cc = list(mrr.exterior.coords)[:4]
+    e = max(((cc[k], cc[k + 1]) for k in range(3)), key=lambda ab: math.dist(*ab))
+    rot = math.atan2(-(e[1][1] - e[0][1]), e[1][0] - e[0][0])          # long axis in Blender XY (y = -z)
+    L2, W2 = math.dist(*e) / 2, min(math.dist(cc[k], cc[k + 1]) for k in range(3)) / 2
+    # its elliptical podium (OSM way 572703382, 85.5 x 35.2 m) is part of the model; the tower is centred on it
+    pod = None
+    base = next((g for g, t, i, ty in osm.polygons(el, lambda t: 'building' in t) if i == 572703382), None)
+    if base is not None:
+        mb = base.minimum_rotated_rectangle
+        cb = list(mb.exterior.coords)[:4]
+        eb = max(((cb[k], cb[k + 1]) for k in range(3)), key=lambda ab: math.dist(*ab))
+        pod = ((math.dist(*eb) / 2, min(math.dist(cb[k], cb[k + 1]) for k in range(3)) / 2),
+               math.atan2(-(eb[1][1] - eb[0][1]), eb[1][0] - eb[0][0]),
+               (base.centroid.x - twr1.centroid.x, -(base.centroid.y - twr1.centroid.y)))
+        remove += [f'{b["kind"]}_{b["id"]}' for b in ap.buildings if b['id'] == 'w572703382']
+        for b in ap.buildings:
+            if b['id'] == 'w572703382':
+                b['h'] = 10.0
+    twr2 = next((g for g, t, i, ty in osm.polygons(el, lambda t: t.get('man_made') == 'tower') if i == 596215849), None)
+    if twr2 is not None:
+        c2 = twr2.centroid
+        ap.structures.append({'kind': 'tower_generic', 'x': round(c2.x - ap.origin[0], 2), 'z': round(c2.y - ap.origin[1], 2), 'r': 5.0,
+                              'cab0': 37.0, 'top': 45.0, 'collide': [round(c2.x - ap.origin[0], 2), round(c2.y - ap.origin[1], 2), 5.0, 45.0],
+                              'name': 'İstanbul Havalimanı kulesi 2'})
+        ap.exclude_ids.append('w596215849')
+        ap.light(c2.x, c2.y, 49.5, L_OBS_FL)
+        ap.light(c2.x + 1.0, c2.y, 47.5, L_BEACON)
+    models += tt_signs(ap)
+    models += ist_tower_models(ap, {
+        'İstanbul Havalimanı kulesi': lambda n, c, top: IM.tulip_tower(n, c, top, plan=(L2, W2), rot=rot, podium=pod),
+        'İstanbul Havalimanı kulesi 2': lambda n, c, top: IM.generic_tower(n, c, top, r_cab=5.0),
+    })
+    IM.write('LTFM', models, ap.origin, remove=remove, remove_prefix=('tower_generic',))
     return ap
 
 
@@ -1226,6 +1449,29 @@ def build_ltfj():
     }
     ap = ist_airport('LTFJ', cfg, 'Sabiha Gökçen kulesi', 1159751665)
     add_windsocks(ap, ('06L', '24R'))
+    el = ap.el
+    models, remove = [], []
+    # terminals: Terminal 2 (2009, OSM way 595327339, glass facades under a long-span arched roof: Commons "Sabiha
+    # Gökçen Airport Terminal.jpg") and the renovated Terminal 1 (2001, OSM way 75842803 roof:shape=round, three arched
+    # shells: Commons "Sabiha Gökcen - panoramio.jpg"); heights are not published: 18 m eaves, 8 m rise (T1 12 + 5 m)
+    for oid, (eave, rise, seg) in {595327339: (18.0, 8.0, None), 75842803: (12.0, 5.0, 3)}.items():
+        g = next((g for g, t, i, ty in osm.polygons(el, lambda t: t.get('aeroway') == 'terminal') if i == oid), None)
+        b = next((b for b in ap.buildings if b['id'] == f'w{oid}'), None)
+        if g is None or b is None:
+            continue
+        c = g.representative_point()
+        fm = IM.FM(f'terminal_ist_saw{oid}', (c.x, c.y), kind='terminal')
+        mrr = g.minimum_rotated_rectangle
+        cc = list(mrr.exterior.coords)[:4]
+        e = max(((cc[k], cc[k + 1]) for k in range(3)), key=lambda ab: math.dist(*ab))
+        ang = math.atan2(-(e[1][1] - e[0][1]), e[1][0] - e[0][0])
+        IM.barrel_roof(fm, IM.to_b(g.simplify(0.8), fm), ang, eave, rise, segments=seg)
+        models.append(fm)
+        remove.append(f'{b["kind"]}_{b["id"]}')
+        b['h'] = eave + rise
+    models += tt_signs(ap)
+    models += ist_tower_models(ap, {'Sabiha Gökçen kulesi': lambda n, c, top: IM.steel_frame_tower(n, c, top, r_cab=9.0)})
+    IM.write('LTFJ', models, ap.origin, remove=remove, remove_prefix=('tower_generic',))
     return ap
 
 
@@ -1239,8 +1485,30 @@ def build_ltba():
     }
     cfg['ends']['05']['als'] = 'ALSF2'
     cfg['ends']['23']['als'] = 'MALSR'
-    ap = ist_airport('LTBA', cfg, 'Atatürk kulesi', 245003917)
+    # the old terminals stand disused (international: "Terminal İstanbul" technology hub since 2025, domestic: empty):
+    # terminal buildings, not generic blocks (international 20 m, domestic 3 storeys)
+    ov = {7400912: {'kind': 'terminal', 'h': 20.0}, 288197552: {'kind': 'terminal', 'h': 15.0},
+          508352324: {'kind': 'tower_cab', 'h': 18.5, 'minh': 15.0, 'name': 'Atatürk apron kulesi'}}
+    # no OSM element is the ATC tower (way 245003917 is a communication tower south of RWY 05): the tower stands at the
+    # west end of the international terminal beside the AIS/MET building (AIP ADC AMDT 06/26 "TWR (309')", chart
+    # position 40.9772 N 28.8173 E +-50 m), 309 ft = 94.2 m top elevation on ~32.5 m ground -> 62 m
+    ap = ist_airport('LTBA', cfg, 'Atatürk kulesi', -1, overrides=ov)
     add_windsocks(ap, ('05', '23'))
+    tx, tz = lonlat_to_local(28.8173, 40.9772)
+    ap.structures.append({'kind': 'tower_generic', 'x': round(tx - ap.origin[0], 2), 'z': round(tz - ap.origin[1], 2), 'r': 9.0,
+                          'cab0': 51.3, 'top': 62.0, 'collide': [round(tx - ap.origin[0], 2), round(tz - ap.origin[1], 2), 8.0, 62.0],
+                          'name': 'Atatürk kulesi'})
+    ap.light(tx, tz, 66.0, L_OBS_FL)
+    ap.light(tx + 1.0, tz, 64.0, L_BEACON)
+    models = tt_signs(ap)
+    # the small apron tower (OSM way 508352324 "Kule": cab 15-18.5 m)
+    k = next((b for b in ap.buildings if b['id'] == 'w508352324'), None)
+    if k is not None:
+        kx, kz = k['anchor'][0] + ap.origin[0], k['anchor'][1] + ap.origin[1]
+        fm, _ = IM.generic_tower('tower_ist_apron', (kx, kz), 18.5, r_cab=4.0, cab_h=3.0)
+        models.append(fm)
+    models += ist_tower_models(ap, {'Atatürk kulesi': lambda n, c, top: IM.octagon_tower(n, c, top)})
+    IM.write('LTBA', models, ap.origin, remove_prefix=('tower_generic',))
     return ap
 
 
