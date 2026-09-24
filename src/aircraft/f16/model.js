@@ -3,6 +3,7 @@
 // has its origin on the hinge and its local +X along the rotation axis; rotation angles are applied on top of the
 // rest quaternion. Signs: positive rotation about local +X moves a trailing edge DOWN (surfaces aft of the hinge).
 import * as THREE from 'three';
+import { singlePassFlatGlass } from '../glass.js';
 
 // URLs are resolved relative to this module so that pages outside the repo root (dev/*.html) load the same files.
 const ROOT = new URL('../../../', import.meta.url).href;
@@ -287,6 +288,7 @@ export function createRig(gltfScene) {
   const navLensMats = [];
   let lensMat = null;
   const exteriorGlass = [];   // HUD rear plate: never casts shadows
+  singlePassFlatGlass(gltfScene);
   gltfScene.traverse((o) => {
     if (!o.isMesh) return;
     const mats = Array.isArray(o.material) ? o.material : [o.material];
@@ -347,6 +349,7 @@ export function createRig(gltfScene) {
   // ---- state
   const st = { gear: 1, t: 0, view: 'exterior', nozzleOpen: 0.5, lef: 0 };
 
+  const speedbrakes = [S.sbRu, S.sbRl, S.sbLu, S.sbLl];   // (one array, not one per frame)
   function update(dt, v) {
     dt = Math.min(dt || 0, 0.1);
     st.t += dt;
@@ -373,7 +376,7 @@ export function createRig(gltfScene) {
     setRot(S.lefL, -st.lef * 25 * D2R);
     // speedbrakes
     const sb = clamp(v.speedbrake ?? 0, 0, 1) * ((v.gear ?? 0) > 0.5 ? 43 / 58 : 1);
-    for (const a of [S.sbRu, S.sbRl, S.sbLu, S.sbLl]) if (a) setRot(a, sb * (a.data.open_angle ?? 1));
+    for (const a of speedbrakes) if (a) setRot(a, sb * (a.data.open_angle ?? 1));
     // canopy
     if (S.canopy) setRot(S.canopy, clamp(v.canopy ?? 0, 0, 1) * (S.canopy.data.open_angle ?? 0.66));
 
@@ -470,6 +473,7 @@ export function createRig(gltfScene) {
     // the cockpit GLB is exported in the exterior's frame (origin = CG): no offset, just parent it next to the exterior
     gltfScene.add(cockpitScene);
     cockpitScene.updateMatrixWorld(true);
+    singlePassFlatGlass(cockpitScene);
     interior = root;
     collectScreens(cockpitScene);
     cockpitScene.traverse((o) => {

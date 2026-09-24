@@ -3,6 +3,7 @@
 // rotation about local X moves a trailing edge DOWN (wing surfaces), the rudder trailing edge RIGHT,
 // and gear legs towards RETRACTED. Fans spin about their local Z (engine axis).
 import * as THREE from 'three';
+import { singlePassFlatGlass } from '../glass.js';
 
 // URLs resolve against the repo root whatever page imports this module (index.html or dev/*.html).
 const repo = (p) => new URL(`../../../${p}`, import.meta.url).href;
@@ -87,6 +88,7 @@ export function createRig(gltfScene) {
   root.updateMatrixWorld(true);
   const byName = new Map();
   root.traverse((o) => { if (o.name && !byName.has(o.name)) byName.set(o.name, o); });
+  singlePassFlatGlass(root);
   const get = (n) => byName.get(n) || null;
   const localPos = (name, fallback) => {
     const o = get(name);
@@ -160,7 +162,7 @@ export function createRig(gltfScene) {
     const rev = pivot(`reverser_${i}`);
     let blur = null;
     if (fan) {
-      const mat = new THREE.MeshBasicMaterial({ map: blurTex, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide });
+      const mat = new THREE.MeshBasicMaterial({ map: blurTex, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide, forceSinglePass: true });
       blur = new THREE.Mesh(new THREE.CircleGeometry(0.77, 48), mat);
       blur.name = `fan_blur_${i}`;
       blur.position.set(0, 0, -0.02);         // just ahead of the blades (fan local frame: -Z = forward)
@@ -435,6 +437,7 @@ export function createRig(gltfScene) {
     root.add(gltfScene);
     gltfScene.updateMatrixWorld(true);
     gltfScene.traverse((o) => { if (o.name && !byName.has(o.name)) byName.set(o.name, o); });
+    singlePassFlatGlass(gltfScene);
     interior = byName.get('interior') || gltfScene;
     cabin = byName.get('interior_cabin') || null;
     gltfScene.traverse((o) => { if (o.isMesh && o.name.startsWith('screen_')) screens[o.name] = o; });

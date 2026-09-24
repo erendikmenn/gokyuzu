@@ -211,6 +211,7 @@ export function createRig(gltfScene) {
   }
   const hudGlassMat = new THREE.MeshPhysicalMaterial({ color: 0x9fd6b8, roughness: 0.05, transparent: true, opacity: 0.1,
     side: THREE.DoubleSide, depthWrite: false });
+  hudGlassMat.forceSinglePass = true;   // flat combiner panes: one pass is pixel-identical (src/aircraft/glass.js)
   const setupHudGlass = (root) => {
     root.traverse((o) => {
       if (o.isMesh && /^hud_glass/.test(o.name)) { o.material = hudGlassMat; o.castShadow = false; o.renderOrder = 4; }

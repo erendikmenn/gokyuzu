@@ -17,6 +17,22 @@ import { BOEING } from './boeing.js';
 import { F16 } from './f16.js';
 import { F22 } from './f22.js';
 import { UH60 } from './uh60.js';
+import { detectDevice } from '../core/gpu-device.js';
+
+// Phones and tablets: display canvases at most 512 px on the long side. Phones draw the whole 3D view at most 1.25 × a
+// ~400 px short side and tablets at 1.25 × ~800 px (src/core/quality.js): a cockpit display covers at most ~250–500
+// rendered pixels there, so a 1024² PFD / ND / HUD canvas is 4× the pixels to rasterise and upload for no visible
+// detail, and in WebKit (iPad / iPhone Safari) the canvas → texture upload is the largest CPU cost of the cockpit view.
+// The upload itself costs WebKit ~0.5 ms fixed + ~0.5 ms per 512² with mipmaps (Safari measured on an M4 Max; Chromium
+// ~0.01 ms), so phones and tablets also redraw the full-rate panel displays (PFD, FCR, MFD pages without a slower `hz`)
+// at MOBILE_HZ; HUDs keep the tick rate (they are conformal with the world outside).
+const MOBILE_MAX = 512, MOBILE_HZ = 15;
+let mobile = null;
+function isMobileClass() {
+  if (mobile === null) { try { const k = detectDevice().kind; mobile = k === 'phone' || k === 'tablet'; } catch { mobile = false; } }
+  return mobile;
+}
+const displaySizeCap = () => (isMobileClass() ? MOBILE_MAX : Infinity);
 
 const NODATA = {
   vw: 1000, vh: 1000, size: 512,
@@ -62,7 +78,7 @@ export function createDisplay(type, opts = {}) {
     if (cal) { def = { ...def, vw: Math.round(1000 * cal.aspect), vh: 1000 }; opts = { ...opts, fovDeg: cal.fovDeg, boresight: cal.boresight }; }
   }
   const aspect = def.vw / def.vh;
-  const base = Math.max(16, Math.round(opts.size || def.size || 512));
+  const base = Math.max(16, Math.min(Math.round(opts.size || def.size || 512), opts.size ? Infinity : displaySizeCap()));
   const w = Math.round(opts.width || (aspect >= 1 ? base : base * aspect));
   const h = Math.round(opts.height || (aspect >= 1 ? base / aspect : base));
   const shareable = opts.shared !== false && !opts.fovDeg && !Number.isFinite(opts.boresight) && !(type.endsWith('.hud') && opts.mesh);
@@ -108,7 +124,8 @@ function createCore(type, def, w, h, opts, shareable) {
   try { draw = def.create(env); } catch (e) { console.warn('[avionics] create failed', type, e); draw = NODATA.create(env); }
   const ctx = { world: null, flight: null, nav: null, dt: 0, now: 0 };
   let lastDraw = -1, lastFlight = undefined, errors = 0, pendingDt = 0;
-  const minInterval = def.hz ? 1000 / def.hz - 4 : 0;
+  const hz = def.hz || (isMobileClass() && !type.endsWith('.hud') ? MOBILE_HZ : 0);
+  const minInterval = hz ? 1000 / hz - 4 : 0;
 
   const display = {
     type, canvas, texture, aspect: w / h, enabled: true, draws: 0, drawMs: 0, watched: false, lastSeen: 0, skips: 0,

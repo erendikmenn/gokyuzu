@@ -6,6 +6,7 @@
 // `interior_lite` (seen through the windows); attachCockpit() adds `interior` with the screens and the animated
 // thrust levers, side-sticks, speed brake / flap / gear levers and rudder pedals.
 import * as THREE from 'three';
+import { singlePassFlatGlass } from '../glass.js';
 
 // URLs resolved against this module so they work from index.html and from dev/*.html alike.
 const repo = (p) => new URL(`../../../${p}`, import.meta.url).href;
@@ -71,6 +72,7 @@ export function createRig(gltfScene) {
   gltfScene.updateMatrixWorld(true);
   const byName = new Map();
   gltfScene.traverse((o) => { if (o.name && !byName.has(o.name)) byName.set(o.name, o); });
+  singlePassFlatGlass(gltfScene);
   const N = (n) => byName.get(n) || null;
   const localPos = (n) => { const o = N(n); const v = new THREE.Vector3(); if (o) o.getWorldPosition(v); return object.worldToLocal(v); };
 
@@ -173,7 +175,7 @@ export function createRig(gltfScene) {
     let disc = null;
     if (fan) {
       disc = new THREE.Mesh(new THREE.CircleGeometry(0.985, 48),
-        new THREE.MeshBasicMaterial({ map: blurTex, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide }));
+        new THREE.MeshBasicMaterial({ map: blurTex, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide, forceSinglePass: true }));
       disc.position.set(0, 0, -0.05); disc.renderOrder = 2; disc.visible = false; disc.name = `fan_blur_${i}`;
       fan.add(disc);
     }
@@ -340,8 +342,13 @@ export function createRig(gltfScene) {
     setHinge(gear.nfL, -doorOpen * NOSE_DOOR_OPEN); setHinge(gear.nfR, doorOpen * NOSE_DOOR_OPEN);
     const aftOpen = smooth(0.0, 0.18, g);
     setHinge(gear.naL, -aftOpen * NOSE_DOOR_OPEN); setHinge(gear.naR, aftOpen * NOSE_DOOR_OPEN);
-    for (const c of stays) solveChain(c);
-    if (brace) solveChain(brace);
+    // the side stays / brace follow the legs, which only move with the gear: solved again only when it moves (each solve
+    // re-computes the world matrices of the leg subtree)
+    if (g !== st.chainG) {
+      st.chainG = g;
+      for (const c of stays) solveChain(c);
+      if (brace) solveChain(brace);
+    }
     // --- struts (compression per contact: nose, main L, main R) + nose-wheel steering
     const comp = v.gearCompression || [];
     const down = legT > 0.999;
@@ -431,6 +438,7 @@ export function createRig(gltfScene) {
     if (!cockpitScene || rig.cockpitReady) return;
     object.add(cockpitScene);
     cockpitScene.updateMatrixWorld(true);
+    singlePassFlatGlass(cockpitScene);
     const map = new Map();
     cockpitScene.traverse((o) => { if (o.name && !map.has(o.name)) map.set(o.name, o); });
     interior = map.get('interior') || cockpitScene;

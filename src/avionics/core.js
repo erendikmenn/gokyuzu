@@ -80,6 +80,7 @@ export function createFlightState() {
 }
 
 const ZERO_WARN = { stall: false, overspeed: false, gear: false, bank: false, sinkRate: false, pullUp: false };
+const VSP_KEYS = ['vls', 'vs1g', 'vapp', 'vref', 'vr', 'v2', 'vmo', 'vfe', 'vfeNext', 'vle', 'greenDot'];
 /** Updates S from the flight model. dt in seconds. */
 export function readFlight(S, f, world, dt) {
   dt = clamp(num(dt, 1 / 30), 0, 0.5);
@@ -170,7 +171,7 @@ export function readFlight(S, f, world, dt) {
   // reference speeds (m/s in the model → kt)
   const v = f.vSpeeds && typeof f.vSpeeds === 'object' ? f.vSpeeds : null, V = S.vsp;
   V.valid = !!v && num(v.vls) > 0;
-  for (const k of ['vls', 'vs1g', 'vapp', 'vref', 'vr', 'v2', 'vmo', 'vfe', 'vfeNext', 'vle', 'greenDot']) V[k] = v ? Math.max(0, num(v[k])) * KT : 0;
+  for (const k of VSP_KEYS) V[k] = v ? Math.max(0, num(v[k])) * KT : 0;
   V.mmo = v ? num(v.mmo) : 0;
   S.autobrake = typeof f.autobrake === 'string' ? f.autobrake.toUpperCase() : '';
   S.parkingBrake = !!f.parkingBrake;
