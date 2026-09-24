@@ -9,6 +9,8 @@
 // Free-flight challenges (src/missions/challenges.js) get their own boards `ff-<id>` (not comparable to the missions:
 // any start, every fitting aircraft): the challenge's aircraft, its highest score (+10 %), its run limit (+60 s; no
 // limit: the default) and star thresholds; no daily boards.
+// Maps: San Francisco (src/missions/catalog.js + challenges.js) and İstanbul (src/missions/ist/catalog.js +
+// challenges.js: missions `ist-<name>`, boards `ff-ist-<name>`), one rules file for both.
 //   node infra/leaderboard/build_rules.mjs
 import { writeFileSync, readFileSync } from 'node:fs';
 
@@ -19,11 +21,15 @@ const AIRCRAFT = ['f16', 'f22', 'a320neo', 'b737', 'uh60'];
 const OBJECTIVE_MAX = {
   altitude: () => 0,
   bridge: () => 500 + 300,                                            // centre + height
-  gates: (o, sc) => (o.gates || []).length * ((sc.gate ?? 200) + (sc.gateAcc ?? 100)),
+  // gates + optional speed windows (score.gateKt per gate) and corridor (score.low)
+  gates: (o, sc) => (o.gates || []).length * ((sc.gate ?? 200) + (sc.gateAcc ?? 100) + (o.kt != null || (o.gates || []).some((g) => g.kt != null) ? sc.gateKt ?? 100 : 0))
+    + (Number.isFinite(o.ceiling) ? sc.low ?? 300 : 0),
   hover: () => 300,
   pad: (o, sc) => 400 + (sc.landing ?? 8) * 100,                      // accuracy + landing card (0–100 points)
   land: (o, sc) => (sc.landing ?? 10) * 100 + (sc.runwayBonus ?? 0),
   ditch: (o, sc) => (sc.ditch ?? 10) * 100,
+  orbit: () => 400 + 200 + 200,                                       // radius + height + no restart
+  goaround: () => 400,                                                // height kept after the call
 };
 
 function maxScore(m, warn) {
@@ -36,52 +42,62 @@ function maxScore(m, warn) {
   return max;
 }
 
-let catalog;
-try {
-  catalog = await import('../../src/missions/catalog.js');
-} catch (e) {
-  console.error(`build_rules: src/missions/catalog.js not usable (${e.message}); keeping ${OUT.pathname}`);
-  process.exit(0);
-}
-const { MISSIONS, buildMission } = catalog;
 const warnings = new Set();
 const missions = {};
 const DAY0 = Date.UTC(2026, 8, 1);
-for (const def of MISSIONS) {
-  let max = 0, limit = 0;
-  const variants = [buildMission(def.id)];
-  for (let i = 0; i < 120; i++) variants.push(buildMission(def.id, new Date(DAY0 + i * 86400e3).toISOString().slice(0, 10).replace(/-/g, '')));
-  for (const m of variants) {
-    max = Math.max(max, maxScore(m, (w) => warnings.add(w)));
-    limit = Math.max(limit, m.limit || 0);
+const counts = [];
+/** Rules of one map's catalog (+ free-flight challenges): missions and ff- boards into `missions`. */
+async function addMap(name, catalogPath, challengesPath) {
+  let catalog;
+  try {
+    catalog = await import(catalogPath);
+  } catch (e) {
+    console.error(`build_rules: ${catalogPath} not usable (${e.message}); ${name} skipped`);
+    return false;
   }
-  const stars = variants[0].stars;
-  missions[def.id] = {
-    aircraft: AIRCRAFT.includes(def.aircraft) ? [def.aircraft] : AIRCRAFT,
-    scoreMin: 0, scoreMax: Math.ceil(max * 1.1), secMin: 3, secMax: limit ? limit + 60 : 7200, starsMin: 1,
-    ...(Array.isArray(stars) && stars.length === 3 ? { stars } : {}),
-    daily: typeof def.daily === 'function',
-  };
-}
-// free-flight challenges: boards ff-<id>
-let challenges = [];
-try {
-  const ch = await import('../../src/missions/challenges.js');
-  challenges = ch.CHALLENGES;
-  for (const c of challenges) {
-    if (missions[c.board]) { warnings.add(`${c.board}: clashes with a mission id`); continue; }
-    missions[c.board] = {
-      aircraft: c.aircraft.filter((a) => AIRCRAFT.includes(a)),
-      scoreMin: 0, scoreMax: Math.ceil(ch.maxChallengeScore(c) * 1.1), secMin: 1, secMax: c.limit ? c.limit + 60 : 7200, starsMin: 1,
-      ...(Array.isArray(c.stars) && c.stars.length === 3 ? { stars: c.stars } : {}),
-      daily: false,
+  const { MISSIONS, buildMission } = catalog;
+  for (const def of MISSIONS) {
+    if (missions[def.id]) { warnings.add(`${def.id}: duplicate mission id (${name})`); continue; }
+    let max = 0, limit = 0;
+    const variants = [buildMission(def.id)];
+    for (let i = 0; i < 120; i++) variants.push(buildMission(def.id, new Date(DAY0 + i * 86400e3).toISOString().slice(0, 10).replace(/-/g, '')));
+    for (const m of variants) {
+      max = Math.max(max, maxScore(m, (w) => warnings.add(w)));
+      limit = Math.max(limit, m.limit || 0);
+    }
+    const stars = variants[0].stars;
+    missions[def.id] = {
+      aircraft: AIRCRAFT.includes(def.aircraft) ? [def.aircraft] : AIRCRAFT,
+      scoreMin: 0, scoreMax: Math.ceil(max * 1.1), secMin: 3, secMax: limit ? limit + 60 : 7200, starsMin: 1,
+      ...(Array.isArray(stars) && stars.length === 3 ? { stars } : {}),
+      daily: typeof def.daily === 'function',
     };
   }
-} catch (e) {
-  console.error(`build_rules: src/missions/challenges.js not usable (${e.message}); no free-flight boards`);
+  // free-flight challenges: boards ff-<id>
+  let challenges = [];
+  try {
+    const ch = await import(challengesPath);
+    challenges = ch.CHALLENGES;
+    for (const c of challenges) {
+      if (missions[c.board]) { warnings.add(`${c.board}: clashes with a mission id or another board`); continue; }
+      missions[c.board] = {
+        aircraft: c.aircraft.filter((a) => AIRCRAFT.includes(a)),
+        scoreMin: 0, scoreMax: Math.ceil(ch.maxChallengeScore(c) * 1.1), secMin: 1, secMax: c.limit ? c.limit + 60 : 7200, starsMin: 1,
+        ...(Array.isArray(c.stars) && c.stars.length === 3 ? { stars: c.stars } : {}),
+        daily: false,
+      };
+    }
+  } catch (e) {
+    console.error(`build_rules: ${challengesPath} not usable (${e.message}); no ${name} free-flight boards`);
+  }
+  counts.push(`${name}: ${MISSIONS.length} missions + ${challenges.length} free-flight boards`);
+  return true;
 }
+const sfOk = await addMap('San Francisco', '../../src/missions/catalog.js', '../../src/missions/challenges.js');
+if (!sfOk) { console.error(`build_rules: keeping ${OUT.pathname}`); process.exit(0); }
+await addMap('İstanbul', '../../src/missions/ist/catalog.js', '../../src/missions/ist/challenges.js');
 const rules = {
-  source: `src/missions/catalog.js (${MISSIONS.length} missions) + src/missions/challenges.js (${challenges.length} free-flight boards) via infra/leaderboard/build_rules.mjs`,
+  source: `${counts.join('; ')} (src/missions/catalog.js, challenges.js, ist/catalog.js, ist/challenges.js) via infra/leaderboard/build_rules.mjs`,
   strict: true,
   aircraft: AIRCRAFT,
   default: { scoreMin: 0, scoreMax: 100000, secMin: 1, secMax: 7200 },
@@ -93,4 +109,4 @@ let old = '';
 try { old = readFileSync(OUT, 'utf8'); } catch { /* first run */ }
 if (old !== text) writeFileSync(OUT, text);
 for (const w of warnings) console.error(`build_rules: ${w}`);
-console.error(`build_rules: ${MISSIONS.length} missions + ${challenges.length} free-flight boards → lambda/rules.json${old === text ? ' (unchanged)' : ''}`);
+console.error(`build_rules: ${counts.join('; ')} → lambda/rules.json${old === text ? ' (unchanged)' : ''}`);

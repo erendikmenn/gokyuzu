@@ -1,5 +1,5 @@
 {
- "source": "src/missions/catalog.js (10 missions) + src/missions/challenges.js (10 free-flight boards) via infra/leaderboard/build_rules.mjs",
+ "source": "San Francisco: 10 missions + 10 free-flight boards; İstanbul: 19 missions + 16 free-flight boards (src/missions/catalog.js, challenges.js, ist/catalog.js, ist/challenges.js) via infra/leaderboard/build_rules.mjs",
  "strict": true,
  "aircraft": [
   "f16",
@@ -311,6 +311,562 @@
    "daily": false
   },
   "ff-autorot": {
+   "aircraft": [
+    "uh60"
+   ],
+   "scoreMin": 0,
+   "scoreMax": 2420,
+   "secMin": 1,
+   "secMax": 660,
+   "starsMin": 1,
+   "daily": false
+  },
+  "ist-15temmuz": {
+   "aircraft": [
+    "f16"
+   ],
+   "scoreMin": 0,
+   "scoreMax": 2971,
+   "secMin": 3,
+   "secMax": 210,
+   "starsMin": 1,
+   "stars": [
+    1000,
+    1750,
+    2250
+   ],
+   "daily": true
+  },
+  "ist-fsm": {
+   "aircraft": [
+    "f22"
+   ],
+   "scoreMin": 0,
+   "scoreMax": 2971,
+   "secMin": 3,
+   "secMax": 210,
+   "starsMin": 1,
+   "stars": [
+    1000,
+    1750,
+    2250
+   ],
+   "daily": true
+  },
+  "ist-ltfm-inis": {
+   "aircraft": [
+    "a320neo"
+   ],
+   "scoreMin": 0,
+   "scoreMax": 2200,
+   "secMin": 3,
+   "secMax": 300,
+   "starsMin": 1,
+   "daily": true
+  },
+  "ist-kiz-kulesi": {
+   "aircraft": [
+    "uh60"
+   ],
+   "scoreMin": 0,
+   "scoreMax": 3059,
+   "secMin": 3,
+   "secMax": 360,
+   "starsMin": 1,
+   "stars": [
+    1000,
+    1750,
+    2200
+   ],
+   "daily": true
+  },
+  "ist-tirmanis": {
+   "aircraft": [
+    "f22"
+   ],
+   "scoreMin": 0,
+   "scoreMax": 4400,
+   "secMin": 3,
+   "secMax": 180,
+   "starsMin": 1,
+   "stars": [
+    1000,
+    2125,
+    2625
+   ],
+   "daily": true
+  },
+  "ist-bogaz-turu": {
+   "aircraft": [
+    "b737"
+   ],
+   "scoreMin": 0,
+   "scoreMax": 2971,
+   "secMin": 3,
+   "secMax": 480,
+   "starsMin": 1,
+   "stars": [
+    1150,
+    1700,
+    2050
+   ],
+   "daily": true
+  },
+  "ist-saw-inis": {
+   "aircraft": [
+    "b737"
+   ],
+   "scoreMin": 0,
+   "scoreMax": 2200,
+   "secMin": 3,
+   "secMax": 300,
+   "starsMin": 1,
+   "daily": true
+  },
+  "ist-yarimada": {
+   "aircraft": [
+    "uh60"
+   ],
+   "scoreMin": 0,
+   "scoreMax": 5500,
+   "secMin": 3,
+   "secMax": 600,
+   "starsMin": 1,
+   "stars": [
+    1000,
+    2900,
+    3550
+   ],
+   "daily": true
+  },
+  "ist-heli-tur": {
+   "aircraft": [
+    "uh60"
+   ],
+   "scoreMin": 0,
+   "scoreMax": 6249,
+   "secMin": 3,
+   "secMax": 960,
+   "starsMin": 1,
+   "stars": [
+    1000,
+    3600,
+    4400
+   ],
+   "daily": true
+  },
+  "ist-kiz-kulesi-jet": {
+   "aircraft": [
+    "f16"
+   ],
+   "scoreMin": 0,
+   "scoreMax": 3576,
+   "secMin": 3,
+   "secMax": 300,
+   "starsMin": 1,
+   "stars": [
+    1000,
+    1900,
+    2400
+   ],
+   "daily": true
+  },
+  "ist-bogaz-alcak": {
+   "aircraft": [
+    "f22"
+   ],
+   "scoreMin": 0,
+   "scoreMax": 4125,
+   "secMin": 3,
+   "secMax": 210,
+   "starsMin": 1,
+   "stars": [
+    1000,
+    2300,
+    2800
+   ],
+   "daily": true
+  },
+  "ist-halic": {
+   "aircraft": [
+    "f16"
+   ],
+   "scoreMin": 0,
+   "scoreMax": 3631,
+   "secMin": 3,
+   "secMax": 210,
+   "starsMin": 1,
+   "stars": [
+    1000,
+    1800,
+    2200
+   ],
+   "daily": true
+  },
+  "ist-aktarma": {
+   "aircraft": [
+    "a320neo"
+   ],
+   "scoreMin": 0,
+   "scoreMax": 4005,
+   "secMin": 3,
+   "secMax": 1260,
+   "starsMin": 1,
+   "stars": [
+    1000,
+    2250,
+    2700
+   ],
+   "daily": true
+  },
+  "ist-ataturk-pas": {
+   "aircraft": [
+    "b737"
+   ],
+   "scoreMin": 0,
+   "scoreMax": 3081,
+   "secMin": 3,
+   "secMax": 660,
+   "starsMin": 1,
+   "stars": [
+    1000,
+    2200,
+    2700
+   ],
+   "daily": true
+  },
+  "ist-uc-kopru": {
+   "aircraft": [
+    "f22"
+   ],
+   "scoreMin": 0,
+   "scoreMax": 7041,
+   "secMin": 3,
+   "secMax": 360,
+   "starsMin": 1,
+   "stars": [
+    1000,
+    3400,
+    4200
+   ],
+   "daily": true
+  },
+  "ist-saw-motor": {
+   "aircraft": [
+    "b737"
+   ],
+   "scoreMin": 0,
+   "scoreMax": 3741,
+   "secMin": 3,
+   "secMax": 600,
+   "starsMin": 1,
+   "stars": [
+    1000,
+    1750,
+    2150
+   ],
+   "daily": true
+  },
+  "ist-alev": {
+   "aircraft": [
+    "f16"
+   ],
+   "scoreMin": 0,
+   "scoreMax": 2200,
+   "secMin": 3,
+   "secMax": 360,
+   "starsMin": 1,
+   "stars": [
+    1000,
+    1650,
+    1900
+   ],
+   "daily": true
+  },
+  "ist-marmara": {
+   "aircraft": [
+    "a320neo"
+   ],
+   "scoreMin": 0,
+   "scoreMax": 2200,
+   "secMin": 3,
+   "secMax": 360,
+   "starsMin": 1,
+   "daily": true
+  },
+  "ist-otorotasyon": {
+   "aircraft": [
+    "uh60"
+   ],
+   "scoreMin": 0,
+   "scoreMax": 2420,
+   "secMin": 3,
+   "secMax": 210,
+   "starsMin": 1,
+   "stars": [
+    1000,
+    1600,
+    1900
+   ],
+   "daily": true
+  },
+  "ff-ist-bogazici": {
+   "aircraft": [
+    "f16",
+    "f22",
+    "a320neo",
+    "b737",
+    "uh60"
+   ],
+   "scoreMin": 0,
+   "scoreMax": 1981,
+   "secMin": 1,
+   "secMax": 7200,
+   "starsMin": 1,
+   "stars": [
+    1000,
+    1450,
+    1650
+   ],
+   "daily": false
+  },
+  "ff-ist-fsm": {
+   "aircraft": [
+    "f16",
+    "f22",
+    "a320neo",
+    "b737",
+    "uh60"
+   ],
+   "scoreMin": 0,
+   "scoreMax": 1981,
+   "secMin": 1,
+   "secMax": 7200,
+   "starsMin": 1,
+   "stars": [
+    1000,
+    1450,
+    1650
+   ],
+   "daily": false
+  },
+  "ff-ist-yss": {
+   "aircraft": [
+    "f16",
+    "f22",
+    "a320neo",
+    "b737",
+    "uh60"
+   ],
+   "scoreMin": 0,
+   "scoreMax": 1981,
+   "secMin": 1,
+   "secMax": 7200,
+   "starsMin": 1,
+   "stars": [
+    1000,
+    1450,
+    1650
+   ],
+   "daily": false
+  },
+  "ff-ist-kiz-kulesi": {
+   "aircraft": [
+    "uh60"
+   ],
+   "scoreMin": 0,
+   "scoreMax": 1375,
+   "secMin": 1,
+   "secMax": 660,
+   "starsMin": 1,
+   "stars": [
+    850,
+    1000,
+    1120
+   ],
+   "daily": false
+  },
+  "ff-ist-kiz-kulesi-jet": {
+   "aircraft": [
+    "f16",
+    "f22",
+    "a320neo",
+    "b737"
+   ],
+   "scoreMin": 0,
+   "scoreMax": 1541,
+   "secMin": 1,
+   "secMax": 660,
+   "starsMin": 1,
+   "stars": [
+    850,
+    1000,
+    1120
+   ],
+   "daily": false
+  },
+  "ff-ist-bogaz-alcak": {
+   "aircraft": [
+    "f16",
+    "f22",
+    "a320neo",
+    "b737",
+    "uh60"
+   ],
+   "scoreMin": 0,
+   "scoreMax": 4125,
+   "secMin": 1,
+   "secMax": 660,
+   "starsMin": 1,
+   "stars": [
+    1000,
+    2300,
+    2800
+   ],
+   "daily": false
+  },
+  "ff-ist-halic": {
+   "aircraft": [
+    "f16",
+    "f22",
+    "a320neo",
+    "b737",
+    "uh60"
+   ],
+   "scoreMin": 0,
+   "scoreMax": 3631,
+   "secMin": 1,
+   "secMax": 660,
+   "starsMin": 1,
+   "stars": [
+    1000,
+    1800,
+    2200
+   ],
+   "daily": false
+  },
+  "ff-ist-bogaz-turu": {
+   "aircraft": [
+    "f16",
+    "f22",
+    "a320neo",
+    "b737",
+    "uh60"
+   ],
+   "scoreMin": 0,
+   "scoreMax": 2971,
+   "secMin": 1,
+   "secMax": 960,
+   "starsMin": 1,
+   "stars": [
+    1150,
+    1700,
+    2050
+   ],
+   "daily": false
+  },
+  "ff-ist-yarimada": {
+   "aircraft": [
+    "uh60"
+   ],
+   "scoreMin": 0,
+   "scoreMax": 2971,
+   "secMin": 1,
+   "secMax": 960,
+   "starsMin": 1,
+   "stars": [
+    1300,
+    1750,
+    2050
+   ],
+   "daily": false
+  },
+  "ff-ist-tirmanis": {
+   "aircraft": [
+    "f16",
+    "f22",
+    "a320neo",
+    "b737"
+   ],
+   "scoreMin": 0,
+   "scoreMax": 4400,
+   "secMin": 1,
+   "secMax": 360,
+   "starsMin": 1,
+   "stars": [
+    1000,
+    2125,
+    2625
+   ],
+   "daily": false
+  },
+  "ff-ist-yenikapi-ped": {
+   "aircraft": [
+    "uh60"
+   ],
+   "scoreMin": 0,
+   "scoreMax": 2750,
+   "secMin": 1,
+   "secMax": 300,
+   "starsMin": 1,
+   "stars": [
+    1000,
+    1650,
+    2050
+   ],
+   "daily": false
+  },
+  "ff-ist-inis": {
+   "aircraft": [
+    "f16",
+    "f22",
+    "a320neo",
+    "b737",
+    "uh60"
+   ],
+   "scoreMin": 0,
+   "scoreMax": 2200,
+   "secMin": 1,
+   "secMax": 7200,
+   "starsMin": 1,
+   "daily": false
+  },
+  "ff-ist-motor": {
+   "aircraft": [
+    "a320neo",
+    "b737"
+   ],
+   "scoreMin": 0,
+   "scoreMax": 2420,
+   "secMin": 1,
+   "secMax": 960,
+   "starsMin": 1,
+   "daily": false
+  },
+  "ff-ist-alev": {
+   "aircraft": [
+    "f16"
+   ],
+   "scoreMin": 0,
+   "scoreMax": 2200,
+   "secMin": 1,
+   "secMax": 960,
+   "starsMin": 1,
+   "daily": false
+  },
+  "ff-ist-denize-inis": {
+   "aircraft": [
+    "a320neo",
+    "b737"
+   ],
+   "scoreMin": 0,
+   "scoreMax": 2200,
+   "secMin": 1,
+   "secMax": 960,
+   "starsMin": 1,
+   "daily": false
+  },
+  "ff-ist-otorotasyon": {
    "aircraft": [
     "uh60"
    ],

@@ -141,6 +141,36 @@ check('shipped rules: every catalog mission present with its aircraft (rerun bui
     && checkScore({ mission: 'ff-eng', score: 2000, stars: 2, ac: 'a320neo', sid: SID, sec: 240 }, sctx).ok
     && checkScore({ mission: 'ff-eng', score: 2000, stars: 2, ac: 'f22', sid: SID }, sctx).error === 'ac');
 }
+// İstanbul (src/missions/ist/catalog.js + ist/challenges.js): missions ist-<name>, boards ff-ist-<name> in the same rules
+{
+  let ok = true, detail = '';
+  try {
+    const { MISSIONS: IM, buildMission: ib } = await import('../src/missions/ist/catalog.js');
+    const { CHALLENGES: IC, maxChallengeScore: imax } = await import('../src/missions/ist/challenges.js');
+    for (const m of IM) {
+      const r = SHIPPED.missions[m.id];
+      const built = ib(m.id);
+      if (!r || !/^ist-/.test(m.id) || r.aircraft.length !== 1 || r.aircraft[0] !== m.aircraft || r.daily !== true
+        || (Array.isArray(built.stars) && JSON.stringify(r.stars) !== JSON.stringify(built.stars)) || r.secMax < built.limit) { ok = false; detail += `${m.id} `; }
+    }
+    for (const c of IC) {
+      const r = SHIPPED.missions[c.board];
+      if (!r || !/^ff-ist-/.test(c.board) || r.daily !== false || r.aircraft.length !== c.aircraft.length || r.scoreMax < imax(c)
+        || (Array.isArray(c.stars) && JSON.stringify(r.stars) !== JSON.stringify(c.stars))) { ok = false; detail += `${c.board} `; }
+    }
+    ok = ok && IM.length >= 16 && IC.length >= 12;
+    detail += `${IM.length} missions, ${IC.length} boards`;
+  } catch (e) { ok = false; detail = e.message; }
+  check('shipped rules İstanbul: every ist- mission (its aircraft, stars, limit, daily) and every ff-ist- board (aircraft, max score, stars, no daily)', ok, detail);
+  const heli = { mission: 'ist-heli-tur', score: 4400, stars: 3, ac: 'uh60', sid: SID, sec: 600 };
+  check('shipped rules ist-heli-tur: a 3-star UH-60 run accepted (also as daily), the F-16 refused, 3 stars for 3.500 refused',
+    checkScore(heli, sctx).ok && checkScore({ ...heli, day: '20260924' }, sctx).ok && checkScore({ ...heli, ac: 'f16' }, sctx).error === 'ac' && checkScore({ ...heli, score: 3500 }, sctx).error === 'stars');
+  check('shipped rules ff-ist-bogazici / ff-ist-yenikapi-ped: any aircraft under the bridge, the pad only for the UH-60, no daily boards',
+    checkScore({ mission: 'ff-ist-bogazici', score: 1700, stars: 3, ac: 'b737', sid: SID }, sctx).ok
+    && checkScore({ mission: 'ff-ist-bogazici', score: 1700, stars: 3, ac: 'b737', sid: SID, day: '20260924' }, sctx).error === 'day'
+    && checkScore({ mission: 'ff-ist-yenikapi-ped', score: 2100, stars: 3, ac: 'f16', sid: SID }, sctx).error === 'ac'
+    && checkScore({ mission: 'ff-ist-yenikapi-ped', score: 2100, stars: 3, ac: 'uh60', sid: SID }, sctx).ok);
+}
 for (const id of ids) {
   const r = SHIPPED.missions[id];
   const three = Array.isArray(r.stars) ? r.stars[2] : Math.min(r.scoreMax, 1500);
