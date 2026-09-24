@@ -1,6 +1,8 @@
 """W2 city: pack the Cycles-rendered facade/roof cells (blender/city/facade_atlas.py) into the 4K atlas images.
 
   .venv/bin/python tools/geo/city_atlas.py [--cell 512]
+  GEO_REGION=ist .venv/bin/python tools/geo/city_atlas.py    (other maps: San Francisco's atlas, copied - same cells,
+                                                              same texture memory; the maps differ in tints / styles)
 
 Inputs : data/sf/cache/city/atlas_cells/<name>_{albedo,data,win,normal}.png + cells.json
 Outputs: assets/sf/city/atlas/atlas_albedo.webp  RGB albedo (sRGB, sky occlusion baked)
@@ -13,9 +15,20 @@ import json, os, sys
 import numpy as np
 from PIL import Image
 
-ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-ADIR = os.path.join(ROOT, 'assets', 'sf', 'city', 'atlas')
-CDIR = os.path.join(ROOT, 'data', 'sf', 'cache', 'city', 'atlas_cells')
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from city_paths import ROOT, OUT, CACHE, REGION_ID  # noqa: E402
+
+ADIR = os.path.join(OUT, 'atlas')
+CDIR = os.path.join(CACHE, 'atlas_cells')
+
+
+def copy_sf_atlas():
+    import shutil
+    src = os.path.join(ROOT, 'assets', 'sf', 'city', 'atlas')
+    os.makedirs(ADIR, exist_ok=True)
+    for f in ('atlas.json', 'atlas_albedo.webp', 'atlas_mat.webp', 'atlas_nrm.webp'):
+        shutil.copy2(os.path.join(src, f), os.path.join(ADIR, f))
+        print('copied', f)
 
 
 def load(path, size, mode='RGB', resample=Image.LANCZOS):
@@ -70,4 +83,7 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    if REGION_ID != 'sf':
+        copy_sf_atlas()
+    else:
+        main()

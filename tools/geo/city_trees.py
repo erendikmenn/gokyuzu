@@ -1,6 +1,7 @@
 """W2 city: tree instances for the whole map (street trees, OSM trees, forests, parks, back yards, scrub).
 
   .venv/bin/python tools/geo/city_trees.py
+  GEO_REGION=ist .venv/bin/python tools/geo/city_trees.py      (İstanbul: main_ist below)
 
 Sources: DataSF Street Tree List (144k, species + trunk diameter), OSM natural=tree nodes / tree_row ways, OSM
 natural=wood / landuse=forest (dense stands: Presidio, Golden Gate Park, Sutro, Oakland hills), leisure=park /
@@ -22,9 +23,10 @@ from shapely.prepared import prep
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from geo import ROOT  # noqa: E402
 from city_prep import proj, rnd01, load_exclusions, load_airport_exclusions  # noqa: E402
+from city_paths import CACHE, REGION_ID, DATA_DIR  # noqa: E402
+from city_paths import OUT as CITY_OUT  # noqa: E402
 
-CACHE = os.path.join(ROOT, 'data', 'sf', 'cache', 'city')
-OUT = os.path.join(ROOT, 'assets', 'sf', 'city', 'trees')
+OUT = os.path.join(CITY_OUT, 'trees')
 T2 = 2000.0
 SPECIES = ['broadleaf', 'small', 'eucalyptus', 'cypress', 'pine', 'conifer', 'palm_date', 'palm_fan', 'shrub']
 SP = {s: i for i, s in enumerate(SPECIES)}
@@ -242,9 +244,10 @@ def main():
     # ---- trees where the aerial photo shows canopy (W1 NAIP mosaic, 1 m/px): dark, green, textured pixels.
     # Flat fills (no photo) and water (teal) are rejected; a tree per 7 m cell with >= 40 % canopy.
     from PIL import Image
-    tidx = json.load(open(os.path.join(ROOT, 'assets', 'sf', 'terrain', 'index.json')))
+    tdir = os.path.join(os.path.dirname(CITY_OUT), 'terrain')     # the map's terrain pack (assets/<map>/terrain)
+    tidx = json.load(open(os.path.join(tdir, 'index.json')))
     RX, RZ, root = tidx['rootMinX'], tidx['rootMinZ'], tidx['rootSize']
-    L8 = 8
+    L8 = int(tidx.get('imgLevels', {}).get('core', 8))  # deepest imagery level (San Francisco 8 = 1 m/px)
     tsize = root / (1 << L8)
     px = int(tidx.get('imgPx', 512))
     mpp = tsize / px
@@ -254,7 +257,7 @@ def main():
     region = json.load(open(os.path.join(ROOT, 'data', 'sf', 'region.json')))['local']
     flat_tiles = set()
     photo = []
-    img_dir = os.path.join(ROOT, 'assets', 'sf', 'terrain', 'img', str(L8))
+    img_dir = os.path.join(tdir, 'img', str(L8))
     from scipy.ndimage import uniform_filter
     for f in os.listdir(img_dir):
         if not f.endswith('.webp'):
@@ -386,5 +389,186 @@ def main():
     print(f'{len(trees)} trees in {len(meta)} tiles: {dict(counts)} ({time.time() - t0:.0f} s)')
 
 
+# ==================================================================================================== İstanbul
+# No street-tree inventory and no 1 m aerial photo (Sentinel-2 is 10 m): OSM natural=tree nodes / tree rows,
+# forests (Belgrad Ormanı and the northern woods: oak, beech, hornbeam, chestnut), pine hills (Adalar, Aydos, Çamlıca),
+# cemeteries (Karacaahmet, Zincirlikuyu, Edirnekapı: cypress), parks / gardens / groves, scrub (maquis), plus sparse
+# garden trees in residential land use away from buildings and streets. Same species models and tile format as San
+# Francisco (the models are copied from assets/sf/city/trees).
+def forest_mix_ist(x, z):
+    if 17000 < x < 34000 and 14000 < z < 22000:          # Adalar (Princes' Islands): Turkish red pine
+        return [('pine', 8), ('cypress', 1), ('broadleaf', 1)]
+    if z < -12000:                                         # Belgrad Ormanı and the northern forests
+        return [('broadleaf', 8), ('pine', 1), ('conifer', 1), ('small', 1)]
+    return [('pine', 5), ('broadleaf', 4), ('cypress', 1), ('small', 1)]      # hills inside the city
+
+
+def main_ist():
+    t0 = time.time()
+    os.makedirs(OUT, exist_ok=True)
+    rng = np.random.default_rng(7)
+    trees = []
+    say = lambda *a: print(*a, f'({time.time() - t0:.0f} s)', flush=True)
+    ot = json.load(open(os.path.join(CACHE, 'osm_trees.json')))
+    if ot:
+        xy = proj(np.array([[t['lon'], t['lat']] for t in ot]))
+        for t, (x, z) in zip(ot, xy):
+            g = (t.get('genus') or t.get('species') or t.get('taxon') or '').split(' ')[0]
+            if g in GENUS:
+                s_ = GENUS[g]
+            elif t.get('leaf_type') == 'needleleaved':
+                s_ = 'pine'
+            elif 'palm' in (t.get('species:en') or '').lower() or g.lower() == 'palm':
+                s_ = 'palm_fan'
+            else:
+                s_ = 'broadleaf' if rnd01((x, z), 'o') < 0.65 else 'small'
+            h = None
+            try:
+                h = float(str(t.get('height', '')).split()[0])
+            except (ValueError, IndexError):
+                pass
+            trees.append((x, z, s_, h or REF_H[s_] * (0.7 + 0.6 * rnd01((x, z), 'h')), f'ot{x:.0f}_{z:.0f}'))
+    roads_raw = json.load(open(os.path.join(CACHE, 'osm_roads.json')))
+    for r in roads_raw:
+        if r.get('natural') == 'tree_row':
+            line = LineString(proj(r['pts']))
+            n = max(1, int(line.length / 9))
+            for k in range(n + 1):
+                p = line.interpolate(k / max(n, 1), normalized=True)
+                trees.append((p.x, p.y, 'broadleaf', 9 + 5 * rnd01((p.x, p.y), 'tr'), f'tr{p.x:.0f}_{p.y:.0f}'))
+    say(f'OSM trees + rows: {len(trees)}')
+    # obstacles for scatter: buildings (the prepared city tiles) + roads
+    bpolys = []
+    tiles_dir = os.path.join(CACHE, 'tiles')
+    for f in os.listdir(tiles_dir):
+        if f.startswith('L1_'):
+            for b in json.load(open(os.path.join(tiles_dir, f)))['buildings']:
+                try:
+                    bpolys.append(Polygon(b['p']))
+                except Exception:
+                    pass
+    btree = STRtree(bpolys)
+    lines, widths = [], []
+    for r in roads_raw:
+        hw = r.get('highway')
+        if hw:
+            lines.append(LineString(proj(r['pts'])))
+            widths.append({'motorway': 18, 'trunk': 15, 'primary': 12, 'secondary': 10, 'tertiary': 9}.get(hw.split('_')[0], 6))
+    rtree = STRtree(lines)
+    widths = np.array(widths)
+    say(f'obstacles: {len(bpolys)} buildings, {len(lines)} roads')
+
+    def clear(pts, bclear=2.5, road_scale=1.0):
+        if len(pts) == 0:
+            return pts
+        g = shapely.points(pts)
+        bad = np.zeros(len(pts), bool)
+        bad[btree.query(g, predicate='dwithin', distance=bclear)[0]] = True
+        idx, d = rtree.query_nearest(g, max_distance=20, return_distance=True, all_matches=False)
+        bad[idx[0][d < widths[idx[1]] * road_scale]] = True
+        return pts[~bad]
+
+    lc = json.load(open(os.path.join(CACHE, 'osm_landcover.json')))
+    kinds = Counter()
+    for b in lc:
+        t = b['tags']
+        kind = None
+        if t.get('natural') == 'wood' or t.get('landuse') == 'forest':
+            kind = 'forest'
+        elif t.get('natural') in ('scrub', 'heath'):
+            kind = 'scrub'
+        elif t.get('landuse') == 'cemetery' or t.get('amenity') == 'grave_yard':
+            kind = 'cemetery'
+        elif t.get('leisure') in ('park', 'garden', 'golf_course', 'nature_reserve') or t.get('landuse') in ('orchard', 'village_green'):
+            kind = 'park'
+        elif t.get('landuse') == 'residential':
+            kind = 'yard'
+        if not kind:
+            continue
+        for r in b['rings']:
+            try:
+                poly = Polygon(proj(r['outer']), [proj(x) for x in r['inner'] if len(x) >= 4]).buffer(0)
+            except Exception:
+                continue
+            if poly.area < 200:
+                continue
+            big = poly.area > 5e6
+            spacing = {'forest': 11.0 if big else 9.0, 'scrub': 14.0, 'cemetery': 9.0, 'park': 14.0, 'yard': 24.0}[kind]
+            cand = scatter(poly, spacing, rng)
+            if not len(cand):
+                continue
+            if kind == 'yard':
+                cand = cand[rng.random(len(cand)) < 0.45]
+                cand = clear(cand, bclear=3.0, road_scale=1.0)
+            elif kind in ('park', 'cemetery'):
+                cand = clear(cand, bclear=2.0, road_scale=0.8)
+            else:
+                cand = clear(cand, bclear=1.5, road_scale=0.7)
+            for (x, z) in cand:
+                key = f'{kind}{x:.1f}_{z:.1f}'
+                u = rnd01(key, 'hh')
+                if kind == 'scrub':
+                    if rnd01(key, 'sk') < 0.4:
+                        continue
+                    s_, h = 'shrub', 1.2 + 2.3 * u
+                elif kind == 'forest':
+                    s_ = pick(forest_mix_ist(x, z), key)
+                    h = REF_H[s_] * (0.65 + 0.7 * u)
+                elif kind == 'cemetery':
+                    s_ = pick([('cypress', 7), ('broadleaf', 2), ('pine', 1)], key)
+                    h = REF_H[s_] * (0.7 + 0.6 * u)
+                elif kind == 'park':
+                    s_ = pick([('broadleaf', 5), ('pine', 3), ('small', 2), ('cypress', 1), ('conifer', 0.5), ('palm_fan', 0.1)], key)
+                    h = REF_H[s_] * (0.6 + 0.6 * u)
+                else:
+                    s_ = pick([('broadleaf', 4), ('small', 4), ('pine', 1), ('cypress', 0.6), ('palm_fan', 0.05)], key)
+                    h = REF_H[s_] * (0.5 + 0.6 * u)
+                trees.append((x, z, s_, h, key))
+            kinds[kind] += len(cand)
+        if len(trees) and len(trees) % 500000 < 50:
+            say(f'  {len(trees)} trees ...')
+    say(f'landcover scatter: {dict(kinds)}')
+    # exclusions: airports (zones + runway strips), landmarks (fixed list / landmarks agent)
+    import city_ist
+    lm_ids, lm_polys, _ = city_ist.load_landmark_exclusions()
+    apt_ids, apt_zones = city_ist.load_airport_exclusions()
+    ex_all = STRtree(lm_polys + apt_zones)
+    xy = np.array([(t[0], t[1]) for t in trees])
+    bad = set(ex_all.query(shapely.points(xy), predicate='intersects')[0].tolist())
+    trees = [t for k, t in enumerate(trees) if k not in bad]
+    say(f'excluded {len(bad)} trees (airports / landmarks)')
+    write_tiles(trees)
+    say('done')
+
+
+def write_tiles(trees):
+    tiles = defaultdict(list)
+    for (x, z, s, h, key) in trees:
+        tiles[(int(math.floor(x / T2)), int(math.floor(z / T2)))].append((x, z, s, h, key))
+    for f in os.listdir(OUT):
+        if f.endswith('.bin'):
+            os.remove(os.path.join(OUT, f))
+    meta = []
+    for (i, j), lst in sorted(tiles.items()):
+        buf = bytearray(struct.pack('<4siiI', b'TRE1', i, j, len(lst)))
+        arr = np.zeros(len(lst), dtype=[('x', '<f4'), ('z', '<f4'), ('s', 'u1'), ('h', 'u1'), ('r', 'u1'), ('c', 'u1')])
+        arr['x'] = [t[0] for t in lst]
+        arr['z'] = [t[1] for t in lst]
+        arr['s'] = [SP[t[2]] for t in lst]
+        arr['h'] = [min(255, max(1, int(round(t[3] * 4)))) for t in lst]
+        arr['r'] = [int(rnd01(t[4], 'rot') * 255) for t in lst]
+        arr['c'] = [int(rnd01(t[4], 'col') * 255) for t in lst]
+        buf += arr.tobytes()
+        open(os.path.join(OUT, f'{i}_{j}.bin'), 'wb').write(buf)
+        meta.append({'i': i, 'j': j, 'n': len(lst)})
+    counts = Counter(s for (_, _, s, _, _) in trees)
+    json.dump({'version': 1, 'size': T2, 'species': SPECIES, 'refHeight': REF_H, 'tiles': meta, 'counts': counts},
+              open(os.path.join(OUT, 'trees.json'), 'w'))
+    print(f'{len(trees)} trees in {len(meta)} tiles: {dict(counts)}')
+
+
 if __name__ == '__main__':
-    main()
+    if REGION_ID != 'sf':
+        main_ist()
+    else:
+        main()

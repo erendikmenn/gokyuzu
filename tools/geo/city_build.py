@@ -1,16 +1,19 @@
 """W2 city: run blender/city/build_tiles.py in parallel over all prepared tiles, then write assets/sf/city/index.json.
 
   .venv/bin/python tools/geo/city_build.py [--jobs 8] [--force] [--index-only] [--only i_j,...]
+  GEO_REGION=ist .venv/bin/python tools/geo/city_build.py [--jobs 14] [--force]   (Python / meshopt builder:
+                                                                                   tools/geo/city_mesh.py, no Blender)
 
 Incremental: a tile is rebuilt only when its prepared JSON changed (hash stored in the tile meta), so re-running after
 city_prep.py (e.g. new airport exclusions from W4) only re-exports the affected tiles.
 """
 import glob, json, os, subprocess, sys, time
 
-ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from city_paths import ROOT, CACHE, OUT, REGION_ID  # noqa: E402
+
 BLENDER = '/Applications/Blender.app/Contents/MacOS/Blender'
-TILES = os.path.join(ROOT, 'data', 'sf', 'cache', 'city', 'tiles')
-OUT = os.path.join(ROOT, 'assets', 'sf', 'city')
+TILES = os.path.join(CACHE, 'tiles')
 
 
 def chunks(lst, n):
@@ -43,6 +46,46 @@ def run_all(jobs, force, only):
     print(f'blender build done in {time.time() - t0:.0f} s')
 
 
+def _py_job(args):
+    kind, i, j, force = args
+    import city_mesh
+    if kind == 'l1':
+        return city_mesh.build_l1(i, j, force)
+    return city_mesh.build_far(i, j, 2, force), city_mesh.build_far(i, j, 3, force)
+
+
+def run_all_py(jobs, force, only):
+    """Python builder (city_mesh.py) over a process pool: heaviest tiles first."""
+    import multiprocessing as mp
+    l1 = [os.path.basename(p)[3:-5] for p in glob.glob(os.path.join(TILES, 'L1_*.json'))]
+    far = sorted({os.path.basename(p)[3:-5] for p in glob.glob(os.path.join(TILES, 'L[23]_*.json'))} |
+                 {os.path.basename(p)[:-4] for p in glob.glob(os.path.join(OUT, 'l[23]', '*.glb'))})
+    if only:
+        l1 = [t for t in l1 if t in only]
+        far = []
+    l1.sort(key=lambda t: -os.path.getsize(os.path.join(TILES, f'L1_{t}.json')))
+    tasks = [('l1', *map(int, t.split('_')), force) for t in l1] + [('far', *map(int, t.split('_')), force) for t in far]
+    for d in ('l0', 'l1', 'l2', 'l3'):
+        os.makedirs(os.path.join(OUT, d), exist_ok=True)
+    if not only:     # tiles whose prepared JSON is gone (e.g. new exclusions): remove their GLBs
+        have = set(l1)
+        for d, f in (('l1', 1), ('l0', 2)):
+            for g in glob.glob(os.path.join(OUT, d, '*.glb')):
+                i, j = map(int, os.path.basename(g)[:-4].split('_'))
+                if f'{i // f}_{j // f}' not in have:
+                    for ext in ('.glb', '.json'):
+                        if os.path.exists(g[:-4] + ext):
+                            os.remove(g[:-4] + ext)
+    t0 = time.time()
+    done = 0
+    with mp.get_context('spawn').Pool(jobs) as pool:
+        for _ in pool.imap_unordered(_py_job, tasks, chunksize=1):
+            done += 1
+            if done % 100 == 0:
+                print(f'  {done}/{len(tasks)} tiles ({time.time() - t0:.0f} s)', flush=True)
+    print(f'python build done in {time.time() - t0:.0f} s ({len(tasks)} tasks)')
+
+
 def write_index():
     levels = []
     for lvl, size in ((0, 500), (1, 1000), (2, 2000), (3, 2000)):
@@ -52,7 +95,9 @@ def write_index():
             if not os.path.exists(m[:-5] + '.glb'):
                 continue
             tiles.append({k: js[k] for k in ('i', 'j', 'minX', 'maxX', 'minZ', 'maxZ', 'maxY', 'tris', 'bytes', 'buildings')})
-        levels.append({'level': lvl, 'size': size, 'dir': f'l{lvl}', 'placement': 'vertex' if lvl >= 2 else 'anchor', 'tiles': tiles})
+        # İstanbul's LOD1 are merged blocks placed per vertex (city_mesh.py); San Francisco's LOD1 keep the anchors
+        vertex_from = 2 if REGION_ID == 'sf' else 1
+        levels.append({'level': lvl, 'size': size, 'dir': f'l{lvl}', 'placement': 'vertex' if lvl >= vertex_from else 'anchor', 'tiles': tiles})
     obst = sorted(os.path.basename(p)[:-7] for p in glob.glob(os.path.join(OUT, 'obst', '*.bin.gz')))
     trees = None
     tpath = os.path.join(OUT, 'trees', 'trees.json')
@@ -74,5 +119,8 @@ if __name__ == '__main__':
     if '--only' in sys.argv:
         only = set(sys.argv[sys.argv.index('--only') + 1].split(','))
     if '--index-only' not in sys.argv:
-        run_all(jobs, '--force' in sys.argv, only)
+        if REGION_ID == 'sf':
+            run_all(jobs, '--force' in sys.argv, only)
+        else:
+            run_all_py(jobs, '--force' in sys.argv, only)
     write_index()

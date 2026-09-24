@@ -1,6 +1,7 @@
 """W2 city: merge DataSF LiDAR footprints + OSM buildings, classify, and write per-tile building records for Blender.
 
   .venv/bin/python tools/geo/city_prep.py [--only i,j]        (after city_fetch.py, city_osm.py, facade_atlas + city_atlas)
+  GEO_REGION=ist .venv/bin/python tools/geo/city_prep.py        (İstanbul: tools/geo/city_ist.py, OSM + Overture)
 
 Pipeline
   1. DataSF footprints (SF, 177k) with LiDAR height stats; OSM buildings everywhere else (and OSM tags/heights inside SF:
@@ -25,17 +26,17 @@ from shapely import STRtree
 from pyproj import Transformer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from geo import E0, N0, ROOT  # noqa: E402
+from geo import E0, N0, ROOT, CRS  # noqa: E402
+from city_paths import CACHE, OUT, REGION_ID  # noqa: E402
 
-CACHE = os.path.join(ROOT, 'data', 'sf', 'cache', 'city')
 TILES = os.path.join(CACHE, 'tiles')
-OBST = os.path.join(ROOT, 'assets', 'sf', 'city', 'obst')
-ATLAS = json.load(open(os.path.join(ROOT, 'assets', 'sf', 'city', 'atlas', 'atlas.json')))
+OBST = os.path.join(OUT, 'obst')
+ATLAS = json.load(open(os.path.join(OUT, 'atlas', 'atlas.json')))
 LAYER = {l['name']: l['index'] for l in ATLAS['layers']}
 CELLS = {l['name']: l for l in ATLAS['layers']}
 T1 = 1000.0       # LOD1 tile size (LOD0 = T1 / 2, LOD2 = 2 * T1)
 OBST_CELL = 4.0
-_fwd = Transformer.from_crs('EPSG:4326', 'EPSG:32610', always_xy=True)
+_fwd = Transformer.from_crs('EPSG:4326', CRS, always_xy=True)
 
 
 def proj(coords):
@@ -447,13 +448,14 @@ def sample_roof_colors(buildings):
     from PIL import Image
     from rasterio import features
     from rasterio.transform import from_origin
-    tidx_path = os.path.join(ROOT, 'assets', 'sf', 'terrain', 'index.json')
+    tdir = os.path.join(os.path.dirname(OUT), 'terrain')          # the map's terrain pack (assets/<map>/terrain)
+    tidx_path = os.path.join(tdir, 'index.json')
     if not os.path.exists(tidx_path):
         print('  (no W1 imagery: palette roof colours)')
         return
     tidx = json.load(open(tidx_path))
     RX, RZ, root = tidx['rootMinX'], tidx['rootMinZ'], tidx['rootSize']
-    L = 8
+    L = int(tidx.get('imgLevels', {}).get('core', 8))    # deepest imagery level (San Francisco 8 = 1 m/px, İstanbul 6)
     size = root / (1 << L)
     px = int(tidx.get('imgPx', 512))
     means = atlas_cell_means()
@@ -464,7 +466,7 @@ def sample_roof_colors(buildings):
         groups[(int(math.floor((b['cx'] - RX) / size)), int(math.floor((b['cz'] - RZ) / size)))].append(bi)
     n_ok = 0
     for (i, j), ids in groups.items():
-        path = os.path.join(ROOT, 'assets', 'sf', 'terrain', 'img', str(L), f'{i}_{j}.webp')
+        path = os.path.join(tdir, 'img', str(L), f'{i}_{j}.webp')
         if not os.path.exists(path):
             continue
         img = np.asarray(Image.open(path).convert('RGB'), np.float32)
@@ -1005,4 +1007,8 @@ def write_far(buildings):
 
 
 if __name__ == '__main__':
-    main()
+    if REGION_ID != 'sf':
+        import city_ist
+        city_ist.main()
+    else:
+        main()
