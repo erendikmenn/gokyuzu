@@ -11,6 +11,7 @@ import { MISSIONS, BRIDGES, buildMission, dailyMissionId, dailyMission } from '.
 import { createObjective } from '../src/missions/objectives.js';
 import { scoreLanding, sampleTouchdown, scoreDitch, landingFields, findLandingRunway } from '../src/missions/landing-score.js';
 import { istanbulDay, secondsToNextDay, dirOf, bearing, clamp, wrap180, KT, FT, FPM, DEG } from '../src/missions/util.js';
+import { CHALLENGES, challengesFor, createChallengeTracker, maxChallengeScore, recordChallenge, loadChallengeProgress } from '../src/missions/challenges.js';
 
 const RUNWAYS = JSON.parse(readFileSync(new URL('../data/sf/runways.json', import.meta.url), 'utf8'));
 const REGION = JSON.parse(readFileSync(new URL('../data/sf/region.json', import.meta.url), 'utf8'));
@@ -506,6 +507,227 @@ const headingBank = (f, hdgT, max = 30) => clamp(wrap180(hdgT - f.heading) * 1.5
     `${o.status !== 'done' ? trace.slice(-12).join(' | ') + ' ' : ''}${t.toFixed(0)} s, ${o.points} pts + time → ${Math.round(score)} (${stars}★), acc ${o.gates.map((x) => x.acc.toFixed(2)).join('/')}; crashed ${f.crashed} ${f.crashReason}`);
 }
 
+
+// =====================================================================================================================
+// 5. free-flight challenges (src/missions/challenges.js): passive detection with scripted samples and the flight models
+function ffTracker(aircraft, category, hooks = {}) {
+  const ev = [];
+  const tr = createChallengeTracker({
+    aircraft, category, ends: ENDS, bridges: BRIDGES, spanAt: (x, z, o) => world.getObstacleSpan(x, z, o),
+    isOnRunway: world.isOnRunway, isWater: world.isWater, hooks, emit: (type, e, data) => ev.push({ type, id: e.id, data }),
+  });
+  const s = sampler().s;
+  const put = (o, dt = 0.1) => { s.px = s.x; s.py = s.y; s.pz = s.z; Object.assign(s, o); s.dt = dt; s.t += dt; tr.update(s); s.first = false; };
+  return { tr, ev, s, put, last: (type, id) => [...ev].reverse().find((x) => x.type === type && (!id || x.id === id)) };
+}
+{
+  const ids = (ac) => challengesFor(ac).map((c) => c.id).join(',');
+  const boards = new Set(CHALLENGES.map((c) => c.board));
+  check('Free flight: catalog — ff-<id> boards, siblings of real missions, per-aircraft lists (Alcatraz / autorotation only UH-60, climb fixed wing, engine / ditching twin airliners, flameout F-16)',
+    boards.size === CHALLENGES.length && CHALLENGES.every((c) => c.board === `ff-${c.id}` && buildMission(c.mission) && c.title && c.hint && maxChallengeScore(c) > 0)
+    && ids('f22') === 'bridge,low-pass,bay-tour,climb,landing' && ids('uh60') === 'bridge,low-pass,bay-tour,alcatraz,landing,autorot'
+    && ids('b737') === 'bridge,low-pass,bay-tour,climb,landing,eng,ditch' && ids('a320neo') === ids('b737') && ids('f16') === 'bridge,low-pass,bay-tour,climb,landing,flameout',
+    ['f16', 'f22', 'a320neo', 'b737', 'uh60'].map((a) => `${a}: ${ids(a)}`).join(' | '));
+}
+// 5a. Golden Gate: not evaluated far away, over the deck → message only, under the deck → done (base + centre + height);
+//     re-armed after a short cool-down
+{
+  const { tr, ev, s, put, last } = ffTracker('uh60', 'helicopter');
+  const along = (d, a) => ({ x: GG.x + GGA.dx * a + GGN.dx * d, z: GG.z + GGA.dz * a + GGN.dz * d });
+  put({ ...along(-40, 0), y: 90, first: true }); put({ ...along(40, 0), y: 90 });          // over the deck
+  const over = ev.some((x) => x.type === 'message' && /üstünden/.test(x.data)) && !last('done');
+  put({ ...along(-40, 60), y: 38, first: true }); put({ ...along(40, 60), y: 38 });        // under, 60 m from mid-span
+  const d1 = last('done', 'bridge');
+  put({ ...along(-40, 0), y: 38, first: true }); put({ ...along(40, 0), y: 38 });          // again at once: cool-down
+  const n1 = ev.filter((x) => x.type === 'done').length;
+  for (let i = 0; i < 25; i++) put({ ...along(-600, 0), y: 38, first: i === 0 });         // 2.5 s away from the bridge
+  put({ ...along(-40, 0), y: 38, first: true }); put({ ...along(40, 0), y: 38 });
+  const n2 = ev.filter((x) => x.type === 'done').length;
+  // a crossing of the bridge line 20 km away is never looked at (distance check first)
+  const { ev: ev2, put: put2 } = ffTracker('f16', 'fighter');
+  put2({ x: GG.x + GGA.dx * 20000 - GGN.dx * 40, z: GG.z + GGA.dz * 20000 - GGN.dz * 40, y: 30, first: true });
+  put2({ x: GG.x + GGA.dx * 20000 + GGN.dx * 40, z: GG.z + GGA.dz * 20000 + GGN.dz * 40, y: 30 });
+  check('Free flight bridge: over the deck → message; under it → done 1000 + centre + height, stars; cool-down, then again; far crossings ignored',
+    over && d1 && d1.data.ok && d1.data.score >= 1700 && d1.data.stars === 3 && d1.data.board === 'ff-bridge' && d1.data.time === null && n1 === 1 && n2 === 2 && ev2.length === 0,
+    d1 ? `${d1.data.score} pts ${d1.data.stars}★ ${JSON.stringify(d1.data.rows)}; passes ${n1} → ${n2}` : `no pass: ${JSON.stringify(ev)}`);
+  void tr; void s;
+}
+// 5b. gate runs: gate 1 starts the clock (auto-start), all gates in order → done with the time bonus from gate 1;
+//     a started run far away is dropped silently; a crash fails it
+{
+  const { tr, ev, put, last } = ffTracker('f22', 'fighter');
+  const lp = tr.byId['low-pass'];
+  const G = lp.gates;
+  const thru = (g, y, dt) => { put({ x: g.x - g.nx * 60, y, z: g.z - g.nz * 60 }, dt); put({ x: g.x + g.nx * 60, y, z: g.z + g.nz * 60 }, 0.6); };
+  put({ x: 3200, y: 40, z: -500, first: true });
+  thru(G[0], 40, 0.1);
+  const started = last('start', 'low-pass') && lp.status === 'run';
+  const t0 = lp.t0;
+  for (let i = 1; i < G.length; i++) thru(G[i], 40, 14);     // ≈ 14.6 s per leg
+  const d = last('done', 'low-pass');
+  const el = d ? d.data.time : 0;
+  const expectBonus = Math.round(Math.max(0, 100 - el) * 15);
+  const okDone = d && d.data.ok && Math.abs(el - 4 * 14.6) < 0.01 && d.data.rows.some((r) => /Süre/.test(r[0]) && r[2] === expectBonus) && lp.status === 'idle';
+  // second run: dropped far away
+  thru(G[0], 40, 0.1);
+  const run2 = lp.status === 'run';
+  put({ x: 30000, y: 400, z: 20000, first: true }, 0.1); put({ x: 30010, y: 400, z: 20000 }, 0.1);
+  const dropped = lp.status === 'idle' && last('abort', 'low-pass');
+  // third run: a crash fails it (and the idle entries stay quiet)
+  put({ x: 3200, y: 40, z: -500, first: true }); thru(G[0], 40, 0.1);
+  const nFail = ev.filter((x) => x.type === 'fail').length;
+  tr.onCrash('Kaza: Suya çarptı');
+  const f = last('fail', 'low-pass');
+  check('Free flight gates (low pass): gate 1 auto-starts the clock, 5 gates → done + time bonus from gate 1; far away → dropped; crash → fail',
+    started && t0 > 0 && okDone && run2 && dropped && f && !f.data.ok && /Kaza/.test(f.data.reason) && ev.filter((x) => x.type === 'fail').length === nFail + 1,
+    d ? `${d.data.score} pts ${d.data.stars}★ in ${el.toFixed(1)} s (bonus ${expectBonus}); fail "${f && f.data.reason}"` : `no done: ${JSON.stringify(ev.slice(-4))}`);
+}
+// 5c. climb clock: armed at a standstill on a runway, the clock starts with the take-off roll (not while parked),
+//     a rejected take-off re-arms, 10,000 ft → done with the mission's score formula
+{
+  const { tr, ev, put, last } = ffTracker('f16', 'fighter');
+  const cl = tr.byId.climb;
+  const e = ENDS.find((r) => r.name === 'KNGZ 24');
+  const at = (d) => ({ x: e.x + e.dx * d, z: e.z + e.dz * d });
+  put({ ...at(50), y: 3.5, onGround: true, gs: 0, first: true });
+  for (let i = 0; i < 20; i++) put({ ...at(50), y: 3.5, onGround: true, gs: 0 });     // 2 s parked: no clock
+  const armed = cl.status === 'armed';
+  put({ ...at(52), y: 3.5, onGround: true, gs: 4 });                                   // roll → start
+  const t0 = cl.t0, started = cl.status === 'run';
+  put({ ...at(55), y: 3.5, onGround: true, gs: 0.5 });                                 // rejected take-off
+  const rearmed = cl.status === 'armed' && last('abort', 'climb');
+  put({ ...at(56), y: 3.5, onGround: true, gs: 5 });
+  const t1 = cl.t0;
+  put({ ...at(900), y: 4, onGround: true, gs: 80 }, 10);
+  for (let k = 1; k <= 40; k++) put({ ...at(900 + k * 200), y: 4 + k * 80, onGround: false, gs: 150 }, 1);   // 40 s climb → 3204 m
+  const d = last('done', 'climb');
+  const el = d ? d.data.time : 0;
+  check('Free flight climb: armed parked on the runway, clock from the roll, rejected take-off re-arms, 10,000 ft → 1000 + 25/s under 120 s',
+    armed && started && rearmed && t1 > t0 && d && d.data.ok && Math.abs(el - 49) < 0.05 && d.data.score === 1000 + Math.round((120 - el) * 25) && d.data.stars === 3,
+    d ? `${el.toFixed(1)} s → ${d.data.score} pts ${d.data.stars}★` : JSON.stringify(ev));
+}
+// 5d. emergencies: gating by aircraft and state, the failure injected now, a runway landing completes it (the failure is
+//     cleared), off-runway / crash fails it, a reset ends it silently; the landing entry counts every runway landing
+{
+  const calls = [];
+  const hooks = { inject: (k, o) => { calls.push(['inject', k, o.index]); return true; }, clearFailure: (k) => calls.push(['clear', k]), suspendRandom: (on) => calls.push(['random', on]) };
+  const { tr, ev, s, put, last } = ffTracker('b737', 'airliner', hooks);
+  const land = ENDS.find((r) => r.name === 'KSFO 28R');
+  put({ x: land.x, y: 3.5, z: land.z, onGround: true, agl: 0, first: true });
+  const ground = tr.canStart('eng', s).reason;
+  put({ x: 3000, y: 60, z: -4000, onGround: false, agl: 60 });
+  const low = tr.canStart('eng', s).reason;
+  put({ x: 3000, y: 400, z: -4000, onGround: false, agl: 400 });
+  const water = tr.canStart('ditch', s).ok;
+  put({ x: land.x - land.dx * 3000, y: 400, z: land.z - land.dz * 3000, onGround: false, agl: 330 });   // over the SFO land margin? (fake world: water)
+  const f22 = ffTracker('f22', 'fighter');
+  const noEng = !f22.tr.byId.eng && !f22.tr.start('eng', s).ok && !createChallengeTracker({ aircraft: 'f16' }).byId.ditch;
+  const st = tr.start('eng', s);
+  const other = tr.canStart('ditch', s).reason;
+  const td = { x: land.x + land.dx * 400, z: land.z + land.dz * 400, heading: land.course / DEG, track: land.course / DEG, vs: -1.0, roll: 0, pitch: 4, gs: 70, onRunway: true };
+  const card = scoreLanding(td, { category: 'airliner', ends: ENDS });
+  tr.onLanding(card, td);
+  const done = last('done', 'eng'), landDone = last('done', 'landing');
+  const injected = calls.find((c) => c[0] === 'inject'), cleared = calls.find((c) => c[0] === 'clear' && c[1] === 'engine');
+  check('Free flight emergency (737 engine): gated by state (ground / height / other running) and aircraft; injected now; runway landing → done 1000 + 12 × points, failure cleared; landing entry scores it too',
+    /havalan/.test(ground) && /En az 400 ft/.test(low) && water && noEng && st.ok && /Önce süren/.test(other) && injected && [0, 1].includes(injected[2])
+    && done && done.data.ok && done.data.score === 1000 + 12 * card.points && done.data.stars === card.stars && cleared
+    && landDone && landDone.data.score === card.points * 20 && calls.some((c) => c[0] === 'random' && c[1] === true) && calls.some((c) => c[0] === 'random' && c[1] === false),
+    `ground "${ground}", low "${low}", other "${other}", ${done ? `${done.data.score} pts ${done.data.stars}★` : 'no done'}, landing entry ${landDone ? landDone.data.score : '-'}; calls ${JSON.stringify(calls)}`);
+  // off-runway landing / crash → fail; reset → silent abort
+  put({ x: 3000, y: 500, z: -4000, onGround: false, agl: 500 });
+  tr.start('eng', s);
+  const offTd = { ...td, x: land.x + land.dx * 400 - land.dz * 300, z: land.z + land.dz * 400 + land.dx * 300, onRunway: false };
+  tr.onLanding(scoreLanding(offTd, { category: 'airliner', ends: ENDS }), offTd);
+  const off = last('fail', 'eng');
+  tr.start('eng', s);
+  tr.onCrash('Kaza: Yere çarptı');
+  const crash = last('fail', 'eng');
+  tr.start('eng', s);
+  const nEv = ev.filter((x) => x.type === 'fail').length;
+  tr.onReset();
+  check('Free flight emergency: off-runway landing → fail "Pist dışına indin", crash → fail, reset → silent (no fail)',
+    off && /Pist dışı/.test(off.data.reason) && crash && /Kaza/.test(crash.data.reason) && ev.filter((x) => x.type === 'fail').length === nEv && tr.byId.eng.status === 'idle' && last('abort', 'eng').data === 'reset',
+    `${off && off.data.reason} / ${crash && crash.data.reason}`);
+  // progress store (localStorage when present; in Node the calls must not throw)
+  let storeOk = true;
+  try { recordChallenge('bridge', { ok: true, score: 1500, stars: 2, ac: 'f16' }); loadChallengeProgress(); } catch { storeOk = false; }
+  check('Free flight progress: recordChallenge / loadChallengeProgress safe without localStorage', storeOk);
+}
+// 5e. flown by the models through the tracker: F-22 climb from brake release (clock from the roll), F-22 low pass
+//     from the mission start (clock from gate 1), A320 ditching started over the bay (the model's failures)
+{
+  const mk = (ac, cat, f) => ffTracker(ac, cat, { inject: (k, o) => f.failures.inject(k, o), clearFailure: (k) => f.failures.clear(k), suspendRandom: () => {} });
+  // climb
+  const f = createFixedWingModel(SPECS.f22, {});
+  const e24 = ENDS.find((r) => r.name === 'KNGZ 24');
+  f.reset({ x: e24.x + e24.dx * 45, z: e24.z + e24.dz * 45, heading: e24.course }, world);
+  const A = mk('f22', 'fighter', f);
+  const inp = input({ throttle: 0 });
+  const smp = sampler();
+  let parked = 0;
+  const t = fly(f, inp, 200, (t, dt) => {
+    parked += dt;
+    inp.throttle = parked > 3 ? 1 : 0;   // 3 s parked, then full afterburner
+    const kt = f.ias / KT, el = A.tr.byId.climb.status === 'run' ? smp.s.t - A.tr.byId.climb.t0 : 0;
+    stick(f, inp, f.onGround ? (kt > 125 ? 10 : 0) : Math.min(35, 10 + el * 3), 0);
+    if (!f.onGround && f.gearHandleDown && f.agl > 20) f.command('gear');
+    smp.fill(f, dt); A.tr.update(smp.s); smp.s.first = false;
+    return !A.last('done', 'climb');
+  });
+  const dc = A.last('done', 'climb');
+  check('Free flight climb flown (F-22): 3 s parked (no clock), full AB roll → clock → 10,000 ft done, ≥ 2★ (clock from the roll, not the page)',
+    dc && dc.data.ok && dc.data.stars >= 2 && dc.data.time > 30 && dc.data.time < t - 2.5,
+    dc ? `${dc.data.time.toFixed(1)} s from the roll (${t.toFixed(1)} s flown), ${dc.data.score} pts ${dc.data.stars}★` : `no done, ${Math.round(f.altitude / FT)} ft`);
+
+  // low pass
+  const m = buildMission('low-pass');
+  const f2 = createFixedWingModel(SPECS.f22, {});
+  start(m, f2);
+  const B = mk('f22', 'fighter', f2);
+  const o = B.tr.byId['low-pass'];
+  const smp2 = sampler(); const inp2 = input({ throttle: f2.throttle });
+  const t2 = fly(f2, inp2, 150, (t, dt) => {
+    const i = Math.min(o.index, o.gates.length - 1), g = o.gates[i];
+    const a = i === 0 ? { x: m.start.x, z: m.start.z } : o.gates[i - 1];
+    const lx = g.x - a.x, lz = g.z - a.z, L = Math.hypot(lx, lz), ux = lx / L, uz = lz / L;
+    const xt = (f2.position.x - a.x) * -uz + (f2.position.z - a.z) * ux;
+    const hdgT = bearing(0, 0, ux, uz) + clamp(-xt * 0.25, -40, 40);
+    const vsT = clamp((g.y - f2.altitude) * 0.5, -8, 8);
+    inp2.pitch = clamp((vsT - f2.verticalSpeed) * 0.05, -0.5, 0.5);
+    inp2.roll = clamp((clamp(wrap180(hdgT - f2.heading) * 2, -70, 70) - f2.roll) * 0.02, -0.4, 0.4);
+    inp2.throttle = clamp(0.5 + (330 - f2.ias / KT) * 0.02, 0, 0.89);
+    smp2.fill(f2, dt); B.tr.update(smp2.s); smp2.s.first = false;
+    return !B.last('done', 'low-pass');
+  });
+  const dl = B.last('done', 'low-pass'), sl = B.last('start', 'low-pass');
+  check('Free flight low pass flown (F-22): clock from gate 1 (not from the start), 5 frames → done ≥ 2★',
+    sl && dl && dl.data.ok && dl.data.stars >= 2 && dl.data.time < t2 - 10 && !f2.crashed,
+    dl ? `${dl.data.time.toFixed(1)} s from gate 1 (${t2.toFixed(0)} s flown), ${dl.data.score} pts ${dl.data.stars}★` : `no done; crashed ${f2.crashed}`);
+
+  // ditching (A320): started over the bay at 2,500 ft, the model's dual engine failure, 4d's glide and flare
+  const md = buildMission('ditch');
+  const f3 = createFixedWingModel(SPECS.a320neo, {});
+  start(md, f3);
+  const C = mk('a320neo', 'airliner', f3);
+  f3.on('ditch', (i) => C.tr.onDitch({ fpm: Math.max(0, -i.verticalSpeed * FPM), pitch: i.pitch, roll: i.roll, kt: i.ias / KT, gear: 0, survived: true }));
+  const smp3 = sampler(); const inp3 = input({ throttle: f3.throttle });
+  let started = null;
+  fly(f3, inp3, 300, (t, dt) => {
+    smp3.fill(f3, dt); C.tr.update(smp3.s); smp3.s.first = false;
+    if (!started && t >= 3) started = C.tr.start('ditch', smp3.s, f3);
+    const agl = f3.agl, kt = f3.ias / KT;
+    const vsT = agl > 60 ? null : -Math.max(1.0, agl * 0.05);
+    const pT = vsT === null ? clamp(f3.pitch + (kt - 150) * 0.12, -6, 8) : clamp(f3.pitch + (vsT - f3.verticalSpeed) * 0.6, 2, 11.5);
+    stick(f3, inp3, pT, 0);
+    inp3.throttle = 0;
+    return !f3.ditched && !f3.crashed;
+  });
+  const dd = C.last('done', 'ditch');
+  check('Free flight ditching flown (A320): "Başlat" over the bay injects engineAll (model), glide + flare → ditch objective done, failure cleared after',
+    started && started.ok && f3.ditched && dd && dd.data.ok && dd.data.stars >= 1 && !f3.failures.active.size,
+    `${started ? started.reason || 'started' : 'not started'}; ${dd ? `${dd.data.score} pts ${dd.data.stars}★` : 'no done'}; ditched ${f3.ditched}, crashed ${f3.crashed} ${f3.crashReason || ''}; active ${[...f3.failures.active.keys()]}`);
+}
 // =====================================================================================================================
 let failed = 0;
 const w = Math.max(...rows.map((r) => r.name.length));

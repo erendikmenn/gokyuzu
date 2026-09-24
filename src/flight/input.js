@@ -264,6 +264,9 @@ export function createInput(target = globalThis.window) {
   }
 
   const bindings = [];
+  // rows other modules add to the F1 help: [{ keys, touch, label }] (free-flight challenges: Enter / GÖREV)
+  let extraBindings = [];
+  const addExtras = (add, touchRows) => { for (const b of extraBindings) { const k = touchRows ? b.touch : b.keys; if (k) add(k, b.label); } };
   /** F1 help rows for the on-screen controls (labels match the buttons of src/ui/touch.js). */
   function buildTouchBindings(add, heli, ftr) {
     if (heli) {
@@ -290,6 +293,7 @@ export function createInput(target = globalThis.window) {
     add('KAMERA', 'Kamera değiştir');
     add('KOKPİT', 'Kokpit / dış görünüm');
     add('HARİTA', 'Harita: rota çiz, direkt git, piste yaklaş');
+    addExtras(add, true);
     add('❚❚', 'Duraklat · Ayarlar · Yeniden başla · Ana menü');
     add('Ekranın ortası', 'Sürükle: etrafa bak / kamerayı döndür · Çift dokun: ortala');
     add('Eğim', 'Ayarlar → Kontroller → Eğimle kumanda: telefonu yatırarak uç');
@@ -349,6 +353,7 @@ export function createInput(target = globalThis.window) {
     add('P / Esc', 'Duraklat');
     add('H', 'Göstergeleri gizle / göster');
     add('J', 'Harita: rota çiz, direkt git, piste yaklaş (Esc kapatır)');
+    addExtras(add, false);
     add('M', 'Sesi kapat / aç');
     add('F1 / ?', 'Yardım');
     add('Tab', 'Ana menü');
@@ -386,5 +391,7 @@ export function createInput(target = globalThis.window) {
     get touchMode() { return touchMode; },
     /** Input device used last: 'kb' | 'pad' | 'touch'. */
     get kind() { return lastKind; },
+    /** Extra F1 help rows [{ keys, touch, label }] from other modules (the key handling stays theirs). */
+    setExtraBindings(list) { extraBindings = Array.isArray(list) ? list : []; buildBindings(); },
   };
 }

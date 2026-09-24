@@ -113,6 +113,27 @@ let loading = null;   // loading screen (also used by startFailed)
 // missions hook (src/missions/**, CONTRACTS-SF.md §12): the mission runtime is its own lazily loaded chunk (nothing is
 // loaded for free flight); the landing score card (src/ui/landing.js) is a small module loaded after the menu
 let missionMod = null, landing = null, landingP = null;
+// free-flight challenges hook (src/missions/ff-runtime.js, CONTRACTS-SF.md §12.1): the missions' objectives detected while
+// flying freely, the "Görevler" panel (Enter / GÖREV); its own chunk, imported when the main thread is idle after the
+// first playable frame; never in mission mode
+let ffc = null, ffcLoading = false;
+function loadChallenges() {
+  if (ffc || ffcLoading || state.mission || state.halted || params.get('ffc') === '0') return;
+  ffcLoading = true;
+  const go = () => import('../missions/ff-runtime.js').then(async (m) => {
+    await landingP;
+    if (state.mission || ffc || !state.flight) return;
+    ffc = m.createFreeFlightChallenges({
+      state, scene, camera, hud, landing, touch: touchUI.active, aircraft: state.aircraftId,
+      leave: (url) => { state.leaving = true; clearResume(); location.href = url; },   // (no "leave the page?" prompt)
+      compile: (obj) => renderer.compileAsync(obj, camera, scene),
+      canToggle: () => !state.paused && !state.helpVisible && !navMap.isOpen,
+    });
+    state.ffc = ffc;   // test hook
+    input.setExtraBindings([{ keys: 'Enter', touch: 'GÖREV', label: 'Serbest uçuş görevleri: listeyi aç / kapat (uçuş durmaz)' }]);
+  }).catch((e) => { if (!isNetworkError(e)) console.warn('[challenges]', e); ffcLoading = false; });
+  afterFrames(20, () => { if (window.requestIdleCallback) requestIdleCallback(go, { timeout: 4000 }); else setTimeout(go, 1000); });
+}
 async function planMissionFor(req, runways) {
   try { missionMod = await import('../missions/runtime.js'); return missionMod.planMission(req, runways); } catch (e) {
     if (isNetworkError(e)) throw e;
@@ -190,6 +211,7 @@ async function start() {
   if (resumed) {   // robustness hook: back in the same flight after a graphics failure (no tutorial / key card)
     gpu.report('resume', { why: resumed.crash ? 'crash' : resumed.reason || 'gpu', ac: choice.aircraftId });
     hud.showMessage(`Uçuşa kaldığın yerden devam ediliyor · Grafik: ${quality.label}${resumeNote ? ' · ' + resumeNote : ''}`, 4500);
+    loadChallenges();
     return;
   }
   clearResume();
@@ -203,6 +225,7 @@ async function start() {
   }
   // onboarding hook: tutorial on the first flight of the category, otherwise the key card + start message
   onboarding.begin({ flight: state.flight, def: state.def, spawn });
+  loadChallenges();   // free-flight challenges hook
 }
 
 /**
@@ -495,6 +518,7 @@ function bindScreenMaterial(display, type) {
 function bindFlightEvents(flight) {
   flight.on('crash', () => {
     if (state.mission && state.mission.claimCrash(flight)) return;   // missions hook: a rated ditching is not a crash
+    if (ffc && ffc.onCrash(flight)) return;   // free-flight challenges hook: running runs fail, the flight's results show
     audio.play('crash'); hud.showMessage(`Kaza! ${flight.crashReason || ''}`.trim(), 3500);
     state.crashTimer = state.mission ? 0 : 4;   // missions hook: the results screen instead of the automatic reset
   });
@@ -517,6 +541,7 @@ function resetFlight() {
   if (state.mission) state.mission.resetFlight();   // missions hook: the mission's start state, objectives and failures
   else state.flight.reset({ x: s.x, z: s.z, heading: s.heading, altitude: s.altitude, speed: s.altitude ? state.def.spec.spawnSpeed : undefined }, state.world);
   if (landing) landing.reset();
+  if (ffc) ffc.onReset();   // free-flight challenges hook: running runs end silently
   state.crashTimer = 0;
   if (input.setThrottle) input.setThrottle(state.flight.throttle ?? 0);   // lever follows the reset engine state
   syncRig(1);
@@ -617,6 +642,7 @@ function frame(ts) {
     onboarding.update(dt, flight, { view: cameraRig.view, paused: state.paused });   // onboarding hook
     if (landing) landing.update(dt, flight);   // missions hook: landing score card (idle without a touchdown)
     if (state.mission) state.mission.update(dt, { paused: state.paused || !!state.warming });   // missions hook
+    else if (ffc) ffc.update(dt, { paused: state.paused || !!state.warming });   // free-flight challenges hook
     touchUI.update(dt, flight, { view: cameraRig.view });   // mobile hook
     audio.update(dt, flight, { view: cameraRig.view, aircraftObject: rig.object, camera });
   }

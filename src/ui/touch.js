@@ -589,6 +589,22 @@ function createControls(hudRoot, { input, hud, getState }) {
     const lt = tapes[0] && tapes[0].getBoundingClientRect(), rt = tapes[1] && tapes[1].getBoundingClientRect();
     const topW = lt && rt && lt.width > 0 && rt.left > lt.right ? rt.left - lt.right - 16 : W - 2 * (L + 110);
     html.setProperty('--gkx-top-w', `${Math.round(clamp(topW, 240, 560))}px`);
+    // free-flight challenges hook (src/ui/challenges-panel.js): the tab takes the next free slot of the top-right row;
+    // the open panel uses the side area right of the stick's ring (preferably right of the stick zone), left of the
+    // altitude column and of the buttons next to the lever, between the top row and the bottom controls
+    html.setProperty('--gkx-slot-l', `${Math.round(xr)}px`);
+    html.setProperty('--gkx-slot-t', `${Math.round(T)}px`);
+    html.setProperty('--gkx-slot-s', `${B}px`);
+    const colLeft = rt && rt.width > 0 ? rt.left : W - R - sw - gap - 70 * u;
+    const sx1 = Math.min(colLeft, heli ? colR : colL) - gap;
+    const ring = st.hx + st.R + 16 * u;
+    const sx0 = Math.max(ring, Math.min(zW + gap, sx1 - 260 * u));
+    let sy1 = H - Bm;
+    if (heli && sx1 > W - R - sw - gap - Math.round(clamp(W * 0.26, 150, 260))) sy1 = H - Bm - Math.round(46 * u) - gap;   // above the pedal strip
+    html.setProperty('--gkx-side-x0', `${Math.round(sx0)}px`);
+    html.setProperty('--gkx-side-x1', `${Math.round(sx1)}px`);
+    html.setProperty('--gkx-side-y0', `${Math.round(T + B + gap)}px`);
+    html.setProperty('--gkx-side-y1', `${Math.round(sy1)}px`);
     orient();
   }
 
