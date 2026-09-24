@@ -142,8 +142,13 @@ needs `['assets/ist/terrain', 'h']` in `SKIP_UNDER` like San Francisco's):
   runway 0.036 m; runway pavement gradient ≤ 1.02 % (LTFM, longitudinal + cross), shoulders ≤ 2.7 %. Taxiways / aprons /
   aerodrome (OSM) on a smooth surface: LTFM, LTFJ a spline platform through the runway profiles; LTBA a plane fitted to
   its paved DSM (robust against roofs); taxiway / apron slope p99 0.6 % (LTFJ) to 1.8 % (LTBA), max 2.8 %. Blends into
-  the DEM over 150–600 m. `data/ist/terrain_airports.json` lists per runway end the terrain elevation and the
-  published (OurAirports / AIP) value. Rebuild the terrain (terrain_airports.py, terrain_build.py, imagery_build.py,
+  the DEM over 150–600 m. **Approach grading**: the DEM predates LTFM and rose up to 50 m above the 3° path before
+  35L / 35R / 36; for every runway end the ground under the approach (ICAO approach-surface width: 150 m each side,
+  +15 %, out to 5 km) is cut to strip level at the threshold, +2 % from 60 m out, never higher than 20 m below a 3°
+  path aimed 300 m past the threshold. Published terrain, ±60 m of the extended centreline, all 16 ends: ≥ 13.1 m in
+  the first 60 m (runway strip level), ≥ 16.4 m at 60–300 m, ≥ 22.6 m from 300 m to 5 km; city buildings ≥ 15.3 m
+  (LTFJ 24L, 704 m out; all others ≥ 43 m), trees ≥ 35.9 m. `data/ist/terrain_airports.json` lists per runway end the
+  terrain elevation, the published (OurAirports / AIP) value and these clearances ("approach"). Rebuild the terrain (terrain_airports.py, terrain_build.py, imagery_build.py,
   terrain_pinpack.py) whenever runway geometry or elevations in runways.json change.
 - **Water / coast**: sea = root − OSM land polygons (osmdata.openstreetmap.de land-polygons-split-4326): Karadeniz,
   Boğaz, Haliç, Marmara, Adalar, İzmit Körfezi; lakes / piers / aerodromes from the Geofabrik Turkey extract

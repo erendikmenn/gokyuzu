@@ -1,5 +1,5 @@
 {
- "note": "Elevations (m MSL, EGM2008 ~ MSL) the İstanbul terrain has at each runway end (terrain_airports.py): the runway rectangle (+60 m) is flat at these values (linear between the ends if they differ). \"published\" = the AIP end elevations in OurAirports, for reference (LTFM's real runways slope ~0.9 %).",
+ "note": "Elevations (m MSL, EGM2008 ~ MSL) the İstanbul terrain has at each runway end (terrain_airports.py): the runway rectangle (+60 m) is flat at these values (linear between the ends if they differ). \"published\" = the AIP end elevations in OurAirports, for reference (LTFM's real runways slope ~0.9 %). \"approach\" per landing threshold: minimum height (m) of a 3° glide path aimed 300 m past the threshold above the graded terrain within +-60 m of the extended centreline, 0-60 m (runway strip / overrun), 60-300 m and 0.3-5 km before the threshold, and 0.3-5 km before the approach grading.",
  "source": "data/ist/runways.json (airports pipeline) or OSM aeroways + OurAirports runways.csv",
  "airports": [
   {
@@ -39,7 +39,25 @@
        27.43
       ]
      ],
-     "closedInOurAirports": null
+     "closedInOurAirports": null,
+     "approach": {
+      "05": {
+       "thresholdElevation": 28.32,
+       "aimElevation": 28.21,
+       "clearance_0_60m": 15.6,
+       "clearance_60_300m": 18.9,
+       "clearance_300m_5km": 32.1,
+       "clearance_300m_5km_beforeGrading": 32.1
+      },
+      "23": {
+       "thresholdElevation": 27.42,
+       "aimElevation": 27.53,
+       "clearance_0_60m": 15.8,
+       "clearance_60_300m": 19.2,
+       "clearance_300m_5km": 35.0,
+       "clearance_300m_5km_beforeGrading": 35.0
+      }
+     }
     }
    ]
   },
@@ -80,7 +98,25 @@
        92.66
       ]
      ],
-     "closedInOurAirports": null
+     "closedInOurAirports": null,
+     "approach": {
+      "06L": {
+       "thresholdElevation": 89.3,
+       "aimElevation": 89.64,
+       "clearance_0_60m": 16.1,
+       "clearance_60_300m": 19.4,
+       "clearance_300m_5km": 32.0,
+       "clearance_300m_5km_beforeGrading": 32.0
+      },
+      "24R": {
+       "thresholdElevation": 92.7,
+       "aimElevation": 92.36,
+       "clearance_0_60m": 15.4,
+       "clearance_60_300m": 18.8,
+       "clearance_300m_5km": 58.1,
+       "clearance_300m_5km_beforeGrading": 58.1
+      }
+     }
     },
     {
      "ref": "06R/24L",
@@ -111,7 +147,25 @@
        88.09
       ]
      ],
-     "closedInOurAirports": null
+     "closedInOurAirports": null,
+     "approach": {
+      "06R": {
+       "thresholdElevation": 88.1,
+       "aimElevation": 88.1,
+       "clearance_0_60m": 15.7,
+       "clearance_60_300m": 19.1,
+       "clearance_300m_5km": 31.6,
+       "clearance_300m_5km_beforeGrading": 31.6
+      },
+      "24L": {
+       "thresholdElevation": 88.1,
+       "aimElevation": 88.1,
+       "clearance_0_60m": 15.7,
+       "clearance_60_300m": 19.1,
+       "clearance_300m_5km": 31.0,
+       "clearance_300m_5km_beforeGrading": 31.0
+      }
+     }
     }
    ]
   },
@@ -152,7 +206,25 @@
        66.45
       ]
      ],
-     "closedInOurAirports": null
+     "closedInOurAirports": null,
+     "approach": {
+      "34R": {
+       "thresholdElevation": 99.1,
+       "aimElevation": 96.49,
+       "clearance_0_60m": 13.1,
+       "clearance_60_300m": 16.5,
+       "clearance_300m_5km": 28.9,
+       "clearance_300m_5km_beforeGrading": 28.9
+      },
+      "16L": {
+       "thresholdElevation": 66.5,
+       "aimElevation": 69.11,
+       "clearance_0_60m": 18.3,
+       "clearance_60_300m": 21.7,
+       "clearance_300m_5km": 60.3,
+       "clearance_300m_5km_beforeGrading": 60.3
+      }
+     }
     },
     {
      "ref": "16R/34L",
@@ -183,7 +255,25 @@
        66.45
       ]
      ],
-     "closedInOurAirports": null
+     "closedInOurAirports": null,
+     "approach": {
+      "34L": {
+       "thresholdElevation": 99.1,
+       "aimElevation": 96.49,
+       "clearance_0_60m": 13.1,
+       "clearance_60_300m": 16.5,
+       "clearance_300m_5km": 26.2,
+       "clearance_300m_5km_beforeGrading": 26.2
+      },
+      "16R": {
+       "thresholdElevation": 66.5,
+       "aimElevation": 69.11,
+       "clearance_0_60m": 18.3,
+       "clearance_60_300m": 21.7,
+       "clearance_300m_5km": 62.0,
+       "clearance_300m_5km_beforeGrading": 62.0
+      }
+     }
     },
     {
      "ref": "17L/35R",
@@ -214,7 +304,25 @@
        61.57
       ]
      ],
-     "closedInOurAirports": null
+     "closedInOurAirports": null,
+     "approach": {
+      "35R": {
+       "thresholdElevation": 94.5,
+       "aimElevation": 92.09,
+       "clearance_0_60m": 13.3,
+       "clearance_60_300m": 16.7,
+       "clearance_300m_5km": 28.9,
+       "clearance_300m_5km_beforeGrading": 28.9
+      },
+      "17L": {
+       "thresholdElevation": 61.6,
+       "aimElevation": 64.01,
+       "clearance_0_60m": 18.1,
+       "clearance_60_300m": 21.5,
+       "clearance_300m_5km": 42.9,
+       "clearance_300m_5km_beforeGrading": 42.9
+      }
+     }
     },
     {
      "ref": "17R/35L",
@@ -245,7 +353,25 @@
        61.57
       ]
      ],
-     "closedInOurAirports": null
+     "closedInOurAirports": null,
+     "approach": {
+      "35L": {
+       "thresholdElevation": 94.5,
+       "aimElevation": 92.09,
+       "clearance_0_60m": 13.3,
+       "clearance_60_300m": 16.7,
+       "clearance_300m_5km": 28.7,
+       "clearance_300m_5km_beforeGrading": 28.7
+      },
+      "17R": {
+       "thresholdElevation": 61.6,
+       "aimElevation": 64.01,
+       "clearance_0_60m": 18.1,
+       "clearance_60_300m": 20.0,
+       "clearance_300m_5km": 22.5,
+       "clearance_300m_5km_beforeGrading": 22.5
+      }
+     }
     },
     {
      "ref": "18/36",
@@ -276,7 +402,25 @@
        67.36
       ]
      ],
-     "closedInOurAirports": null
+     "closedInOurAirports": null,
+     "approach": {
+      "36": {
+       "thresholdElevation": 94.2,
+       "aimElevation": 91.55,
+       "clearance_0_60m": 13.1,
+       "clearance_60_300m": 16.4,
+       "clearance_300m_5km": 28.4,
+       "clearance_300m_5km_beforeGrading": 28.4
+      },
+      "18": {
+       "thresholdElevation": 67.4,
+       "aimElevation": 70.05,
+       "clearance_0_60m": 18.4,
+       "clearance_60_300m": 21.8,
+       "clearance_300m_5km": 28.5,
+       "clearance_300m_5km_beforeGrading": 28.5
+      }
+     }
     }
    ]
   }

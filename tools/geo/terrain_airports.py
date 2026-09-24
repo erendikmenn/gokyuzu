@@ -15,6 +15,12 @@ Surface per airport (MODES):
             residuals (spline, exact on the runway rectangles) faded out 800 m from the runways. LTBA (only 05/23 is still a runway; its old 17/35 area rises ~20 m to the north).
 Zone = aerodrome polygon (-30 m) + runways (+60 m) + aprons + taxiways (+7.5 m); paved areas are exact, the zone edge
 blends into the DEM over 150-600 m (wider where the DEM differs more: at most ~20 % slopes on the blend).
+Approach grading (grade_approaches): the DEM predates LTFM and rises above its south thresholds, so for every runway end
+the ground under the approach is cut (never filled) down to an earthwork surface: strip level at the threshold, rising
+2 % from 60 m out (the ICAO approach surface), and never higher than 20 m below a 3° glide path aimed 300 m past the
+threshold; over the ICAO approach-surface width (150 m each side, diverging 15 %) out to 5 km, faded out over 250 m to
+the sides and 5-5.6 km out. Runway rectangles and pavement stay exact. The resulting minimum clearance under the path
+(terrain only, +-60 m of the centreline, by distance band) per end goes into terrain_airports.json ("approach").
 Output : <cache>/airports.pkl (geometry for terrain_build.py), data/ist/terrain_airports.json (tracked: per airport
          and runway end the elevation the terrain has there, for the airports / engine pipelines).
 Usage  : imported by terrain_build.py; `GEO_REGION=ist .venv/bin/python tools/geo/terrain_airports.py` rebuilds the cache.
@@ -183,6 +189,7 @@ def build():
                 pub = {e['ident']: e['elevation'] for o in oa.get(icao, []) for e in o['ends']}
                 rws.append({'ref': r['id'], 'ids': [a0['ident'], a1['ident']], 'a': [a0['x'], a0['z'], ea],
                             'b': [a1['x'], a1['z'], eb], 'width': r['width'], 'line': LineString([P0, P1]),
+                            'disp': [float(a0.get('displaced') or 0.0), float(a1.get('displaced') or 0.0)],
                             'published': [[a0['ident'], round(pub[a0['ident']], 2) if a0['ident'] in pub else None],
                                           [a1['ident'], round(pub[a1['ident']], 2) if a1['ident'] in pub else None]]})
             runways = []
@@ -346,14 +353,111 @@ def flatten(apts, h, water, x0, z0, d, log=print):
         log(f'flattened {apt["icao"]} ({apt.get("mode")}): paved {float(tgt[paved].min()):.1f}..{float(tgt[paved].max()):.1f} m, '
             f'DEM change in the zone median {float(np.median(dz)):.1f} m, p95 {float(np.percentile(dz, 95)):.1f} m')
         report.append(apt)
+    grade_approaches(apts, h, water, x0, z0, d, log)
     write_json(apts)
     return h
+
+
+GLIDE = np.tan(np.radians(3.0))
+AIM = 300.0          # glide path aim point past the threshold (m)
+MARGIN = 20.0        # graded ground stays this far below the glide path (>= 15 m asked + a little)
+
+
+def _ends(apt):
+    """Approach ends: (runway, ident, threshold xy, unit direction toward the other end, threshold elev, aim elev)."""
+    out = []
+    for r in apt['runways']:
+        if r['a'][2] is None:
+            continue
+        A, B = np.array(r['a'][:2], float), np.array(r['b'][:2], float)
+        L = float(np.hypot(*(B - A)))
+        disp = r.get('disp', [0.0, 0.0])
+        ids = r.get('ids') or ['?', '?']
+        for k, (P, Q, dsp) in enumerate(((A, B, disp[0]), (B, A, disp[1]))):
+            u = (Q - P) / L
+            ev = lambda s, k=k: (r['a'][2] + (r['b'][2] - r['a'][2]) * (s / L if k == 0 else 1 - s / L))
+            out.append((r, ids[k], P + u * dsp, u, ev(dsp), ev(min(dsp + AIM, L))))
+    return out
+
+
+def approach_clearance(apt, sample, dmax=5000.0, step=8.0, half=60.0):
+    """Minimum (glide path - ground) per approach end over distance bands before the threshold, on the centreline and
+    +-half m; ground from sample(x, z) (arrays). 0-60 m is the runway strip / overrun (at strip level the path is only
+    ~15 m up there by construction)."""
+    res = {}
+    for r, ident, T, u, eT, eA in _ends(apt):
+        n = np.array([-u[1], u[0]])
+        D = np.arange(0.0, dmax + step, step)
+        path = eA + (D + AIM) * GLIDE
+        c = np.full(D.shape, np.inf)
+        for o in (-half, -half / 2, 0.0, half / 2, half):
+            P = T[None] - D[:, None] * u[None] + o * n[None]
+            c = np.minimum(c, path - sample(P[:, 0], P[:, 1]))
+        band = lambda lo, hi: round(float(np.min(c[(D >= lo) & (D <= hi)])), 1)
+        res[ident] = {'thresholdElevation': round(eT, 2), 'aimElevation': round(eA, 2),
+                      'clearance_0_60m': band(0, 60), 'clearance_60_300m': band(60, 300), 'clearance_300m_5km': band(300, dmax)}
+    return res
+
+
+def grade_approaches(apts, h, water, x0, z0, d, log=print):
+    """Cut the ground under every approach down to the earthwork surface (module docstring); h is modified in place."""
+    from rasterio import features
+    from affine import Affine
+
+    def smoothstep(e0, e1, x):
+        t = np.clip((x - e0) / (e1 - e0), 0, 1)
+        return t * t * (3 - 2 * t)
+
+    def grid_sample(xs, zs):
+        fx = np.clip((xs - x0) / d, 0, h.shape[1] - 1.001)
+        fz = np.clip((zs - z0) / d, 0, h.shape[0] - 1.001)
+        ix, iz = np.floor(fx).astype(int), np.floor(fz).astype(int)
+        tx, tz = fx - ix, fz - iz
+        return ((h[iz, ix] * (1 - tx) + h[iz, ix + 1] * tx) * (1 - tz) + (h[iz + 1, ix] * (1 - tx) + h[iz + 1, ix + 1] * tx) * tz)
+    DMAX, DFADE, SIDE = 5000.0, 600.0, 250.0
+    for apt in apts:
+        before = approach_clearance(apt, grid_sample)
+        keep_geom = unary_union(runway_polys(apt, 60.0) + [apt['paved']])
+        for r, ident, T, u, eT, eA in _ends(apt):
+            n = np.array([-u[1], u[0]])
+            far = DMAX + DFADE
+            wmax = 150.0 + 0.15 * far + SIDE
+            corners = [T - u * Dd + n * s * ww for Dd, ww in ((-60.0, 150.0 + SIDE), (far, wmax)) for s in (-1, 1)]
+            cx, cz = zip(*corners)
+            i0 = max(0, int((min(cx) - x0) / d)); i1 = min(h.shape[1], int((max(cx) - x0) / d) + 2)
+            j0 = max(0, int((min(cz) - z0) / d)); j1 = min(h.shape[0], int((max(cz) - z0) / d) + 2)
+            if i1 <= i0 or j1 <= j0:
+                continue
+            X, Z = np.meshgrid(x0 + np.arange(i0, i1) * d, z0 + np.arange(j0, j1) * d)
+            D = -((X - T[0]) * u[0] + (Z - T[1]) * u[1])            # distance before the threshold
+            lat = np.abs((X - T[0]) * n[0] + (Z - T[1]) * n[1])
+            W = 150.0 + 0.15 * np.maximum(D, 0.0)
+            w = (1 - smoothstep(W, W + SIDE, lat)) * (1 - smoothstep(DMAX, DMAX + DFADE, D)) * (D >= 0)
+            cap = np.maximum(eA + (D + AIM) * GLIDE - MARGIN, eT + 0.02 * np.maximum(D - 60.0, 0.0))
+            T_ = Affine(d, 0, x0 + i0 * d - d / 2, 0, d, z0 + j0 * d - d / 2)
+            keep = features.rasterize([(keep_geom, 1)], out_shape=X.shape, transform=T_, dtype=np.uint8, fill=0).astype(bool)
+            sub = h[j0:j1, i0:i1]
+            cut = np.where(water[j0:j1, i0:i1] | keep, 0.0, w * np.maximum(sub - cap, 0.0))
+            h[j0:j1, i0:i1] = (sub - cut).astype(np.float32)
+            if cut.max() > 0.05:
+                log(f'  approach {apt["icao"]} {ident}: ground cut up to {cut.max():.1f} m '
+                    f'({(cut > 0.5).sum() * d * d / 1e4:.1f} ha more than 0.5 m)')
+        after = approach_clearance(apt, grid_sample)
+        for ident, v in after.items():
+            v['clearance_300m_5km_beforeGrading'] = before[ident]['clearance_300m_5km']
+        apt['approach'] = after
+        log(f'approach clearance {apt["icao"]} (3° aimed {AIM:.0f} m past the threshold, +-60 m, 0-60 / 60-300 m / 0.3-5 km): ' +
+            ', '.join(f'{k} {v["clearance_0_60m"]:.1f} / {v["clearance_60_300m"]:.1f} / {v["clearance_300m_5km"]:.1f} m '
+                      f'(ungraded {v["clearance_300m_5km_beforeGrading"]:.1f})' for k, v in after.items()))
 
 
 def write_json(apts):
     out = {'note': 'Elevations (m MSL, EGM2008 ~ MSL) the İstanbul terrain has at each runway end (terrain_airports.py): the '
                    'runway rectangle (+60 m) is flat at these values (linear between the ends if they differ). "published" = '
-                   'the AIP end elevations in OurAirports, for reference (LTFM\'s real runways slope ~0.9 %).',
+                   'the AIP end elevations in OurAirports, for reference (LTFM\'s real runways slope ~0.9 %). "approach" per '
+                   'landing threshold: minimum height (m) of a 3° glide path aimed 300 m past the threshold above the graded '
+                   'terrain within +-60 m of the extended centreline, 0-60 m (runway strip / overrun), 60-300 m and 0.3-5 km '
+                   'before the threshold, and 0.3-5 km before the approach grading.',
            'source': 'data/ist/runways.json (airports pipeline) or OSM aeroways + OurAirports runways.csv',
            'airports': []}
     for a in apts:
@@ -364,7 +468,8 @@ def write_json(apts):
             rws.append({'ref': r['ref'], 'ids': r.get('ids'), 'width': round(r['width'], 1),
                         'ends': [{'x': round(r['a'][0], 1), 'z': round(r['a'][1], 1), 'elevation': round(r['a'][2], 2)},
                                  {'x': round(r['b'][0], 1), 'z': round(r['b'][1], 1), 'elevation': round(r['b'][2], 2)}],
-                        'published': r.get('published'), 'closedInOurAirports': r.get('closedInOurAirports')})
+                        'published': r.get('published'), 'closedInOurAirports': r.get('closedInOurAirports'),
+                        'approach': {k: v for k, v in (a.get('approach') or {}).items() if k in (r.get('ids') or [])}})
         els = [e['elevation'] for r in rws for e in r['ends']]
         out['airports'].append({'icao': a['icao'], 'name': a['name'], 'surface': a.get('mode'), 'source': a.get('source'),
                                 'elevationMax': round(max(els), 2), 'elevationMin': round(min(els), 2), 'runways': rws})
