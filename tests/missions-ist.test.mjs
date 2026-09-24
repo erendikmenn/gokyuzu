@@ -12,7 +12,7 @@ import { createFixedWingModel } from '../src/flight/fixedwing.js';
 import { createHelicopterModel } from '../src/flight/helicopter.js';
 import { runwayEnds } from '../src/flight/fixedwing-autopilot.js';
 import { createRoute } from '../src/nav/route.js';
-import { MISSIONS, BRIDGES, PLACES, PADS, PATHS, RW_ENDS, RW_FALLBACK, runwayThresholds, useRunways, buildMission, dailyMissionId, dailyMission } from '../src/missions/ist/catalog.js';
+import { MISSIONS, BRIDGES, PLACES, PADS, PATHS, RW_ENDS, RW_FALLBACK, DEPARTURE_ONLY, runwayThresholds, departureOnlyEnds, useRunways, buildMission, dailyMissionId, dailyMission } from '../src/missions/ist/catalog.js';
 import { MISSIONS as SF_MISSIONS } from '../src/missions/catalog.js';
 import { CHALLENGES as SF_CHALLENGES, createChallengeTracker, loadChallengeSet } from '../src/missions/challenges.js';
 import { CHALLENGES, challengesFor, maxChallengeScore } from '../src/missions/ist/challenges.js';
@@ -270,6 +270,29 @@ const inside = (x, z) => { const b = REGION.local; return x > b.minX && x < b.ma
     ['Galata Kulesi / Çamlıca / Topkapı on land', ['galataKulesi', 'camlicaCamii', 'camlicaKulesi', 'topkapi', 'suleymaniye'].every((k) => !seaAt(PLACES[k].x, PLACES[k].z))],
     ['pads on land', Object.values(PADS).every((p) => !seaAt(p.x, p.z))]];
   check('Geometry: water centrelines and bridges over the sea, landmarks and pads on land (fake world water = DEM coastline)', wet.every((w) => w[1]), wet.filter((w) => !w[1]).map((w) => w[0]).join(', '));
+}
+
+// 2b. the departures-only runway (LTFM 09/27): never a landing target, excluded from "any runway" landings
+{
+  const dep = departureOnlyEnds(RUNWAYS);
+  const bad = [];
+  for (const def of MISSIONS) for (const m of [buildMission(def.id), buildMission(def.id, '20261003'), buildMission(def.id, '20261011')]) {
+    for (const o of m.objectives) {
+      if (o.type !== 'land') continue;
+      if ((o.target && dep.includes(o.target)) || (o.runways || []).some((x) => dep.includes(x))) bad.push(`${def.id} targets ${o.target}`);
+      if (o.any && !o.heli && !(o.exclude && dep.every((x) => o.exclude.includes(x)))) bad.push(`${def.id} any without exclude`);
+    }
+    if (m.start.final && dep.includes(m.start.final)) bad.push(`${def.id} final ${m.start.final}`);
+  }
+  const alev = buildMission('ist-alev');
+  const lo = createObjective(alev.objectives[0], env(alev));
+  lo.start();
+  const e09 = ENDS.find((x) => x.name === 'LTFM 09');
+  lo.onLanding(scoreLanding({ x: e09.x + e09.dx * 400, z: e09.z + e09.dz * 400, heading: e09.course / DEG, track: e09.course / DEG, vs: -1.5, roll: 0, pitch: 4, gs: 70 }, { category: 'fighter', ends: ENDS }));
+  check('Departures-only LTFM 09/27 (runways.json departureOnly / landing false): no landing target or final on it, "any runway" landings exclude it (a landing there fails)',
+    dep.length === 2 && dep.includes('LTFM 09') && dep.includes('LTFM 27') && JSON.stringify([...DEPARTURE_ONLY].sort()) === JSON.stringify([...dep].sort()) && bad.length === 0
+    && lo.status === 'fail' && /yalnız kalkışa/.test(lo.failReason) && RW_ENDS['LTFM 09'] && buildMission('ist-tirmanis').def.daily.toString().includes("'09'"),
+    `${dep.join(', ')} | ${bad.join('; ')} | ${lo.status} "${lo.failReason}"`);
 }
 
 // 3. objectives with scripted samples
@@ -826,10 +849,15 @@ const cbrief = (res) => `${res.m.params.rw || ''} ${res.card ? `${res.card.point
   check('Mission ist-bogaz-turu (737): route loaded, AP NAV flies the four Boğaz rings in order, both directions → ≥ 2★', ok, out.join(' || '));
 }
 
-// 4n. "İstanbul'dan Sabiha Gökçen'e" (A320): take-off from LTFM 35R by hand, autopilot NAV on the mission route over
-//     the FSM and Çamlıca rings, slowed on the last legs, flaps / gear before the 9 km final point → APP, autoland on 06L
-{
+// 4n. "İstanbul'dan Sabiha Gökçen'e" (A320): take-off from LTFM 35R (and the departures-only 09) by hand, autopilot
+//     NAV on the mission route over the FSM and Çamlıca rings, slowed on the last legs, flaps / gear before the final
+//     point → APP, autoland on 06L
+const out4n = []; let ok4n = true;
+for (const rw of ['35R', '09']) {
+  const def = MISSIONS.find((x) => x.id === 'ist-aktarma'), save = def.params.rw;
+  def.params.rw = rw;
   const m = buildMission('ist-aktarma');
+  def.params.rw = save;
   const f = createFixedWingModel(SPECS.a320neo, {});
   const route = createRoute();
   route.env = { groundAt: (x, z) => world.getGroundHeight(x, z), bounds: REGION.local };
@@ -865,9 +893,11 @@ const cbrief = (res) => `${res.m.params.rw || ''} ${res.card ? `${res.card.point
     return !(card && f.groundSpeed < 20) && !r.failed;
   });
   const res = { m, f, r, t, card, trace, score: r.score(t), stars: r.done ? r.stars(t) : 0 };
-  check('Mission ist-aktarma (A320): LTFM 35R take-off, NAV over the FSM and Çamlıca rings, configured on the final → APP autoland at Sabiha Gökçen → ≥ 2★',
-    r.done && res.stars >= 2 && !f.crashed, `${brief(res)}; ${cbrief(res)} | ${trace.join(' | ')}`);
+  if (!(r.done && res.stars >= 2 && !f.crashed)) ok4n = false;
+  out4n.push(`${rw}: ${brief(res)}; ${cbrief(res)}${!r.done ? ' | ' + trace.join(' | ') : ''}`);
 }
+check('Mission ist-aktarma (A320): take-off from LTFM 35R / 09 (departures only), NAV over the FSM and Çamlıca rings, configured on the final → APP autoland at Sabiha Gökçen → ≥ 2★',
+  ok4n, out4n.join(' || '));
 
 // 4o. "Atatürk'te pas geçme" (737): autopilot ILS to LTBA 05 (and 23); at the decision frame the pilot disconnects,
 //     TOGA, 12° nose up, gear up → 2.000 ft; the circuit abbreviated (repositioned 8 km out, gear down) → autoland
@@ -1022,22 +1052,31 @@ const cbrief = (res) => `${res.m.params.rw || ''} ${res.card ? `${res.card.point
   check('Mission ist-alev (F-16): engine out at 7.000 ft, straight-in glide with gear + speed brake to Sabiha Gökçen 06L / 06R, Atatürk 05 and İstanbul Havalimanı 35L → ≥ 2★', ok, out.join(' || '));
 }
 
-// 4s. "İstanbul Havalimanı'ndan dik tırmanış" (F-22): full afterburner from LTFM 35R, 30° climb → 10.000 ft, ≥ 2★
+// 4s. "İstanbul Havalimanı'ndan dik tırmanış" (F-22): full afterburner from LTFM 35R and from the departures-only 09,
+//     30° climb → 10.000 ft, ≥ 2★
 {
-  const m = buildMission('ist-tirmanis');
-  const f = createFixedWingModel(SPECS.f22, {});
-  start(m, f);
-  const r = runner(m);
-  const smp = sampler(); const inp = input({ throttle: 1 });
-  const t = fly(f, inp, 120, (t, dt) => {
-    const kt = f.ias / KT;
-    stick(f, inp, f.onGround ? (kt > 125 ? 10 : 0) : Math.min(35, 10 + smp.s.t * 3), 0);
-    if (!f.onGround && f.gearHandleDown && f.agl > 20) f.command('gear');
-    smp.fill(f, dt); r.update(smp.s); smp.s.first = false;
-    return !r.done;
-  });
-  const res = { m, f, r, t, trace: [], score: r.score(t), stars: r.done ? r.stars(t) : 0 };
-  check('Mission ist-tirmanis (F-22): LTFM 35R, full afterburner, 10.000 ft → ≥ 2★ for a clean max-performance climb', r.done && res.stars >= 2 && !f.crashed, brief(res));
+  const out = []; let ok = true;
+  for (const rw of ['35R', '09']) {
+    const def = MISSIONS.find((x) => x.id === 'ist-tirmanis'), save = def.params.rw;
+    def.params.rw = rw;
+    const m = buildMission('ist-tirmanis');
+    def.params.rw = save;
+    const f = createFixedWingModel(SPECS.f22, {});
+    start(m, f);
+    const r = runner(m);
+    const smp = sampler(); const inp = input({ throttle: 1 });
+    const t = fly(f, inp, 120, (t, dt) => {
+      const kt = f.ias / KT;
+      stick(f, inp, f.onGround ? (kt > 125 ? 10 : 0) : Math.min(35, 10 + smp.s.t * 3), 0);
+      if (!f.onGround && f.gearHandleDown && f.agl > 20) f.command('gear');
+      smp.fill(f, dt); r.update(smp.s); smp.s.first = false;
+      return !r.done;
+    });
+    const res = { m, f, r, t, trace: [], score: r.score(t), stars: r.done ? r.stars(t) : 0 };
+    if (!(r.done && res.stars >= 2 && !f.crashed)) ok = false;
+    out.push(`${rw}: ${brief(res)}`);
+  }
+  check('Mission ist-tirmanis (F-22): LTFM 35R and 09 (departures only), full afterburner, 10.000 ft → ≥ 2★ for a clean max-performance climb', ok, out.join(' || '));
 }
 
 // =====================================================================================================================

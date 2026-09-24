@@ -70,8 +70,9 @@ export const PATHS = {
 // ---- runway thresholds (data/ist/runways.json) ----
 /**
  * Runway ends of a runways.json object as { 'LTFM 35L': { x, z, hdg (true heading of the landing direction), elev } },
- * read like the engine's map module (src/maps/ist.js): the threshold's own elevation on sloped runways
- * (ends[i].elevation), else the runway's, else the airport's.
+ * read like the engine (src/flight/fixedwing-autopilot.js runwayEnds): the end's own elevation on sloped runways
+ * (ends[i].elevation), else the runway's, else the airport's. x / z = the physical runway end (a displaced threshold is
+ * `displaced` m further on, as in the file).
  */
 export function runwayThresholds(runways) {
   const out = {};
@@ -82,23 +83,38 @@ export function runwayThresholds(runways) {
   }
   return out;
 }
+/** Runway ends nobody may land on (runways.json `departureOnly` runways / ends with `landing: false`). */
+export function departureOnlyEnds(runways) {
+  const out = [];
+  for (const a of (runways && runways.airports) || []) {
+    for (const r of a.runways || []) for (const e of r.ends || []) if (r.departureOnly || e.landing === false) out.push(`${a.icao} ${e.ident}`);
+  }
+  return out;
+}
 /**
  * The thresholds the missions are built on until the engine hands over the map's runways.json (useRunways): the file's
- * values (tests/missions-ist.test.mjs keeps this table equal to it).
+ * values (DHMİ AIP; tests/missions-ist.test.mjs keeps this table equal to it).
  */
 export const RW_FALLBACK = {
-  'LTFJ 06L': { x: 27211.2, z: 14100.5, hdg: 62.6, elev: 89.3 },
-  'LTFJ 06R': { x: 28024.6, z: 14944.5, hdg: 62.62, elev: 88.1 },
-  'LTBA 05': { x: -13730.6, z: 6993.2, hdg: 57.43, elev: 28.4 },
-  'LTBA 23': { x: -11440.9, z: 5530.4, hdg: 237.43, elev: 27.4 },
-  'LTFM 35L': { x: -21450.3, z: -25794.5, hdg: 358.03, elev: 94.5 },
-  'LTFM 35R': { x: -21239.7, z: -25804.1, hdg: 358.02, elev: 94.5 },
+  'LTFJ 06L': { x: 27211.9, z: 14099.1, hdg: 62.6, elev: 89.0 },
+  'LTFJ 06R': { x: 28024.8, z: 14944.9, hdg: 62.6, elev: 82.3 },
+  'LTBA 05': { x: -13664.5, z: 6949.5, hdg: 57.38, elev: 28.3 },
+  'LTBA 23': { x: -11491.8, z: 5559.1, hdg: 237.38, elev: 27.4 },
+  'LTFM 35L': { x: -21447.2, z: -25794.4, hdg: 358.02, elev: 94.5 },
+  'LTFM 35R': { x: -21237.4, z: -25801.7, hdg: 358.02, elev: 94.5 },
+  'LTFM 09': { x: -17992.7, z: -24953.1, hdg: 87.98, elev: 83.5 },
 };
 const RW_ENDS = { ...RW_FALLBACK };
+/**
+ * LTFM 09/27 (opened 18 Sep 2026) is for departures only: land objectives on "any" runway exclude these ends (the same
+ * array, refreshed in place by useRunways).
+ */
+export const DEPARTURE_ONLY = ['LTFM 09', 'LTFM 27'];
 /** The map's runways.json (src/maps/index.js loadMap): mission geometry from the file's thresholds from now on. */
 export function useRunways(runways) {
   const t = runwayThresholds(runways);
   for (const k of Object.keys(t)) RW_ENDS[k] = t[k];
+  if (runways && runways.airports && runways.airports.length) DEPARTURE_ONLY.splice(0, DEPARTURE_ONLY.length, ...departureOnlyEnds(runways));
   return RW_ENDS;
 }
 export { RW_ENDS };
@@ -193,11 +209,11 @@ export const MISSIONS = [
   {
     id: 'ist-ltfm-inis', title: 'İstanbul Havalimanı\'na iniş', aircraft: 'a320neo', minutes: 2, level: 1, teaches: 'Son yaklaşma ve yumuşak iniş',
     brief: 'İstanbul Havalimanı\'na son yaklaşmadasın: takım ve flaplar açık, hız ayarlı. Merkez hattında ve 3°\'lik süzülüşte kal, eşiği geçince gazı kes ve hafifçe burnu kaldır.',
-    goal: 'Pist {rw}\'ye iniş: temas bölgesine, 200 ft/dk civarında.',
+    goal: '{rw} pistine iniş: temas bölgesine, 200 ft/dk civarında.',
     params: { rw: '35L', dist: 8000 },
     build: (p) => ({
       start: { final: `LTFM ${p.rw}`, dist: p.dist },
-      objectives: [{ type: 'land', runways: [`LTFM ${p.rw}`], minStars: 1, target: `LTFM ${p.rw}`, label: `Pist ${p.rw}'ye in` }],
+      objectives: [{ type: 'land', runways: [`LTFM ${p.rw}`], minStars: 1, target: `LTFM ${p.rw}`, label: `${p.rw} pistine in` }],
       limit: 240, manual: true,                           // no autoland: the landing is the test
       score: { base: 0, landing: 20 },                     // landing points × 20 (0–2000)
       stars: 'landing',
@@ -251,7 +267,8 @@ export const MISSIONS = [
         stars: [1000, at(75), at(55)],
       };
     },
-    daily: (r) => ({ rw: ['35R', '35L', '34L', '17L', '16R', '36'][Math.floor(r() * 6)], altFt: [8000, 10000, 12000][Math.floor(r() * 3)] }),
+    // (09: the departures-only runway opened on 18 Sep 2026, eastbound)
+    daily: (r) => ({ rw: ['35R', '35L', '34L', '17L', '16R', '36', '09'][Math.floor(r() * 7)], altFt: [8000, 10000, 12000][Math.floor(r() * 3)] }),
     dailyNote: (p) => `Pist ${p.rw} · ${fmtFt(p.altFt)} ft`,
   },
   {
@@ -291,11 +308,11 @@ export const MISSIONS = [
   {
     id: 'ist-saw-inis', title: 'Sabiha Gökçen\'e iniş', aircraft: 'b737', minutes: 2, level: 1, teaches: 'Son yaklaşma ve yumuşak iniş',
     brief: 'Pendik açıklarından Sabiha Gökçen\'e son yaklaşmadasın: takım ve flaplar açık, hız ayarlı. Merkez hattında ve 3°\'lik süzülüşte kal, eşikten sonra gazı kes ve burnu hafifçe kaldır.',
-    goal: 'Pist {rw}\'ye iniş: temas bölgesine, 200 ft/dk civarında.',
+    goal: '{rw} pistine iniş: temas bölgesine, 200 ft/dk civarında.',
     params: { rw: '06L', dist: 8000 },
     build: (p) => ({
       start: { final: `LTFJ ${p.rw}`, dist: p.dist },
-      objectives: [{ type: 'land', runways: [`LTFJ ${p.rw}`], minStars: 1, target: `LTFJ ${p.rw}`, label: `Pist ${p.rw}'ye in` }],
+      objectives: [{ type: 'land', runways: [`LTFJ ${p.rw}`], minStars: 1, target: `LTFJ ${p.rw}`, label: `${p.rw} pistine in` }],
       limit: 240, manual: true,
       score: { base: 0, landing: 20 },
       stars: 'landing',
@@ -445,7 +462,7 @@ export const MISSIONS = [
   },
   {
     id: 'ist-aktarma', fogBank: false, title: 'İstanbul\'dan Sabiha Gökçen\'e', aircraft: 'a320neo', minutes: 11, level: 2, teaches: 'Kalkış, NAV rotası, yaklaşma ve iniş',
-    brief: 'İstanbul Havalimanı pist {rw}\'den kalk, Fatih Sultan Mehmet Köprüsü ve Çamlıca üstündeki halkalardan geçip Sabiha Gökçen 06L\'ye in. Rota hazır: kalkıştan sonra otopilotu NAV ile açabilirsin.',
+    brief: 'İstanbul Havalimanı\'nın {rw} pistinden kalk, Fatih Sultan Mehmet Köprüsü ve Çamlıca üstündeki halkalardan geçip Sabiha Gökçen 06L\'ye in. Rota hazır: kalkıştan sonra otopilotu NAV ile açabilirsin.',
     goal: 'İki halka, sonra Sabiha Gökçen\'e iniş.',
     params: { rw: '35R', altFt: 4000 },
     build: (p) => {
@@ -467,16 +484,16 @@ export const MISSIONS = [
         route: [{ ...dep, alt: Math.min(y, 3000 * FT) }, { ...r1, alt: y }, { ...lead(r1, dep, 2500), alt: y }, { ...r2, alt: y }, { ...w2, alt: 3000 * FT },
           { x: fi.x, z: fi.z, alt: 2000 * FT }, { x: fa.x, z: fa.z, alt: 1500 * FT }],
         limit: 1200,
-        score: { base: 1000, gate: 200, gateAcc: 100, landing: 12, par: 840, perSec: 1 },
+        score: { base: 1000, gate: 200, gateAcc: 100, landing: 12, par: p.rw === '09' ? 730 : 840, perSec: 1 },   // (09: ≈ 110 s shorter)
         stars: [1000, 2250, 2700],
       };
     },
-    daily: (r) => ({ rw: r() < 0.5 ? '35R' : '35L', altFt: [4000, 5000][Math.floor(r() * 2)] }),
+    daily: (r) => ({ rw: ['35R', '35L', '09'][Math.floor(r() * 3)], altFt: [4000, 5000][Math.floor(r() * 2)] }),
     dailyNote: (p) => `Pist ${p.rw} · ${fmtFt(p.altFt)} ft`,
   },
   {
     id: 'ist-ataturk-pas', title: 'Atatürk\'te pas geçme', aircraft: 'b737', minutes: 5, level: 2, teaches: 'Pas geçme ve trafik paterni',
-    brief: 'Atatürk Havalimanı pist {rw}\'e yaklaşıyorsun. Karar noktasındaki kapıdan geçince pistte bir araç görünecek: tam güç, burnu kaldır, pozitif tırmanışta takımı topla ve 2.000 ft\'e tırman, sonra dönüp in.',
+    brief: 'Atatürk Havalimanı\'nın {rw} pistine yaklaşıyorsun. Karar noktasındaki kapıdan geçince pistte bir araç görünecek: tam güç, burnu kaldır, pozitif tırmanışta takımı topla ve 2.000 ft\'e tırman, sonra dönüp in.',
     goal: 'Kapı, pas geçme (2.000 ft), sonra Atatürk\'e iniş.',
     params: { rw: '05', dist: 9000 },
     build: (p) => {
@@ -540,7 +557,7 @@ export const MISSIONS = [
   {
     id: 'ist-alev', title: 'Alev sönmesi', aircraft: 'f16', minutes: 3, level: 3, unlock: 3, teaches: 'Süzülüş ve enerji yönetimi',
     brief: '{altFt} ft\'te motor sönecek ve yeniden yanmayacak. F-16 en iyi 200 kt civarında süzülür: fazla yüksekliği S dönüşleri ve hava freniyle harca. Hidrolik B gider: takım için önce G, sonra ACİL (klavyede I) ile acil indirme.',
-    goal: '{target} pistine motorsuz, güvenli iniş (başka pist de olur).',
+    goal: '{target} pistine motorsuz, güvenli iniş (başka pist de olur; yalnız kalkışa açık 09/27 hariç).',
     params: { from: 0, altFt: 7000 },
     build: (p) => {
       // straight-in: Sabiha Gökçen 06L / 06R (from the Marmara over Pendik), Atatürk 05 (off Yeşilköy), İstanbul
@@ -553,7 +570,7 @@ export const MISSIONS = [
         start: { x: e.x - dx * pl.dist, z: e.z - dz * pl.dist, hdg: e.hdg, alt: p.altFt * FT, kt: 250 },
         targetName: `${apt} ${pl.final.slice(5)}`,
         failures: [{ at: { t: 4 }, kind: 'engine', opts: { index: 0, restartable: false }, message: 'Motor söndü: süzül!' }],
-        objectives: [{ type: 'land', any: true, minStars: 1, target: pl.final, label: 'Bir piste süzül ve in' }],
+        objectives: [{ type: 'land', any: true, exclude: DEPARTURE_ONLY, minStars: 1, target: pl.final, label: 'Bir piste süzül ve in' }],
         limit: 300,
         score: { base: 1000, landing: 10 },
         stars: [1000, 1650, 1900],
@@ -570,7 +587,7 @@ export const MISSIONS = [
     build: (p) => {
       // 2 km past the Atatürk 23 departure end (Yeşilköy coast), out over the open Marmara (a glide of ≤ 14 km stays
       // inside the map: 2.4 km from its western edge at worst)
-      const e = RW_ENDS['LTBA 05'], { dx, dz } = dirOf(237.43);
+      const e = RW_ENDS['LTBA 05'], { dx, dz } = dirOf(RW_ENDS['LTBA 23'].hdg);
       return {
         start: { x: Math.round(e.x + dx * 2000), z: Math.round(e.z + dz * 2000), hdg: p.hdg, alt: p.altFt * FT, kt: 210, gear: false, flaps: 0 },
         failures: [{ at: { t: 3 }, kind: 'engineAll', opts: { restartable: false }, message: 'Çift motor arızası!' }],

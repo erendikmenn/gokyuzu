@@ -19,7 +19,8 @@
 //            speed window: crossing a gate at `kt` (gate.kt or def.kt) ± ktTol knots earns score.gateKt (default 100)
 //   hover    { x, z, y, r, hmin, hmax, t, maxKt, ty?, doneMsg? }   ty: pointer height above y (default 8)
 //   pad      { x, z, y, r, profile?, outFail? }   helicopter touchdown on a pad (outFail: a touchdown outside fails)
-//   land     { runways?, airports?, any?, heli?, minStars, target, profile? }
+//   land     { runways?, airports?, any?, heli?, minStars, target, profile?, exclude? }   exclude: runway ends that fail
+//            (departures-only runways)
 //   ditch    {}
 //   orbit    { x, z, rmin, rmax, ymin, ymax, dir: 'left'|'right', deg?, grace?, n?, shape: 'ring' }
 //            fly `deg` (360) degrees around (x, z) in the given direction (left = counter-clockwise seen from above)
@@ -394,6 +395,7 @@ class Land extends Objective {
   onLanding(card) {
     const d = this.def;
     const apt = card.runway ? card.runway.split(' ')[0] : '';
+    if (d.exclude && card.runway && d.exclude.includes(card.runway)) { this.fail(`Pist ${card.runway.split(' ')[1]} yalnız kalkışa açık: iniş sayılmaz`); return; }
     let allowed;
     if (d.runways) allowed = card.onRunway && d.runways.includes(card.runway);
     else if (d.airports) allowed = card.onRunway && d.airports.includes(apt);

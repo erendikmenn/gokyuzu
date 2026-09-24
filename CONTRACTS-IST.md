@@ -229,8 +229,10 @@ needs `['assets/ist/terrain', 'h']` in `SKIP_UNDER` like San Francisco's):
   `map: 'ist'`; placeholders `{rw} {alt} {dist} {side} {back} {target} {dirText} {kt}`), `dailyMissionId(day)` /
   `dailyMission(day)` (own shuffled cycle, seed `gokyuzu-ist-daily-cycle-`, never twice in a row), `missionById`,
   `PLACES`, `PADS`, `PATHS` (Boğaz / Haliç water centrelines), `MAP_ID`, and the runway thresholds: `useRunways(runways)`
-  (the map's runways.json → `RW_ENDS`, per-end elevations like src/maps/ist.js), `runwayThresholds(runways)`,
-  `RW_FALLBACK` (the built-in table used until then; the test keeps it equal to the file). The engine wraps it with
+  (the map's runways.json → `RW_ENDS`, per-end elevations like runwayEnds(); DHMİ AIP thresholds = the physical ends,
+  displaced thresholds as `displaced` in the file), `runwayThresholds(runways)`, `RW_FALLBACK` (the built-in table used
+  until then; the test keeps it equal to the file), `DEPARTURE_ONLY` / `departureOnlyEnds(runways)` (LTFM 09/27,
+  departures only: never a landing target; "any runway" land objectives of fixed wing aircraft carry it as `exclude`). The engine wraps it with
   `createCatalog` (progress `gokyuzu.missions.ist`). Mission ids `ist-<name>`, levels 1–3 (level 3 `unlock: 3`):
 
   | id | aircraft | lvl | objectives | stars |
@@ -239,7 +241,7 @@ needs `['assets/ist/terrain', 'h']` in `SKIP_UNDER` like San Francisco's):
   | ist-fsm | F-22 | 1 | under FSM through the Rumeli Hisarı bends + 1.500 ft | 1000/1750/2250 |
   | ist-ltfm-inis | A320 | 1 | landing on any of the ten LTFM ends (daily; sloped: southbound uphill) | landing |
   | ist-kiz-kulesi | UH-60 | 1 | orbit 120–320 m / 100–500 ft, then 5 s hover beside the tower | 1000/1750/2200 |
-  | ist-tirmanis | F-22 | 1 | LTFM take-off → 8–12.000 ft | as SF climb |
+  | ist-tirmanis | F-22 | 1 | LTFM take-off (daily incl. the departures-only 09) → 8–12.000 ft | as SF climb |
   | ist-bogaz-turu | 737 | 1 | 4 rings Kız Kulesi → YSS on a NAV route (both ways) | 1150/1700/2050 |
   | ist-saw-inis | 737 | 1 | landing LTFJ 06L / 06R | landing |
   | ist-yarimada | UH-60 | 2 | 6 rings (Galata … Sarayburnu), hover + landing on the Yenikapı pad | 1000/2900/3550 |
@@ -247,7 +249,7 @@ needs `['assets/ist/terrain', 'h']` in `SKIP_UNDER` like San Francisco's):
   | ist-kiz-kulesi-jet | F-16 | 2 | orbit 1–2 km / 700–1.450 ft, then a 30 m frame at 250–350 kt (speed window) | 1000/1900/2400 |
   | ist-bogaz-alcak | F-22 | 2 | 6 frames Rumeli Hisarı ↔ Kız Kulesi, 500 ft corridor | 1000/2300/2800 |
   | ist-halic | F-16 | 2 | 6 Haliç frames at 75–125 m over all its bridges (both ways) + 2.000 ft | 1000/1800/2200 |
-  | ist-aktarma | A320 | 2 | LTFM take-off, NAV route over FSM / Çamlıca rings, LTFJ 06L landing (route ends on the final: gear down arms APP) | 1000/2250/2700 |
+  | ist-aktarma | A320 | 2 | LTFM 35R / 35L / 09 take-off, NAV route over FSM / Çamlıca rings, LTFJ 06L landing (route ends on the final: gear down arms APP) | 1000/2250/2700 |
   | ist-ataturk-pas | 737 | 2 | ILS LTBA 05 / 23, decision frame, go-around to 2.000 ft, landing | 1000/2200/2700 |
   | ist-uc-kopru | F-22 | 3 | under 15 Temmuz, FSM, YSS in order, timed (both ways) | 1000/3400/4200 |
   | ist-saw-motor | 737 | 3 | LTFJ 24R/24L take-off, engine failure 300–600 ft, 2.000 ft, landing | 1000/1750/2150 |
@@ -258,7 +260,7 @@ needs `['assets/ist/terrain', 'h']` in `SKIP_UNDER` like San Francisco's):
   `orbit { x, z, rmin, rmax, ymin, ymax, dir, grace?, n?, shape: 'ring' }` (swept angle inside the band; exposes the
   gates interface `gates` / `index` / `orient()` for markers) and `goaround { min, call? }` (fails on a touchdown, points
   for the height kept); `gates` + `ceiling` / `grace` (corridor, `score.low`) and `kt` / `ktTol` (speed window,
-  `score.gateKt`); `hover` + `ty` / `doneMsg`; `pad` + `outFail`.
+  `score.gateKt`); `hover` + `ty` / `doneMsg`; `pad` + `outFail`; `land` + `exclude` (runway ends whose landing fails).
 - **`src/missions/ist/challenges.js`** — `CHALLENGES` (16, boards `ff-ist-<name>`), `challengeById`, `challengesFor`,
   `maxChallengeScore`; data only, run by `src/missions/challenges.js` `createChallengeTracker({ challenges, catalog })`
   with its kinds: bridges `ist-bogazici` / `ist-fsm` / `ist-yss` (all aircraft); gates `ist-kiz-kulesi` (UH-60) /
@@ -273,8 +275,10 @@ needs `['assets/ist/terrain', 'h']` in `SKIP_UNDER` like San Francisco's):
   by the real flight models in a fake İstanbul world (water = the DEM coastline polyline-encoded in the test, runways,
   pads, bridge decks / towers), all ≥ 2★ for a clean scripted flight, and the challenges through the engine's tracker.
   `IST_WORLD=<module>` flies the same flights against another world (used while designing, with the raw Copernicus DSM).
-- **Engine hooks**: none outstanding (orbit markers, `useRunways` hand-over and per-end threshold elevations are in).
-  No wind in the flight models, so no crosswind variants.
+- **Engine notes**: orbit markers, the `useRunways` hand-over and per-end threshold elevations are in. Open: runwayEnds()
+  ignores `displaced` (LTBA 05's 130 m) and `landing: false` — the ILS / landing score measure from the pavement end,
+  and the free-flight tracker's "best landing" entry and its emergencies' nearest-runway target can still pick LTFM
+  09/27 (the missions' own land objectives exclude it). No wind in the flight models, so no crosswind variants.
 
 ### 6.A Airports + city (airports + city agent)
 - **Sources**: OpenStreetMap = Geofabrik `turkey-latest.osm.pbf` (downloaded once, pyosmium; no Overpass); Overture Maps

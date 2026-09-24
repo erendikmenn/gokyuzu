@@ -14,8 +14,8 @@
 //   alcatraz  UH-60: hover 5 s over the Yenikapı pad, then land on it (ist-yarimada's last two objectives)
 //   landing   every runway landing (≥ 1★): points × 20
 //   emergency explicit start: engine failure (A320 / 737), flameout (F-16), ditching (A320 / 737 over the sea),
-//             autorotation (UH-60) — land safely
-import { buildMission } from './catalog.js';
+//             autorotation (UH-60) — land safely (fixed wing: never on the departures-only LTFM 09/27)
+import { buildMission, DEPARTURE_ONLY } from './catalog.js';
 import { FT } from '../util.js';
 
 const ALL = ['f16', 'f22', 'a320neo', 'b737', 'uh60'];
@@ -100,7 +100,7 @@ export const CHALLENGES = [
     title: 'Motor arızası',
     hint: 'Bir motor şimdi duracak: dümenle düz uç, hızı koru, en yakın piste güvenli in.',
     need: { agl: 400 * FT }, failure: { kind: 'engine', opts: { index: 'random' } },
-    objective: { type: 'land', any: true, minStars: 1 }, limit: 900, score: { base: 1000, landing: 12 }, stars: 'landing',
+    objective: { type: 'land', any: true, exclude: DEPARTURE_ONLY, minStars: 1 }, limit: 900, score: { base: 1000, landing: 12 }, stars: 'landing',
     message: (o) => `${o.index === 1 ? 'Sağ' : 'Sol'} motor arızası! Dümenle düz uç, en yakın piste in.`,
   },
   {
@@ -108,7 +108,7 @@ export const CHALLENGES = [
     title: 'Alev sönmesi',
     hint: 'Motor sönecek ve yeniden yanmayacak: 200 kt ile süzül, takım için G sonra ACİL (I), bir piste in.',
     need: { agl: 4000 * FT }, failure: { kind: 'engine', opts: { index: 0, restartable: false } },
-    objective: { type: 'land', any: true, minStars: 1 }, limit: 900, score: { base: 1000, landing: 10 }, stars: 'landing',
+    objective: { type: 'land', any: true, exclude: DEPARTURE_ONLY, minStars: 1 }, limit: 900, score: { base: 1000, landing: 10 }, stars: 'landing',
     message: () => 'Motor söndü: süzül ve en yakın piste in!',
   },
   {
