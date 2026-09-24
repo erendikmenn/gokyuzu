@@ -33,7 +33,7 @@ export function buildSpawns(runways) {
   const list = [];
   const ends = new Map();
   for (const a of (runways && runways.airports) || []) {
-    for (const r of a.runways || []) for (const e of r.ends || []) ends.set(`${a.icao} ${e.ident}`, { ...e, elev: r.elevation ?? a.elevation ?? 0 });
+    for (const r of a.runways || []) for (const e of r.ends || []) ends.set(`${a.icao} ${e.ident}`, { ...e, elev: e.elevation ?? r.elevation ?? a.elevation ?? 0 });   // (sloped runways: per end)
   }
   const used = new Set();
   for (const [icao, idents, name] of RUNWAY_STARTS) {

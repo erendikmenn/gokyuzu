@@ -63,9 +63,10 @@ if (existsSync(RW_PATH)) {
   }
   check('runway starts 45 m past the threshold, runway heading', worst < 1e-6, worst);
   const fin = sp.find((s) => s.id === 'IST-AIR-LTFM-FINAL');
-  const e = rw.airports.find((a) => a.icao === 'LTFM').runways.flatMap((r) => r.ends).find((x) => x.ident === '35L');
+  const r35 = rw.airports.find((a) => a.icao === 'LTFM').runways.find((r) => r.ends.some((x) => x.ident === '35L')), e = r35.ends.find((x) => x.ident === '35L');
+  const elev = e.elevation ?? r35.elevation;
   const d = Math.hypot(fin.x - e.x, fin.z - e.z), along = ((e.x - fin.x) * Math.sin(fin.heading) - (e.z - fin.z) * Math.cos(fin.heading));
-  check('LTFM final: 9 km out on the centre line, 3° path', Math.abs(d - 9000) < 1 && Math.abs(along - 9000) < 1 && Math.abs(fin.altitude - (99.1 + 9000 * Math.tan(3 * Math.PI / 180))) < 1 && fin.final, `${d.toFixed(1)} m, ${fin.altitude} m`);
+  check('LTFM final: 9 km out on the centre line, 3° path', Math.abs(d - 9000) < 1 && Math.abs(along - 9000) < 1 && Math.abs(fin.altitude - (elev + 9000 * Math.tan(3 * Math.PI / 180))) < 1 && fin.final, `${d.toFixed(1)} m, ${fin.altitude} m`);
   check('every ist spawn inside the map', sp.every(inside));
   check('default spawns exist when the runways do', Object.values(IST.MAP.defaultSpawns).every((id) => ids.includes(id)));
 } else check('ist runway starts (data/ist/runways.json not built: skipped)', true);
