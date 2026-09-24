@@ -129,19 +129,26 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
     G.alert = g(1); G.alert.connect(G.mix);
     G.ui = g(0.8); G.ui.connect(G.mix);
     G.atc = g(vol.atc * vol.atc); G.atc.connect(G.mix);        // for radio/ATC audio of other modules (api.atcInput)
-    const resume = () => { if (ctx && started && !document.hidden && ctx.state !== 'running' && ctx.state !== 'closed') ctx.resume().catch(() => {}); };
+    const resume = () => { if (ctx && started && !document.hidden && !wantIdle() && ctx.state !== 'running' && ctx.state !== 'closed') ctx.resume().catch(() => {}); };
     for (const ev of ['pointerdown', 'keydown', 'touchend', 'mousedown']) window.addEventListener(ev, resume, { passive: true, capture: true });
     document.addEventListener('visibilitychange', () => {
       if (!ctx) return;
       if (document.hidden) ctx.suspend().catch(() => {}); else resume();
     });
+    // start() may have run before the page had a gesture (a direct link) and the context be created later by another
+    // path (loadAircraft): the output fade-in of start() belongs to the context, not to that first call
+    if (started) fadeIn();
     return ctx;
   }
 
   function start() {
     started = true;
     if (!ensureContext()) return;
-    if (ctx.state !== 'running') ctx.resume().catch(() => {});
+    if (ctx.state !== 'running' && !wantIdle()) ctx.resume().catch(() => {});
+    syncIdle();
+    fadeIn();
+  }
+  function fadeIn() {
     const t = ctx.currentTime;
     G.out.gain.cancelScheduledValues(t);
     G.out.gain.setValueAtTime(G.out.gain.value, t);
@@ -151,6 +158,7 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
   function setMuted(m) {
     api.muted = !!m;
     if (G) G.mute.gain.setTargetAtTime(api.muted ? 0 : 1, ctx.currentTime, 0.05);
+    syncIdle();
   }
 
   function setPaused(p) {
@@ -158,6 +166,31 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
     if (!G) return;
     G.duck.gain.setTargetAtTime(userPaused ? 0 : 1, ctx.currentTime, userPaused ? 0.08 : 0.2);
     if (userPaused && inst) stopVoice();
+    syncIdle();
+  }
+
+  // Idle graph: a paused / held flight, muted sound or a zero master volume still cost the audio thread its full render
+  // load (every loop, filter, delay line and panner runs at 48 kHz behind a zero gain). The context is suspended once the
+  // fade-out is over (IDLE_MS) and resumed the moment sound is wanted again; update() does nothing while it is not
+  // running (no parameter automation piles up), and the first update after it restarts transitions and the doppler
+  // history like after a reset (no stale one-shots, voices or pitch sweeps).
+  const IDLE_MS = 600;
+  let idleTimer = 0, idleSuspended = false;
+  function wantIdle() { return userPaused || api.muted || vol.master <= 0; }
+  function syncIdle() {
+    if (!ctx) return;
+    clearTimeout(idleTimer);
+    if (wantIdle()) {
+      idleTimer = setTimeout(() => {
+        if (!ctx || !wantIdle() || ctx.state !== 'running') return;
+        idleSuspended = true;
+        ctx.suspend().catch(() => {});
+      }, IDLE_MS);
+    } else {
+      if (idleSuspended && inst) { inst.teleport = true; inst.histN = 0; }
+      idleSuspended = false;
+      if (started && !document.hidden && ctx.state !== 'running' && ctx.state !== 'closed') ctx.resume().catch(() => {});
+    }
   }
 
   // ------------------------------------------------------------------------------------------------ loading
@@ -317,6 +350,7 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
     };
     for (const [name, d] of Object.entries(profile.emitters || { air: { offset: [0, 0, 0] } })) I.emitters[name] = makeEmitter(name, d);
     if (!I.emitters.air) I.emitters.air = makeEmitter('air', { offset: [0, 0, 0], ref: 25 });
+    I.emList = Object.values(I.emitters);
     const nE = Math.max(1, profile.engines || 1);
     for (const def of profile.layers || []) {
       if (def.perEngine) for (let i = 0; i < nE; i++) addLayer(I, def, i);
@@ -329,7 +363,7 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
         const id = `${sys.name}:${lid}`;
         const L = { id: 'alert:' + id, def: { file: def.file }, g: gainNode(0), src: null, last: {}, norm: 1, db: def.db ?? 0, on: false };
         L.g.connect(G.alert);
-        L.input = L.g;
+        L.input = L.g; L.exits = [[L.g, G.alert]];
         attachLoop(I, L);
         I.sysLoops[id] = L;
       }
@@ -338,7 +372,7 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
       if (!r.loop) continue;
       const L = { id: 'alert:' + r.id, def: { file: r.loop }, g: gainNode(0), src: null, last: {}, norm: 1 };
       L.g.connect(G.alert);
-      L.input = L.g;
+      L.input = L.g; L.exits = [[L.g, G.alert]];
       attachLoop(I, L);
       I.alertLoops[r.id] = L;
     }
@@ -360,10 +394,13 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
       L.f.connect(L.g);
     }
     L.input = L.f || L.g;
-    if (def.ext && em) { L.ext = gainNode(0); L.g.connect(L.ext).connect(def.dir === 'rear' ? em.inJet : em.in); }
+    L.exits = [];                                      // [node, destination]: the chain's links into the mix (sleep)
+    if (def.ext && em) { L.ext = gainNode(0); const to = def.dir === 'rear' ? em.inJet : em.in; L.g.connect(L.ext).connect(to); L.exits.push([L.ext, to]); }
     if (def.int) {
       L.int = gainNode(0);
-      L.g.connect(L.int).connect(def.intPath === 'direct' || !em ? G.intDirect : em.intIn);
+      const to = def.intPath === 'direct' || !em ? G.intDirect : em.intIn;
+      L.g.connect(L.int).connect(to);
+      L.exits.push([L.int, to]);
     }
     attachLoop(I, L);
     I.layers.push(L);
@@ -385,11 +422,14 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
         src.loopStart = buf.__loop.start; src.loopEnd = buf.__loop.start + buf.__loop.dur;
         start = buf.__loop.start + Math.random() * buf.__loop.dur * 0.999;
       }
-      // buffers may arrive seconds after the layer is running (the game no longer waits for audio): fade in
-      const fadeIn = gainNode(0);
-      src.connect(fadeIn).connect(L.input);
+      // buffers may arrive seconds after the layer is running (the game no longer waits for audio): the layer gain
+      // restarts from 0 and the next update ramps it up with the layer's time constant (a fade-in without an extra node)
+      src.connect(L.input);
       const t = ctx.currentTime + 0.02;
-      fadeIn.gain.setValueAtTime(0, t); fadeIn.gain.setTargetAtTime(1, t, 0.12);
+      L.g.gain.cancelScheduledValues(ctx.currentTime); L.g.gain.setValueAtTime(0, ctx.currentTime);
+      L.last.g = undefined;
+      if (L.asleep) wakeLoop(L);
+      L.quietSince = -1;
       src.start(t, start);
       L.src = src;
       L.norm = normFor(L.def.file, true);
@@ -528,8 +568,9 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
     s.vlsKt = num(f.vSpeeds?.vls) / 0.514444;
     s.vmoKt = num(f.spec?.limits?.vmo, 1e4) / 0.514444;
     s.mmo = num(f.spec?.limits?.mmo, 9);
-    s.n1min = Math.min(...s.eng.map((e) => e.n1));
-    s.n1max = Math.max(...s.eng.map((e) => e.n1));
+    let n1min = Infinity, n1max = -Infinity;           // (no per-frame arrays)
+    for (const e of s.eng) { if (e.n1 < n1min) n1min = e.n1; if (e.n1 > n1max) n1max = e.n1; }
+    s.n1min = n1min; s.n1max = n1max;
     computeIls(I, s, f);
     // every boolean flag the flight model publishes in `warnings` is passed through (new flags such as lowEnergy or
     // alphaFloor become s.w.<name> without changes here); s.wHas tells whether the model provides a flag at all
@@ -572,6 +613,41 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
     if (last !== undefined && Math.abs(v - last) <= 1e-4 + Math.abs(last) * (key === 'rate' ? 0.0004 : 0.004)) return;
     obj.last[key] = v;
     param.setTargetAtTime(v, ctx.currentTime, tau);
+  }
+
+  // Silent loops sleep: a loop whose gain target has been ~0 (below -80 dB) for LOOP_SLEEP_S has its chain (source,
+  // filter, gains) unlinked from the mix, so the audio thread no longer renders any of it; it is linked again the moment
+  // its level rises, before the gain ramps up from ~0 (no click; the loop continues from where it stopped, inaudible
+  // for these noise / tone loops). In cruise about half of an aircraft's loops (afterburner, gear, brakes, rolling,
+  // motors, buffet, every alert loop) are silent.
+  const LOOP_SILENT = 1e-4, LOOP_SLEEP_S = 1.5;
+  function loopGain(L, v, tau) {
+    if (v > LOOP_SILENT) { L.quietSince = -1; if (L.asleep) wakeLoop(L); }
+    setP(L, 'g', L.g.gain, v, tau);
+    if (v <= LOOP_SILENT && L.src && !L.asleep && L.exits) {
+      const now = ctx.currentTime;
+      if (!(L.quietSince >= 0)) L.quietSince = now;
+      else if (now - L.quietSince >= LOOP_SLEEP_S) {
+        L.asleep = true;                                 // the chain (source, filter, gains) is no longer pulled
+        for (const [n, to] of L.exits) { try { n.disconnect(to); } catch { /* */ } }
+      }
+    }
+  }
+  // A bus whose gain has been at 0 for BUS_SLEEP_S is unlinked from the mix (with everything that only feeds it: not
+  // rendered at all) and linked again before its gain ramps up.
+  const BUS_SLEEP_S = 0.6;
+  const busParked = (node) => !!(node.__park && node.__park.asleep);
+  function parkBus(node, silent, now) {
+    const b = node.__park || (node.__park = { asleep: false, since: -1 });
+    if (!silent) { b.since = -1; if (b.asleep) { b.asleep = false; try { node.connect(G.mix); } catch { /* */ } } return; }
+    if (b.asleep) return;
+    if (b.since < 0) b.since = now;
+    else if (now - b.since >= BUS_SLEEP_S) { b.asleep = true; try { node.disconnect(G.mix); } catch { /* */ } }
+  }
+  function wakeLoop(L) {
+    L.asleep = false;
+    for (const [n, to] of L.exits) { try { n.connect(to); } catch { /* */ } }
+    L.last.rate = undefined; L.last.lp = undefined; L.last.ext = undefined; L.last.int = undefined;   // re-sent next update
   }
 
   const REAR_PTS = [[0, 0.28], [60, 0.34], [90, 0.5], [120, 0.8], [145, 1], [165, 0.95], [180, 0.85]];
@@ -634,7 +710,7 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
   }
 
   function resolveEmitterNodes(I, obj) {
-    for (const em of Object.values(I.emitters)) {
+    for (const em of I.emList) {
       if (em.resolvedFor === obj) continue;
       em.resolvedFor = obj;
       em.offset.fromArray(em.def.offset || [0, 0, 0]);
@@ -652,7 +728,7 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
 
   // ------------------------------------------------------------------------------------------------ one-shots
   function playFile(I, rel, { em = null, ext = 1, int = 1, gain = 1, rate = 1, bus = null, delay = 0, maxLate = 0.5 } = {}) {
-    if (!ctx || !rel) return;
+    if (!ctx || !rel || idleSuspended) return;         // (inaudible now: paused / muted; it must not sound late)
     const asked = ctx.currentTime;
     getBuffer(rel).then((buf) => {
       if (!buf || (I && inst !== I)) return;
@@ -755,7 +831,7 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
       if (active) { try { on = !!r.when(s); } catch { on = false; } }
       if (r.loop) {
         const L = I.alertLoops[r.id];
-        if (L) setP(L, 'g', L.g.gain, on ? db(r.loopDb ?? 0) * L.norm : 0, on ? 0.02 : 0.08);
+        if (L) loopGain(L, on ? db(r.loopDb ?? 0) * L.norm : 0, on ? 0.02 : 0.08);
       }
       if (r.voice) {
         const busy = (I.voice && I.voice.tag === r.id) || I.queue.some((q) => q.tag === r.id);
@@ -810,7 +886,7 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
         const L = I.sysLoops[id];
         const on = run && !!I.loopReq[id];
         if (on !== L.on) { L.on = on; traceAdd(on ? 'loop+' : 'loop-', id, on && I.loopWhy[id] ? { why: I.loopWhy[id] } : undefined); }
-        setP(L, 'g', L.g.gain, on ? db(L.db) * L.norm : 0, on ? 0.015 : 0.06);
+        loopGain(L, on ? db(L.db) * L.norm : 0, on ? 0.015 : 0.06);
       }
     }
   }
@@ -1030,6 +1106,7 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
   function update(dt, flight, opts = {}) {
     const I = inst;
     if (!ctx || !I || !flight) return;
+    if (ctx.state !== 'running') return;          // suspended (idle, hidden tab, not yet allowed): nothing is heard
     dt = clamp(num(dt, 0.016), 0.001, 0.1);
     const now = ctx.currentTime;
     const cam = opts.camera || defaultCamera;
@@ -1085,6 +1162,16 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
     const tauView = 0.06;
     setP(I, 'ext', G.ext.gain, cockpit ? 0 : 1, tauView);
     setP(I, 'int', G.int.gain, cockpit ? 1 : 0, tauView);
+    parkBus(G.int, !cockpit, now);                   // the whole interior path sleeps in the exterior views
+    // and the exterior path (emitters: delay lines, filters, panners) in the cockpit; after it wakes, every emitter
+    // re-sends its parameters and re-seats its delay line like after a camera cut (dip + jump, no pitch sweep)
+    const extWas = busParked(G.ext);
+    parkBus(G.ext, cockpit, now);
+    const extParked = busParked(G.ext);
+    if (extWas && !extParked) {
+      for (const em of I.emList) { em.last = {}; em.rejump = true; }
+      for (const L of I.layers) L.last.ext = undefined;
+    }
     setP(I, 'alert', G.alert.gain, (cockpit ? 1.0 : 0.5) * vol.voice * vol.voice, 0.1);
     const canopy = s.canopy;
     const supersonicQuiet = I.profile.category === 'fighter' ? 1 - 0.55 * sstep(1.0, 1.25, s.mach) : 1;
@@ -1095,7 +1182,8 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
     // --- emitters: directivity angle, distance, air absorption, retarded delay, panning, Mach cone
     const extDb = db(I.profile.exteriorDb ?? 0);
     const mach = s.mach;
-    for (const em of Object.values(I.emitters)) {
+    for (const em of I.emList) {
+      if (extParked) break;                            // (cockpit: the exterior path is not rendered)
       vA.copy(em.offset).applyQuaternion(qA);           // world offset
       em.world.copy(vA).add(vB);
       vC.copy(vCam).sub(em.world);
@@ -1118,7 +1206,8 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
       const tau = solveTau(I, em.tau, now, vA, mach);
       histAt(I, now - tau, vC);
       em.retarded.copy(vC).add(vA);
-      const jump = Math.abs(tau - em.tau) > Math.max(0.15, 4 * dt);
+      const jump = em.rejump || Math.abs(tau - em.tau) > Math.max(0.15, 4 * dt);
+      em.rejump = false;
       em.tau = tau;
       // Mach cone: outside it (ahead of a supersonic aircraft) nothing has arrived yet
       let inside = true;
@@ -1184,8 +1273,8 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
       let g = 0;
       try { g = Math.max(0, num(def.gain(s, e))); } catch { g = 0; }
       const tau = def.tau ?? 0.07;
-      setP(L, 'g', L.g.gain, g * L.norm * (L.cat === 'engine' ? volE : volA), tau);
-      if (g <= 0 && L.last.g === 0) continue;
+      loopGain(L, g * L.norm * (L.cat === 'engine' ? volE : volA), tau);
+      if (L.asleep || (g <= 0 && L.last.g === 0)) continue;
       if (L.src && (def.rate || L.ei > 0)) {
         let r = 1;
         if (def.rate) { try { r = clamp(num(def.rate(s, e), 1), 0.05, 4); } catch { r = 1; } }
@@ -1198,7 +1287,7 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
         try { hz = clamp(num(def.lp(s, e), 8000), 60, 20000); } catch { /* */ }
         setP(L, 'lp', L.f.frequency, hz, 0.08);
       }
-      if (L.ext) setP(L, 'ext', L.ext.gain, num(val(def.ext, s, e)) * directivity(def.dir, L.em), 0.05);
+      if (L.ext && !extParked) setP(L, 'ext', L.ext.gain, num(val(def.ext, s, e)) * directivity(def.dir, L.em), 0.05);
       if (L.int) setP(L, 'int', L.int.gain, num(val(def.int, s, e)), 0.05);
     }
 
@@ -1294,6 +1383,7 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
     G.vol.gain.setTargetAtTime(vol.master * vol.master, t, 0.05);
     G.atc.gain.setTargetAtTime(vol.atc * vol.atc, t, 0.05);
     if (inst) { inst.last.alert = undefined; for (const L of inst.layers) L.last.g = undefined; }   // re-apply next frame
+    syncIdle();
   }
 
   const api = {
