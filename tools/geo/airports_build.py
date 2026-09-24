@@ -330,7 +330,7 @@ class Airport:
                     self.papi_units.append((x, z, facing))
             als = c.get('als')
             if als:
-                self._als(ef, rf, disp, als, facing)
+                self._als(ef, rf, disp, als, facing, end.get('elevation'))
                 # ILS: localizer array beyond the far (stop) end on the centreline, glideslope mast beside the TDZ
                 far = EndFrame(rf, 1 - which)
                 lx, lz = far.P(-(self.cfg.get('loc_dist', 300.0)), 0.0)
@@ -345,9 +345,10 @@ class Airport:
     fixtures = []
     papi_units = []
 
-    def _als(self, ef, rf, disp, kind, facing):
-        """Approach lighting system measured from the landing threshold (s = disp) outward (s decreasing)."""
-        y = self.elev + 0.6
+    def _als(self, ef, rf, disp, kind, facing, end_elev=None):
+        """Approach lighting system measured from the landing threshold (s = disp) outward (s decreasing).
+        end_elev: the runway end's own elevation where runways.json has one (sloped runways), else the airport's."""
+        y = (self.elev if end_elev is None else end_elev) + 0.6
         st = []
         if kind == 'ALSF2':
             stations = [k * 100 for k in range(1, 25)]
