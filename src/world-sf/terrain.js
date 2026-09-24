@@ -566,7 +566,7 @@ export async function createTerrain(ctx) {
       }
       // GPU buffers of a tile are uploaded on its first draw: cap first-time activations per frame (no upload spikes)
       if (ready && fresh && !omni) {
-        if (activations + fresh > MAX_ACTIVATIONS) ready = false;
+        if (activations + fresh > maxActivations) ready = false;
         else activations += fresh;
       }
       if (ready) {
@@ -582,7 +582,8 @@ export async function createTerrain(ctx) {
 
   const prevVisible = [];
   let morphStep = 0.05;
-  const MAX_ACTIVATIONS = 8;   // ~8 x 90 KB of vertex data per frame
+  const MAX_ACTIVATIONS = 8;   // ~8 x 90 KB of vertex data per 60 Hz frame (scaled with the frame time: step)
+  let maxActivations = MAX_ACTIVATIONS;
   let activations = 0;
   function select(cam, omni = false) {
     activations = 0;
@@ -716,12 +717,15 @@ export async function createTerrain(ctx) {
   const prof = { select: 0, pump: 0, build: 0, evict: 0 };
   function step(cam, omni, dt) {
     morphStep = Math.min(dt / 0.35, 1);
+    // per-update budgets scaled to the time since the last one: a frame cap (phones draw 30 fps) keeps the throughput
+    const rate = omni ? 1 : Math.min(3, Math.max(1, dt * 60));
+    maxActivations = Math.round(MAX_ACTIVATIONS * rate);
     let t = performance.now(), t2;
     select(cam, omni);
     t2 = performance.now(); prof.select = Math.max(prof.select, t2 - t); t = t2;
     pump();
     t2 = performance.now(); prof.pump = Math.max(prof.pump, t2 - t); t = t2;
-    processBuilt(omni ? 12 : 3, omni ? 16 : 2);
+    processBuilt(omni ? 12 : 3 * rate, omni ? 16 : Math.round(2 * rate));
     t2 = performance.now(); prof.build = Math.max(prof.build, t2 - t); t = t2;
     if ((frame & 7) === 0) evict();
     t2 = performance.now(); prof.evict = Math.max(prof.evict, t2 - t);
@@ -800,14 +804,15 @@ export async function createTerrain(ctx) {
   pinsDone = true;
   stats.pinned = pinned; stats.pinSeconds = +((performance.now() - tp) / 1000).toFixed(2);
   // after the start: the remaining cells near the camera, nearest first (desktop classes: all of them, in the
-  // background; phones / tablets: within 15 km, so a flight loads what it passes)
+  // background; phones / tablets: within 8 km, so a flight loads what it passes; city tiles and landmarks closer than
+  // that ask for their own cells first)
   const pinMobile = !!(ctx.quality && (ctx.quality.deviceClass === 'phone' || ctx.quality.deviceClass === 'tablet'));
   let pinTimer = 0, pinBusy = 0;
   function pinTick(dt, cam) {
     if (!pinGroups || (pinTimer -= dt) > 0) return;
     pinTimer = 1;
     const cx = cam.position.x, cz = cam.position.z, now = performance.now();
-    const todo = pinGroups.filter((g) => (g.state === 'none' || (g.state === 'retry' && now >= g.retryAt)) && g.box && (!pinMobile || boxDist(g.box, cx, cz) < 15000));
+    const todo = pinGroups.filter((g) => (g.state === 'none' || (g.state === 'retry' && now >= g.retryAt)) && g.box && (!pinMobile || boxDist(g.box, cx, cz) < 8000));
     if (!todo.length) { if (pinGroups.every((g) => g.state === 'done' || g.state === 'failed')) pinGroups = null; return; }
     todo.sort((a, b) => boxDist(a.box, cx, cz) - boxDist(b.box, cx, cz));
     for (const g of todo.slice(0, Math.max(0, (pinMobile ? 1 : 2) - pinBusy))) { pinBusy++; loadPinGroup(g).finally(() => { pinBusy--; }); }

@@ -15,6 +15,11 @@
 //   terrain.pins              terrain/packs/pins/index.json + <group>.bin   pins.bin (full-depth heights under airports and
 //                             landmarks) split into the coarse levels (≤ L6, 'base') and one file per level-6 cell (2 km):
 //                             the start loads base + the cells around the spawn, the rest streams near the camera
+//   prewarm                   packs/prewarm.glb                    every material that only appears after the start
+//                             (near tree LODs, airport buildings, parked-aircraft LODs, landmark LODs) on a 1-triangle
+//                             mesh with the same vertex attributes and
+//                             4×4 placeholder textures: the loading screen's shader pre-warm compiles their programs
+//                             (WebKit links shaders synchronously: in flight that froze iPads for 0.3–4 s)
 //   airports.groundMobile     packs/airport-ground-1024/           the airport ground textures larger than 1024² cut to 1024²
 //                             (what phones / tablets keep anyway, src/world-sf/airports_ground.js): −2.2 MB at their start
 //   city.treesLow             city/packs/trees_d30/, trees_d50/    tree tiles holding only the trees a density of 0.3 /
@@ -40,7 +45,7 @@ const require = createRequire(path.join(HERE, 'package.json'));
 const argv = process.argv.slice(2);
 const opt = (n, d) => { const i = argv.indexOf(n); return i >= 0 ? argv[i + 1] : d; };
 const MAPS = (opt('--maps', 'sf,ist')).split(',');
-const ONLY = new Set((opt('--only', 'water,atlas,trees,treeslow,airtex,pins')).split(','));
+const ONLY = new Set((opt('--only', 'water,atlas,trees,treeslow,airtex,pins,prewarm')).split(','));
 const FORCE = argv.includes('--force');
 const CHECK = argv.includes('--check');
 const VERSION = 2;
@@ -167,7 +172,7 @@ async function packTrees(m, sources, shared) {
       for (const s of root.listScenes().slice(1)) { for (const n of s.listChildren()) scene.addChild(n); s.dispose(); }
       for (const n of [...scene.listChildren()]) if (!new RegExp(`_lod${lod}$`).test(n.getName())) n.dispose();
       root.setDefaultScene(scene);
-      await doc.transform(prune({ keepAttributes: true, keepLeaves: false }), dedup({ propertyTypes: [PropertyType.ACCESSOR, PropertyType.MESH, PropertyType.TEXTURE, PropertyType.MATERIAL] }), prune({ keepAttributes: true, keepLeaves: false }), unpartition());
+      await doc.transform(prune({ keepAttributes: true, keepLeaves: false, keepSolidTextures: true }), dedup({ propertyTypes: [PropertyType.ACCESSOR, PropertyType.MESH, PropertyType.TEXTURE, PropertyType.MATERIAL] }), prune({ keepAttributes: true, keepLeaves: false, keepSolidTextures: true }), unpartition());
       const own = new Map();
       if (farTextures) {
         // near LOD: textures the far file already carries are not stored again; the runtime binds them by name
@@ -181,7 +186,7 @@ async function packTrees(m, sources, shared) {
           }
           if (Object.keys(shareMap).length) mat.setExtras({ ...mat.getExtras(), packShared: shareMap });
         }
-        await doc.transform(prune({ keepAttributes: true, keepLeaves: false }));
+        await doc.transform(prune({ keepAttributes: true, keepLeaves: false, keepSolidTextures: true }));
       }
       for (const t of root.listTextures()) own.set(hashOf(t), t.getName());
       // PNG leaves / fronds / cards (alpha) as lossless WebP (EXT_texture_webp): the same pixels in ~45 % of the bytes;
@@ -315,6 +320,118 @@ async function packAirportGround(m, sources, shared) {
   return entry('packs/airport-ground-1024');
 }
 
+// ------------------------------------------------------------------ shader pre-warm stand-ins
+async function packPrewarm(m, sources) {
+  const files = [];
+  const treeDir = path.join(mapDir(m), 'city', 'trees');
+  if (fs.existsSync(path.join(treeDir, 'trees.json'))) {
+    const meta = JSON.parse(fs.readFileSync(path.join(treeDir, 'trees.json'), 'utf8'));
+    for (const sp of Object.keys(meta.refHeight)) { const f = path.join(treeDir, `${sp}.glb`); if (fs.existsSync(f)) files.push([f, 'tree']); }
+  }
+  const man = path.join(mapDir(m), 'airports', 'manifest.json');
+  if (fs.existsSync(man)) {
+    const j = JSON.parse(fs.readFileSync(man, 'utf8'));
+    for (const f of Object.values(j.buildings || {})) { const p = path.join(mapDir(m), 'airports', f); if (fs.existsSync(p)) files.push([p, 'building']); }
+    // parked aircraft near LODs (airports_props.js loadAgentLod: the aircraft's <id>_lod.glb)
+    for (const [id, on] of Object.entries(j.lods || {})) { const p = path.join(ROOT, 'assets', 'aircraft', id, `${id}_lod.glb`); if (on && fs.existsSync(p)) files.push([p, 'agent']); }
+  }
+  const lmIndex = path.join(mapDir(m), 'landmarks', 'index.json');
+  if (fs.existsSync(lmIndex)) {
+    for (const l of JSON.parse(fs.readFileSync(lmIndex, 'utf8')).landmarks || []) {
+      (l.lods || []).forEach((lo, i) => { const p = path.join(ROOT, lo.url); if (fs.existsSync(p)) files.push([p, 'landmark', { lod: i, instanced: !!l.instances, noShadow: l.shadows === false }, [Math.round(l.origin.x), Math.round(l.origin.z)]]); });
+    }
+  }
+  if (!files.length) return null;
+  const key = sha(Buffer.from(files.map(([f, k, x]) => `${rel(f)}:${k}:${JSON.stringify(x || {})}:${fileSha(f)}`).join(',')));
+  for (const [f] of files) sources[rel(f)] = fileSha(f);
+  const out = path.join(mapDir(m), 'packs', 'prewarm.glb'), stamp = path.join(mapDir(m), 'packs', 'prewarm.json');
+  let fresh = !FORCE && fs.existsSync(out) && fs.existsSync(stamp);
+  if (fresh) { try { fresh = JSON.parse(fs.readFileSync(stamp, 'utf8')).key === key; } catch { fresh = false; } }
+  if (fresh) return { prewarm: 'packs/prewarm.glb' };
+  const { NodeIO, Document } = await import(require.resolve('@gltf-transform/core'));
+  const { ALL_EXTENSIONS } = await import(require.resolve('@gltf-transform/extensions'));
+  const { prune } = await import(require.resolve('@gltf-transform/functions'));
+  const draco3d = require('draco3dgltf');
+  const { MeshoptDecoder } = await import(require.resolve('meshoptimizer'));
+  await MeshoptDecoder.ready;
+  const sharp = require('sharp');
+  const io = new NodeIO().registerExtensions(ALL_EXTENSIONS).registerDependencies({ 'draco3d.decoder': await draco3d.createDecoderModule(), 'meshopt.decoder': MeshoptDecoder });
+  // KTX2 images cannot be decoded here: GLTF readers only need the bytes, so read them as opaque data
+  const doc = new Document();
+  const buffer = doc.createBuffer();
+  const scene = doc.createScene('prewarm');
+  // (not a solid colour: glTF tools fold solid textures into material factors, which changes the shader)
+  const px = Buffer.alloc(4 * 4 * 4); for (let k = 0; k < 16; k++) px.set((k + (k >> 2)) & 1 ? [200, 200, 200, 255] : [60, 60, 60, 255], k * 4);
+  const png = new Uint8Array(await sharp(px, { raw: { width: 4, height: 4, channels: 4 } }).png().toBuffer());
+  const { mergeDocuments } = await import(require.resolve('@gltf-transform/functions'));
+  const seen = new Map();   // variant → its node (landmarks: the origins it stands in for, so the game can skip far ones)
+  let count = 0;
+  for (const [f, kind, extra = {}, at = null] of files) {
+    const src = await io.read(f);
+    const map = mergeDocuments(doc, src);
+    for (const mesh of src.getRoot().listMeshes()) {
+      if (kind === 'tree' && !/_lod0$/.test(mesh.getName() || '') && !src.getRoot().listNodes().some((n) => n.getMesh() === mesh && /_lod0$/.test(n.getName()))) continue;
+      for (const prim of mesh.listPrimitives()) {
+        const mat = prim.getMaterial();
+        if (!mat) continue;
+        // parked aircraft: only the parts loadAgentLod keeps with their own material (textured / see-through); the rest
+        // shares one vertex-coloured material built at runtime (a stand-in of its own there)
+        if (kind === 'agent' && !(mat.getBaseColorTexture() || mat.getAlphaMode() !== 'OPAQUE' || mat.getBaseColorFactor()[3] < 1)) continue;
+        // buildings / parked aircraft are merged with position / normal / uv only (normalizeGeo, loadAgentLod)
+        const sems = kind === 'building' || kind === 'agent' ? ['POSITION', 'NORMAL', 'TEXCOORD_0'] : prim.listSemantics();
+        // one stand-in per shader variant: what the program depends on (material kind and extensions, texture slots and
+        // their uv sets, alpha mode, sides, vertex attributes, the name rules landmarks.js applies, shadow flags)
+        const slots = ['getBaseColorTexture', 'getNormalTexture', 'getEmissiveTexture', 'getOcclusionTexture', 'getMetallicRoughnessTexture']
+          .map((g) => (mat[g]() ? `${g}:${(mat[g.replace('Texture', 'TextureInfo')]() || { getTexCoord: () => 0 }).getTexCoord()}` : '')).join(',');
+        const nameRule = kind === 'landmark' ? ['_clip', '_blend', '_emit', '_glass', '_cable'].filter((r) => (mat.getName() || '').includes(r)).join('') : kind === 'tree' ? '' : '';
+        const sig = [kind, JSON.stringify(extra), nameRule, slots, mat.getAlphaMode(), mat.getDoubleSided(), mat.listExtensions().map((e) => e.extensionName).sort().join('+'),
+          sems.map((sm) => { const a = prim.getAttribute(sm); return a ? `${sm}:${a.getType()}:${a.getComponentType()}:${a.getNormalized()}` : sm; }).join(',')].join('|');
+        if (seen.has(sig)) {
+          const n = seen.get(sig);
+          if (at) { const e = n.getExtras(); if (!e.at.some(([x, z]) => x === at[0] && z === at[1])) n.setExtras({ ...e, at: [...e.at, at] }); }
+          continue;
+        }
+        const np = doc.createPrimitive().setMaterial(map.get(mat));
+        for (const sm of sems) {
+          const a = prim.getAttribute(sm);
+          const size = { SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4 }[a ? a.getType() : (sm === 'TEXCOORD_0' ? 'VEC2' : 'VEC3')];
+          const flat = kind === 'building' || kind === 'agent';
+          const Arr = a && !flat ? a.getArray().constructor : Float32Array;
+          const arr = new Arr(3 * size);
+          if (sm === 'POSITION') arr.set([0, 0, 0, 1, 0, 0, 0, 1, 0]);
+          if (sm === 'NORMAL') arr.set([0, 0, 1, 0, 0, 1, 0, 0, 1]);
+          const acc = doc.createAccessor().setType(a && !flat ? a.getType() : size === 2 ? 'VEC2' : 'VEC3').setArray(arr).setBuffer(buffer);
+          if (a && !flat) acc.setNormalized(a.getNormalized());
+          np.setAttribute(sm, acc);
+        }
+        np.setIndices(doc.createAccessor().setType('SCALAR').setArray(new Uint16Array([0, 1, 2])).setBuffer(buffer));
+        const nm = doc.createMesh(`${kind}-${mat.getName()}`).addPrimitive(np);
+        const node = doc.createNode(`${kind}-${mat.getName()}`).setMesh(nm).setExtras({ prewarm: kind, ...extra, ...(at ? { at: [at] } : {}) });
+        scene.addChild(node);
+        seen.set(sig, node);
+        count++;
+      }
+    }
+  }
+  const root = doc.getRoot();
+  for (const sc of root.listScenes()) if (sc !== scene) sc.dispose();
+  root.setDefaultScene(scene);
+  for (const n of root.listNodes()) if (!n.getExtras().prewarm) n.dispose();
+  for (const t of root.listTextures()) t.setImage(png).setMimeType('image/png').setURI('');
+  for (const ext of root.listExtensionsUsed()) if (/^(KHR_draco_mesh_compression|EXT_meshopt_compression|KHR_texture_basisu|EXT_texture_webp)$/.test(ext.extensionName)) ext.dispose();
+  for (const b of root.listBuffers()) if (b !== buffer) { for (const a of root.listAccessors()) if (a.getBuffer() === b) a.setBuffer(buffer); b.dispose(); }
+  await doc.transform(prune({ keepAttributes: true, keepSolidTextures: true }));
+  const { dedup: dedupP } = await import(require.resolve('@gltf-transform/functions'));
+  const { PropertyType: PT } = await import(require.resolve('@gltf-transform/core'));
+  await doc.transform(dedupP({ propertyTypes: [PT.TEXTURE, PT.ACCESSOR] }), prune({ keepAttributes: true, keepSolidTextures: true }));
+  root.getAsset().generator = 'gokyuzu tools/assets/packs.mjs (shader pre-warm stand-ins)';
+  fs.mkdirSync(path.dirname(out), { recursive: true });
+  fs.writeFileSync(out, Buffer.from(await io.writeBinary(doc)));
+  fs.writeFileSync(stamp, JSON.stringify({ key, stand: count, note: 'tools/assets/packs.mjs (not loaded by the game)' }, null, 1));
+  console.log(`[${m}] prewarm ${count} material stand-ins, ${(fs.statSync(out).size / 1024).toFixed(0)} KB (${rel(out)})`);
+  return { prewarm: 'packs/prewarm.glb' };
+}
+
 // ------------------------------------------------------------------ low-density tree tiles
 const TREE_CELL = 250, DENSITIES = [0.3, 0.5];
 async function packTreesLow(m, sources) {
@@ -395,6 +512,7 @@ for (const m of MAPS) {
   if (ONLY.has('atlas')) Object.assign(out.city, await packAtlas(m, sources, shared) || {}); else if (old.city) for (const k of ['atlasSmall', 'atlasTiny']) if (old.city[k]) out.city[k] = old.city[k];
   if (ONLY.has('trees')) Object.assign(out.city, await packTrees(m, sources, shared) || {}); else if (old.city && old.city.trees) out.city.trees = old.city.trees;
   if (ONLY.has('airtex')) Object.assign(out.airports, await packAirportGround(m, sources, shared) || {}); else Object.assign(out.airports, old.airports || {});
+  if (ONLY.has('prewarm')) Object.assign(out, await packPrewarm(m, sources) || {}); else if (old.prewarm) out.prewarm = old.prewarm;
   if (ONLY.has('treeslow')) Object.assign(out.city, await packTreesLow(m, sources) || {}); else if (old.city && old.city.treesLow) out.city.treesLow = old.city.treesLow;
   if (old.city && old.city.tiles) out.city.tiles = old.city.tiles;   // (tools/assets/city_meshopt.mjs)
   out.sources = { ...(old.sources || {}), ...sources };
@@ -409,6 +527,7 @@ function packFiles(p, m) {
   for (const k of ['atlasSmall', 'atlasTiny']) if (p.city && p.city[k]) out.push(p.city[k] + 'atlas.json');
   if (p.city && p.city.trees) out.push(p.city.trees.lod1, p.city.trees.lod0);
   for (const e of (p.city && p.city.treesLow) || []) out.push(`${e.dir}/source.json`);
+  if (p.prewarm) out.push(p.prewarm);
   const g = p.airports && p.airports.groundMobile;
   if (g) for (const f of g.files) out.push(g.dir + f);
   void m;

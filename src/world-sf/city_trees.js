@@ -14,6 +14,13 @@ import { assetData, withRetry, isNetworkError, reportLoadFailure, retryDelay } f
 const CELL = 250;
 const DEF = { r0: 260, r1: 1900, rShrub: 650, tileRadius: 2300, maxPerSpecies: 40000, maxNearPerSpecies: 4000, frameBudgetMs: 2 };
 
+/** The runtime changes every tree material gets (also used for the shader pre-warm stand-ins, world index.js). */
+export function prepareTreeMaterial(mat, geo) {
+  mat.vertexColors = !!geo.getAttribute('color');
+  if (mat.alphaTest > 0 || mat.transparent) { mat.transparent = false; mat.alphaTest = 0.45; mat.side = THREE.DoubleSide; }
+  return mat;
+}
+
 export async function createCityTrees(ctx) {
   const opt = { ...DEF, ...(ctx.treeOptions || {}) };
   const qual = { density: 1, dist: 1, shadows: true };
@@ -77,8 +84,7 @@ export async function createCityTrees(ctx) {
         for (const [slot, name] of Object.entries(share)) { const t = texByName.get(name); if (t && mat[slot] !== t) { mat[slot] = t; mat.needsUpdate = true; } }
       }
       for (const k of ['map', 'normalMap']) if (mat[k] && mat[k].name && !texByName.has(mat[k].name)) texByName.set(mat[k].name, mat[k]);
-      mat.vertexColors = !!geo.getAttribute('color');
-      if (mat.alphaTest > 0 || mat.transparent) { mat.transparent = false; mat.alphaTest = 0.45; mat.side = THREE.DoubleSide; }
+      prepareTreeMaterial(mat, geo);
       const im = new THREE.InstancedMesh(geo, mat, 0);
       im.instanceMatrix = sh.m;
       im.instanceColor = sh.c;
@@ -415,7 +421,7 @@ export async function createCityTrees(ctx) {
       camera.getWorldPosition(camPos);
       camera.getWorldDirection(camDir);
       if (streamTimer > 0.4) { stream(camPos.x, camPos.z); streamTimer = 0; }
-      processJobs(opt.frameBudgetMs);
+      processJobs(opt.frameBudgetMs * Math.min(3, Math.max(1, dt * 60)));   // (per second, not per update: frame caps)
       if ((resnapTimer += dt) > 0.5) { resnapTimer = 0; queueResnaps(camPos.x, camPos.z, opt.r1 * qual.dist + CELL); }
       if (nearState === 'none' && (nearWanted || (eagerNear && (nearTimer -= dt) <= 0))) loadNear();
       const moved = camPos.distanceToSquared(lastPos) > 12 * 12 || camDir.dot(lastDir) < 0.995;

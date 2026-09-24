@@ -286,7 +286,7 @@ export async function createAirports(ctx) {
           if (!sig || sig !== best.drapeSig || best.drapeMoved) { go = true; best.drapeSigNext = sig; } else best.drapeDue = 1.0;
         }
         if (go) {
-          if (best.draper.step(4000)) {
+          if (best.draper.step(Math.round(4000 * Math.min(3, Math.max(1, dt * 60))))) {
             best.drapeMoved = best.draper.changed;
             best.drapeSig = best.drapeSigNext;
             best.drapeDue = best.draper.changed ? 1.5 : best.drapeSig ? 1.0 : 6.0;

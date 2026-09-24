@@ -5,7 +5,8 @@ import * as THREE from 'three';
 import { createEnvironment } from './environment.js';
 import { createTerrain } from './terrain.js';
 import { createCity } from './city.js';
-import { createLandmarks } from './landmarks.js';
+import { prepareTreeMaterial } from './city_trees.js';
+import { createLandmarks, prepareLandmarkStandIn } from './landmarks.js';
 import { createAirports } from './airports.js';
 import { isNetworkError } from '../core/assets.js';
 
@@ -29,6 +30,62 @@ export async function createSFWorld({ scene, renderer, camera, loader, quality =
   ctx.precompile = (obj) => {
     try { return renderer && renderer.compileAsync && !renderer.getContext().isContextLost() ? renderer.compileAsync(obj, camera, scene).then(() => obj, () => obj) : Promise.resolve(obj); } catch { return Promise.resolve(obj); }
   };
+  // Shader pre-warm stand-ins (packs.json prewarm, tools/assets/packs.mjs): one per shader variant of the materials
+  // that only appear after the start (near tree LODs, airport buildings, parked-aircraft LODs, landmark LODs), on a
+  // hidden 1-triangle mesh of the kind the layer draws them with (same material processing, instancing and shadow
+  // flags), so the loading screen's pre-warm (main.js: compileAsync of the scene, hidden objects included) links their
+  // programs and the real materials find them in three.js' program cache. Never drawn, never disposed (disposing would
+  // release the programs).
+  let prewarmGroup = null, prewarmMake = null, prewarmTimer = 0;
+  const prewarmLater = [], PREWARM_R = 15000;
+  const prewarmP = packs && packs.prewarm ? loader.loadGLTF(A + packs.prewarm).then((g) => {
+    const group = new THREE.Group();
+    group.name = 'prewarm';
+    // drawn (as zero-area triangles) only while the loading screen is up, so the pre-warm frame also links their
+    // shadow-pass variants; hidden from the first playable frame on (update())
+    prewarmGroup = group;
+    const stand = [];
+    g.scene.traverse((o) => { if (o.isMesh) stand.push(o); });
+    const shadowsOn = !quality || quality.shadows !== false;
+    const inst = (geo, mat, color) => {
+      const m = new THREE.InstancedMesh(geo, mat, 1);
+      if (color) m.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(3), 3);
+      return m;
+    };
+    const near = (at, r) => !at || at.some(([ax, az]) => Math.hypot(ax - focus.x, az - focus.z) < r);
+    for (const o of stand) {
+      const x = o.userData && o.userData.prewarm ? o.userData : (o.parent && o.parent.userData) || {};
+      // landmark variants of landmarks far from the spawn: compiled later, when the camera comes within 20 km
+      if (x.prewarm === 'landmark' && !near(x.at, PREWARM_R)) { prewarmLater.push([o, x]); continue; }
+      group.add(makeStandIn(o, x));
+    }
+    function makeStandIn(o, x) {
+      let m;
+      if (x.prewarm === 'tree') m = inst(o.geometry, prepareTreeMaterial(o.material, o.geometry), true);   // city_trees.js
+      else if (x.prewarm === 'agent') m = inst(o.geometry, o.material, false);                             // airports_props.js NearSet
+      else if (x.prewarm === 'landmark') {
+        m = x.instanced ? inst(o.geometry, o.material, false) : new THREE.Mesh(o.geometry, o.material);
+        prepareLandmarkStandIn(m, x.lod | 0, shadowsOn && !x.noShadow);
+      } else m = new THREE.Mesh(o.geometry, o.material);   // airport buildings: merged plain meshes
+      if (x.prewarm !== 'landmark') { m.castShadow = true; m.receiveShadow = true; }
+      m.frustumCulled = false;
+      const pos = m.geometry.getAttribute('position');
+      if (pos) { pos.array.fill(0); pos.needsUpdate = true; }   // zero area: nothing rasterized
+      return m;
+    }
+    prewarmMake = makeStandIn;
+    // parked aircraft: the parts without their own material share one vertex-coloured material (loadAgentLod)
+    const flat = new THREE.BufferGeometry();
+    flat.setAttribute('position', new THREE.BufferAttribute(new Float32Array(9), 3));
+    flat.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(9), 3));
+    flat.setAttribute('color', new THREE.BufferAttribute(new Float32Array(12), 4));
+    flat.setIndex([0, 1, 2]);
+    const fm = inst(flat, new THREE.MeshStandardMaterial({ vertexColors: true }), false);
+    fm.castShadow = true; fm.receiveShadow = true; fm.frustumCulled = false;
+    group.add(fm);
+    scene.add(group);
+  }).catch((e) => { if (isNetworkError(e)) throw e; console.warn('[world] prewarm stand-ins unavailable', e && e.message); }) : null;
+  if (prewarmP) prewarmP.catch(() => {});
   onProgress(0.05, 'Gökyüzü ve ışık');
   const environment = await createEnvironment(ctx);
   onProgress(0.15, 'Arazi ve hava fotoğrafları');
@@ -65,6 +122,7 @@ export async function createSFWorld({ scene, renderer, camera, loader, quality =
   await Promise.all(parts.map(([, p]) => Promise.resolve(p).catch((e) => { if (isNetworkError(e)) throw e; console.error(e); }).then(() => {
     onProgress(0.6 + 0.35 * ++readyN / parts.length, 'Detaylar yükleniyor');
   })));
+  if (prewarmP) await prewarmP;
   onProgress(1, 'Hazır');
   if (quality) for (const part of [environment, terrain, ...layers]) if (part && part.setQuality) { try { part.setQuality(quality); } catch (e) { console.error('[world] setQuality', e); } }
 
@@ -135,6 +193,13 @@ export async function createSFWorld({ scene, renderer, camera, loader, quality =
       if (!ctx.playable) {
         updateTime += dt;
         if ((typeof window !== 'undefined' && window.__game && window.__game.readyAt) || updateTime > 4) ctx.playable = true;
+      }
+      if (ctx.playable && prewarmGroup && prewarmGroup.visible) prewarmGroup.visible = false;
+      // remaining stand-ins: one at a time when the camera gets within 20 km of a landmark they stand in for
+      if (ctx.playable && prewarmLater.length && (prewarmTimer -= dt) <= 0) {
+        prewarmTimer = 2;
+        const k = prewarmLater.findIndex(([, x]) => x.at.some(([ax, az]) => Math.hypot(ax - cam.position.x, az - cam.position.z) < 20000));
+        if (k >= 0) { const [o, x] = prewarmLater.splice(k, 1)[0]; const m = prewarmMake(o, x); prewarmGroup.add(m); ctx.precompile(m); }
       }
       environment.update(dt, cam);
       terrain.update(dt, cam);

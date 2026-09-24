@@ -256,6 +256,11 @@ function applyShadows(root, cast, receive) {
   root.traverse((o) => { if (o.isMesh) { o.castShadow = cast; o.receiveShadow = receive; } });
 }
 
+/** Shader pre-warm stand-in (world index.js): the material / shadow processing a landmark LOD `lod` gets. */
+export function prepareLandmarkStandIn(obj, lod, shadowsOn) {
+  prepareMaterials(obj, { warn: [], lamp: [] }, { shadows: shadowsOn && lod < 2, cast: shadowsOn && lod === 0 });
+}
+
 function prepareMaterials(root, sink, { shadows = true, cast = shadows } = {}) {
   root.traverse((o) => {
     if (!o.isMesh) return;

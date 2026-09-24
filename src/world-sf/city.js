@@ -48,6 +48,7 @@ export async function createCity(ctx, options = {}) {
   group.name = 'city';
   const buildings = new THREE.Group();
   buildings.name = 'city_buildings';
+  buildings.matrixWorldAutoUpdate = false;   // static tiles: their matrixWorld is set once (finish), no per-frame walk
   group.add(buildings);
 
   // ---- tile registry ------------------------------------------------------------------------------------------
@@ -396,6 +397,18 @@ export async function createCity(ctx, options = {}) {
       select(focusCam);
     }
     await obst;
+    // the warm-up material's program for the 1x1 target (a first tile upload in flight would link it)
+    if (ctx.renderer && opt.warmUpload) {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(9), 3));
+      const m = new THREE.Mesh(g, material);
+      m.frustumCulled = false;
+      warm.scene.add(m);
+      const r = ctx.renderer, prev = r.getRenderTarget(), prevAuto = r.shadowMap.autoUpdate;
+      try { r.shadowMap.autoUpdate = false; r.setRenderTarget(warm.target); r.render(warm.scene, warm.camera); } catch { /* at the first tile */ }
+      r.setRenderTarget(prev); r.shadowMap.autoUpdate = prevAuto;
+      warm.scene.remove(m); g.dispose();
+    }
     // the facade atlas uploads here, behind the loading screen, one array texture per task (at the first draw the
     // three uploads came in one frame: 111 MB of texImage3D, 160 ms on a phone)
     if (ctx.renderer) for (const t of textures) { try { ctx.renderer.initTexture(t); } catch { /* at first use */ } await new Promise((r) => setTimeout(r, 0)); }
@@ -408,7 +421,7 @@ export async function createCity(ctx, options = {}) {
   // one per two frames and no trees for the first STAGGER_S seconds of flight (iOS kills the page for memory otherwise)
   const STAGGER_S = 10;
   const mobile = !!(q0 && (q0.deviceClass === 'phone' || q0.deviceClass === 'tablet'));
-  let flightT = 0, frameN = 0, treesStarted = false;
+  let flightT = 0, frameN = 0, treesStarted = false, uploadCredit = 0;
 
   return {
     object: group,
@@ -468,7 +481,12 @@ export async function createCity(ctx, options = {}) {
         lastCam.copy(camPos);
       }
       pump();
-      processJobs(opt.frameBudgetMs, mobile && flightT < STAGGER_S ? frameN & 1 : opt.uploadsPerFrame);
+      // budgets per second, not per update: a frame cap (phones draw 30 fps) must not halve the streaming throughput
+      const rate = Math.min(3, Math.max(1, dt * 60));
+      uploadCredit = Math.min(4, uploadCredit + (mobile && flightT < STAGGER_S ? 0.5 : opt.uploadsPerFrame) * rate);
+      const ups = Math.floor(uploadCredit);
+      uploadCredit -= ups;
+      processJobs(opt.frameBudgetMs * rate, ups);
       if (trees && treesStarted) trees.update(dt, camera);
     },
     // buildings only: trees are not obstacles for physics/GPWS (a helicopter must not land on treetops)

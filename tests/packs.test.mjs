@@ -6,6 +6,7 @@
 //   3. tree models: both packs hold every species' LOD, near-LOD textures shared with the far pack are named there
 //   4. thinned tree tiles: exactly the trees src/world-sf/city_trees.js keeps from the full tile at that density
 //   5. meshopt city tiles: one per index tile, meshopt-compressed, same triangle count as the Draco original
+//   6. shader pre-warm stand-ins: every kind present, 1-triangle meshes, placeholder textures
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -88,6 +89,13 @@ for (const map of ['sf', 'ist']) {
     const farTex = new Set(lod1.textures.map((tx) => tx.name || (lod1.images[srcOf(tx)] || {}).name));
     const shared = lod0.materials.flatMap((mt) => Object.values((mt.extras && mt.extras.packShared) || {}));
     check(`${map}: near-LOD shared textures exist in the far pack`, shared.length > 0 && shared.every((nm) => farTex.has(nm)), shared.filter((nm) => !farTex.has(nm)).join(', '));
+  }
+  // shader pre-warm stand-ins: 1-triangle meshes for every kind of late material, placeholder textures only
+  if (packs.prewarm) {
+    const j = glbJson(at(packs.prewarm));
+    const kinds = new Set(j.nodes.map((n) => n.extras && n.extras.prewarm));
+    const tiny = j.accessors.every((a) => a.count <= 3);
+    check(`${map}: pre-warm stand-ins (${j.nodes.length}: ${[...kinds].join(', ')})`, ['tree', 'building', 'landmark'].every((k) => kinds.has(k)) && tiny && (j.images || []).length <= 2);
   }
   // 4. thinned tree tiles (sample)
   const tmeta = JSON.parse(fs.readFileSync(path.join(dir, 'city', 'trees', 'trees.json'), 'utf8'));
