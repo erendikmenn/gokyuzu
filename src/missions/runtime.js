@@ -56,6 +56,8 @@ export function createMissionRuntime(plan, ctx) {
   const bounds = (world.region && world.region.local) || { minX: -16467, maxX: 20799, minZ: -28016, maxZ: 7745 };
   const cat = (state.def && state.def.spec && state.def.spec.category) || 'airliner';
   const spanScratch = { bottom: -Infinity, top: -Infinity };
+  // missions around the Golden Gate / the Bay need the targets in sight: the drifting fog bank can swallow the bridge
+  if (world.environment && world.environment.setFogBank) world.environment.setFogBank(mission.def.fogBank !== false);
   const env = {
     ends, bridges: BRIDGES, score: mission.score || {}, cat,
     spanAt: world.getObstacleSpan ? (x, z, out) => world.getObstacleSpan(x, z, out || spanScratch) : null,

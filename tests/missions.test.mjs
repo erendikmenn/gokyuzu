@@ -160,6 +160,9 @@ const headingBank = (f, hdgT, max = 30) => clamp(wrap180(hdgT - f.heading) * 1.5
   }
   check(`Catalog: ${MISSIONS.length} missions × 90 daily variations build (starts in the map, runways exist, texts filled, 1–3 sentence briefs)`,
     MISSIONS.length >= 8 && MISSIONS.length <= 10 && bad.length === 0, bad.slice(0, 6).join('; '));
+  // the runtime reads the flag from mission.def (buildMission does not copy it): Bay / Golden Gate targets must stay in sight
+  const noFog = MISSIONS.filter((d) => buildMission(d.id).def.fogBank === false).map((d) => d.id).sort().join(',');
+  check('Catalog: fog bank off for the Bay / Golden Gate missions', noFog === 'alcatraz,bay-tour,ditch,gg-under,low-pass', noFog);
 }
 
 // 3. objectives with scripted samples

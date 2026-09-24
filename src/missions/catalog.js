@@ -69,7 +69,7 @@ export const MISSIONS = [
     dailyNote: (p) => `Pist ${p.rw} · ${fmtFt(p.altFt)} ft`,
   },
   {
-    id: 'gg-under', title: 'Golden Gate\'in altından geç', aircraft: 'f16', minutes: 2, level: 1, teaches: 'Alçak irtifada hassas kontrol',
+    id: 'gg-under', fogBank: false, title: 'Golden Gate\'in altından geç', aircraft: 'f16', minutes: 2, level: 1, teaches: 'Alçak irtifada hassas kontrol',
     brief: 'Köprü {dist} km önünde. Kuleler arası 1.280 m, deniz ile tabliye arası yaklaşık 65 m: tam ortadan, 30–40 m\'den geç.',
     goal: 'Tabliyenin altından geç, sonra 1.500 ft\'e tırman.',
     params: { east: true, dist: 5500, alt: 120, kt: 300 },
@@ -105,7 +105,7 @@ export const MISSIONS = [
     dailyNote: (p) => `Pist ${p.rw} · ${(p.dist / 1852).toFixed(1).replace('.', ',')} NM`,
   },
   {
-    id: 'alcatraz', title: 'Alcatraz\'a hassas iniş', aircraft: 'uh60', minutes: 2, level: 2, teaches: 'Hover ve hassas iniş',
+    id: 'alcatraz', fogBank: false, title: 'Alcatraz\'a hassas iniş', aircraft: 'uh60', minutes: 2, level: 2, teaches: 'Hover ve hassas iniş',
     brief: 'Alcatraz\'ın güneydoğusundaki eski tören alanına bir iniş pedi işaretlendi. Yavaşla, pedin üstünde asılı kal, sonra dikey in.',
     goal: 'Pedin üstünde 5 sn asılı kal ve pedin ortasına in.',
     params: { from: 0 },
@@ -127,7 +127,7 @@ export const MISSIONS = [
     dailyNote: (p) => ['Pier 39 tarafından', 'Kuzeyden, Marin tarafından', 'Batıdan, Golden Gate tarafından'][p.from] || '',
   },
   {
-    id: 'low-pass', title: 'Alçak geçiş', aircraft: 'f22', minutes: 2, level: 2, teaches: 'Alçak irtifa ve hız yönetimi',
+    id: 'low-pass', fogBank: false, title: 'Alçak geçiş', aircraft: 'f22', minutes: 2, level: 2, teaches: 'Alçak irtifa ve hız yönetimi',
     brief: 'Körfezin ortasına 5 kapı dizildi, her biri deniz üstünde 10–70 m arası. Sırayla geç; kapının üstünden ya da yanından geçersen sayılmaz, dönüp yeniden dene.',
     goal: '5 kapıdan sırayla, olabildiğince hızlı geç.',
     params: { jit: [0, 0, 0, 0, 0], y: 40 },
@@ -148,7 +148,7 @@ export const MISSIONS = [
     dailyNote: () => 'Kapılar yer değiştirdi',
   },
   {
-    id: 'bay-tour', title: 'Körfez turu', aircraft: 'b737', minutes: 3, level: 2, teaches: 'Rota uçuşu ve otopilot (NAV)',
+    id: 'bay-tour', fogBank: false, title: 'Körfez turu', aircraft: 'b737', minutes: 3, level: 2, teaches: 'Rota uçuşu ve otopilot (NAV)',
     brief: 'Körfezin üç simgesini tek turda gör: Bay Köprüsü, Alcatraz ve Golden Gate. Rota hazır: istersen otopilotu açıp NAV ile uçur, istersen elle.',
     goal: 'Üç halkadan sırayla geç.',
     params: { altFt: 2000 },
@@ -231,7 +231,7 @@ export const MISSIONS = [
     dailyNote: (p) => `${['SFO 28L', 'Alameda (güneyden)', 'SFO 28R'][p.from] || ''} · ${fmtFt(p.altFt)} ft`,
   },
   {
-    id: 'ditch', title: 'Körfeze mecburi iniş', aircraft: 'a320neo', minutes: 3, level: 3, unlock: 3, teaches: 'Çift motor arızası, suya iniş',
+    id: 'ditch', fogBank: false, title: 'Körfeze mecburi iniş', aircraft: 'a320neo', minutes: 3, level: 3, unlock: 3, teaches: 'Çift motor arızası, suya iniş',
     brief: 'Kuş sürüsü: iki motor birden durdu ve hiçbir piste yetişemezsin. Takım kapalı, kanatlar düz, burun hafif yukarıda ve hız en düşük güvenli değerdeyken suya koy.',
     goal: 'Körfeze kontrollü suya iniş (ditching).',
     params: { hdg: 100, altFt: 2500 },
