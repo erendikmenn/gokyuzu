@@ -1,0 +1,225 @@
+{
+ "note": "Landmarks agent (tools/geo/landmarks_ist_layout.py): landmark positions (local m, lon/lat); the models are assets/ist/landmarks/index.json, the city exclusions data/ist/landmarks-exclude.json.",
+ "landmarks": [
+  {
+   "id": "camlica_camii",
+   "name": "\u00c7aml\u0131ca Camii",
+   "lon": 29.07051,
+   "lat": 41.034091,
+   "x": 8077.65,
+   "z": -1135.33,
+   "excludeRadius": 0,
+   "kind": "building"
+  },
+  {
+   "id": "sultanahmet",
+   "name": "Sultanahmet Camii",
+   "lon": 28.976879,
+   "lat": 41.005253,
+   "x": 279.04,
+   "z": 2248.87,
+   "excludeRadius": 0,
+   "kind": "building"
+  },
+  {
+   "id": "ayasofya",
+   "name": "Ayasofya-i Kebir Camii",
+   "lon": 28.980048,
+   "lat": 41.008527,
+   "x": 537.38,
+   "z": 1879.35,
+   "excludeRadius": 0,
+   "kind": "building"
+  },
+  {
+   "id": "suleymaniye",
+   "name": "S\u00fcleymaniye Camii",
+   "lon": 28.964033,
+   "lat": 41.01604,
+   "x": -828.21,
+   "z": 1075.66,
+   "excludeRadius": 0,
+   "kind": "building"
+  },
+  {
+   "id": "yeni_cami",
+   "name": "Yeni Cami",
+   "lon": 28.972161,
+   "lat": 41.016892,
+   "x": -146.91,
+   "z": 965.73,
+   "excludeRadius": 0,
+   "kind": "building"
+  },
+  {
+   "id": "galata_kulesi",
+   "name": "Galata Kulesi",
+   "lon": 28.974213,
+   "lat": 41.025634,
+   "x": 3.71,
+   "z": -8.77,
+   "excludeRadius": 0,
+   "kind": "tower"
+  },
+  {
+   "id": "kiz_kulesi",
+   "name": "K\u0131z Kulesi",
+   "lon": 29.004089,
+   "lat": 41.021059,
+   "x": 2527.22,
+   "z": 441.86,
+   "excludeRadius": 0,
+   "kind": "tower"
+  },
+  {
+   "id": "camlica_kulesi",
+   "name": "\u00c7aml\u0131ca Kulesi",
+   "lon": 29.065541,
+   "lat": 41.016372,
+   "x": 7706.52,
+   "z": 841.72,
+   "excludeRadius": 0,
+   "kind": "tower"
+  },
+  {
+   "id": "haydarpasa",
+   "name": "Haydarpa\u015fa Gar\u0131",
+   "lon": 29.018828,
+   "lat": 40.99628,
+   "x": 3830.14,
+   "z": 3164.3,
+   "excludeRadius": 0,
+   "kind": "building"
+  },
+  {
+   "id": "rumeli_hisari",
+   "name": "Rumeli Hisar\u0131",
+   "lon": 29.05612,
+   "lat": 41.084763,
+   "x": 6735.28,
+   "z": -6732.34,
+   "excludeRadius": 0,
+   "kind": "building"
+  },
+  {
+   "id": "topkapi",
+   "name": "Topkap\u0131 Saray\u0131",
+   "lon": 28.984064,
+   "lat": 41.012812,
+   "x": 864.28,
+   "z": 1395.91,
+   "excludeRadius": 0,
+   "kind": "building"
+  },
+  {
+   "id": "dolmabahce",
+   "name": "Dolmabah\u00e7e Saray\u0131",
+   "lon": 29.000547,
+   "lat": 41.039114,
+   "x": 2183.43,
+   "z": -1555.7,
+   "excludeRadius": 0,
+   "kind": "building"
+  },
+  {
+   "id": "skyline_atasehir",
+   "name": "Ata\u015fehir g\u00f6kdelenleri",
+   "lon": 29.125593,
+   "lat": 40.961187,
+   "x": 12905.34,
+   "z": 6847.15,
+   "excludeRadius": 0,
+   "kind": "tower"
+  },
+  {
+   "id": "skyline_levent",
+   "name": "Levent \u2013 Maslak g\u00f6kdelenleri",
+   "lon": 29.011906,
+   "lat": 41.080928,
+   "x": 3031.09,
+   "z": -6219.9,
+   "excludeRadius": 0,
+   "kind": "tower"
+  },
+  {
+   "id": "skyline_west",
+   "name": "Esenyurt \u2013 Beylikd\u00fcz\u00fc kuleleri",
+   "lon": 28.666672,
+   "lat": 41.049442,
+   "x": -25903.26,
+   "z": -2112.4,
+   "excludeRadius": 0,
+   "kind": "tower"
+  },
+  {
+   "id": "bogazici",
+   "name": "15 Temmuz \u015eehitler K\u00f6pr\u00fcs\u00fc",
+   "lon": 29.03424,
+   "lat": 41.045626,
+   "x": 4998.78,
+   "z": -2344.16,
+   "excludeRadius": 0,
+   "kind": "bridge"
+  },
+  {
+   "id": "fsm",
+   "name": "Fatih Sultan Mehmet K\u00f6pr\u00fcs\u00fc",
+   "lon": 29.0614,
+   "lat": 41.091301,
+   "x": 7161.69,
+   "z": -7468.62,
+   "excludeRadius": 0,
+   "kind": "bridge"
+  },
+  {
+   "id": "yss",
+   "name": "Yavuz Sultan Selim K\u00f6pr\u00fcs\u00fc",
+   "lon": 29.111677,
+   "lat": 41.203056,
+   "x": 11083.58,
+   "z": -19977.06,
+   "excludeRadius": 0,
+   "kind": "bridge"
+  },
+  {
+   "id": "galata_bridge",
+   "name": "Galata K\u00f6pr\u00fcs\u00fc",
+   "lon": 28.973185,
+   "lat": 41.020037,
+   "x": -68.67,
+   "z": 614.56,
+   "excludeRadius": 0,
+   "kind": "bridge"
+  },
+  {
+   "id": "ataturk_bridge",
+   "name": "Atat\u00fcrk K\u00f6pr\u00fcs\u00fc",
+   "lon": 28.965142,
+   "lat": 41.024195,
+   "x": -755.39,
+   "z": 168.19,
+   "excludeRadius": 0,
+   "kind": "bridge"
+  },
+  {
+   "id": "halic_metro",
+   "name": "Hali\u00e7 Metro K\u00f6pr\u00fcs\u00fc",
+   "lon": 28.966684,
+   "lat": 41.022663,
+   "x": -621.89,
+   "z": 335.4,
+   "excludeRadius": 0,
+   "kind": "bridge"
+  },
+  {
+   "id": "halic_bridge",
+   "name": "Hali\u00e7 K\u00f6pr\u00fcs\u00fc",
+   "lon": 28.942035,
+   "lat": 41.043649,
+   "x": -2746.24,
+   "z": -1948.04,
+   "excludeRadius": 0,
+   "kind": "bridge"
+  }
+ ]
+}
