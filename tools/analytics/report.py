@@ -550,7 +550,7 @@ def report_hourly(hours, first_seen, beacons, visitors, requests, only=None):
     or a challenge; the landing entry left out), ist (people who flew İstanbul). only = a map id: the beacon columns
     count only that map's sessions (visitor / request columns stay for everyone)."""
     c = defaultdict(Counter)
-    fps, rel = defaultdict(list), defaultdict(list)
+    fps, frel = defaultdict(list), defaultdict(list)   # frel: fps as a share of the flight cap
     players, mis, ffc, done, ist = (defaultdict(set) for _ in range(5))
     for evs in beacons.values():
         m = session_map(evs)
@@ -570,7 +570,7 @@ def report_hourly(hours, first_seen, beacons, visitors, requests, only=None):
                 c[h]['hb'] += 1
                 if (q.get('fps') or '').isdigit():
                     fps[h].append(int(q['fps']))
-                    rel[h].append(fps_rel(q))
+                    frel[h].append(fps_rel(q))
             elif t == 'takeoff':
                 c[h]['takeoff'] += 1
             elif t == 'land':
@@ -603,7 +603,7 @@ def report_hourly(hours, first_seen, beacons, visitors, requests, only=None):
     for h in sorted(hours):
         r, k, n = hours[h], c[h], len(hours[h]['vis'])
         f = statistics.mean(fps[h]) if fps[h] else 0
-        fr = 100 * statistics.mean(rel[h]) if rel[h] else 0
+        fr = 100 * statistics.mean(frel[h]) if frel[h] else 0
         print(f"{h:%d.%m %H}:00|{n:6d}|{new[h]:5d}|{len(players[h]):5d}|{k['fly']:5d}|{k['touch']:6d}|{k['hb']:8d}|{k['takeoff']:6d}|"
               f"{k['land']:5d}({k['landrw']:2d})  |{k['crash']:5d}|{k['tutdone']:10d}|{f:4.0f}|{fr:4.0f}|{100 * len(r['phone']) / n:4.0f}|{100 * len(r['iab']) / n:5.0f}|"
               f"{k['err']:4d}|{r['bytes'] / 1e9:5.1f}|{len(mis[h]):5d}|{len(ffc[h]):4d}|{len(done[h]):5d}|{len(ist[h]):4d}| {rel.get(h, '')}")
