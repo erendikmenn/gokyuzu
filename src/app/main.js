@@ -110,19 +110,47 @@ const touchUI = createTouchControls(hud.element, { input, hud, getState: () => (
 state.touch = touchUI;   // test hook
 
 let loading = null;   // loading screen (also used by startFailed)
+// missions hook (src/missions/**, CONTRACTS-SF.md §12): the mission runtime is its own lazily loaded chunk (nothing is
+// loaded for free flight); the landing score card (src/ui/landing.js) is a small module loaded after the menu
+let missionMod = null, landing = null, landingP = null;
+async function planMissionFor(req, runways) {
+  try { missionMod = await import('../missions/runtime.js'); return missionMod.planMission(req, runways); } catch (e) {
+    if (isNetworkError(e)) throw e;
+    console.warn('[missions] cannot start', req && req.id, e);
+    return null;
+  }
+}
+const aircraftShort = () => (state.def ? String(state.def.name || state.def.id).replace(/^(Airbus|Boeing) /, '').replace(/ (Fighting Falcon|Raptor|Black Hawk)$/, '') : '');
+function loadLandingCard() {
+  landingP = import('../ui/landing.js').then((m) => {
+    landing = m.createLandingCard({ hud, getWorld: () => state.world, prepareShare: (card) => import('../ui/share.js').then((x) => x.prepareLanding(card, { aircraft: aircraftShort() })) });
+    state.landing = landing;   // test hook
+    if (state.flight) landing.attach(state.flight, state.def);
+    return landing;
+  }).catch((e) => { console.warn('[landing]', e); return null; });
+  return landingP;
+}
 async function start() {
   await loadAssetVersions();   // CONTRACTS-SF.md §9: version map before any asset request (menu thumbnails too)
   const runways = await loader.loadJSON('data/sf/runways.json');
   const spawns = buildSpawns(runways);
-  let choice;
+  let choice, plan = null;
   const direct = AIRCRAFT.find((a) => a.id === params.get('aircraft'));   // ?aircraft=<id>&spawn=<id> skips the menu
   const resumed = resume && AIRCRAFT.some((a) => a.id === resume.aircraft) ? resume : null;   // robustness hook: same flight
+  const missionReq = !resumed && params.get('mission') ? { id: params.get('mission'), daily: params.get('daily') } : null;   // missions hook: ?mission=<id>(&daily=YYYYMMDD)
+  if (missionReq) plan = await planMissionFor(missionReq, runways);
   if (resumed) choice = { aircraftId: resumed.aircraft, spawnId: spawns.some((s) => s.id === resumed.spawn) ? resumed.spawn : spawns[0].id };
+  else if (plan) choice = { aircraftId: plan.aircraft, spawnId: plan.spawn.id, mission: missionReq };
   else if (direct) choice = { aircraftId: direct.id, spawnId: spawns.some((s) => s.id === params.get('spawn')) ? params.get('spawn') : direct.defaultSpawn };
   else choice = await createMenu(uiRoot, { aircraft: AIRCRAFT, spawns });
+  if (!plan && choice.mission) {   // missions hook: "Görevler" in the menu — the mission picks the aircraft and the start
+    plan = await planMissionFor(choice.mission, runways);
+    if (plan) choice = { ...choice, aircraftId: plan.aircraft, spawnId: plan.spawn.id }; else delete choice.mission;
+  }
   audio.start();
   state.choice = choice;
-  const spawn = spawns.find((s) => s.id === choice.spawnId) || spawns[0];
+  loadLandingCard();   // missions hook: landing score card (free flight and missions)
+  const spawn = plan ? plan.spawn : spawns.find((s) => s.id === choice.spawnId) || spawns[0];
   state.spawn = spawn;
 
   loading = createLoadingScreen(uiRoot);
@@ -138,6 +166,14 @@ async function start() {
   }
   loading.setProgress(0.85, 'Uçak yükleniyor');
   await loadAircraft(await aircraftP);
+  if (plan) {   // missions hook: the runtime drives resetFlight (start state), holds the flight for the briefing / results
+    await landingP;
+    state.mission = missionMod.createMissionRuntime(plan, {
+      state, scene, camera, hud, input, audio, navRoute, landing, touch: touchUI.active, resetFlight, goToMenu,
+      leave: (url) => { state.leaving = true; location.href = url; },
+      snapshot: () => { renderer.render(scene, camera); return renderer.domElement; },   // share card image (same task as the render)
+    });
+  }
   resetFlight();
   let resumeNote = null;
   if (resumed) { try { resumeNote = applyResume(state, resumed, { input }); } catch (e) { console.warn('[resume]', e); } }   // robustness hook
@@ -150,13 +186,21 @@ async function start() {
   state.aircraftId = choice.aircraftId;
   if (state.halted) return;   // robustness: the graphics guard gave up while loading (notice shown): no flight to report
   if (state.standIn) upgradeAircraft();   // LOD start: the full model now, swapped in when it is ready
-  trackFlight(choice.aircraftId, spawn.id, (performance.now() - t0) / 1000, settings.quality, { in: touchUI.active ? 'touch' : input.kind, tilt: touchUI.active && settings.tilt ? 1 : undefined });
+  trackFlight(choice.aircraftId, spawn.id, (performance.now() - t0) / 1000, settings.quality, { in: touchUI.active ? 'touch' : input.kind, tilt: touchUI.active && settings.tilt ? 1 : undefined, mi: state.mission ? state.mission.mission.id : undefined });
   if (resumed) {   // robustness hook: back in the same flight after a graphics failure (no tutorial / key card)
     gpu.report('resume', { why: resumed.crash ? 'crash' : resumed.reason || 'gpu', ac: choice.aircraftId });
     hud.showMessage(`Uçuşa kaldığın yerden devam ediliyor · Grafik: ${quality.label}${resumeNote ? ' · ' + resumeNote : ''}`, 4500);
     return;
   }
   clearResume();
+  if (state.mission) {   // missions hook: no first-flight tutorial over a mission (the briefing lists the essential controls)
+    const cur = state.settings || settings;
+    window.dispatchEvent(new CustomEvent('gokyuzu:settings', { detail: { ...cur, tutorial: false } }));   // (not saved)
+    onboarding.begin({ flight: state.flight, def: state.def, spawn });
+    window.dispatchEvent(new CustomEvent('gokyuzu:settings', { detail: cur }));   // hints stay on
+    state.mission.begin();
+    return;
+  }
   // onboarding hook: tutorial on the first flight of the category, otherwise the key card + start message
   onboarding.begin({ flight: state.flight, def: state.def, spawn });
 }
@@ -227,6 +271,7 @@ async function loadAircraft({ def, rig, standIn }) {
   input.setAircraft(def.spec);
   hud.setAircraft(def);
   Object.assign(state, { def, rig, flight, standIn });
+  if (landing) landing.attach(flight, def);   // missions hook: landing score card
   cameraRig.setAircraft(rigView, def);   // (reads bounds + eye now; follows whichever rig is current, see rigView)
   // audio streams in the background: the game starts without waiting and sounds fade in when their buffers arrive
   audio.loadAircraft(def.id).catch((e) => console.warn('[audio]', e));
@@ -448,8 +493,13 @@ function bindScreenMaterial(display, type) {
 }
 
 function bindFlightEvents(flight) {
-  flight.on('crash', () => { audio.play('crash'); hud.showMessage(`Kaza! ${flight.crashReason || ''}`.trim(), 3500); state.crashTimer = 4; });
+  flight.on('crash', () => {
+    if (state.mission && state.mission.claimCrash(flight)) return;   // missions hook: a rated ditching is not a crash
+    audio.play('crash'); hud.showMessage(`Kaza! ${flight.crashReason || ''}`.trim(), 3500);
+    state.crashTimer = state.mission ? 0 : 4;   // missions hook: the results screen instead of the automatic reset
+  });
   flight.on('touchdown', (i) => {
+    if (landingP) return;   // missions hook: the landing score card (src/ui/landing.js) replaces this message
     const vs = Math.abs(i.verticalSpeed);
     if (!flight.crashed) hud.showMessage((vs < 1 ? 'Tereyağı gibi iniş!' : vs < 2.5 ? 'Güzel iniş.' : 'Sert iniş.') + (i.onRunway ? '' : ' (pist dışı)'), 2500);
   });
@@ -464,7 +514,9 @@ function bindFlightEvents(flight) {
 
 function resetFlight() {
   const s = state.spawn;
-  state.flight.reset({ x: s.x, z: s.z, heading: s.heading, altitude: s.altitude, speed: s.altitude ? state.def.spec.spawnSpeed : undefined }, state.world);
+  if (state.mission) state.mission.resetFlight();   // missions hook: the mission's start state, objectives and failures
+  else state.flight.reset({ x: s.x, z: s.z, heading: s.heading, altitude: s.altitude, speed: s.altitude ? state.def.spec.spawnSpeed : undefined }, state.world);
+  if (landing) landing.reset();
   state.crashTimer = 0;
   if (input.setThrottle) input.setThrottle(state.flight.throttle ?? 0);   // lever follows the reset engine state
   syncRig(1);
@@ -520,7 +572,7 @@ input.on('help', () => { state.helpVisible = !state.helpVisible; hud.showHelp(in
 input.on('menu', goToMenu);
 input.on('map', () => navMap.toggle('key'));   // navigation hook: J opens / closes the map (Esc closes it too)
 // an accidental tab close / reload mid-flight (Ctrl+W on Windows, Cmd+W, F5) asks first instead of losing the flight
-guardUnload(() => !!state.flight && !state.halted);   // (robustness: the graphics-failure reload is not asked about)
+guardUnload(() => !!state.flight && !state.halted && !state.leaving);   // (robustness: the graphics-failure reload is not asked about; missions: "Sonraki görev")
 
 // ---- loop ----
 const timer = new THREE.Timer();
@@ -537,7 +589,7 @@ function frame(ts) {
   if (up && up.compiled && up.textures && !up.textures.length && up.replayed === up.log.length) swapAircraft(up);
   const { flight, rig, world } = state;
   if (flight && rig && world) {
-    if (!state.paused && !state.halted && !state.warming) {
+    if (!state.paused && !state.halted && !state.warming && !(state.mission && state.mission.hold)) {   // missions hook: held for the briefing / results
       if (!flight.crashed) {
         // invert pitch (settings) on a copy so the input module's own smoothing state is untouched
         let inp = input.state;
@@ -563,6 +615,8 @@ function frame(ts) {
     hud.update(flight, { world, spawn: state.spawn, view: cameraRig.view });
     navMap.update(dt, flight, world);   // navigation hook: track trail, map redraw while open
     onboarding.update(dt, flight, { view: cameraRig.view, paused: state.paused });   // onboarding hook
+    if (landing) landing.update(dt, flight);   // missions hook: landing score card (idle without a touchdown)
+    if (state.mission) state.mission.update(dt, { paused: state.paused || !!state.warming });   // missions hook
     touchUI.update(dt, flight, { view: cameraRig.view });   // mobile hook
     audio.update(dt, flight, { view: cameraRig.view, aircraftObject: rig.object, camera });
   }
@@ -665,7 +719,8 @@ function startFailed(e) {
   trackFail(state.world ? 'aircraft' : state.choice ? 'world' : 'menu', e && e.message, net);   // load failures were invisible in the analytics
   if (!loading) loading = createLoadingScreen(uiRoot);   // failed before the loading screen (version map, runways)
   const q = new URLSearchParams(location.search);
-  if (state.choice) { q.set('aircraft', state.choice.aircraftId); q.set('spawn', state.choice.spawnId); }
+  if (state.choice && state.choice.mission) { q.set('mission', state.choice.mission.id); if (state.choice.mission.daily) q.set('daily', state.choice.mission.daily); }   // missions hook
+  else if (state.choice) { q.set('aircraft', state.choice.aircraftId); q.set('spawn', state.choice.spawnId); }
   const url = q.toString() ? `${location.pathname}?${q}` : location.pathname;
   loading.showError(net ? undefined : `Oyun yüklenemedi: ${e.message}`, () => location.replace(url));
 }

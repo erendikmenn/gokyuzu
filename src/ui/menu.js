@@ -627,6 +627,27 @@ export function createMenu(container, { aircraft = [], spawns = [] } = {}) {
       resolve(result);
     }
 
+    // missions hook (src/ui/missions-menu.js, CONTRACTS-SF.md §12): "Görevler" + "Günün görevi" entry and panel, loaded
+    // once the menu is on screen; a mission closes the menu like "Uç" with { aircraftId, spawnId, mission: { id, daily } }
+    function startMission(sel) {
+      if (closed || !sel) return;
+      closed = true;
+      if (touch) enterFullscreen();
+      const a = list.find((x) => x.id === (sel.aircraft || '')) || currentAircraft();
+      const result = { aircraftId: a ? a.id : list[0].id, spawnId: spawnId || (a && a.defaultSpawn), mission: { id: sel.id, daily: sel.daily || null } };
+      cleanup();
+      if (hintBox && hintBox.el.isConnected) hintBox.el.remove();
+      root.classList.add('gkm-out');
+      setTimeout(() => root.remove(), 600);
+      resolve(result);
+    }
+    setTimeout(() => {
+      if (closed) return;
+      import(new URL('./missions-menu.js', import.meta.url).href)
+        .then((m) => { if (!closed) shared.missionsMenu = m.mountMissions({ root, brand, foot, container, touch, start: startMission }); })
+        .catch((e) => console.warn('[menu] missions', e));
+    }, 0);
+
     // ---------- keyboard (captured before the game input sees it) ----------
     function onKey(e) {
       if (closed || shared.modalOpen) return;            // the settings / credits modal handles its own keys

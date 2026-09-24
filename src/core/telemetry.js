@@ -102,12 +102,17 @@ try {
 // loop or a bouncing landing cannot flood the log. Values are short codes and numbers, never anything personal.
 const EVENT_CAP = 40;
 const eventCount = {};
+// missions hook (CONTRACTS-SF.md §12): a module may add fields to every event of a type, e.g. the landing score
+// (src/ui/landing.js) adds fpm / cl / tdz / st to `land`; fn(data) → { key: value } | null, never throws into the caller
+const eventExtras = {};
+export function setEventExtras(type, fn) { eventExtras[type] = typeof fn === 'function' ? fn : null; }
 /** Generic gameplay event, e.g. trackEvent('land', { ac: 'a320neo', vs: -1.2, rw: 1 }). */
 export function trackEvent(type, data = {}) {
   const t = String(type || '').replace(/[^a-z0-9_-]/gi, '').slice(0, 16);
   if (!t) return;
   eventCount[t] = (eventCount[t] || 0) + 1;
   if (eventCount[t] > EVENT_CAP) return;
+  if (eventExtras[t]) { try { const x = eventExtras[t](data); if (x) data = { ...data, ...x }; } catch { /* ignore */ } }
   send(t, data);
 }
 
