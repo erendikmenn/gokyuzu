@@ -130,7 +130,10 @@ const CSS = `
 @keyframes gkm-twinkle { from { opacity: .35; } to { opacity: .65; } }
 .gkm-scene { position: absolute; left: -3%; width: 106%; top: 40%; height: 60%;
   transform: translate(calc(var(--px) * -14px), calc(var(--py) * -6px)); }
-.gkm-scene svg { width: 100%; height: 100%; display: block; overflow: visible; }
+.gkm-scene > * { position: absolute; inset: 0; width: 100%; height: 100%; display: block; overflow: visible; }
+/* Everything that moves is its own compositor layer animated by transform / opacity only (layerScene() splits the
+   scene SVG): the fog bands are separate SVG layers, the sun streaks HTML boxes. Animated SVG children (and the CTA
+   sheen's former left) made the main thread restyle, lay out and repaint the menu 60 times a second. */
 .gm-far { fill: #3a3553; opacity: .85; }
 .gm-city { fill: #2e2d45; }
 .gm-near { fill: #10141f; }
@@ -139,12 +142,17 @@ const CSS = `
 .gm-bridge .gm-cable { fill: none; stroke: #0c101c; stroke-width: 3.2; }
 .gm-bridge .gm-susp { fill: none; stroke: #0c101c; stroke-width: .9; opacity: .9; }
 .gm-bridge .gm-rim { fill: none; stroke-width: 1.2; opacity: .75; }
-.gm-streak { fill: #ffb27a; opacity: .5; animation: gkm-shimmer 3.2s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
+.gkm-streaks { pointer-events: none; }
+.gkm-streaks > i { position: absolute; background: #ffb27a; opacity: .5; animation: gkm-shimmer 3.2s ease-in-out infinite; transform-origin: center; }
+.gm-streak { fill: #ffb27a; opacity: .5; }
 @keyframes gkm-shimmer { 0%, 100% { opacity: .15; transform: scaleX(.7); } 50% { opacity: .6; transform: scaleX(1.1); } }
 .gm-fog { opacity: .75; }
-.gm-fog-back { animation: gkm-fog 70s linear infinite alternate; }
-.gm-fog-front { animation: gkm-fog 46s linear infinite alternate-reverse; opacity: .5; }
-@keyframes gkm-fog { from { transform: translateX(-120px); } to { transform: translateX(60px); } }
+.gm-fog-front { opacity: .5; }
+/* the fog layers span the scene (1600 user units): -7.5 % … 3.75 % = −120 … 60 units, as the bands moved before */
+.gkm-scene > .gm-fog-back { animation: gkm-fog 70s linear infinite alternate; }
+.gkm-scene > .gm-fog-front { animation: gkm-fog 46s linear infinite alternate-reverse; }
+@keyframes gkm-fog { from { transform: translateX(-7.5%); } to { transform: translateX(3.75%); } }
+
 .gkm-jet { position: absolute; left: 0; top: 10%; width: calc(16 * var(--u1)); height: calc(16 * var(--u1)); opacity: 0;
   animation: gkm-jet 52s linear 3s infinite; }
 .gkm-jet .pf { width: 100%; height: 100%; overflow: visible; }
@@ -314,7 +322,8 @@ const CSS = `
 .gkm-fly:focus-visible { box-shadow: 0 0 0 2px #fff, 0 0 0 6px rgba(255, 107, 61, .55); }
 .gkm-fly::after { content: ""; position: absolute; top: 0; bottom: 0; width: 40%; left: -60%; transform: skewX(-20deg);
   background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .45), transparent); animation: gkm-sheen 4.5s ease-in-out 1.5s infinite; }
-@keyframes gkm-sheen { 0% { left: -60%; } 30%, 100% { left: 130%; } }
+/* (transform only: the box is 40 % of the button wide, so −60 % → 130 % of the button is +475 % of itself) */
+@keyframes gkm-sheen { 0% { transform: translateX(0) skewX(-20deg); } 30%, 100% { transform: translateX(475%) skewX(-20deg); } }
 .gkm-fly-l { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; }
 .gkm-fly-t { font-family: var(--gk-display); font-size: calc(30 * var(--u1)); font-weight: 850; letter-spacing: .01em; line-height: 1; }
 .gkm-fly-s { margin-top: calc(4 * var(--u1)); font-size: calc(11.5 * var(--u1)); font-weight: 650; opacity: .75; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: calc(230 * var(--u1)); }
@@ -355,6 +364,106 @@ const PLANE_ICON = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M21 16
 const ARROW_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>';
 
 /** maps (optional): { id, list: src/maps/index.js entries, load(id) → Promise<{ spawns }> } → a San Francisco / İstanbul choice. */
+/**
+ * Splits the menu's scene SVG (src/ui/art.js / a map's sceneSVG: hills, bridge, water, `.gm-fog` bands, `.gm-streaks`)
+ * into stacked layers with the same viewBox, in the same order: static runs stay SVG, each fog band becomes its own SVG
+ * layer (animated as a whole by transform), the sun streaks become HTML boxes (opacity / scale animations). The
+ * compositor then runs every loop without restyling or repainting the scene.
+ */
+function layerScene(scene) {
+  const svg = scene.querySelector('svg');
+  if (!svg) return;
+  const defs = svg.querySelector('defs');
+  const vb = svg.viewBox && svg.viewBox.baseVal;
+  const W = vb && vb.width ? vb.width : SCENE_VB.w, H = vb && vb.height ? vb.height : SCENE_VB.h;
+  const layers = [];
+  let run = null;
+  const newSvg = () => {
+    const l = svg.cloneNode(false);
+    if (defs) l.appendChild(defs.cloneNode(true));
+    layers.push(l);
+    return l;
+  };
+  for (const node of [...svg.children]) {
+    if (node === defs) continue;
+    const cls = node.classList;
+    if (cls && cls.contains('gm-fog')) {
+      const l = newSvg();
+      for (const c of cls) l.classList.add(c);    // the band's opacity and its animation move to the layer
+      node.removeAttribute('class');
+      l.appendChild(node);
+      run = null;
+    } else if (cls && cls.contains('gm-streaks')) {
+      const box = document.createElement('div');
+      box.className = 'gkm-streaks';
+      for (const r of node.querySelectorAll('rect')) {
+        const x = +r.getAttribute('x'), y = +r.getAttribute('y'), w = +r.getAttribute('width'), h = +r.getAttribute('height');
+        const rx = +(r.getAttribute('rx') || 0);
+        const i = document.createElement('i');
+        i.style.cssText = `left:${(x / W) * 100}%;top:${(y / H) * 100}%;width:${(w / W) * 100}%;height:${(h / H) * 100}%;`
+          + `border-radius:${(rx / w) * 100}% / ${(rx / h) * 100}%;${r.style.animationDelay ? `animation-delay:${r.style.animationDelay};` : ''}`;
+        box.appendChild(i);
+      }
+      layers.push(box);
+      run = null;
+    } else {
+      if (!run) run = newSvg();
+      run.appendChild(node);
+    }
+  }
+  scene.replaceChildren(...layers);
+}
+
+/**
+ * The menu's endless ambient loops, clocked from script at the rate each one needs. While any CSS animation runs, the
+ * compositor draws a new frame on every display refresh, and a menu frame is expensive (the side panel, cards and
+ * buttons blur what is behind them): ~7 ms of GPU-process CPU per frame on an M4 Max, the same whether the jet or only
+ * the button sheen moves. Here the loops are paused and their time is set explicitly: fog, stars and the sun streaks
+ * 15 times a second, the jet and the spawn-map ping 30 times (the jet while it crosses), the button sheen at the
+ * display rate during its sweep, and nothing while a value cannot change (the jet's hidden part, the sheen's rest) or
+ * the missions panel covers the scene.
+ * The motion is the one the CSS describes; only its sample rate differs. Returns { adopt(), stop() }.
+ */
+const LOOP_RATE = { 'gkm-fog': 15, 'gkm-twinkle': 15, 'gkm-shimmer': 15, 'gkm-jet': 30, 'gkm-ping': 30, 'gkm-sheen': 0 };   // Hz (0 = every frame)
+const LOOP_ACTIVE = { 'gkm-jet': 0.63, 'gkm-sheen': 0.31 };   // changing part of each iteration (fraction); constant after it
+function createLoopClock(root) {
+  const loops = [];
+  let raf = 0, stopped = false, t0 = performance.now(), lastAdopt = -1;
+  function adopt() {
+    for (let i = loops.length - 1; i >= 0; i--) { const t = loops[i].a.effect && loops[i].a.effect.target; if (!t || !t.isConnected) loops.splice(i, 1); }
+    const all = root.getAnimations ? root.getAnimations({ subtree: true }) : [];
+    for (const a of all) {
+      const name = a.animationName;
+      if (!(name in LOOP_RATE) || loops.some((l) => l.a === a)) continue;
+      const timing = a.effect && a.effect.getComputedTiming ? a.effect.getComputedTiming() : null;
+      if (!timing || timing.iterations !== Infinity) continue;   // (reduced motion: one short iteration, left to CSS)
+      const base = (a.currentTime || 0) - (performance.now() - t0);
+      a.pause();
+      loops.push({ a, name, base, rate: LOOP_RATE[name], active: LOOP_ACTIVE[name] || 1, delay: timing.delay || 0, dur: timing.duration || 1, parked: false, tick: -1 });
+    }
+    if (!raf && loops.length && !stopped) raf = requestAnimationFrame(frame);
+  }
+  function frame(now) {
+    raf = 0;
+    if (stopped || !root.isConnected) return;
+    raf = requestAnimationFrame(frame);
+    if (root.querySelector(':scope > .gkmm')) return;             // the missions panel covers the scene
+    const el = performance.now() - t0, grid = Math.floor(el / (1000 / 30));
+    if (grid % 30 === 0 && grid !== lastAdopt) { lastAdopt = grid; adopt(); }   // loops of re-rendered parts (spawn map ping)
+    for (const l of loops) {
+      const t = l.base + el;
+      const every = l.rate ? Math.round(30 / l.rate) : 0;
+      if (every && (grid % every !== 0 || grid === l.tick)) continue;
+      const phase = ((t - l.delay) % l.dur + l.dur) % l.dur / l.dur;
+      const changing = t >= l.delay && phase <= l.active;   // (before its delay a loop shows its resting style)
+      if (!changing) { if (l.parked) continue; l.parked = true; } else l.parked = false;
+      l.tick = grid;
+      l.a.currentTime = t;
+    }
+  }
+  return { adopt, stop() { stopped = true; if (raf) cancelAnimationFrame(raf); raf = 0; } };
+}
+
 export function createMenu(container, { aircraft = [], spawns = [], maps = null } = {}) {
   injectCSS('base', BASE_CSS);
   injectCSS('menu', CSS);
@@ -387,7 +496,9 @@ export function createMenu(container, { aircraft = [], spawns = [], maps = null 
     const jet = el('div', 'gkm-jet', root);
     jet.innerHTML = planformSVG('a320neo', { rotate: -86 });
     const scene = el('div', 'gkm-scene', root);
-    const sceneArt = () => { scene.innerHTML = mapInfo && mapInfo.sceneSVG ? mapInfo.sceneSVG(SCENE_VB) : goldenGateSceneSVG(); };   // maps hook
+    const loopClock = createLoopClock(root);
+    root.gkmLoops = loopClock;   // test hook (stop() freezes the ambient loops for screenshots)
+    const sceneArt = () => { scene.innerHTML = mapInfo && mapInfo.sceneSVG ? mapInfo.sceneSVG(SCENE_VB) : goldenGateSceneSVG(); layerScene(scene); loopClock.adopt(); };   // maps hook
     sceneArt();
     el('div', 'gkm-scrim', root);
     el('div', 'gkm-grain', root);
@@ -748,6 +859,7 @@ export function createMenu(container, { aircraft = [], spawns = [], maps = null 
     window.addEventListener('resize', layout);
     layout();
     function cleanup() {
+      loopClock.stop();
       window.removeEventListener('keydown', onKey, true);
       window.removeEventListener('keyup', onKey, true);
       window.removeEventListener('resize', layout);
@@ -757,6 +869,7 @@ export function createMenu(container, { aircraft = [], spawns = [], maps = null 
     renderHero(false);
     renderControls();
     refresh();
+    loopClock.adopt();   // (the whole menu exists now: the button sheen too)
     // touch: the chosen start point in view (scrolls the list only: scrollIntoView would also shift the menu itself)
     if (touch) {
       const sb = spawnButtons.get(spawnId);

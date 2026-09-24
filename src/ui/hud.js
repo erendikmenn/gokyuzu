@@ -515,7 +515,16 @@ export function createHUD(container) {
   //   cockpit / flyby / tower / HUD off: top strip → toast → warnings
   function positionTopStack() {
     let toastTop, warnTop;
-    if (view === 'cockpit' || cinematic || !visible) {
+    const ti = touchInsets;
+    if ((view === 'cockpit' || cinematic || !visible) && ti) {
+      // touch: the cockpit strip and the messages sit below the on-screen button row (at the top they covered its
+      // buttons: the strip spans more than the gap between the left and right groups on a phone)
+      const top = Math.round(ti.top);
+      stripBar.style.top = `${top}px`;
+      const stripH = visible ? (stripBar.offsetHeight || Math.round(44 * pscale)) : 0;
+      toastTop = top + (stripH ? stripH + 6 : 0); warnTop = toastTop + 62 * s;
+    } else if (view === 'cockpit' || cinematic || !visible) {
+      stripBar.style.top = '';
       toastTop = 66 * pscale; warnTop = toastTop + 62 * s;
     } else if (compact()) {
       const fmaTop = parseFloat(root.style.getPropertyValue('--fma-top')) || 64 * s;

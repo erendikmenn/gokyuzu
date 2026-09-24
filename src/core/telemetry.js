@@ -62,7 +62,11 @@ export function startTelemetry({ build, renderer, quality, state, extra = {} }) 
     const s = getState && getState();
     if (!s || !s.flying || s.paused || document.hidden) return;
     active++;
-    send('hb', { a: active, ac: s.aircraft, fps: Math.round(s.fps || 0), pr: s.pixelRatio && s.pixelRatio.toFixed(2), vw: s.view === 'cockpit' ? 'c' : 'e' });
+    // fps = drawn frames per second in flight; cap = what the frame pacing aims at (30 on phones, 60 on tablets, the
+    // player's setting; 0 = the display's rate), so the report can tell a capped phone from a slow one
+    const pacing = s.pacing || (globalThis.__game && globalThis.__game.pacing);
+    const cap = s.cap ?? (pacing && Number.isFinite(pacing.cap) ? pacing.cap : undefined);
+    send('hb', { a: active, ac: s.aircraft, fps: Math.round(s.fps || 0), cap, pr: s.pixelRatio && s.pixelRatio.toFixed(2), vw: s.view === 'cockpit' ? 'c' : 'e' });
   }, 60000);
   addEventListener('pagehide', () => send('end', { a: active }));
 }

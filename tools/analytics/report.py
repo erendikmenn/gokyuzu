@@ -530,6 +530,18 @@ def report_maps(real, visitors):
     print('Haritalar:', ' | '.join(rows) or '-')
 
 
+def fps_target(q):
+    """Frame rate a heartbeat aims at: its `cap` (frame pacing: 30 on phones, 60 on tablets, the player's setting),
+    60 for the display rate (cap 0) and for beacons from before the cap was sent (the old loop drew every refresh)."""
+    c = q.get('cap') or ''
+    return int(c) if c.isdigit() and int(c) > 0 else 60
+
+
+def fps_rel(q):
+    """Heartbeat fps as a share of its target (1.0 = the cap is held; a phone at 30 of 30 is not slow)."""
+    return min(1.0, int(q['fps']) / fps_target(q))
+
+
 def report_hourly(hours, first_seen, beacons, visitors, requests, only=None):
     """Hour by hour (Türkiye time), players only: visitors, new visitors (first request in the window), players (a flight
     beacon or an aircraft model download), flights, touch flights, active minutes (heartbeats), take-offs, landings
@@ -538,7 +550,7 @@ def report_hourly(hours, first_seen, beacons, visitors, requests, only=None):
     or a challenge; the landing entry left out), ist (people who flew İstanbul). only = a map id: the beacon columns
     count only that map's sessions (visitor / request columns stay for everyone)."""
     c = defaultdict(Counter)
-    fps = defaultdict(list)
+    fps, rel = defaultdict(list), defaultdict(list)
     players, mis, ffc, done, ist = (defaultdict(set) for _ in range(5))
     for evs in beacons.values():
         m = session_map(evs)
@@ -558,6 +570,7 @@ def report_hourly(hours, first_seen, beacons, visitors, requests, only=None):
                 c[h]['hb'] += 1
                 if (q.get('fps') or '').isdigit():
                     fps[h].append(int(q['fps']))
+                    rel[h].append(fps_rel(q))
             elif t == 'takeoff':
                 c[h]['takeoff'] += 1
             elif t == 'land':
@@ -586,12 +599,13 @@ def report_hourly(hours, first_seen, beacons, visitors, requests, only=None):
     new = Counter(hour_of(t) for t in first_seen.values())
     rel = release_hours()
     print(f"{'saat (TR)':<11}|{'ziyar.':>6}|{'yeni':>5}|{'oyna.':>5}|{'uçuş':>5}|{'dokun.':>6}|{'aktif dk':>8}|{'kalkış':>6}|{'iniş(pist)':>10}|{'kaza':>5}|"
-          f"{'eğit.bitti':>10}|{'fps':>4}|{'tel%':>4}|{'X/IG%':>5}|{'hata':>4}|{'GB':>5}|{'görev':>5}|{'ffc':>4}|{'tamam':>5}|{'ist':>4}| yayın")
+          f"{'eğit.bitti':>10}|{'fps':>4}|{'hdf%':>4}|{'tel%':>4}|{'X/IG%':>5}|{'hata':>4}|{'GB':>5}|{'görev':>5}|{'ffc':>4}|{'tamam':>5}|{'ist':>4}| yayın")
     for h in sorted(hours):
         r, k, n = hours[h], c[h], len(hours[h]['vis'])
         f = statistics.mean(fps[h]) if fps[h] else 0
+        fr = 100 * statistics.mean(rel[h]) if rel[h] else 0
         print(f"{h:%d.%m %H}:00|{n:6d}|{new[h]:5d}|{len(players[h]):5d}|{k['fly']:5d}|{k['touch']:6d}|{k['hb']:8d}|{k['takeoff']:6d}|"
-              f"{k['land']:5d}({k['landrw']:2d})  |{k['crash']:5d}|{k['tutdone']:10d}|{f:4.0f}|{100 * len(r['phone']) / n:4.0f}|{100 * len(r['iab']) / n:5.0f}|"
+              f"{k['land']:5d}({k['landrw']:2d})  |{k['crash']:5d}|{k['tutdone']:10d}|{f:4.0f}|{fr:4.0f}|{100 * len(r['phone']) / n:4.0f}|{100 * len(r['iab']) / n:5.0f}|"
               f"{k['err']:4d}|{r['bytes'] / 1e9:5.1f}|{len(mis[h]):5d}|{len(ffc[h]):4d}|{len(done[h]):5d}|{len(ist[h]):4d}| {rel.get(h, '')}")
     tot = set().union(*(r['vis'] for r in hours.values())) if hours else set()
     print(f"Toplam tekil ziyaretçi {len(tot)} · görev başlatan {len(set().union(*mis.values())) if mis else 0} · paneli açan "
@@ -713,6 +727,8 @@ def main():
         minutes = max(float(q.get('m', 0) or 0) for _, q, _ in evs)
         active = max([int(q.get('a', 0) or 0) for _, q, _ in evs] + [0])
         fps = [int(q['fps']) for q in hbs if q.get('fps', '').isdigit()]
+        rel = [fps_rel(q) for q in hbs if q.get('fps', '').isdigit()]
+        caps = Counter(int(q['cap']) if (q.get('cap') or '').isdigit() else None for q in hbs if q.get('fps', '').isdigit())
         kinds = [q.get('t') for _, q, _ in evs]
         tut = [q for _, q, _ in evs if q.get('t') == 'tut']
         sessions.append({
@@ -724,6 +740,7 @@ def main():
             'foreign': [q.get('e') for _, q, _ in evs if q.get('t') == 'err' and q.get('x') == 'foreign'],
             'vid': vid, 'start': start, 'minutes': max(minutes, (end - start).total_seconds() / 60), 'active': active,
             'aircraft': fly.get('ac'), 'spawn': fly.get('sp'), 'load': fly.get('lt'), 'fps': round(statistics.mean(fps)) if fps else None,
+            'fps_rel': statistics.mean(rel) if rel else None, 'cap': caps.most_common(1)[0][0] if caps else None,
             'gpu': first.get('gpu'), 'quality': fly.get('q') or first.get('q'), 'version': first.get('v') or fly.get('v'),
             'errors': [q.get('e') for _, q, _ in evs if q.get('t') == 'err' and q.get('x') != 'foreign'], 'exact': True,
             'map': session_map(evs),
@@ -747,7 +764,7 @@ def main():
                        and not p.endswith(('_lod.glb', '_cockpit.glb'))), None)
             sessions.append({'took_off': None, 'landings': 0, 'runway_landings': 0, 'crashes': [], 'tut_steps': [], 'dead': [], 'fail': [], 'foreign': [],
                              'vid': vid, 'start': start, 'minutes': (end - start).total_seconds() / 60, 'active': None,
-                             'aircraft': ac, 'spawn': None, 'load': None, 'fps': None, 'gpu': None, 'quality': None,
+                             'aircraft': ac, 'spawn': None, 'load': None, 'fps': None, 'fps_rel': None, 'cap': None, 'gpu': None, 'quality': None,
                              'version': None, 'errors': [], 'exact': False,
                              'map': next((m for m in MAPS if any(p.startswith(f'/assets/{m}/') for _, p in g)), 'sf')})
 
@@ -781,8 +798,13 @@ def main():
     print('Tarayıcı / sistem:', top(Counter(f"{visitors[v]['browser']}/{visitors[v]['system']}" for v in real_v)))
     fps = [s['fps'] for s in real if s['fps']]
     if fps:
-        low = sum(1 for f in fps if f < 40)
-        print(f'Performans: ortalama {statistics.mean(fps):.0f} fps · 40 fps altında: {low} oturum')
+        # heartbeat fps is the drawn rate: phones are capped at 30 (tablets 60, or 30 when 60 is not held), so a session
+        # is judged against its cap (fps_rel); sessions from before the cap was sent count against 60
+        rels = [s['fps_rel'] for s in real if s['fps_rel'] is not None]
+        low = sum(1 for r in rels if r < 0.8)
+        caps = Counter('eski' if s['cap'] is None else 'ekran' if s['cap'] == 0 else str(s['cap']) for s in real if s['fps'])
+        print(f'Performans: ortalama {statistics.mean(fps):.0f} fps · hedefin %{100 * statistics.mean(rels):.0f}’i · '
+              f'hedefin %80 altında: {low} oturum · hedef (fps): {top(caps)}')
         print('Ekran kartları:', top(Counter(s['gpu'] for s in real if s['gpu'])))
         print('Kalite ayarı:', top(Counter(s['quality'] for s in real if s['quality'])))
     exact_flights = [s for s in flights if s['exact']]
@@ -842,7 +864,7 @@ def main():
         v = visitors[s['vid']]
         ac = AIRCRAFT.get(s['aircraft'], s['aircraft'] or 'menüde kaldı')
         dur = fmt_min(s['minutes']) + (f" (aktif {s['active']} dk)" if s['active'] else '') + ('' if s['exact'] else ' ~')
-        extra = ' · '.join(x for x in [f"{s['fps']} fps" if s['fps'] else '', s['spawn'] or '', f"yükleme {s['load']} sn" if s['load'] else ''] if x)
+        extra = ' · '.join(x for x in [(f"{s['fps']}/{s['cap']} fps" if s['cap'] else f"{s['fps']} fps") if s['fps'] else '', s['spawn'] or '', f"yükleme {s['load']} sn" if s['load'] else ''] if x)
         who = f"  [{v['who']}]" if v['who'] else ''
         print(f"  #{s['vid']}  {s['start'].astimezone():%d.%m %H:%M}  {v['city']:<16} {v['browser'] + '/' + v['system']:<16} {ac:<12} {dur}"
               + (f'  · {extra}' if extra else '') + who)

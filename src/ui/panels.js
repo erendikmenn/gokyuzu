@@ -31,6 +31,10 @@ const VOLUMES = [
   ['ambient', 'Ortam'],
 ];
 const HUD_MODES = [['full', 'Tam'], ['compact', 'Sade'], ['off', 'Kapalı']];
+// frame rate cap in flight (settings.fps, src/app/frame-pacing.js): null = auto | 30 | 60 | 0 = no limit
+const FPS_MODES = [['auto', 'Otomatik'], ['30', '30', 'Pil dostu'], ['60', '60'], ['0', 'Sınırsız']];
+const fpsId = (v) => (v === 30 || v === 60 || v === 0 ? String(v) : 'auto');
+const fpsValue = (id) => (id === 'auto' ? null : Number(id));
 // random failures in free flight (src/flight/failures.js RANDOM_RATES)
 const FAILURE_MODES = [['off', 'Kapalı'], ['rare', 'Nadir'], ['realistic', 'Gerçekçi']];
 
@@ -216,6 +220,14 @@ export function openSettings(container) {
   note = el('div', 'gkp-note', g, '');
   updateNote();
 
+  // frame rate (applies live: main.js hands it to the frame pacer)
+  const fr = el('div', 'gkp-sec', m.card);
+  el('div', 'gkp-h', fr, 'Kare hızı');
+  const fps = segmented(fr, FPS_MODES, fpsId(s.fps), (id) => { s.fps = fpsValue(id); commit(); }, 'Kare hızı');
+  el('div', 'gkp-note', fr, touchMode()
+    ? 'Otomatik: telefonda 30 FPS, tablette 60 (tutturamazsa 30). 30 FPS cihazı daha az ısıtır ve pili daha uzun götürür.'
+    : 'Otomatik: ekranın yenileme hızı. 30 ya da 60 seçmek dizüstünde pili uzatır.');
+
   // audio
   const a = el('div', 'gkp-sec', m.card);
   el('div', 'gkp-h', a, 'Ses');
@@ -284,9 +296,9 @@ export function openSettings(container) {
   okb.type = 'button';
   okb.addEventListener('click', m.close);
   reset.addEventListener('click', () => {
-    s = { ...s, quality: auto, volumes: { ...DEFAULT_SETTINGS.volumes }, invertPitch: DEFAULT_SETTINGS.invertPitch, atc: DEFAULT_SETTINGS.atc, tutorial: DEFAULT_SETTINGS.tutorial, hudMode: null, failures: DEFAULT_SETTINGS.failures };
+    s = { ...s, quality: auto, volumes: { ...DEFAULT_SETTINGS.volumes }, invertPitch: DEFAULT_SETTINGS.invertPitch, atc: DEFAULT_SETTINGS.atc, tutorial: DEFAULT_SETTINGS.tutorial, hudMode: null, failures: DEFAULT_SETTINGS.failures, fps: DEFAULT_SETTINGS.fps };
     commit();
-    qs.set(s.quality); updateNote();
+    qs.set(s.quality); updateNote(); fps.set(fpsId(s.fps));
     for (const [key, { r, show }] of Object.entries(sliders)) { r.value = String(Math.round((s.volumes[key] ?? 1) * 100)); show(); }
     inv.set(s.invertPitch); if (atc) atc.set(s.atc); tut.set(s.tutorial !== false); hud.set('compact'); fails.set(s.failures);
     if (tiltSw && s.tilt) { s.tilt = false; commit(); tiltSw.set(false); }
