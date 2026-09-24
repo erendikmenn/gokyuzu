@@ -118,11 +118,34 @@ try {
   catalogOk = MISSIONS.every((m) => SHIPPED.missions[m.id] && SHIPPED.missions[m.id].aircraft.includes(m.aircraft));
 } catch { /* catalog not present: nothing to compare */ }
 check('shipped rules: every catalog mission present with its aircraft (rerun build_rules.mjs if not)', catalogOk);
+// free-flight challenges (src/missions/challenges.js): their own boards ff-<id>, every fitting aircraft, no daily boards
+{
+  let ffOk = true, detail = '';
+  try {
+    const { CHALLENGES, maxChallengeScore } = await import('../src/missions/challenges.js');
+    for (const c of CHALLENGES) {
+      const r = SHIPPED.missions[c.board];
+      const ok = r && c.board === `ff-${c.id}` && r.daily === false && c.aircraft.every((a) => r.aircraft.includes(a)) && r.aircraft.length === c.aircraft.length
+        && r.scoreMax >= maxChallengeScore(c) && (!Array.isArray(c.stars) || JSON.stringify(r.stars) === JSON.stringify(c.stars));
+      if (!ok) { ffOk = false; detail += `${c.board} `; }
+    }
+    ffOk = ffOk && CHALLENGES.length >= 8;
+  } catch (e) { ffOk = false; detail = e.message; }
+  check('shipped rules: every free-flight challenge has its ff- board with its aircraft, max score and stars', ffOk, detail);
+  const ffb = { mission: 'ff-bridge', score: 1700, stars: 3, ac: 'uh60', sid: SID };
+  check('shipped rules ff-bridge: any aircraft, no daily board, stars checked against the score',
+    checkScore(ffb, sctx).ok && checkScore({ ...ffb, ac: 'b737' }, sctx).ok && checkScore({ ...ffb, day: '20260924' }, sctx).error === 'day'
+    && checkScore({ ...ffb, score: 1500 }, sctx).error === 'stars' && checkTop({ mission: 'ff-bridge', day: '20260924' }, sctx).error === 'day'
+    && checkTop({ mission: 'ff-bridge' }, sctx).ok);
+  check('shipped rules ff-alcatraz / ff-eng: only the fitting aircraft', checkScore({ mission: 'ff-alcatraz', score: 2100, stars: 3, ac: 'f16', sid: SID }, sctx).error === 'ac'
+    && checkScore({ mission: 'ff-eng', score: 2000, stars: 2, ac: 'a320neo', sid: SID, sec: 240 }, sctx).ok
+    && checkScore({ mission: 'ff-eng', score: 2000, stars: 2, ac: 'f22', sid: SID }, sctx).error === 'ac');
+}
 for (const id of ids) {
   const r = SHIPPED.missions[id];
   const three = Array.isArray(r.stars) ? r.stars[2] : Math.min(r.scoreMax, 1500);
   const p = { mission: id, score: three, stars: 3, ac: r.aircraft[0], sid: SID, sec: Math.max(r.secMin, 30) };
-  check(`shipped rules ${id}: a 3-star run accepted (also as daily)`, checkScore(p, sctx).ok && checkScore({ ...p, day: '20260924' }, sctx).ok, JSON.stringify(checkScore(p, sctx)));
+  check(`shipped rules ${id}: a 3-star run accepted${r.daily === false ? '' : ' (also as daily)'}`, checkScore(p, sctx).ok && (r.daily === false || checkScore({ ...p, day: '20260924' }, sctx).ok), JSON.stringify(checkScore(p, sctx)));
   check(`shipped rules ${id}: impossible score / aircraft / 0 stars refused`, checkScore({ ...p, score: r.scoreMax + 1 }, sctx).error === 'score'
     && (r.aircraft.length === SHIPPED.aircraft.length || checkScore({ ...p, ac: SHIPPED.aircraft.find((a) => !r.aircraft.includes(a)) }, sctx).error === 'ac')
     && checkScore({ ...p, stars: 0 }, sctx).error === 'stars');

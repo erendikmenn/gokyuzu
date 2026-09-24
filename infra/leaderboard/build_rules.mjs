@@ -6,6 +6,9 @@
 // objective's maximum, over the default and 120 daily variations, +10 % margin), the time limit (+60 s), the star
 // thresholds (a submission may not claim more stars than its score earns; landing/ditch missions rate the touchdown
 // instead) and at least one star (only completed runs are submitted). Unknown mission ids are refused (strict).
+// Free-flight challenges (src/missions/challenges.js) get their own boards `ff-<id>` (not comparable to the missions:
+// any start, every fitting aircraft): the challenge's aircraft, its highest score (+10 %), its run limit (+60 s; no
+// limit: the default) and star thresholds; no daily boards.
 //   node infra/leaderboard/build_rules.mjs
 import { writeFileSync, readFileSync } from 'node:fs';
 
@@ -60,8 +63,25 @@ for (const def of MISSIONS) {
     daily: typeof def.daily === 'function',
   };
 }
+// free-flight challenges: boards ff-<id>
+let challenges = [];
+try {
+  const ch = await import('../../src/missions/challenges.js');
+  challenges = ch.CHALLENGES;
+  for (const c of challenges) {
+    if (missions[c.board]) { warnings.add(`${c.board}: clashes with a mission id`); continue; }
+    missions[c.board] = {
+      aircraft: c.aircraft.filter((a) => AIRCRAFT.includes(a)),
+      scoreMin: 0, scoreMax: Math.ceil(ch.maxChallengeScore(c) * 1.1), secMin: 1, secMax: c.limit ? c.limit + 60 : 7200, starsMin: 1,
+      ...(Array.isArray(c.stars) && c.stars.length === 3 ? { stars: c.stars } : {}),
+      daily: false,
+    };
+  }
+} catch (e) {
+  console.error(`build_rules: src/missions/challenges.js not usable (${e.message}); no free-flight boards`);
+}
 const rules = {
-  source: `src/missions/catalog.js (${MISSIONS.length} missions) via infra/leaderboard/build_rules.mjs`,
+  source: `src/missions/catalog.js (${MISSIONS.length} missions) + src/missions/challenges.js (${challenges.length} free-flight boards) via infra/leaderboard/build_rules.mjs`,
   strict: true,
   aircraft: AIRCRAFT,
   default: { scoreMin: 0, scoreMax: 100000, secMin: 1, secMax: 7200 },
@@ -73,4 +93,4 @@ let old = '';
 try { old = readFileSync(OUT, 'utf8'); } catch { /* first run */ }
 if (old !== text) writeFileSync(OUT, text);
 for (const w of warnings) console.error(`build_rules: ${w}`);
-console.error(`build_rules: ${MISSIONS.length} missions → lambda/rules.json${old === text ? ' (unchanged)' : ''}`);
+console.error(`build_rules: ${MISSIONS.length} missions + ${challenges.length} free-flight boards → lambda/rules.json${old === text ? ' (unchanged)' : ''}`);

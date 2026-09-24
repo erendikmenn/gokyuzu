@@ -1,5 +1,5 @@
 {
- "source": "src/missions/catalog.js (10 missions) via infra/leaderboard/build_rules.mjs",
+ "source": "src/missions/catalog.js (10 missions) + src/missions/challenges.js (10 free-flight boards) via infra/leaderboard/build_rules.mjs",
  "strict": true,
  "aircraft": [
   "f16",
@@ -111,9 +111,9 @@
     "b737"
    ],
    "scoreMin": 0,
-   "scoreMax": 3411,
+   "scoreMax": 3609,
    "secMin": 3,
-   "secMax": 450,
+   "secMax": 540,
    "starsMin": 1,
    "stars": [
     1000,
@@ -164,6 +164,162 @@
     1950
    ],
    "daily": true
+  },
+  "ff-bridge": {
+   "aircraft": [
+    "f16",
+    "f22",
+    "a320neo",
+    "b737",
+    "uh60"
+   ],
+   "scoreMin": 0,
+   "scoreMax": 1981,
+   "secMin": 1,
+   "secMax": 7200,
+   "starsMin": 1,
+   "stars": [
+    1000,
+    1450,
+    1650
+   ],
+   "daily": false
+  },
+  "ff-low-pass": {
+   "aircraft": [
+    "f16",
+    "f22",
+    "a320neo",
+    "b737",
+    "uh60"
+   ],
+   "scoreMin": 0,
+   "scoreMax": 3301,
+   "secMin": 1,
+   "secMax": 660,
+   "starsMin": 1,
+   "stars": [
+    1000,
+    1500,
+    1800
+   ],
+   "daily": false
+  },
+  "ff-bay-tour": {
+   "aircraft": [
+    "f16",
+    "f22",
+    "a320neo",
+    "b737",
+    "uh60"
+   ],
+   "scoreMin": 0,
+   "scoreMax": 2228,
+   "secMin": 1,
+   "secMax": 660,
+   "starsMin": 1,
+   "stars": [
+    900,
+    1250,
+    1500
+   ],
+   "daily": false
+  },
+  "ff-climb": {
+   "aircraft": [
+    "f16",
+    "f22",
+    "a320neo",
+    "b737"
+   ],
+   "scoreMin": 0,
+   "scoreMax": 4400,
+   "secMin": 1,
+   "secMax": 360,
+   "starsMin": 1,
+   "stars": [
+    1000,
+    2125,
+    2625
+   ],
+   "daily": false
+  },
+  "ff-alcatraz": {
+   "aircraft": [
+    "uh60"
+   ],
+   "scoreMin": 0,
+   "scoreMax": 2750,
+   "secMin": 1,
+   "secMax": 300,
+   "starsMin": 1,
+   "stars": [
+    1000,
+    1650,
+    2050
+   ],
+   "daily": false
+  },
+  "ff-landing": {
+   "aircraft": [
+    "f16",
+    "f22",
+    "a320neo",
+    "b737",
+    "uh60"
+   ],
+   "scoreMin": 0,
+   "scoreMax": 2200,
+   "secMin": 1,
+   "secMax": 7200,
+   "starsMin": 1,
+   "daily": false
+  },
+  "ff-eng": {
+   "aircraft": [
+    "a320neo",
+    "b737"
+   ],
+   "scoreMin": 0,
+   "scoreMax": 2420,
+   "secMin": 1,
+   "secMax": 960,
+   "starsMin": 1,
+   "daily": false
+  },
+  "ff-flameout": {
+   "aircraft": [
+    "f16"
+   ],
+   "scoreMin": 0,
+   "scoreMax": 2200,
+   "secMin": 1,
+   "secMax": 960,
+   "starsMin": 1,
+   "daily": false
+  },
+  "ff-ditch": {
+   "aircraft": [
+    "a320neo",
+    "b737"
+   ],
+   "scoreMin": 0,
+   "scoreMax": 2200,
+   "secMin": 1,
+   "secMax": 960,
+   "starsMin": 1,
+   "daily": false
+  },
+  "ff-autorot": {
+   "aircraft": [
+    "uh60"
+   ],
+   "scoreMin": 0,
+   "scoreMax": 2420,
+   "secMin": 1,
+   "secMax": 660,
+   "starsMin": 1,
+   "daily": false
   }
  },
  "test": [
