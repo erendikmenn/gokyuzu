@@ -134,7 +134,7 @@ export async function createTerrain(ctx) {
 
   // ---------------- quality (CONTRACTS-SF.md §8) ----------------
   const IMG_DEEPEST = Math.max(...index.nodes.filter((r) => r[8]).map((r) => r[0]));   // 8 (1 m/px)
-  const qual = { geo: 1, tex: 1, imgCap: IMG_DEEPEST, maxTex: 520, aniso: 8 };
+  const qual = { geo: 1, tex: 1, imgCap: IMG_DEEPEST, maxTex: 520, maxTiles: 950, aniso: 8 };
   const hasImg = (n) => n.img && n.L <= qual.imgCap;
   function refreshChildImg() { for (const n of nodes.values()) if (n.children) n.childImg = n.children.some(hasImg); }
   function readQuality(q) {
@@ -143,6 +143,9 @@ export async function createTerrain(ctx) {
     qual.geo = te; qual.tex = te;
     qual.imgCap = IMG_DEEPEST + Math.min(0, q.imageryMaxLevel ?? 0);
     qual.maxTex = q.maxImageryTiles ?? (q.imageryMaxLevel <= -2 ? 200 : q.imageryMaxLevel === -1 ? 320 : 520);   // robustness: per-preset/device GPU budget
+    // resident meshes (≈ 90 KB of vertex data + 14 KB of heights each) follow the imagery budget: a phone (90 imagery
+    // tiles) keeps ≤ 270 instead of 950; the selection itself needs 30–120
+    qual.maxTiles = q.maxTerrainTiles ?? Math.min(950, Math.max(260, Math.round(qual.maxTex * 3)));
     qual.release = !!q.releaseImages;
     qual.aniso = q.anisotropy ?? 8;
     setTerrainWaterQuality(q.water || 'high');
@@ -151,9 +154,13 @@ export async function createTerrain(ctx) {
   refreshChildImg();
 
   // ---------------- shared GPU resources ----------------
-  // The water/ground textures load right after the first playable frame (lateTextures, from the first update()), so
-  // their 2.5 MB do not delay the start; until then: bathymetry/shore distance and ground detail are flat, the waves
-  // come from waves_lo.png (64x64 = mip 3 of waves.png, 10 KB). Sampler settings as before, so the settled image is the same.
+  // The ground detail / wave textures load right after the first playable frame (lateTextures), so they do not delay
+  // the start; until then ground detail is flat and the waves come from waves_lo.png (64x64 = mip 3 of waves.png,
+  // 10 KB). Sampler settings as before, so the settled image is the same.
+  // The bathymetry (depth + shore distance) is part of the start: its upload (a 4096² texture is 64 MB, 84-160 ms in
+  // one call) happens behind the loading screen instead of in flight. Per device class (packs.json): desktops the
+  // 4096² original (32 m per texel), tablets its 2048² mip, phones its 1024² mip (85 / 21 / 5 MB of GPU memory;
+  // 1.4 / 0.3 / 0.1 MB to download); all smooth fields sampled with mip-mapping.
   const flat = (r, g, b) => { const t = new THREE.DataTexture(new Uint8Array([r, g, b, 255]), 1, 1, THREE.RGBAFormat); t.needsUpdate = true; return t; };
   const depthTex = flat(150, 255, 0);   // ~20 m deep, far from shore
   const setupWaves = (t) => {
@@ -175,17 +182,15 @@ export async function createTerrain(ctx) {
       t.anisotropy = Math.min(qual.aniso, maxAniso);
       shared.uDetailTex.value = t;
     }).catch((e) => console.warn('[terrain] detail', e));
-    // 4096² bathymetry: decoded off the main thread (an <img> is decoded again at upload: ~110 ms vs ~15 ms, same texels)
-    assetData(BASE + 'water_depth.png', 'blob').then((b) => createImageBitmap(b, { premultiplyAlpha: 'none', colorSpaceConversion: 'none' })).then((bmp) => {
-      const t = new THREE.Texture(bmp);
-      t.flipY = false;   // row 0 = north (rootMinZ), like every other terrain texture
-      t.colorSpace = THREE.NoColorSpace;
-      t.minFilter = THREE.LinearMipmapLinearFilter;
-      t.magFilter = THREE.LinearFilter;
-      t.needsUpdate = true;
-      shared.uDepthTex.value = t;
-    }).catch((e) => console.warn('[terrain] water_depth', e));
   };
+  // bathymetry: decoded off the main thread (an <img> is decoded again at upload: ~110 ms vs ~15 ms, same texels)
+  const wcls = ctx.quality && ctx.quality.deviceClass, wp = (ctx.packs && ctx.packs.terrain) || {};
+  const wvar = wcls === 'phone' ? wp.waterDepthTiny || wp.waterDepthSmall : wcls === 'tablet' ? wp.waterDepthSmall : null;
+  let waterDone = false;
+  const waterP = assetData(wvar && ctx.assets ? ctx.assets + wvar : BASE + 'water_depth.png', 'blob')
+    .then((b) => createImageBitmap(b, { premultiplyAlpha: 'none', colorSpaceConversion: 'none' }))
+    .catch((e) => { if (isNetworkError(e)) throw e; console.warn('[terrain] water_depth', e); return null; });
+  waterP.catch(() => {});
   let waveTex;
   try { waveTex = setupWaves(await loadTexture(BASE + 'waves_lo.png')); } catch (e) {
     if (isNetworkError(e)) throw e;
@@ -194,6 +199,18 @@ export async function createTerrain(ctx) {
   const maxAniso = renderer.capabilities.getMaxAnisotropy();
   const detailTex = flat(128, 128, 128);
   const shared = createTerrainShared({ depthTex, waveTex, detailTex, rootMinX: RX, rootMinZ: RZ });
+  waterP.then((bmp) => {
+    if (bmp && !disposed) {
+      const t = new THREE.Texture(bmp);
+      t.flipY = false;   // row 0 = north (rootMinZ), like every other terrain texture
+      t.colorSpace = THREE.NoColorSpace;
+      t.minFilter = THREE.LinearMipmapLinearFilter;
+      t.magFilter = THREE.LinearFilter;
+      t.needsUpdate = true;
+      try { renderer.initTexture(t); } catch { /* uploaded at first use */ }
+      shared.uDepthTex.value = t;
+    }
+  }).catch(() => { /* connection lost: the start fails elsewhere; flat water depth meanwhile */ }).finally(() => { waterDone = true; });
   // baked terrain shadows are valid only for the sun they were computed for
   if (index.bakedSun && ctx.sunDirection) {
     const el = index.bakedSun.elevationDeg * Math.PI / 180, az = index.bakedSun.azimuthDeg * Math.PI / 180;
@@ -293,8 +310,8 @@ export async function createTerrain(ctx) {
 
   /** Precomputed compressed height pack (tools/geo/terrain_pinpack.py): airports at full depth + landmarks.
    *  Tiles get heights + water bits (no baked sun visibility: the full tile is fetched when it is first rendered). */
-  async function loadPinPack() {
-    const buf = await loadDeflated(BASE + 'pins.bin');
+  async function loadPinPack(url = BASE + 'pins.bin') {
+    const buf = await loadDeflated(url);
     const dv = new DataView(buf);
     const hl = dv.getUint32(0, true);
     const hdr = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 4, hl)));
@@ -303,6 +320,7 @@ export async function createTerrain(ctx) {
     const acc = new Int32Array(NS * NS);
     for (const [L, i, j] of hdr.tiles) {
       const n = nodes.get(key(L, i, j));
+      if (n) n.pinned = true;   // (also tiles streamed meanwhile: an ancestor of pinned data must keep its heights)
       if (n && !n.heights) {
         // undo the 2D delta: c[y][x] = d[y][x] + c[y-1][x] + c[y][x-1] - c[y-1][x-1]
         const d = new Int16Array(buf.slice(off, off + NS * NS * 2));
@@ -472,7 +490,8 @@ export async function createTerrain(ctx) {
     mesh.visible = false;
     mesh.name = `terrain ${n.L}/${n.i}/${n.j}`;
     mesh.userData.node = n;
-    object.add(mesh);
+    // only the selected tiles are in the scene graph (select()): three.js walks every child of the scene each frame
+    // (matrix update, projection), and up to 950 hidden tiles were 7-13 % of the main thread with a slow CPU
     n.mesh = mesh;
     n.bitmap = null;
     n.state = READY;
@@ -503,7 +522,7 @@ export async function createTerrain(ctx) {
   // ---------------- LOD selection ----------------
   const GEO_PX = +(q.get('geoPx') || 3);           // max geometric error on screen (px, at <= 1200 px viewport height)
   const TEX_PX = +(q.get('texPx') || 1.6);         // max imagery texel size on screen (px)
-  const MAX_TILES = 950;   // + qual.maxTex resident imagery tiles (520 x 1.4 MB with mips at high)
+  // resident tiles: qual.maxTiles meshes (950 on desktop presets) + qual.maxTex imagery tiles (520 x 1.4 MB with mips at high)
   let frame = 0;
   const frustum = new THREE.Frustum();
   const projScreen = new THREE.Matrix4();
@@ -579,13 +598,16 @@ export async function createTerrain(ctx) {
     if (root.state !== READY) { request(root, 0); return; }
     traverse(root, omni);
     for (const m of prevVisible) m.visible = false;
-    prevVisible.length = 0;
     for (const m of visibleNow) {
       const n = m.userData.node;
       if (!m.visible && n.parent && n.parent.selected === frame - 1 && !omni) n.uMorph.value = 0;   // refined: rise from the parent
-      m.visible = true; prevVisible.push(m);
+      m.visible = true;
+      if (m.parent !== object) object.add(m);
       if (n.uMorph.value < 1) n.uMorph.value = Math.min(1, n.uMorph.value + morphStep);
     }
+    for (const m of prevVisible) if (!m.visible && m.parent === object) object.remove(m);
+    prevVisible.length = 0;
+    for (const m of visibleNow) prevVisible.push(m);
   }
 
   function processBuilt(budgetMs, maxTex) {
@@ -604,7 +626,7 @@ export async function createTerrain(ctx) {
   }
 
   function evict() {
-    const MAX_TEX = qual.maxTex;
+    const MAX_TEX = qual.maxTex, MAX_TILES = qual.maxTiles;
     if (loadedCount <= MAX_TILES && texCount <= MAX_TEX) return;
     const cands = [];
     for (const n of loadedSet) {
@@ -627,11 +649,17 @@ export async function createTerrain(ctx) {
   // ---------------- height queries ----------------
   // deepest node whose height data is loaded: identical to the rendered surface near the camera (the rendered cut is
   // the finest data there), and the full-resolution surface wherever finer data is cached or pinned
+  // Height data along any root path is a prefix (a tile is requested only below a ready parent, a parent is evicted only
+  // after its children, pins cover whole chains), so the answer is the deepest node with heights: the walk may start at
+  // the previous answer when it still has heights and contains the point (city placement, trees and draping query
+  // thousands of neighbouring points in a row: ~1 step instead of 8-10 from the root).
+  let lastNode = null;
   function nodeAt(x, z) {
     if (!root.heights) return null;
     const lx = (x - RX) / ROOT, lz = (z - RZ) / ROOT;
     if (lx < 0 || lz < 0 || lx >= 1 || lz >= 1) return null;
-    let n = root;
+    let n = lastNode;
+    if (!n || !n.heights || Math.floor(lx * (1 << n.L)) !== n.i || Math.floor(lz * (1 << n.L)) !== n.j) n = root;
     while (n.children) {
       const s = 1 << (n.L + 1);
       const ci = Math.floor(lx * s) - 2 * n.i, cj = Math.floor(lz * s) - 2 * n.j;
@@ -639,6 +667,7 @@ export async function createTerrain(ctx) {
       if (!c || !c.heights) break;
       n = c;
     }
+    lastNode = n;
     return n;
   }
   function sampleNode(n, x, z) {
@@ -709,7 +738,7 @@ export async function createTerrain(ctx) {
       focusCam.position.set(focus.x, g + 40, focus.z);
       focusCam.lookAt(focus.x + 100, g + 30, focus.z);
       step(focusCam, true, 0.016);
-      if (!isReady && ((root.state === READY && pinsDone && pendingNear === 0 && inflight === 0 && built.length === 0) || performance.now() - t0 > 25000)) {
+      if (!isReady && ((root.state === READY && pinsDone && waterDone && pendingNear === 0 && inflight === 0 && built.length === 0) || performance.now() - t0 > 25000)) {
         isReady = true;
         readyResolve();
       }
@@ -734,8 +763,34 @@ export async function createTerrain(ctx) {
   internalPump();   // start streaming the coarse focus view while the pinned heights load
   const tp = performance.now();
   let pinned = 0;
+  // Pinned heights split by 2 km cell (packs.json terrain.pins, tools/assets/packs.mjs): the start loads the cells
+  // around the spawn and every cell of the airport it is at (1.4 instead of 4.1 MB at SFO, 0.6 instead of 2.8 MB at
+  // İstanbul Havalimanı); the other cells follow near the camera after the start (pinTick). Each cell file carries its
+  // ancestor tiles, so height data along a root path stays a prefix.
+  const pinIdx = ctx.packs && ctx.packs.terrain && ctx.packs.terrain.pins && ctx.assets ? ctx.assets + ctx.packs.terrain.pins : null;
+  let pinGroups = null;
+  const pinDir = pinIdx ? pinIdx.slice(0, pinIdx.lastIndexOf('/') + 1) : '';
+  const boxDist = (b, x, z) => Math.hypot(Math.max(b[0] - x, 0, x - b[0] - b[2]), Math.max(b[1] - z, 0, z - b[1] - b[2]));
+  async function loadPinGroup(g) {
+    g.state = 'loading';
+    try { pinned += await loadPinPack(pinDir + g.file); g.state = 'done'; } catch (e) {
+      g.error = e;
+      g.state = isNetworkError(e) ? 'retry' : 'failed'; g.retryAt = performance.now() + retryDelay(++g.fails);
+      reportLoadFailure('terrain', `pinned heights ${g.key}`, e);
+    }
+  }
   try {
-    pinned = await loadPinPack();
+    const idx = pinIdx ? await assetData(pinIdx, 'json').catch((e) => { if (isNetworkError(e)) throw e; console.warn('[terrain] pin cells unavailable, using pins.bin', e.message); return null; }) : null;
+    if (idx) {
+      pinGroups = idx.groups.map((g) => ({ ...g, state: 'none', fails: 0 }));
+      // the spawn's surroundings (3 km) and every cell of a pinned area (airport / landmark) the spawn is in
+      const home = pinAreas.filter((a) => focus.x > a.x0 - 2000 && focus.x < a.x1 + 2000 && focus.z > a.z0 - 2000 && focus.z < a.z1 + 2000);
+      const first = pinGroups.filter((g) => !g.box || boxDist(g.box, focus.x, focus.z) < 3000
+        || home.some((a) => g.box[0] < a.x1 && g.box[0] + g.box[2] > a.x0 && g.box[1] < a.z1 && g.box[1] + g.box[2] > a.z0));
+      await Promise.all(first.map(loadPinGroup));
+      const lost = first.find((g) => g.state === 'retry');
+      if (lost) throw lost.error;   // connection lost before the start (a missing cell file only costs its exactness)
+    } else pinned = await loadPinPack();
   } catch (e) {
     if (isNetworkError(e)) { disposed = true; throw e; }   // connection lost before the start: connection error screen
     // fallback (no pack / no DecompressionStream): range-request the airport + landmark tiles
@@ -744,11 +799,40 @@ export async function createTerrain(ctx) {
   }
   pinsDone = true;
   stats.pinned = pinned; stats.pinSeconds = +((performance.now() - tp) / 1000).toFixed(2);
+  // after the start: the remaining cells near the camera, nearest first (desktop classes: all of them, in the
+  // background; phones / tablets: within 15 km, so a flight loads what it passes)
+  const pinMobile = !!(ctx.quality && (ctx.quality.deviceClass === 'phone' || ctx.quality.deviceClass === 'tablet'));
+  let pinTimer = 0, pinBusy = 0;
+  function pinTick(dt, cam) {
+    if (!pinGroups || (pinTimer -= dt) > 0) return;
+    pinTimer = 1;
+    const cx = cam.position.x, cz = cam.position.z, now = performance.now();
+    const todo = pinGroups.filter((g) => (g.state === 'none' || (g.state === 'retry' && now >= g.retryAt)) && g.box && (!pinMobile || boxDist(g.box, cx, cz) < 15000));
+    if (!todo.length) { if (pinGroups.every((g) => g.state === 'done' || g.state === 'failed')) pinGroups = null; return; }
+    todo.sort((a, b) => boxDist(a.box, cx, cz) - boxDist(b.box, cx, cz));
+    for (const g of todo.slice(0, Math.max(0, (pinMobile ? 1 : 2) - pinBusy))) { pinBusy++; loadPinGroup(g).finally(() => { pinBusy--; }); }
+  }
 
   return {
     object,
     getHeight,
     isWater,
+    /** Level of the height data getHeight(x, z) samples (-1 outside / nothing loaded): tells placed objects whether
+     *  finer terrain arrived since they were placed. */
+    levelAt(x, z) { const n = nodeAt(x, z); return n ? n.L : -1; },
+    /** True while pinned heights (packs) for a part of the box are still to come; asks for them first. */
+    pinsPending(x0, z0, x1, z1) {
+      if (!pinGroups) return false;
+      let pending = false;
+      for (const g of pinGroups) {
+        if (!g.box || g.state === 'done' || g.state === 'failed') continue;
+        if (g.box[0] >= x1 || g.box[0] + g.box[2] <= x0 || g.box[1] >= z1 || g.box[1] + g.box[2] <= z0) continue;
+        pending = true;
+        if (g.state === 'none' || (g.state === 'retry' && performance.now() >= g.retryAt)) loadPinGroup(g);
+        else if (g.state === 'retry') return false;   // connection trouble: place on what is there rather than wait
+      }
+      return pending;
+    },
     ready,
     stats,
     prof,
@@ -761,7 +845,7 @@ export async function createTerrain(ctx) {
       return out.set(-hx, 2 * e, -hz).normalize();
     },
     update(dt, camera) {
-      if (!lateStarted) lateTextures();   // the game loop's first update = the first playable frame
+      if (ctx.playable !== false) { if (!lateStarted) lateTextures(); pinTick(dt, camera); }   // after the first playable frame (world index.js)
       lastExternal = performance.now();
       step(camera, false, dt);
     },

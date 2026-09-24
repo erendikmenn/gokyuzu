@@ -18,6 +18,14 @@ function rng(seed) {
   let s = (seed * 2654435761) >>> 0 || 1;
   return () => { s ^= s << 13; s >>>= 0; s ^= s >> 17; s ^= s << 5; s >>>= 0; return s / 4294967296; };
 }
+/** Uniform [0, 1) from a position (quantized to 25 cm) and a type name: the same stand keeps its rank whatever the list. */
+function stableRank(x, z, type) {
+  let h = Math.imul(Math.round(x * 4), 73856093) ^ Math.imul(Math.round(z * 4), 19349663);
+  for (let k = 0; k < type.length; k++) h = Math.imul(h ^ type.charCodeAt(k), 16777619);
+  const r = rng(h >>> 0);
+  r();
+  return r();
+}
 
 // generic livery tail colours (sRGB hex) — no logos, only colour schemes
 const TAILS_NARROW = ['#1b3a78', '#0e2a5a', '#0b6f78', '#7a1422', '#1f4fb0', '#f0b21a', '#e9ecef', '#0d1d44', '#3b73c4', '#1a1a1d', '#7fa6cf', '#1e5c3a'];
@@ -319,6 +327,7 @@ export async function buildProps(meta, ctx, colliders) {
   batch.name = `apt-props-batch-${meta.icao}`;
   batch.castShadow = true;
   batch.receiveShadow = true;
+  batch.sortObjects = false;   // opaque: no per-frame depth sort of every instance (11-15 MB/s of garbage at an airport)
   for (const list of geoIds.values()) for (const e of list) e.gid = batch.addGeometry(e.g);
   for (const it of items) {
     _q.setFromAxisAngle(UP, -it.h);
@@ -365,7 +374,13 @@ export async function buildProps(meta, ctx, colliders) {
   };
   const lampMeshes = [];
   group.traverse((o) => { if (o.isInstancedMesh && lamps.includes(o.material)) lampMeshes.push(o); });
-  items.forEach((it, i) => { it.rank = rng(i * 104729 + 7)(); });    // stable per-item rank for density thinning
+  // per-item rank for density thinning: the item's place among the aircraft (or among the vehicles) ordered by a hash
+  // of its own position and type, so a fraction f keeps exactly round(f × n) of them and a data edit elsewhere moves
+  // at most a few across the threshold (it was a random number from the item's index in the list: any edit before it
+  // reshuffled which aircraft low presets / phones keep, and the kept count wandered: LTFM 170 → 179 on phones)
+  for (const group of [items.filter((it) => it.ac), items.filter((it) => !it.ac)]) {
+    group.map((it) => [stableRank(it.x, it.z, it.type), it]).sort((a, b) => a[0] - b[0]).forEach(([, it], k, all) => { it.rank = (k + 0.5) / all.length; });
+  }
   return { object: group, batch, items, aircraft, nearSets, lamps, lampMeshes, drapeJob, timer: 0, origin: [ox, oz], lastDay: -1, aircraftCount: count };
 }
 
@@ -428,7 +443,10 @@ export async function addAgentLods(p, ctx) {
     const entry = { type, list, near: [] };
     for (const id of AGENT_ID[type] || []) {
       const lod = await loadAgentLod(id, ctx);
-      if (lod) entry.near.push({ id, set: new NearSet(`${type}-${id}`, lod.parts, list.length, p.object), tris: lod.tris });
+      if (!lod) continue;
+      const set = new NearSet(`${type}-${id}`, lod.parts, list.length, p.object);
+      if (ctx.precompile) for (const im of set.meshes) await ctx.precompile(im);   // shaders before the first draw
+      entry.near.push({ id, set, tris: lod.tris });
     }
     if (entry.near.length) p.nearSets.push(entry);
   }

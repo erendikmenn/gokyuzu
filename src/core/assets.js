@@ -215,6 +215,63 @@ export async function assetData(path, as = 'arrayBuffer', init) {
   return fetchWithRetry(assetUrl(path), init, (r) => r[as]());
 }
 
+/**
+ * True when createImageBitmap honours its options (imageOrientation / resize): the same rule as three's GLTFLoader
+ * (Safari and iOS web views before 17 and Firefox before 98 ignore them and would upload images upside down).
+ */
+export function bitmapDecodeOk() {
+  if (typeof createImageBitmap !== 'function' || typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent || '';
+  const ios = /(?:iPhone|iPad|iPod).* OS (\d+)_/.exec(ua);
+  if (ios && Number(ios[1]) < 17) return false;
+  const safari = /^((?!chrome|android|crios|fxios).)*safari/i.test(ua) ? /Version\/(\d+)/.exec(ua) : null;
+  if (safari && Number(safari[1]) < 17) return false;
+  const ff = /Firefox\/(\d+)/.exec(ua);
+  if (ff && Number(ff[1]) < 98) return false;
+  return true;
+}
+
+/**
+ * A game image for a THREE.Texture, decoded off the main thread where the browser can (createImageBitmap: an <img>
+ * is decoded again, synchronously, when the texture is uploaded), optionally cut to `maxSize` (the device class's
+ * texture cap: the same box/high-quality downscale the GLB texture policy does). Resolves with
+ * { image, flipY, width, height, from: [w, h] }: set texture.flipY = flipY (a bitmap is already flipped like
+ * THREE.TextureLoader's images are at upload; the <img> fallback keeps three's default flipY = true).
+ * The fallback (old Safari / Firefox) is the plain <img> path, capped with a canvas when needed.
+ */
+export async function assetBitmap(path, { maxSize = 0, init } = {}) {
+  if (!bitmapDecodeOk()) {
+    const img = await assetImage(path, init);
+    const w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
+    if (maxSize && Math.max(w, h) > maxSize) {
+      const s = maxSize / Math.max(w, h), c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round(w * s)); c.height = Math.max(1, Math.round(h * s));
+      const g = c.getContext('2d');
+      g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
+      g.drawImage(img, 0, 0, c.width, c.height);
+      return { image: c, flipY: true, width: c.width, height: c.height, from: [w, h] };
+    }
+    return { image: img, flipY: true, width: w, height: h, from: [w, h] };
+  }
+  const blob = await assetData(path, 'blob', init);
+  let bmp;
+  try {
+    bmp = await createImageBitmap(blob, { imageOrientation: 'flipY', premultiplyAlpha: 'none' });
+  } catch (e) {
+    throw new Error(`image decode failed ${shortUrl(path)} (${e && e.message})`);
+  }
+  const w = bmp.width, h = bmp.height;
+  if (maxSize && Math.max(w, h) > maxSize) {
+    const s = maxSize / Math.max(w, h);
+    try {
+      const small = await createImageBitmap(bmp, { resizeWidth: Math.max(1, Math.round(w * s)), resizeHeight: Math.max(1, Math.round(h * s)), resizeQuality: 'high', premultiplyAlpha: 'none' });
+      bmp.close();
+      bmp = small;
+    } catch { /* resize unsupported: keep the full image (the renderer still uploads it) */ }
+  }
+  return { image: bmp, flipY: false, width: bmp.width, height: bmp.height, from: [w, h] };
+}
+
 /** Decoded HTMLImageElement of a game image (same orientation/colour handling as THREE.ImageLoader), with retries. */
 export async function assetImage(path, init) {
   const blob = await assetData(path, 'blob', init);
@@ -309,8 +366,22 @@ async function phoneVariant(url) {
   return map && map[rel] ? new URL(map[rel], ROOT).href : url;
 }
 
+/**
+ * Meshopt geometry (EXT_meshopt_compression: the city tiles of both maps) decodes in worker threads instead of on the main
+ * thread (GLTFLoader uses the decoder's async path when workers exist): 2 workers, 1 on phones. Once per page.
+ */
+let meshoptWorkers = false;
+function useMeshoptWorkers() {
+  if (meshoptWorkers || typeof Worker === 'undefined' || !MeshoptDecoder.supported) return;
+  meshoptWorkers = true;
+  let n = 2;
+  try { if (detectDevice().kind === 'phone') n = 1; } catch { /* no DOM */ }
+  try { MeshoptDecoder.useWorkers(n); } catch (e) { console.warn('[assets] meshopt workers unavailable', e && e.message); }
+}
+
 export function createAssetLoader(renderer, manager = THREE.DefaultLoadingManager) {
   applyAssetUrls(manager);
+  useMeshoptWorkers();
   const draco = new DRACOLoader(manager).setDecoderPath(LIBS + 'draco/gltf/');
   const ktx2 = shareKTX2(new KTX2Loader(manager).setTranscoderPath(LIBS + 'basis/'));
   if (renderer) ktx2.detectSupport(renderer);

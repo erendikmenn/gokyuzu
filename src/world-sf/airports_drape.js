@@ -1,7 +1,9 @@
 // W4 airports: incremental re-draping. ctx.terrain.getHeight samples the terrain LOD that is currently rendered, so an
 // airport built while the camera was far away sits on coarse heights (errors of 1-2 m measured). While the camera is
 // near an airport, its heights are re-sampled a few thousand per frame and every draped thing is re-grounded:
-// pavement + paint vertices, light sprites, light fixtures, signs, props and whole buildings.
+// pavement + paint vertices, light sprites, light fixtures, signs, props and whole buildings. A pass runs only while
+// the terrain under the airport is getting finer (the caller compares levelSignature() before and after) or the last
+// pass still moved something; sample() returns a shared [x, z] pair (no allocation per sample).
 import * as THREE from 'three';
 
 /** A drape job walks `n` items: sample(i) -> [worldX, worldZ]; apply(i, h) -> true if something moved. */
@@ -26,8 +28,8 @@ export class Draper {
       const end = Math.min(job.n, this.item + budget);
       let changed = false;
       for (let i = this.item; i < end; i++) {
-        const [x, z] = job.sample(i);
-        if (job.apply(i, t.getHeight(x, z))) changed = true;
+        const s = job.sample(i);   // (no destructuring: an iterator per sample was 10-18 MB/s of garbage at an airport)
+        if (job.apply(i, t.getHeight(s[0], s[1]))) changed = true;
       }
       budget -= end - this.item;
       this.item = end;
@@ -50,6 +52,20 @@ export class Draper {
 }
 
 const EPS = 0.03;
+
+/** Finest terrain height level seen so far on a 6×6 grid over a square (centre cx, cz, half size r), as a string that
+ *  changes only when finer heights than ever before arrive under a grid point (`seen`: the per-point maxima, updated);
+ *  '' when the terrain cannot tell (then the caller re-drapes on its timer as before). */
+export function levelSignature(terrain, cx, cz, r, seen) {
+  if (!terrain || !terrain.levelAt) return '';
+  let sig = '';
+  for (let j = 0, k = 0; j < 6; j++) for (let i = 0; i < 6; i++, k++) {
+    const lv = terrain.levelAt(cx - r + (2 * r * (i + 0.5)) / 6, cz - r + (2 * r * (j + 0.5)) / 6);
+    if (lv > seen[k]) seen[k] = lv;
+    sig += String.fromCharCode(66 + seen[k]);
+  }
+  return sig;
+}
 
 /** Pavement / paint mesh: positions x,z are relative to `origin`, y = ground + off. */
 export function meshJob(mesh, origin, off) {

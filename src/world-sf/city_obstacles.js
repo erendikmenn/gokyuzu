@@ -12,14 +12,14 @@ async function gunzip(buf) {
   return new Response(new Blob([buf]).stream().pipeThrough(ds)).arrayBuffer();
 }
 
-export function createCityObstacles({ base, index, terrain }) {
+export function createCityObstacles({ base, index, terrain, maxTiles = 160 }) {
   const size = index.size, cell = index.cell;
   const available = new Set(index.tiles);
   const tiles = new Map();      // key -> { solids, raster, n, x0, z0, ground }
   const pending = new Map();
   const retry = new Map();      // key -> { at, fails }: tiles whose download failed on a lost connection
-  const lru = [];
-  const MAX = 160;
+  let useClock = 0;   // least recently queried tile goes first (it was the oldest loaded, even while still queried)
+  const MAX = maxTiles;   // resident tiles (LRU): ~140 KB of JS heap each
   const getH = (x, z) => (terrain ? terrain.getHeight(x, z) : 0);
 
   function key(i, j) { return i + '_' + j; }
@@ -36,9 +36,12 @@ export function createCityObstacles({ base, index, terrain }) {
         const solids = new Float32Array(buf, HEADER, n * 3);
         const raster = new Uint16Array(buf.slice(HEADER + n * 12, HEADER + n * 12 + w * h * 2));
         const ground = new Float32Array(n).fill(NaN);
-        tiles.set(k, { solids, raster, n, w, x0: i * size, z0: j * size, ground });
-        lru.push(k);
-        while (lru.length > MAX) tiles.delete(lru.shift());
+        tiles.set(k, { solids, raster, n, w, x0: i * size, z0: j * size, ground, used: ++useClock });
+        while (tiles.size > MAX) {
+          let oldK = null, oldU = Infinity;
+          for (const [kk, tt] of tiles) if (tt.used < oldU) { oldU = tt.used; oldK = kk; }
+          tiles.delete(oldK);
+        }
         pending.delete(k);
         retry.delete(k);
       }).catch((e) => {
@@ -61,6 +64,7 @@ export function createCityObstacles({ base, index, terrain }) {
   function cellTop(x, z) {
     const i = Math.floor(x / size), j = Math.floor(z / size);
     const t = tiles.get(key(i, j));
+    if (t) t.used = ++useClock;
     if (!t) { if (available.has(key(i, j))) load(i, j); return -Infinity; }
     const c = Math.floor((x - t.x0) / cell), r = Math.floor((z - t.z0) / cell);
     if (c < 0 || r < 0 || c >= t.w || r >= t.w) return -Infinity;

@@ -4,7 +4,7 @@
 // once every tile of the new level is loaded (no holes), drops every building onto the live terrain
 // (ctx.terrain.getHeight) and answers heightAt / hitTest from 4 m building obstacle rasters (trees are not obstacles).
 import * as THREE from 'three';
-import { assetData, withRetry, isNetworkError, reportLoadFailure, retryDelay } from '../core/assets.js';
+import { assetData, isNetworkError, reportLoadFailure, retryDelay } from '../core/assets.js';
 import { createCityMaterial, prepareCityGeometry, setAnisotropy } from './city_material.js';
 import { createCityObstacles } from './city_obstacles.js';
 import { createCityTrees } from './city_trees.js';
@@ -12,6 +12,14 @@ import { createCityTrees } from './city_trees.js';
 const BASE = 'assets/sf/city/';
 function freeArray() { this.array = null; }
 const DEFAULTS = { r0: 1300, r1: 3600, r2: 8000, rMax: 26000, maxLoads: 4, unloadAfter: 20, frameBudgetMs: 3, uploadsPerFrame: 1, warmUpload: true, lodScale: 1, shadows: true, readyRadius: 900 };
+// Streaming at speed (a fighter at 500 kt crosses a 1 km L0 tile in 4 s): the camera's smoothed ground speed shrinks the
+// L0 and L1 rings (s = 0 below ~230 kt, 1 above ~500 kt; phones and tablets more), requests are ordered by the distance
+// from where the camera will be in LOOKAHEAD s, tiles behind the view last, and downloads nobody wants any more are
+// cancelled. Paused / slow flight (every reference pose) is unchanged.
+const SPEED_LO = 120, SPEED_HI = 260, LOOKAHEAD = 2.5;
+// far tiles (L2 blocks, L3 towers) are small but were never unloaded: a long flight kept every one it passed (a 10-min
+// İstanbul flight: +37 geometries a minute, +75 MB of buffers on a phone); they go after FAR_UNLOAD_S unused seconds
+const FAR_UNLOAD_S = { phone: 30, tablet: 45, default: 120 };
 
 export async function createCity(ctx, options = {}) {
   const opt = { ...DEFAULTS, ...options };
@@ -24,8 +32,16 @@ export async function createCity(ctx, options = {}) {
   const base = options.base || (ctx.map ? `${ctx.map.assets}city/` : BASE);   // the active map's (src/maps/index.js)
   const { terrain, focus = { x: 0, z: 0 } } = ctx;
   const getH = (x, z) => (terrain ? terrain.getHeight(x, z) : 0);
+  // facade atlas per device class (packs.json): tablets 256² cells (the 512² cells' mip 1), phones 128² (mip 2):
+  // 3 × 49 → 3 × 12 / 3 × 3 MB of GPU memory, a quarter / a sixteenth of the decode work at start; loaded in parallel
+  // with the tile index
+  const cls = q0 && q0.deviceClass, cp = (ctx.packs && ctx.packs.city) || {};
+  const atlasVar = ctx.assets && (cls === 'phone' ? cp.atlasTiny || cp.atlasSmall : cls === 'tablet' ? cp.atlasSmall : null);
+  const farUnload = FAR_UNLOAD_S[cls] || FAR_UNLOAD_S.default;
+  const materialP = createCityMaterial(ctx.renderer, atlasVar ? ctx.assets + atlasVar : base + 'atlas/', q0 && q0.anisotropy);
+  materialP.catch(() => {});
   const index = await assetData(base + 'index.json', 'json');
-  const { material, materialFar, uniforms, textures } = await createCityMaterial(ctx.renderer, base + 'atlas/', q0 && q0.anisotropy);
+  const { material, materialFar, uniforms, textures } = await materialP;
   const gltf = ctx.loader?.gltf || (await import('../core/assets.js')).createAssetLoader(ctx.renderer).gltf;
 
   const group = new THREE.Group();
@@ -56,6 +72,14 @@ export async function createCity(ctx, options = {}) {
   }
   const lvlMap = (n) => (levels.find((l) => l.level === n) || { map: new Map() }).map;
   const L0 = lvlMap(0), L1 = lvlMap(1), L2 = lvlMap(2), L3 = lvlMap(3);
+  // repackaged levels (packs.json city.tiles: San Francisco's Draco tiles as meshopt, tools/assets/city_meshopt.mjs)
+  const packTiles = (ctx.packs && ctx.packs.city && ctx.packs.city.tiles && ctx.assets) ? ctx.packs.city.tiles : {};
+  const tileUrl = (rec) => (packTiles[rec.dir] ? `${ctx.assets}${packTiles[rec.dir]}/${rec.i}_${rec.j}.glb` : `${base}${rec.dir}/${rec.i}_${rec.j}.glb`);
+  const mobileClass = !!(q0 && (q0.deviceClass === 'phone' || q0.deviceClass === 'tablet'));
+  const motion = { speed: 0, vx: 0, vz: 0, fx: 0, fz: -1, s: 0, init: false, px: 0, pz: 0 };
+  const pred = new THREE.Vector3();
+  /** Ring scales from the smoothed speed: L0 ring × (1 − 0.5 s) (phones / tablets 1 − 0.65 s), L1 × (1 − 0.25 s). */
+  const ringScale = (level) => (level === 0 ? 1 - (mobileClass ? 0.65 : 0.5) * motion.s : 1 - 0.25 * motion.s);
 
   function dist(cam, b) {
     const dx = Math.max(b.minX - cam.x, 0, cam.x - b.maxX);
@@ -77,13 +101,34 @@ export async function createCity(ctx, options = {}) {
     rec.prio = prio;
     queue.push(rec);
   }
+  /** Request priority in flight: distance from the predicted camera position, tiles behind the view pushed back. */
+  function flightPrio(t, cam) {
+    const d = dist(pred, t);
+    const cx = (t.minX + t.maxX) / 2 - cam.x, cz = (t.minZ + t.maxZ) / 2 - cam.z;
+    const L = Math.hypot(cx, cz);
+    const behind = L < 700 ? 0 : Math.max(0, -(cx * motion.fx + cz * motion.fz) / L);
+    return d * (1 + 1.5 * behind) + (t.level >= 2 ? 2000 : 0);
+  }
 
   // Loaded GLBs go through a per-frame time-budgeted pipeline so streaming never stalls a frame:
-  //   'place'  terrain placement of the vertices in slices (≈ 8k vertices per slice, budget opt.frameBudgetMs)
+  //   'place'  terrain placement of the vertices in slices (2k vertices per slice, budget opt.frameBudgetMs)
   //   'upload' GPU upload of the finished tile, one tile per frame, by drawing it into a 1x1 render target
   const jobs = [];
   const warm = { scene: new THREE.Scene(), target: new THREE.WebGLRenderTarget(1, 1), camera: new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1) };
   warm.scene.matrixWorldAutoUpdate = false;
+  // the warm-up draw only has to upload the buffers (three.js uploads every attribute of a drawn geometry): a trivial
+  // material instead of the city shader, whose render-target variant (linear output, no tone mapping) was a second
+  // program per material, compiled synchronously in flight (~150 ms with a 4x slower CPU)
+  warm.scene.overrideMaterial = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false, depthTest: false });
+  // the city shaders for the screen, compiled in the background before the first tile shows (not in the frame that
+  // first draws a near / far tile)
+  if (ctx.precompile) {
+    const g = new THREE.BufferGeometry();
+    for (const [k, n] of [['position', 3], ['normal', 3], ['aFacade', 2], ['aLayer', 2], ['aTint', 4]]) g.setAttribute(k, new THREE.BufferAttribute(new Float32Array(3 * n), n));
+    const pre = new THREE.Group();
+    for (const m of [material, materialFar]) { const o = new THREE.Mesh(g, m); o.receiveShadow = true; pre.add(o); }
+    ctx.precompile(pre).then(() => g.dispose());
+  }
 
   function pump() {
     if (!queue.length || active >= opt.maxLoads) return;
@@ -91,8 +136,14 @@ export async function createCity(ctx, options = {}) {
     while (queue.length && active < opt.maxLoads) {
       const rec = queue.shift();
       active++;
-      const url = `${base}${rec.dir}/${rec.i}_${rec.j}.glb`;
-      withRetry(() => gltf.loadAsync(url), url).then((g) => {
+      rec.state = 'loading';
+      loading.add(rec);
+      const ac = typeof AbortController === 'function' ? new AbortController() : null;
+      rec.abort = ac;
+      // downloaded here (cancellable when the tile is no longer wanted), parsed by the shared GLTFLoader (meshopt in
+      // its workers, Draco in DRACOLoader's)
+      assetData(tileUrl(rec), 'arrayBuffer', ac ? { signal: ac.signal } : undefined).then((buf) => gltf.parseAsync(buf, '')).then((g) => {
+        if (ac && ac.signal.aborted) throw Object.assign(new Error('aborted'), { name: 'AbortError' });
         let mesh = null;
         g.scene.traverse((o) => { if (o.isMesh && !mesh) mesh = o; });
         if (!mesh) throw new Error('no mesh');
@@ -103,12 +154,13 @@ export async function createCity(ctx, options = {}) {
         rec.state = 'processing';
         rec.fails = 0;
       }).catch((e) => {
+        if ((e && e.name === 'AbortError') || (ac && ac.signal.aborted)) { rec.state = 'none'; aborted++; return; }   // no longer wanted
         // connection lost: asked again after a delay (select); missing/broken tile: stays failed (a hole, no retries)
         rec.fails = (rec.fails || 0) + 1;
         rec.retryAt = isNetworkError(e) ? clock + retryDelay(rec.fails) / 1000 : 0;
         rec.state = 'failed';
         reportLoadFailure('city', `tile ${rec.dir}/${rec.i}_${rec.j}`, e);
-      }).finally(() => { active--; });
+      }).finally(() => { active--; rec.abort = null; loading.delete(rec); });
     }
   }
 
@@ -176,30 +228,35 @@ export async function createCity(ctx, options = {}) {
       warm.scene.remove(mesh);
       mesh.frustumCulled = true;
     }
-    mesh.visible = false;
-    buildings.add(mesh);
+    mesh.visible = true;   // (added to the scene graph when its cell displays it)
     rec.mesh = mesh;
     rec.state = 'ready';
     loadedTiles.add(rec);
   }
 
+  // A tile is placed on the terrain as loaded when its placement starts, and never again (its CPU arrays are freed after
+  // upload). Where the terrain pack has full-depth heights for the tile's area that are still on their way (the
+  // pinned cells stream after the start), the tile waits for them (terrain.pinsPending also moves them up the queue).
+  const waitsForPins = (job) => job.v === 0 && terrain && terrain.pinsPending && terrain.pinsPending(job.rec.minX, job.rec.minZ, job.rec.maxX, job.rec.maxZ);
   function processJobs(budgetMs, maxUploads = opt.uploadsPerFrame) {
     const t0 = performance.now();
-    let uploads = 0;
-    while (jobs.length && performance.now() - t0 < budgetMs) {
-      const job = jobs[0];
-      if (job.rec.state !== 'processing') { jobs.shift(); continue; }
+    let uploads = 0, k = 0;
+    while (k < jobs.length && performance.now() - t0 < budgetMs) {
+      const job = jobs[k];
+      if (job.rec.state !== 'processing') { jobs.splice(k, 1); continue; }
       if (job.phase === 'place') {
-        if (placeSlice(job, 8192)) job.phase = 'upload';
+        if (waitsForPins(job)) { k++; continue; }
+        if (placeSlice(job, 2048)) job.phase = 'upload';
         continue;
       }
-      if (uploads >= maxUploads) break;
-      finish(jobs.shift());
+      if (uploads >= maxUploads) { k++; continue; }
+      finish(jobs.splice(k, 1)[0]);
       uploads++;
     }
   }
 
   function unload(rec) {
+    if (rec.abort) rec.abort.abort();
     if (rec.state === 'processing') {
       const k = jobs.findIndex((j) => j.rec === rec);
       if (k >= 0) { jobs[k].mesh.geometry.dispose(); jobs.splice(k, 1); }
@@ -214,8 +271,9 @@ export async function createCity(ctx, options = {}) {
   }
 
   // ---- LOD selection per 2 km cell ------------------------------------------------------------------------------
-  const camPos = new THREE.Vector3();
-  let clock = 0, lastSelect = -1;
+  const camPos = new THREE.Vector3(), camFwd = new THREE.Vector3();
+  let clock = 0, lastSelect = -1, aborted = 0;
+  const loading = new Set();   // tiles being downloaded / parsed
   const lastCam = new THREE.Vector3(1e9, 0, 0);
 
   function wanted(c, cam) {
@@ -225,7 +283,7 @@ export async function createCity(ctx, options = {}) {
       const t = L3.get(tkey(c.i, c.j));
       return { key: 'L3', tiles: t ? [t] : [] };
     }
-    if (d > opt.r1) {
+    if (d > opt.r1 * ringScale(1)) {
       const t = L2.get(tkey(c.i, c.j));
       return { key: 'L2', tiles: t ? [t] : [] };
     }
@@ -235,7 +293,7 @@ export async function createCity(ctx, options = {}) {
       const i1 = c.i * 2 + a, j1 = c.j * 2 + b;
       const t1 = L1.get(tkey(i1, j1));
       const bb = t1 || { minX: i1 * 1000, maxX: i1 * 1000 + 1000, minZ: j1 * 1000, maxZ: j1 * 1000 + 1000, maxY: 50 };
-      if (dist(cam, bb) / opt.lodScale > opt.r0) {
+      if (dist(cam, bb) / opt.lodScale > opt.r0 * ringScale(0)) {
         key += '1';
         if (t1) tiles.push(t1);
       } else {
@@ -249,8 +307,9 @@ export async function createCity(ctx, options = {}) {
     return { key, tiles };
   }
 
-  function select(cam) {
+  function select(cam, flying = false) {
     const now = clock;
+    if (flying) pred.set(cam.x + motion.vx * LOOKAHEAD, cam.y, cam.z + motion.vz * LOOKAHEAD);
     for (const c of cells.values()) {
       const w = wanted(c, cam);
       const d = dist(cam, c);
@@ -260,40 +319,47 @@ export async function createCity(ctx, options = {}) {
         if (t.state === 'failed' && t.retryAt && now >= t.retryAt) { t.state = 'none'; t.retryAt = 0; }
         if (t.state !== 'ready' && t.state !== 'failed') {
           allReady = false;
-          if (t.state === 'processing') continue;
-          request(t, dist(cam, t) + (t.level >= 2 ? 2000 : 0));
+          if (t.state === 'processing' || t.state === 'loading') continue;
+          request(t, flying ? flightPrio(t, cam) : dist(cam, t) + (t.level >= 2 ? 2000 : 0));
         }
       }
       if (allReady && w.key !== c.displayKey) {
-        if (c.display) for (const t of c.display) if (t.mesh) t.mesh.visible = false;
+        // only displayed tiles are in the scene graph (three.js walks every child each frame)
+        if (c.display) for (const t of c.display) if (t.mesh) t.mesh.removeFromParent();
         c.display = w.tiles;
         c.displayKey = w.key;
-        for (const t of c.display) if (t.mesh) t.mesh.visible = true;
+        for (const t of c.display) if (t.mesh) buildings.add(t.mesh);
       }
       if (c.display) for (const t of c.display) t.lastUsed = now;
       c.dist = d;
     }
-    // evict tiles unused for a while (L2 tiles are small: keep them)
-    for (const rec of [...loadedTiles]) {
-      if (rec.level < 2 && now - rec.lastUsed > opt.unloadAfter) unload(rec);
+    // evict tiles unused for a while (the small far tiles after a longer time)
+    for (const rec of loadedTiles) {
+      if (now - rec.lastUsed > (rec.level < 2 ? opt.unloadAfter : farUnload)) unload(rec);
     }
-    // drop queued requests that are no longer wanted
+    // drop queued requests that are no longer wanted, cancel such downloads (at speed: tiles already passed)
     for (let k = queue.length - 1; k >= 0; k--) {
       if (now - queue[k].lastUsed > 2) { queue[k].state = 'none'; queue.splice(k, 1); }
     }
+    if (flying) for (const rec of loading) if (now - rec.lastUsed > 1.5 && rec.abort) rec.abort.abort();
   }
 
   // ---- obstacles, trees -----------------------------------------------------------------------------------------
-  const obstacles = createCityObstacles({ base, index: index.obstacles, terrain });
+  // obstacle rasters kept (LRU, ~140 KB of heap each): phones 48 (a 7 × 7 km neighbourhood), tablets 80, others 160
+  const obstacles = createCityObstacles({ base, index: index.obstacles, terrain, maxTiles: cls === 'phone' ? 48 : cls === 'tablet' ? 80 : 160 });
   let trees = null, lastQuality = null;
-  // trees (models ~4 MB + instance tiles) are not needed to start: they load after `ready`, then stream with budgets
-  const startTrees = async () => {
+  // tree models load with the start (with packs: the far LODs, 0.9 MB) so the loading screen's shader pre-warm
+  // compiles their programs (WebKit has no parallel compile: linking them in flight froze iPads for 0.3-4 s ~10 s
+  // into every flight); the tree tiles stream after the start (treesStarted)
+  const loadTrees = async () => {
     if (!index.trees) return;
     for (let fails = 1; ; fails++) {
       try {
-        trees = await createCityTrees({ ...ctx, base, getH, indexUrl: base + index.trees });
-        if (lastQuality || q0) trees.setQuality(lastQuality || q0);
-        group.add(trees.object);
+        const t = await createCityTrees({ ...ctx, base, getH, indexUrl: base + index.trees });
+        if (lastQuality || q0) t.setQuality(lastQuality || q0);
+        if (started && ctx.precompile) await ctx.precompile(t.object);   // arrived after the start: compile first
+        trees = t;
+        group.add(t.object);
         return;
       } catch (e) {
         if (!isNetworkError(e)) { console.warn('[city] trees unavailable:', e.message); return; }
@@ -302,6 +368,7 @@ export async function createCity(ctx, options = {}) {
       }
     }
   };
+  const treesP = loadTrees();
 
   // ---- initial load around the focus --------------------------------------------------------------------------------
   // `ready` = the obstacle grid around the spawn + the building tiles of the cells within opt.readyRadius at the LOD a
@@ -329,8 +396,12 @@ export async function createCity(ctx, options = {}) {
       select(focusCam);
     }
     await obst;
-    // the rest (farther tiles, trees) starts with the first update() = when the game loop runs, so it doesn't compete
-    // with the other layers / the aircraft for bandwidth before the first playable frame
+    // the facade atlas uploads here, behind the loading screen, one array texture per task (at the first draw the
+    // three uploads came in one frame: 111 MB of texImage3D, 160 ms on a phone)
+    if (ctx.renderer) for (const t of textures) { try { ctx.renderer.initTexture(t); } catch { /* at first use */ } await new Promise((r) => setTimeout(r, 0)); }
+    await Promise.race([treesP, new Promise((r) => setTimeout(r, 20000))]);
+    // the rest (farther tiles, tree tiles) starts after the first playable frame, so it doesn't compete with the other
+    // layers / the aircraft for bandwidth before it
   })();
   let started = false;
   // mobile hook (docs/errors/audit.md #1): on phones / tablets the post-ready burst is staggered — tile uploads at most
@@ -347,8 +418,8 @@ export async function createCity(ctx, options = {}) {
     uniforms,
     get stats() {
       let tris = 0, visible = 0;
-      for (const r of loadedTiles) if (r.mesh && r.mesh.visible) { visible++; tris += r.tris; }
-      return { loaded: loadedTiles.size, visible, tris, queued: queue.length, active, trees: trees ? trees.stats : null };
+      for (const r of loadedTiles) if (r.mesh && r.mesh.parent === buildings) { visible++; tris += r.tris; }
+      return { loaded: loadedTiles.size, visible, tris, queued: queue.length, active, aborted, speed: Math.round(motion.speed), ringS: +motion.s.toFixed(2), trees: trees ? trees.stats : null };
     },
     setNight(v) { uniforms.uCityNight.value = v; },
     /** LOD distance multiplier (e.g. 0.8 on very high resolutions / low-end GPUs, 1.3 for screenshots). */
@@ -367,20 +438,38 @@ export async function createCity(ctx, options = {}) {
       if (trees) trees.setQuality(q);
     },
     update(dt, camera) {
-      if (!started) { started = true; preloadRadius = Infinity; }
-      flightT += dt; frameN++;
-      if (!treesStarted && (!mobile || flightT >= STAGGER_S)) { treesStarted = true; startTrees(); }
+      const playable = ctx.playable !== false;   // (world index.js: after the first playable frame)
+      if (!started && playable) { started = true; preloadRadius = Infinity; }
+      if (started) { flightT += dt; frameN++; }
+      if (!treesStarted && started && (!mobile || flightT >= STAGGER_S)) treesStarted = true;
       clock += dt;
       camera.getWorldPosition(camPos);
+      camera.getWorldDirection(camFwd);
+      const fl = Math.hypot(camFwd.x, camFwd.z);
+      if (fl > 1e-3) { motion.fx = camFwd.x / fl; motion.fz = camFwd.z / fl; }
+      if (!motion.init || dt <= 0) { motion.init = true; motion.px = camPos.x; motion.pz = camPos.z; }
+      else {
+        // ground velocity of the camera, smoothed over ~1.5 s (a camera cut / reset is one frame: capped)
+        const vx = (camPos.x - motion.px) / dt, vz = (camPos.z - motion.pz) / dt;
+        motion.px = camPos.x; motion.pz = camPos.z;
+        const sp = Math.hypot(vx, vz);
+        if (sp < 1200) {
+          const a = Math.min(1, dt / 1.5);
+          motion.vx += (vx - motion.vx) * a; motion.vz += (vz - motion.vz) * a;
+          motion.speed = Math.hypot(motion.vx, motion.vz);
+          const s = Math.min(1, Math.max(0, (motion.speed - SPEED_LO) / (SPEED_HI - SPEED_LO)));
+          motion.s = s * s * (3 - 2 * s);
+        }
+      }
       const moved = camPos.distanceToSquared(lastCam) > 15 * 15;
       if (moved || clock - lastSelect > 0.5) {
-        select(camPos);
+        select(camPos, started);
         lastSelect = clock;
         lastCam.copy(camPos);
       }
       pump();
       processJobs(opt.frameBudgetMs, mobile && flightT < STAGGER_S ? frameN & 1 : opt.uploadsPerFrame);
-      if (trees) trees.update(dt, camera);
+      if (trees && treesStarted) trees.update(dt, camera);
     },
     // buildings only: trees are not obstacles for physics/GPWS (a helicopter must not land on treetops)
     heightAt(x, z) { return obstacles.heightAt(x, z); },

@@ -2,7 +2,7 @@
 // Geometry comes from tools/geo/airports_build.py (<icao>.bin, x/z relative to the airport origin); heights are sampled
 // from ctx.terrain.getHeight per vertex. Log-depth aware depth bias keeps the layers ordered without z-fighting.
 import * as THREE from 'three';
-import { assetImage, isNetworkError, reportLoadFailure, retryDelay } from '../core/assets.js';
+import { assetBitmap, isNetworkError, reportLoadFailure, retryDelay } from '../core/assets.js';
 
 /** The active map's airport files (createAirports sets them): base = <assets>/airports/, tex = ground textures, props = props GLB. */
 export const airportFiles = { base: 'assets/sf/airports/', tex: 'assets/sf/airports/tex/', props: 'assets/sf/airports/props.glb' };
@@ -38,17 +38,31 @@ export function depthBias(mat, layer, onCompile) {
 let texCache = null;
 let texOpts = null;
 /** Fill `t` with the image at url (versioned, retried); after a lost connection it tries again later. Until then the
- *  texture has no image (three.js skips the upload), like a THREE.TextureLoader texture that is still loading. */
+ *  texture has no image (three.js skips the upload), like a THREE.TextureLoader texture that is still loading.
+ *  Decoded off the main thread (an <img> is decoded synchronously at upload: 2048² JPEGs, ~20-40 ms each, 4x that on
+ *  a phone) and cut to the device class's size (groundTextures). */
 function loadInto(t, url, fails = 0) {
-  assetImage(url).then((img) => { t.image = img; t.needsUpdate = true; }).catch((e) => {
+  assetBitmap(url, { maxSize: texOpts.maxSize }).then(({ image, flipY, from }) => {
+    t.image = image; t.flipY = flipY;
+    if (from[0] !== image.width) t.userData.downscaledFrom = from;
+    t.needsUpdate = true;
+  }).catch((e) => {
     reportLoadFailure('airports', url, e);
     if (isNetworkError(e)) setTimeout(() => loadInto(t, url, fails + 1), retryDelay(fails + 1));
   });
 }
 /** Ground textures, each loaded on first use (an airport only downloads what its pavements use). */
-export function groundTextures(loader, renderer) {
+export function groundTextures(loader, renderer, quality = null, ctx = null) {
   if (texCache) return texCache;
-  texOpts = { aniso: renderer ? renderer.capabilities.getMaxAnisotropy() : 8 };
+  // phones and tablets: 1024² (5.3 instead of 21 MB each, 8 mm per texel on an 8 m asphalt tile); other classes the
+  // files' 2048² unless their texture cap is lower (software rendering)
+  const cls = quality && quality.deviceClass, cap = quality && quality.textureMaxSize;
+  const max = cls === 'phone' || cls === 'tablet' ? 1024 : cap && cap < 2048 ? cap : 0;
+  texOpts = { aniso: renderer ? renderer.capabilities.getMaxAnisotropy() : 8, maxSize: max };
+  // phones / tablets download the 1024² copies of packs.json (tools/assets/packs.mjs) where the originals are larger
+  const gm = max === 1024 && ctx && ctx.assets && ctx.packs && ctx.packs.airports && ctx.packs.airports.groundMobile;
+  const fromPack = new Set(gm ? gm.files : []);
+  const urlOf = (name) => (fromPack.has(name) ? ctx.assets + gm.dir + name : airportFiles.tex + name);
   const FILES = {
     asphaltRwy: ['asphalt_rwy.jpg', true], asphaltTwy: ['asphalt_twy.jpg', true], shoulder: ['shoulder.jpg', true],
     concrete: ['concrete.jpg', true], concreteRwy: ['concrete_rwy.jpg', true],
@@ -62,7 +76,7 @@ export function groundTextures(loader, renderer) {
       get() {
         if (!t) {
           t = new THREE.Texture();
-          loadInto(t, airportFiles.tex + name);
+          loadInto(t, urlOf(name));
           t.wrapS = t.wrapT = THREE.RepeatWrapping;
           t.anisotropy = texOpts.aniso;
           t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
@@ -157,7 +171,7 @@ const LAYERS = {
 export function buildGround(meta, A, ctx, opts = {}) {
   const { terrain } = ctx;
   const [ox, oz] = meta.origin;
-  const tex = groundTextures(ctx.loader, ctx.renderer);
+  const tex = groundTextures(ctx.loader, ctx.renderer, ctx.quality, ctx);
   const group = new THREE.Group();
   group.name = `apt-ground-${meta.icao}`;
   group.position.set(ox, 0, oz);

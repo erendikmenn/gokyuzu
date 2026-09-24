@@ -9,7 +9,7 @@ import { buildSigns } from './airports_signs.js';
 import { loadBuildings, updateBuildingLights } from './airports_buildings.js';
 import { buildProps, updateProps, setPropsDensity, addAgentLods } from './airports_props.js';
 import { buildFence, buildCables, buildFloodPools } from './airports_extras.js';
-import { Draper, meshJob, lightsJob, instancedJob, rigidJob } from './airports_drape.js';
+import { Draper, meshJob, lightsJob, instancedJob, rigidJob, levelSignature } from './airports_drape.js';
 
 const SF_ICAOS = ['ksfo', 'kngz', 'koak'];
 
@@ -119,8 +119,10 @@ export async function createAirports(ctx) {
     let again = false;
     if (!apt.buildings) {
       try {
-        apt.buildings = await loadBuildings(apt.meta, ctx, colliders);
-        if (apt.buildings) apt.root.add(apt.buildings.object);
+        const b = await loadBuildings(apt.meta, ctx, colliders);
+        if (b && ctx.precompile) await ctx.precompile(b.object);   // shaders before the first frame that draws them
+        apt.buildings = b;
+        if (b) apt.root.add(b.object);
       } catch (e) { again = isNetworkError(e); reportLoadFailure('airports', `buildings ${apt.meta.icao}`, e); }
     }
     await frame();
@@ -149,6 +151,7 @@ export async function createAirports(ctx) {
       }
       apt.draper = dr;
       apt.drapeDue = 0;
+      apt.drapeSig = undefined;   // (new parts: one full pass)
     } catch (e) { console.warn('[airports] drape', apt.meta.icao, e); }
   }
 
@@ -230,7 +233,7 @@ export async function createAirports(ctx) {
     /** Force the light/day factor (0 = night … 1 = day); null returns to automatic (sun elevation). */
     setDaylight(v) { state.dayOverride = v; },
     update(dt, camera) {
-      if (!state.started) { state.started = true; resolveStart(); }
+      if (!state.started && ctx.playable !== false) { state.started = true; resolveStart(); }   // after the first playable frame
       state.time += dt;
       state.sunCheck -= dt;
       if (state.sunCheck <= 0) { state.sun = findSun(); state.sunCheck = state.sun ? 20 : 2; }
@@ -275,9 +278,18 @@ export async function createAirports(ctx) {
       }
       if (best) {
         best.drapeDue -= dt;
-        if (best.drapeDue <= 0 || best.draper.busy) {
+        let go = best.draper.busy;
+        if (!go && best.drapeDue <= 0) {
+          // a new pass only when the terrain under the airport changed level since the last quiet pass (it used to
+          // re-drape every 6 s forever), or the last pass still moved something
+          const sig = levelSignature(ctx.terrain, best.meta.origin[0], best.meta.origin[1], best.meta.radius || 3000, best.drapeSeen || (best.drapeSeen = new Int8Array(36).fill(-1)));
+          if (!sig || sig !== best.drapeSig || best.drapeMoved) { go = true; best.drapeSigNext = sig; } else best.drapeDue = 1.0;
+        }
+        if (go) {
           if (best.draper.step(4000)) {
-            best.drapeDue = best.draper.changed ? 1.5 : 6.0;
+            best.drapeMoved = best.draper.changed;
+            best.drapeSig = best.drapeSigNext;
+            best.drapeDue = best.draper.changed ? 1.5 : best.drapeSig ? 1.0 : 6.0;
             best.draper.changed = false;
           }
         }

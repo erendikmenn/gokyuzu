@@ -3,6 +3,11 @@
 // with precomputed instance matrices per species, so rebuilding the global per-species InstancedMeshes (LOD0 near,
 // LOD1 far) is mostly bulk copies. Trees sit on ctx.terrain. heightAt/hitTest here are available for tools but the
 // city layer does not report trees as obstacles (helicopters must be able to land next to / GPWS ignores canopy).
+// Models: with ctx.packs.city.trees (tools/assets/packs.mjs) the far LODs of all species come in one file (each texture
+// once: 1.4 instead of 6.6 MB) and the near LODs in a second one, loaded when a tree first comes within the near range
+// (phones / tablets) or a few seconds later (other classes); until then near trees draw with the far LOD. Without
+// packs, the per-species files as before. Instance buffers grow with what is drawn (they were sized for 40 000 trees
+// per species and LOD: 56 MB at high, 23 MB on a phone drawing a few hundred trees).
 import * as THREE from 'three';
 import { assetData, withRetry, isNetworkError, reportLoadFailure, retryDelay } from '../core/assets.js';
 
@@ -11,6 +16,13 @@ const DEF = { r0: 260, r1: 1900, rShrub: 650, tileRadius: 2300, maxPerSpecies: 4
 
 export async function createCityTrees(ctx) {
   const opt = { ...DEF, ...(ctx.treeOptions || {}) };
+  const qual = { density: 1, dist: 1, shadows: true };
+  if (ctx.quality) {
+    const q = ctx.quality;
+    if (q.treeDensity != null) qual.density = Math.max(0, Math.min(1, q.treeDensity));
+    if (q.treeDistance != null) qual.dist = Math.max(0.2, q.treeDistance);
+    if (q.cityShadows != null) qual.shadows = !!q.cityShadows;
+  }
   if (ctx.quality && ctx.quality.treeDensity != null && !(ctx.treeOptions || {}).maxPerSpecies) {
     // instance buffer capacity follows the preset (low 0.3 -> 16k per species); raising it live just caps the count
     opt.maxPerSpecies = Math.round(opt.maxPerSpecies * Math.min(1, Math.max(0.4, ctx.quality.treeDensity * (ctx.quality.treeDistance || 1) * 1.3)));
@@ -21,52 +33,103 @@ export async function createCityTrees(ctx) {
   const species = meta.species;
   const refH = meta.refHeight;
   const gltf = ctx.loader?.gltf || (await import('../core/assets.js')).createAssetLoader(ctx.renderer).gltf;
+  const loadGLB = (url) => (ctx.loader && ctx.loader.loadGLTF ? ctx.loader.loadGLTF(url, { cache: false }) : withRetry(() => gltf.loadAsync(url), url));
   const group = new THREE.Group();
   group.name = 'city_trees';
 
   // ---- species models ---------------------------------------------------------------------------------------------
-  const models = await Promise.all(species.map(async (sp) => {
-    const url = `${base}trees/${sp}.glb`;
-    const g = await withRetry(() => gltf.loadAsync(url), url);
-    const lods = [null, null];
-    g.scene.traverse((o) => {
-      if (!o.isMesh && !o.isGroup) return;
-      const m = /_lod(\d)$/.exec(o.name);
-      if (m) lods[Number(m[1])] = o;
+  // models[s][lod] = InstancedMesh parts (one per material) sharing one instance matrix / colour buffer (inst[s][lod])
+  const models = species.map(() => [[], []]);
+  const inst = species.map(() => [null, null]);
+  const INITIAL_CAP = 256;
+  const newInst = (cap) => {
+    const m = new THREE.InstancedBufferAttribute(new Float32Array(cap * 16), 16), c = new THREE.InstancedBufferAttribute(new Float32Array(cap * 3), 3);
+    m.setUsage(THREE.DynamicDrawUsage); c.setUsage(THREE.DynamicDrawUsage);
+    return { m, c, cap };
+  };
+  /** Room for `need` instances of (s, lod), doubling up to the preset's cap; false when the cap is reached. */
+  function ensure(s, l, need) {
+    const sh = inst[s][l];
+    if (!sh || need <= sh.cap) return !!sh;
+    const max = l === 0 ? opt.maxNearPerSpecies : opt.maxPerSpecies;
+    if (sh.cap >= max) return false;
+    const n = newInst(Math.min(max, Math.max(need, sh.cap * 2)));
+    n.m.array.set(sh.m.array); n.c.array.set(sh.c.array);   // instances written earlier in this rebuild
+    // a new buffer object (three.js never grows a GL buffer in place); dispose() frees the old one
+    for (const im of models[s][l]) { im.dispose(); im.instanceMatrix = n.m; im.instanceColor = n.c; }
+    inst[s][l] = n;
+    return true;
+  }
+  const texByName = new Map();   // far-pack textures by name (the near pack binds them: material extras packShared)
+  function addLod(s, l, node, parent = group) {
+    const sp = species[s];
+    const parts = [];
+    node?.traverse((o) => { if (o.isMesh) parts.push(o); });
+    if (!parts.length) return;
+    const sh = newInst(INITIAL_CAP);
+    inst[s][l] = sh;
+    models[s][l] = parts.map((p) => {
+      p.updateWorldMatrix(true, false);
+      const geo = p.geometry.clone().applyMatrix4(p.matrixWorld);
+      const mat = p.material;
+      const share = mat.userData && mat.userData.packShared;
+      if (share) {
+        for (const [slot, name] of Object.entries(share)) { const t = texByName.get(name); if (t && mat[slot] !== t) { mat[slot] = t; mat.needsUpdate = true; } }
+      }
+      for (const k of ['map', 'normalMap']) if (mat[k] && mat[k].name && !texByName.has(mat[k].name)) texByName.set(mat[k].name, mat[k]);
+      mat.vertexColors = !!geo.getAttribute('color');
+      if (mat.alphaTest > 0 || mat.transparent) { mat.transparent = false; mat.alphaTest = 0.45; mat.side = THREE.DoubleSide; }
+      const im = new THREE.InstancedMesh(geo, mat, 0);
+      im.instanceMatrix = sh.m;
+      im.instanceColor = sh.c;
+      im.count = 0;
+      im.frustumCulled = false;
+      im.castShadow = l === 0 && qual.shadows;
+      im.receiveShadow = true;
+      im.name = `tree_${sp}_lod${l}`;
+      parent.add(im);
+      return im;
     });
-    const out = [];
-    for (let l = 0; l < 2; l++) {
-      const node = lods[l];
-      const parts = [];
-      node?.traverse((o) => { if (o.isMesh) parts.push(o); });
-      // one InstancedMesh per (lod, material); the parts of a LOD share one instance matrix/colour buffer
-      let shared = null;
-      out.push(parts.map((p) => {
-        p.updateWorldMatrix(true, false);
-        const geo = p.geometry.clone().applyMatrix4(p.matrixWorld);
-        const mat = p.material;
-        mat.vertexColors = !!geo.getAttribute('color');
-        if (mat.alphaTest > 0 || mat.transparent) { mat.transparent = false; mat.alphaTest = 0.45; mat.side = THREE.DoubleSide; }
-        const cap = l === 0 ? opt.maxNearPerSpecies : opt.maxPerSpecies;
-        if (!shared) {
-          shared = { m: new THREE.InstancedBufferAttribute(new Float32Array(cap * 16), 16), c: new THREE.InstancedBufferAttribute(new Float32Array(cap * 3), 3) };
-          shared.m.setUsage(THREE.DynamicDrawUsage);
-          shared.c.setUsage(THREE.DynamicDrawUsage);
-        }
-        const im = new THREE.InstancedMesh(geo, mat, 0);
-        im.instanceMatrix = shared.m;
-        im.instanceColor = shared.c;
-        im.count = 0;
-        im.frustumCulled = false;
-        im.castShadow = l === 0;
-        im.receiveShadow = true;
-        im.name = `tree_${sp}_lod${l}`;
-        group.add(im);
-        return im;
-      }));
-    }
+  }
+  const lodNodes = (scene, l) => {
+    const out = new Map();
+    scene.traverse((o) => { const m = /^(.*)_lod(\d)$/.exec(o.name); if (m && Number(m[2]) === l && (o.isMesh || o.isGroup || o.isObject3D)) out.set(m[1], o); });
     return out;
-  }));
+  };
+  const pack = ctx.packs && ctx.packs.city && ctx.packs.city.trees && ctx.assets ? ctx.packs.city.trees : null;
+  let nearState = pack ? 'none' : 'loaded';   // near LOD models: 'none' | 'loading' | 'loaded' | 'failed'
+  let nearWanted = false;
+  if (pack) {
+    const g = await loadGLB(ctx.assets + pack.lod1);
+    const nodes = lodNodes(g.scene, 1);
+    species.forEach((sp, s) => addLod(s, 1, nodes.get(sp)));
+  } else {
+    await Promise.all(species.map(async (sp, s) => {
+      const url = `${base}trees/${sp}.glb`;
+      const g = await withRetry(() => gltf.loadAsync(url), url);
+      for (let l = 0; l < 2; l++) addLod(s, l, lodNodes(g.scene, l).get(sp));
+    }));
+  }
+  let nearFails = 0;
+  function loadNear() {
+    if (nearState !== 'none') return;
+    nearState = 'loading';
+    const staging = new THREE.Group();
+    loadGLB(ctx.assets + pack.lod0).then((g) => {
+      const nodes = lodNodes(g.scene, 0);
+      species.forEach((sp, s) => addLod(s, 0, nodes.get(sp), staging));
+      return ctx.precompile ? ctx.precompile(staging) : null;   // shaders compiled before the meshes join the scene
+    }).then(() => {
+      for (const im of [...staging.children]) group.add(im);
+      nearState = 'loaded';
+      dirty = true;
+    }).catch((e) => {
+      reportLoadFailure('city', 'near tree models', e);
+      nearState = isNetworkError(e) && ++nearFails < 6 ? 'none' : 'failed';   // lost connection: asked again by rebuild
+    });
+  }
+  const eagerNear = !(ctx.quality && (ctx.quality.deviceClass === 'phone' || ctx.quality.deviceClass === 'tablet'));
+  let nearTimer = 3;   // desktop classes: the near models 3 s after the far ones, whether or not a tree is close
 
   // ---- tiles ------------------------------------------------------------------------------------------------------
   const tiles = new Map();
@@ -82,12 +145,23 @@ export async function createCityTrees(ctx) {
   const jobs = [];
 
   const fails = new Map();   // tile key -> failed downloads on a lost connection (retried with growing delays)
+  // thinned tiles (packs.json city.treesLow): a density of 0.3 / 0.5 downloads only the trees it draws (-70 / -50 %)
+  // (only packs made from this trees.json: same tile and tree counts; a rebuilt city not packed yet uses the full tiles)
+  const sig = { tiles: meta.tiles.length, trees: meta.tiles.reduce((a, t) => a + (t.n || 0), 0) };
+  const lowPacks = ((ctx.packs && ctx.packs.city && ctx.packs.city.treesLow) || [])
+    .filter((p) => p && p.dir && p.density > 0 && p.density < 1 && p.tiles === sig.tiles && p.trees === sig.trees).sort((a, b) => a.density - b.density);
+  function tileSource(key) {
+    const p = ctx.assets ? lowPacks.find((e) => e.density >= qual.density - 1e-6) : null;
+    return p ? { url: `${ctx.assets}${p.dir}/${key}.bin`, d: p.density } : { url: `${base}trees/${key}.bin`, d: 1 };
+  }
   async function loadTile(key) {
     const t = { state: 'loading', cells: [], key, lastUsed: performance.now() };
     tiles.set(key, t);
     loading++;
     try {
-      const buf = await assetData(`${base}trees/${key}.bin`, 'arrayBuffer');
+      const src = tileSource(key);
+      t.fileD = src.d;
+      const buf = await assetData(src.url, 'arrayBuffer');
       t.state = 'processing';
       fails.delete(key);
       jobs.push({ t, it: processTile(t, buf) });
@@ -120,11 +194,12 @@ export async function createCityTrees(ctx) {
       if ((k & 8191) === 8191) yield;
     }
     t.density = qual.density;
+    const frac = Math.min(1, qual.density / (t.fileD || 1));   // (a thinned file already holds its density's subset)
     for (const b0 of bins.values()) {
       // order the bin by a per-tree random rank (rotation byte) so treeDensity keeps the first n of every species;
       // only that subset is kept in memory (raising the density later reloads the tiles)
       const cnt0 = b0.list.length / 6;
-      const cnt = qual.density >= 1 ? cnt0 : Math.max(1, Math.round(cnt0 * qual.density));
+      const cnt = frac >= 1 ? cnt0 : Math.max(1, Math.round(cnt0 * frac));
       const ord = new Uint32Array(cnt0).map((_, k) => k).sort((a, c) => b0.list[a * 6 + 4] - b0.list[c * 6 + 4]);
       const b = { x: b0.x, z: b0.z, list: new Float32Array(cnt * 6) };
       for (let k = 0; k < cnt; k++) for (let m = 0; m < 6; m++) b.list[k * 6 + m] = b0.list[ord[k] * 6 + m];
@@ -154,18 +229,53 @@ export async function createCityTrees(ctx) {
         if (y + h > yMax) yMax = y + h;
         if ((k & 2047) === 2047) yield;
       }
-      t.cells.push({ x: b.x, z: b.z, yMin, yMax, counts, mats, cols, pts, sphere: new THREE.Sphere(new THREE.Vector3(b.x, (yMin + yMax) / 2, b.z), Math.hypot(CELL * 0.71, (yMax - yMin) / 2 + 5)) });
+      t.cells.push({ x: b.x, z: b.z, yMin, yMax, counts, mats, cols, pts, lvl: levelOf(b.x, b.z), sphere: new THREE.Sphere(new THREE.Vector3(b.x, (yMin + yMax) / 2, b.z), Math.hypot(CELL * 0.71, (yMax - yMin) / 2 + 5)) });
       yield;
     }
     t.state = 'ready';
     dirty = true;
   }
 
+  // Trees are placed on the terrain loaded when their tile is processed; the terrain keeps refining around the camera
+  // (a hillside's shrubs placed on a coarse level float or sink by metres, and where they end up depended on streaming
+  // order). Cells near the camera whose terrain got finer are placed again, a few per frame.
+  const levelOf = (x, z) => {
+    if (!ctx.terrain || !ctx.terrain.levelAt) return 99;
+    const h = CELL / 2 - 1;
+    return Math.min(ctx.terrain.levelAt(x, z), ctx.terrain.levelAt(x - h, z - h), ctx.terrain.levelAt(x + h, z - h), ctx.terrain.levelAt(x - h, z + h), ctx.terrain.levelAt(x + h, z + h));
+  };
+  function* resnapCell(c) {
+    let yMin = Infinity, yMax = -Infinity;
+    for (let s = 0; s < nS; s++) {
+      const P = c.pts[s], M = c.mats[s], n = P.length / 4;
+      for (let k = 0; k < n; k++) {
+        const y = getH(P[k * 4], P[k * 4 + 2]) - 0.15, h = P[k * 4 + 3] - P[k * 4 + 1];
+        P[k * 4 + 1] = y; P[k * 4 + 3] = y + h; M[k * 16 + 13] = y;
+        if (y < yMin) yMin = y;
+        if (y + h > yMax) yMax = y + h;
+        if ((k & 1023) === 1023) yield;
+      }
+    }
+    if (yMin <= yMax) { c.yMin = yMin; c.yMax = yMax; c.sphere.center.y = (yMin + yMax) / 2; c.sphere.radius = Math.hypot(CELL * 0.71, (yMax - yMin) / 2 + 5); }
+    dirty = true;
+  }
+  let resnapTimer = 0;
+  function queueResnaps(cx, cz, R) {
+    for (const t of tiles.values()) {
+      if (t.state !== 'ready') continue;
+      for (const c of t.cells) {
+        if (c.resnap || Math.abs(c.x - cx) > R || Math.abs(c.z - cz) > R) continue;
+        const l = levelOf(c.x, c.z);
+        if (l > c.lvl) { c.lvl = l; c.resnap = true; jobs.push({ t, it: resnapCell(c), cell: c }); }
+      }
+    }
+  }
+
   function processJobs(budgetMs) {
     const t0 = performance.now();
     while (jobs.length && performance.now() - t0 < budgetMs) {
       const j = jobs[0];
-      if (j.t.state !== 'processing' || j.it.next().done) jobs.shift();
+      if ((j.cell ? j.t.state !== 'ready' : j.t.state !== 'processing') || j.it.next().done) { if (j.cell) j.cell.resnap = false; jobs.shift(); }
     }
   }
 
@@ -174,13 +284,6 @@ export async function createCityTrees(ctx) {
   const camPos = new THREE.Vector3(), lastPos = new THREE.Vector3(1e9, 0, 0), lastDir = new THREE.Vector3();
   const camDir = new THREE.Vector3();
   let dirty = true, timer = 0, streamTimer = 1, instances = 0;
-  const qual = { density: 1, dist: 1, shadows: true };
-  if (ctx.quality) {
-    const q = ctx.quality;
-    if (q.treeDensity != null) qual.density = Math.max(0, Math.min(1, q.treeDensity));
-    if (q.treeDistance != null) qual.dist = Math.max(0.2, q.treeDistance);
-    if (q.cityShadows != null) qual.shadows = !!q.cityShadows;
-  }
   const counts0 = new Uint32Array(nS), counts1 = new Uint32Array(nS);
 
   function rebuild(camera) {
@@ -207,25 +310,24 @@ export async function createCityTrees(ctx) {
           if (shrub && d > RS) continue;
           if (d > R0) {
             // whole cell at LOD1: bulk copy (the first n instances = density subset)
-            const im = models[s][1];
             const k = counts1[s];
-            if (k + n > opt.maxPerSpecies) continue;
-            if (im.length) { im[0].instanceMatrix.array.set(c.mats[s].subarray(0, n * 16), k * 16); im[0].instanceColor.array.set(c.cols[s].subarray(0, n * 3), k * 3); }
+            if (k + n > opt.maxPerSpecies || !ensure(s, 1, k + n)) continue;
+            const sh = inst[s][1];
+            sh.m.array.set(c.mats[s].subarray(0, n * 16), k * 16); sh.c.array.set(c.cols[s].subarray(0, n * 3), k * 3);
             counts1[s] = k + n;
           } else {
+            nearWanted = true;
+            const nearOk = models[s][0].length > 0;   // near models not loaded (yet): these trees draw with LOD1
             const P = c.pts[s];
             for (let i = 0; i < n; i++) {
               const ex = P[i * 4] - cx, ey = P[i * 4 + 1] - cy, ez = P[i * 4 + 2] - cz;
-              const near = ex * ex + ey * ey + ez * ez < r0sq;
-              const lod = near ? 0 : 1;
-              const cap = near ? opt.maxNearPerSpecies : opt.maxPerSpecies;
-              const cnt = near ? counts0 : counts1;
-              if (cnt[s] >= cap) continue;
-              const m = models[s][lod][0];
-              if (m) {
-                m.instanceMatrix.array.set(c.mats[s].subarray(i * 16, i * 16 + 16), cnt[s] * 16);
-                m.instanceColor.array.set(c.cols[s].subarray(i * 3, i * 3 + 3), cnt[s] * 3);
-              }
+              const lod = nearOk && ex * ex + ey * ey + ez * ez < r0sq ? 0 : 1;
+              const cap = lod === 0 ? opt.maxNearPerSpecies : opt.maxPerSpecies;
+              const cnt = lod === 0 ? counts0 : counts1;
+              if (cnt[s] >= cap || !ensure(s, lod, cnt[s] + 1)) continue;
+              const sh = inst[s][lod];
+              sh.m.array.set(c.mats[s].subarray(i * 16, i * 16 + 16), cnt[s] * 16);
+              sh.c.array.set(c.cols[s].subarray(i * 3, i * 3 + 3), cnt[s] * 3);
               cnt[s]++;
             }
           }
@@ -237,7 +339,7 @@ export async function createCityTrees(ctx) {
       for (const [lod, cnt] of [[0, counts0[s]], [1, counts1[s]]]) {
         for (const m of models[s][lod]) {
           m.count = cnt;
-          if (cnt) {
+          if (cnt && m.instanceMatrix === inst[s][lod].m) {
             m.instanceMatrix.clearUpdateRanges();
             m.instanceMatrix.addUpdateRange(0, cnt * 16);
             m.instanceMatrix.needsUpdate = true;
@@ -272,15 +374,7 @@ export async function createCityTrees(ctx) {
     }
   }
 
-  // initial tiles around the focus
-  const f = ctx.focus || { x: 0, z: 0 };
-  const initial = [];
-  const R0 = 1500 * Math.min(1, qual.dist);
-  for (let i = Math.floor((f.x - R0) / size); i <= Math.floor((f.x + R0) / size); i++)
-    for (let j = Math.floor((f.z - R0) / size); j <= Math.floor((f.z + R0) / size); j++) {
-      const key = `${i}_${j}`;
-      if (avail.has(key)) initial.push(loadTile(key));
-    }
+  // (tiles stream from the first update(): the city starts them after the first playable frame)
 
   function treeTopAt(x, z, rad) {
     let best = -Infinity;
@@ -304,10 +398,12 @@ export async function createCityTrees(ctx) {
 
   return {
     object: group,
-    ready: Promise.all(initial).then(async () => {
-      while (jobs.length) { processJobs(20); await new Promise((r) => setTimeout(r, 0)); }
-    }),
-    get stats() { return { tiles: tiles.size, instances }; },
+    ready: Promise.resolve(),
+    get stats() {
+      let capMB = 0;
+      for (const row of inst) for (const sh of row) if (sh) capMB += sh.cap * 76 / 1048576;
+      return { tiles: tiles.size, instances, near: nearState, instMB: +capMB.toFixed(1) };
+    },
     update(dt, camera) {
       timer += dt;
       streamTimer += dt;
@@ -315,6 +411,8 @@ export async function createCityTrees(ctx) {
       camera.getWorldDirection(camDir);
       if (streamTimer > 0.4) { stream(camPos.x, camPos.z); streamTimer = 0; }
       processJobs(opt.frameBudgetMs);
+      if ((resnapTimer += dt) > 0.5) { resnapTimer = 0; queueResnaps(camPos.x, camPos.z, opt.r1 * qual.dist + CELL); }
+      if (nearState === 'none' && (nearWanted || (eagerNear && (nearTimer -= dt) <= 0))) loadNear();
       const moved = camPos.distanceToSquared(lastPos) > 12 * 12 || camDir.dot(lastDir) < 0.995;
       if ((moved && timer > 0.12) || (dirty && timer > 0.25) || timer > 1.0) {
         rebuild(camera);

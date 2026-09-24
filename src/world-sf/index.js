@@ -11,11 +11,24 @@ import { isNetworkError } from '../core/assets.js';
 
 export async function createSFWorld({ scene, renderer, camera, loader, quality = null, focus = { x: 0, z: 0 }, onProgress = () => {}, map = null, runways: given = null }) {
   const other = map && map.id !== 'sf', D = map ? map.data : 'data/sf/';
+  const A = map ? map.assets : 'assets/sf/';
   const optional = (p, empty) => (other ? p.catch((e) => { if (e && (e.status === 404 || e.status === 403)) return empty; throw e; }) : p);
-  const [runways, landmarks, region] = await Promise.all([
-    given || optional(loader.loadJSON(D + 'runways.json'), { airports: [] }), optional(loader.loadJSON(D + 'landmarks.json'), { landmarks: [] }), loader.loadJSON(D + 'region.json'),
+  // packs.json (tools/assets/packs.mjs): the map's repackaged runtime files (lighter variants per device class, merged
+  // files); every layer falls back to the original files when an entry (or the whole file) is missing
+  const packsP = loader.loadJSON(A + 'packs.json').catch((e) => { if (isNetworkError(e)) throw e; return {}; });
+  const [runways, landmarks, region, packs] = await Promise.all([
+    given || optional(loader.loadJSON(D + 'runways.json'), { airports: [] }), optional(loader.loadJSON(D + 'landmarks.json'), { landmarks: [] }), loader.loadJSON(D + 'region.json'), packsP,
   ]);
-  const ctx = { scene, renderer, camera, loader, runways, landmarks, region, focus, quality, map };   // quality: src/core/quality.js preset (factories may read it at creation)
+  // playable: the first playable frame has been shown (loading screen gone). Until then the layers load only what the
+  // start needs (post-start streaming would compete with the aircraft download and the shader pre-warm, whose frames
+  // already call update()). Set by setPlayable() (main.js), else by the page's readyAt, else after 4 s of updates.
+  const ctx = { scene, renderer, camera, loader, runways, landmarks, region, focus, quality, map, packs: packs || {}, assets: A, playable: false };   // quality: src/core/quality.js preset (factories may read it at creation)
+  // Content that arrives after the start (trees, airport buildings, landmark LODs, new city materials) compiles its
+  // shader programs here before it is shown: with KHR_parallel_shader_compile off the main thread, otherwise at least
+  // not in a frame that draws (a first draw compiled synchronously: 25-160 ms per program with a 4x slower CPU)
+  ctx.precompile = (obj) => {
+    try { return renderer && renderer.compileAsync && !renderer.getContext().isContextLost() ? renderer.compileAsync(obj, camera, scene).then(() => obj, () => obj) : Promise.resolve(obj); } catch { return Promise.resolve(obj); }
+  };
   onProgress(0.05, 'Gökyüzü ve ışık');
   const environment = await createEnvironment(ctx);
   onProgress(0.15, 'Arazi ve hava fotoğrafları');
@@ -23,23 +36,35 @@ export async function createSFWorld({ scene, renderer, camera, loader, quality =
   scene.add(terrain.object);
   ctx.terrain = terrain;
 
-  const layers = [];
+  // the three layers are independent once the terrain exists: their index / manifest / atlas downloads run in parallel
+  // (they used to wait for each other); scene and hit-test order stay airports, city, landmarks
   const steps = [['Havalimanları', createAirports], ['Şehir', createCity], ['Simge yapılar', createLandmarks]];
-  for (let i = 0; i < steps.length; i++) {
-    const [label, factory] = steps[i];
-    onProgress(0.3 + 0.5 * i / steps.length, label);
+  let made = 0;
+  const pendingLabel = () => (steps.find((st) => !st.done) || steps[steps.length - 1])[0];
+  onProgress(0.3, steps.map((st) => st[0]).join(', '));
+  const built = await Promise.all(steps.map(async (st) => {
+    const [label, factory] = st;
     try {
-      const layer = await factory(ctx);
-      scene.add(layer.object);
-      layers.push(layer);
+      return await factory(ctx);
     } catch (e) {
       if (isNetworkError(e)) throw e;   // connection lost: main.js shows the connection error screen
       if (other && e && (e.status === 404 || e.status === 403)) console.info(`[world] ${map.id}: no ${label.toLowerCase()} yet (${e.message})`);
       else console.error(`[world] ${label} failed to load`, e);
+      return null;
+    } finally {
+      st.done = true;
+      onProgress(0.3 + 0.3 * ++made / steps.length, pendingLabel());
     }
-  }
-  onProgress(0.85, 'Detaylar yükleniyor');
-  await Promise.all([terrain.ready, ...layers.map((l) => l.ready)].map((p) => Promise.resolve(p).catch((e) => { if (isNetworkError(e)) throw e; console.error(e); })));
+  }));
+  const layers = built.filter(Boolean);
+  for (const l of layers) scene.add(l.object);
+  // readiness of the start area: progress = parts done (terrain + each layer)
+  const parts = [['Arazi', terrain.ready], ...layers.map((l, k) => [steps[built.indexOf(l)][0], l.ready])];
+  let readyN = 0;
+  onProgress(0.6, 'Detaylar yükleniyor');
+  await Promise.all(parts.map(([, p]) => Promise.resolve(p).catch((e) => { if (isNetworkError(e)) throw e; console.error(e); }).then(() => {
+    onProgress(0.6 + 0.35 * ++readyN / parts.length, 'Detaylar yükleniyor');
+  })));
   onProgress(1, 'Hazır');
   if (quality) for (const part of [environment, terrain, ...layers]) if (part && part.setQuality) { try { part.setQuality(quality); } catch (e) { console.error('[world] setQuality', e); } }
 
@@ -52,6 +77,7 @@ export async function createSFWorld({ scene, renderer, camera, loader, quality =
   }
 
   const spanScratch = { bottom: -Infinity, top: -Infinity };
+  let updateTime = 0;
   return {
     runways, landmarks, region, environment, terrain, layers,
     towers: layers.flatMap((l) => l.towers || []),   // control-tower cab eye points (airports layer) for the tower camera
@@ -102,7 +128,14 @@ export async function createSFWorld({ scene, renderer, camera, loader, quality =
       for (const l of layers) { const hit = l.hitTest(x, y, z, r); if (hit) return hit; }
       return null;
     },
+    /** The first playable frame is on screen (main.js, after the loading screen): post-start streaming may begin. */
+    setPlayable() { ctx.playable = true; },
+    get playable() { return ctx.playable; },
     update(dt, cam) {
+      if (!ctx.playable) {
+        updateTime += dt;
+        if ((typeof window !== 'undefined' && window.__game && window.__game.readyAt) || updateTime > 4) ctx.playable = true;
+      }
       environment.update(dt, cam);
       terrain.update(dt, cam);
       for (const l of layers) l.update(dt, cam);

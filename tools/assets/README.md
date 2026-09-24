@@ -65,3 +65,30 @@ Outputs besides the GLBs:
 `blender/airports/render_scene.py` and `blender/landmarks/render.py` import the GLBs for renders; Blender cannot read
 KTX2 textures. Run `--restore` before such a render session (or point it at `_orig/<name>.glb`) and the converter again
 afterwards. A fresh export simply overwrites the converted GLB; the next run converts it again.
+
+# Runtime packs (streaming): `packs.mjs`, `city_meshopt.mjs`
+
+Lighter or merged copies of published map files, written next to the originals (never replacing them) and listed in
+`assets/<map>/packs.json`, which the game reads at start (`src/world-sf/index.js` → `ctx.packs`). A layer uses a pack
+entry when it is there and falls back to the original files otherwise; paths are relative to `assets/<map>/`, and a map
+whose sources are byte-identical to another map's (İstanbul copies San Francisco's atlas, tree models and airport
+ground textures) points at that map's pack files (one download, one cache entry for players of both maps).
+
+```sh
+node tools/assets/packs.mjs              # water depth, atlas, tree models, thinned tree tiles, airport ground (both maps)
+node tools/assets/city_meshopt.mjs --map sf --verify   # San Francisco city tiles Draco → meshopt (3513 tiles, ~1.5 min)
+node tools/assets/packs.mjs --check      # exit 1 when a pack's sources changed since it was written
+node tests/packs.test.mjs                # structure, sizes, tree subsets, meshopt tile coverage
+```
+
+Re-run after a terrain rebuild (`water_depth.png`), a city rebuild (atlas, tree models, tree tiles, San Francisco
+tiles) or new airport ground textures.
+
+| entry | files | who loads it | why |
+|---|---|---|---|
+| `terrain.waterDepthSmall` / `waterDepthTiny` | `terrain/packs/water_depth_2048.png`, `_1024.png` | tablets / phones | the bathymetry's mip 1 / mip 2 (box filter): 85 → 21 / 5 MB of GPU memory, 1.4 → 0.3 / 0.1 MB download |
+| `city.atlasSmall` / `atlasTiny` | `city/packs/atlas_256/`, `atlas_128/` | tablets / phones | facade atlas cells 256² / 128² (2×2 / 4×4 box filter inside each cell = the cells' mip 1 / 2): 3 × 49 → 3 × 12 / 3 × 3 MB of GPU memory; WebP q95 (material map near-lossless: its channels are independent data) |
+| `city.trees` | `city/packs/trees/species_lod1.glb`, `species_lod0.glb` | every class | the 9 species' far LODs in one file with each texture once (6.6 MB in 9 files → 0.9 MB), near LODs in a second file loaded when a tree comes within the near range (phones / tablets) or 3 s later (others); textures the far file has are bound at runtime (material extras `packShared`). Geometry: Draco, SEQUENTIAL, finer quantization than the sources (positions, normals, colours exact, uv within 1e-4); PNG textures as lossless WebP with `exact` (identical texels) |
+| `city.treesLow` | `city/packs/trees_d30/`, `trees_d50/` | tree density ≤ 0.3 / ≤ 0.5 (phones, low preset / tablets) | tiles holding only the trees that density draws: per 250 m bin the first `max(1, round(n × d))` by the rotation byte, the subset `city_trees.js` keeps from a full tile (tests/packs.test.mjs checks it): −70 / −50 % of the tree bytes |
+| `airports.groundMobile` | `packs/airport-ground-1024/` | phones / tablets | the 2048² runway / taxiway / apron JPEGs at 1024² (lanczos, q92 4:4:4), the size those classes upload anyway: 2.9 → 0.9 MB at their start |
+| `city.tiles` | `city/packs/meshopt/l0…l3/` | every class (San Francisco) | `city_meshopt.mjs`: the Draco tiles in İstanbul's tile format (EXT_meshopt_compression + KHR_mesh_quantization, exponential filter, vertex cache / fetch order): decode 10–30× cheaper (Draco was 70 ms per tile on an M4 Max, 0.5 s with the CPU at 4×), −8–15 % on the wire under the edge's Brotli / gzip; every tile verified against its Draco source (`--verify`: positions ≤ 0.8 / 3 / 12.5 cm at L0 / L1 / L2+, same triangles) |

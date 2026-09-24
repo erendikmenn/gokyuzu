@@ -58,7 +58,7 @@ function createGlow(maxCount) {
   points.renderOrder = 10;
   points.name = 'landmark_lights';
   const lights = [];
-  let lastT = -1, lastNight = -1, lastCount = -1;
+  let lastT = -1, lastNight = -1, lastCount = -1, boundsDirty = false;
   return {
     points, lights,
     clear() { lights.length = 0; geo.setDrawRange(0, 0); },
@@ -72,9 +72,12 @@ function createGlow(maxCount) {
       geo.setDrawRange(0, lights.length);
       geo.attributes.position.needsUpdate = true;
       geo.attributes.aSize.needsUpdate = true;
-      geo.computeBoundingSphere();
+      // (bounds once per batch of adds, in update(): per add it walked the whole 8192-point buffer, 160 ms on SF's
+      // ~1000 lights at every world-data rebuild, 0.7 s with a 4x slower CPU)
+      boundsDirty = true;
     },
     update(t, camera, renderer, night) {
+      if (boundsDirty) { boundsDirty = false; geo.computeBoundingSphere(); }
       const h = renderer ? renderer.domElement.height : 900;
       mat.uniforms.uScale.value = h / 2 / Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2);
       // colors only change with blinking (>= 0.75 s periods) and the day/night factor: refresh at ~20 Hz
@@ -331,11 +334,27 @@ class Landmark {
     this.shown = -1;
     const b = def.bounds || { min: [-100, 0, -100], max: [100, 100, 100] };
     this.bmin = b.min; this.bmax = b.max;
+    this.placedLevel = this.terrainLevel();
   }
+
+  /** Lowest terrain height level (terrain.levelAt) under the origin and the corners of the bounds: placement and
+   *  anchors depend on it; -1 when the terrain cannot tell. */
+  terrainLevel() {
+    const t = this.ctx.terrain;
+    if (!t || !t.levelAt) return -1;
+    const { def } = this, c = Math.cos(-def.heading), s = Math.sin(-def.heading);
+    let lv = t.levelAt(def.origin.x, def.origin.z);
+    for (const [lx, lz] of [[this.bmin[0], this.bmin[2]], [this.bmax[0], this.bmin[2]], [this.bmin[0], this.bmax[2]], [this.bmax[0], this.bmax[2]]]) {
+      lv = Math.min(lv, t.levelAt(def.origin.x + lx * c + lz * s, def.origin.z - lx * s + lz * c));
+    }
+    return lv;
+  }
+  get onTerrain() { return this.def.base === 'terrain' || !!this.def.anchored; }
 
   /** (Re)compute the vertical placement from the terrain (called again once the terrain has streamed in). */
   place() {
     const { def, ctx } = this;
+    if (this.bmin) this.placedLevel = Math.max(this.placedLevel ?? -1, this.terrainLevel());
     this.baseY = this.def.instances && def.base === 'terrain' ? 0 : placementY(def, ctx.terrain);
     this.group.position.set(def.origin.x, this.baseY, def.origin.z);
     this.group.updateMatrixWorld(true);
@@ -427,7 +446,10 @@ class Landmark {
       obj.visible = false;
       this.group.add(obj);
       obj.updateMatrixWorld(true);
-      this.lods[i] = obj;
+      // shaders compiled before the LOD can be shown (not synchronously in the frame that first draws it)
+      return this.ctx.precompile ? this.ctx.precompile(obj) : obj;
+    }).then((obj) => {
+      if (obj) this.lods[i] = obj;
       return obj;
     }).catch((e) => {
       if (isNetworkError(e)) {   // connection lost: coarser/other LODs stay on screen, this one is requested again later
@@ -570,6 +592,22 @@ export async function createLandmarks(ctx) {
     if (w !== last) initial.push(it.load(w));
   }
   const ready = Promise.all(initial).then(() => { for (const it of items) it.update(focus); });
+  // Landmarks on the ground are placed on the terrain loaded at the time; where finer heights arrive later (streaming,
+  // the pinned cells that follow the start) a landmark within REFINE_R of the camera is placed again and the collision /
+  // light data rebuilt (at most every 3 s: rebuilding is ~0.2-0.7 s with a 4x slower CPU; levels only count upward).
+  const REFINE_R = 6000;
+  let refineTimer = 3;
+  const refine = (dt, cam) => {
+    if ((refineTimer -= dt) > 0) return;
+    refineTimer = 3;
+    let changed = false;
+    for (const it of items) {
+      if (!it.onTerrain || it.distanceTo(cam) > REFINE_R) continue;
+      const lv = it.terrainLevel();
+      if (lv > (it.placedLevel ?? -1)) { it.place(); changed = true; }
+    }
+    if (changed) buildWorldData();
+  };
 
   // day/night from the scene's sun (directional light elevation)
   let sunLight = null;
@@ -589,6 +627,7 @@ export async function createLandmarks(ctx) {
       t += dt;
       camera.getWorldPosition(camPos);
       for (const it of items) it.update(camPos);
+      refine(dt, camPos);
       if (traffic) traffic.update(dt, camPos);
       if (!sunLight || !sunLight.parent) sunLight = findSun();
       if (sunLight) {
