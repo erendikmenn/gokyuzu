@@ -7,8 +7,8 @@
    "name": "Atatürk Havalimanı",
    "surface": "fit",
    "source": "data/ist/runways.json",
-   "elevationMax": 26.1,
-   "elevationMin": 26.1,
+   "elevationMax": 28.4,
+   "elevationMin": 27.4,
    "runways": [
     {
      "ref": "05/23",
@@ -21,12 +21,12 @@
       {
        "x": -13730.6,
        "z": 6993.2,
-       "elevation": 26.1
+       "elevation": 28.4
       },
       {
        "x": -11440.9,
        "z": 5530.4,
-       "elevation": 26.1
+       "elevation": 27.4
       }
      ],
      "published": [
@@ -48,8 +48,8 @@
    "name": "Sabiha Gökçen Havalimanı",
    "surface": "platform",
    "source": "data/ist/runways.json",
-   "elevationMax": 95.1,
-   "elevationMin": 92.6,
+   "elevationMax": 92.7,
+   "elevationMin": 88.1,
    "runways": [
     {
      "ref": "06L/24R",
@@ -62,12 +62,12 @@
       {
        "x": 27211.2,
        "z": 14100.5,
-       "elevation": 92.6
+       "elevation": 89.3
       },
       {
        "x": 29875.4,
        "z": 12719.2,
-       "elevation": 92.6
+       "elevation": 92.7
       }
      ],
      "published": [
@@ -93,12 +93,12 @@
       {
        "x": 28024.6,
        "z": 14944.5,
-       "elevation": 95.1
+       "elevation": 88.1
       },
       {
        "x": 31168.4,
        "z": 13316.5,
-       "elevation": 95.1
+       "elevation": 88.1
       }
      ],
      "published": [
@@ -121,7 +121,7 @@
    "surface": "platform",
    "source": "data/ist/runways.json",
    "elevationMax": 99.1,
-   "elevationMin": 99.1,
+   "elevationMin": 61.6,
    "runways": [
     {
      "ref": "16L/34R",
@@ -139,7 +139,7 @@
       {
        "x": -22870.6,
        "z": -29846.2,
-       "elevation": 99.1
+       "elevation": 66.5
       }
      ],
      "published": [
@@ -170,7 +170,7 @@
       {
        "x": -23078.9,
        "z": -29837.3,
-       "elevation": 99.1
+       "elevation": 66.5
       }
      ],
      "published": [
@@ -196,12 +196,12 @@
       {
        "x": -21239.7,
        "z": -25804.1,
-       "elevation": 99.1
+       "elevation": 94.5
       },
       {
        "x": -21381.3,
        "z": -29896.9,
-       "elevation": 99.1
+       "elevation": 61.6
       }
      ],
      "published": [
@@ -227,12 +227,12 @@
       {
        "x": -21450.3,
        "z": -25794.5,
-       "elevation": 99.1
+       "elevation": 94.5
       },
       {
        "x": -21591.4,
        "z": -29891.7,
-       "elevation": 99.1
+       "elevation": 61.6
       }
      ],
      "published": [
@@ -258,12 +258,12 @@
       {
        "x": -18815.5,
        "z": -25896.5,
-       "elevation": 99.1
+       "elevation": 94.2
       },
       {
        "x": -18921.1,
        "z": -28931.3,
-       "elevation": 99.1
+       "elevation": 67.4
       }
      ],
      "published": [

@@ -134,14 +134,17 @@ needs `['assets/ist/terrain', 'h']` in `SKIP_UNDER` like San Francisco's):
   (Küçükçekmece 0.5 m, Büyükçekmece 4.0 m, Terkos, Ömerli, Elmalı, Alibeyköy, Sazlıdere, Darlık…); river polygons stay
   land. Known limit: the DEM (TanDEM-X 2011–2015) predates LTFM and LTFJ's second runway; outside their flattened zones
   the old ground remains (mining pits NE of LTFM, down to −27 m).
-- **Airports** (`tools/geo/terrain_airports.py`): every runway rectangle + 60 m shoulders / overruns exactly at its
-  `data/ist/runways.json` `elevation` (LTFM 99.1, LTFJ 92.6 / 95.1, LTBA 26.1; checked: 0.00 m deviation, pavement slope
-  0.00 %); per-end `ends[k].elevation` values, if added there, make sloped runways (supported). Taxiways / aprons /
-  aerodrome (OSM) on a smooth surface: LTFM, LTFJ a spline platform through the runways; LTBA a plane fitted to its
-  paved DSM (robust against roofs) — taxiway / apron slope p99 0.5 % (LTFJ) to 1.6 % (LTBA). Blends into the DEM over 150–600 m.
-  **For the airports pipeline:** OurAirports / AIP runway end elevations at LTFM fall from ~99 m (south) to 62–67 m
-  (north); with one 99.1 m for all runways the north ends stand ~35 m above the real ground (an embankment north of the
-  field). `data/ist/terrain_airports.json` lists, per runway end, the terrain elevation and the published value.
+- **Airports** (`tools/geo/terrain_airports.py`): every runway rectangle + 60 m shoulders / overruns follows its
+  `data/ist/runways.json` per-end `ends[k].elevation` (linear between the ends; the runway `elevation` where an end has
+  none): LTFM 99.1 / 94.5 / 94.2 m (south ends) to 66.5 / 61.6 / 67.4 m (north ends), 0.80–0.88 % longitudinal slope;
+  LTFJ 06L 89.3 → 24R 92.7, 06R/24L 88.1; LTBA 05 28.4 → 23 27.4. Checked on the published height files (getHeight
+  triangles, centreline and both edges, 81 stations per runway): every runway end within 0.03 m, worst deviation on any
+  runway 0.036 m; runway pavement gradient ≤ 1.02 % (LTFM, longitudinal + cross), shoulders ≤ 2.7 %. Taxiways / aprons /
+  aerodrome (OSM) on a smooth surface: LTFM, LTFJ a spline platform through the runway profiles; LTBA a plane fitted to
+  its paved DSM (robust against roofs); taxiway / apron slope p99 0.6 % (LTFJ) to 1.8 % (LTBA), max 2.8 %. Blends into
+  the DEM over 150–600 m. `data/ist/terrain_airports.json` lists per runway end the terrain elevation and the
+  published (OurAirports / AIP) value. Rebuild the terrain (terrain_airports.py, terrain_build.py, imagery_build.py,
+  terrain_pinpack.py) whenever runway geometry or elevations in runways.json change.
 - **Water / coast**: sea = root − OSM land polygons (osmdata.openstreetmap.de land-polygons-split-4326): Karadeniz,
   Boğaz, Haliç, Marmara, Adalar, İzmit Körfezi; lakes / piers / aerodromes from the Geofabrik Turkey extract
   (pyosmium; Overpass was overloaded). `water_depth.png`: R = depth from EMODnet Bathymetry (free WCS; Marmara > 1 km

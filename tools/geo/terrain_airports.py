@@ -1,12 +1,11 @@
-"""Airport surfaces for terrain built from a DSM (GEO_REGION=ist): every runway rectangle (+60 m shoulders / overruns) at
-its data/ist/runways.json elevation (the airports pipeline's contract: "terrain must be flattened to `elevation` over
-each runway rectangle"; per-end "elevation" values there, if they appear, give sloped runways), taxiways / aprons /
-the aerodrome on a smooth surface through them, blended into the DEM.
+"""Airport surfaces for terrain built from a DSM (GEO_REGION=ist): every runway rectangle (+60 m shoulders / overruns)
+follows its data/ist/runways.json per-end elevations (`ends[k].elevation`, linear between the two ends; the runway
+`elevation` for an end without one), taxiways / aprons / the aerodrome on a smooth surface through them, blended into
+the DEM.
 
-Runway elevations: data/ist/runways.json (LTFM 99.1 m on all five runways, LTFJ 92.6 / 95.1 m, LTBA 26.1 m); airports
-missing there fall back to OSM runways + OurAirports end elevations (public domain, AIP values, cached in
-raw/ourairports/; e.g. LTFM's published ends fall from 99 m (south) to 62 m (north), recorded in the output for the
-airports pipeline).
+Runway elevations: data/ist/runways.json (AIP end elevations: LTFM 94-99 m south ends to 62-67 m north ends, LTFJ
+88-93 m, LTBA 27-28 m); airports missing there fall back to OSM runways + OurAirports end elevations (public domain,
+AIP values, cached in raw/ourairports/), recorded in the output next to the terrain values.
 Surface per airport (MODES):
   platform: thin-plate spline through anchors on every runway centreline and edge, over the whole zone. LTFM
             (Copernicus GLO-30 / TanDEM-X 2011-2015 predates the airport, built 2015-2018 on an open-pit mining site: the
