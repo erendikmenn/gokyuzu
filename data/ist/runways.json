@@ -8,8 +8,8 @@
    "elevation": 99.1,
    "military": false,
    "center": {
-    "x": -21503.9,
-    "z": -27808.9
+    "x": -20682.0,
+    "z": -27341.6
    },
    "runways": [
     {
@@ -19,80 +19,80 @@
      "surface": "asphalt",
      "elevation": 99.1,
      "center": {
-      "x": -22805.29,
-      "z": -27972.89
+      "x": -22802.88,
+      "z": -27973.24
      },
      "ends": [
       {
        "ident": "34R",
-       "x": -22740.02,
-       "z": -26099.63,
-       "headingTrue": 358.0,
-       "headingGeo": 359.13,
+       "x": -22738.06,
+       "z": -26099.97,
+       "headingTrue": 358.02,
+       "headingGeo": 359.15,
        "elevation": 99.1
       },
       {
        "ident": "16L",
-       "x": -22870.56,
-       "z": -29846.15,
-       "headingTrue": 178.0,
-       "headingGeo": 179.13,
-       "elevation": 66.5
+       "x": -22867.71,
+       "z": -29846.51,
+       "headingTrue": 178.02,
+       "headingGeo": 179.15,
+       "elevation": 66.4
       }
      ]
     },
     {
      "id": "16R/34L",
      "width": 60.0,
-     "length": 3749.0,
+     "length": 3748.8,
      "surface": "asphalt",
      "elevation": 99.1,
      "center": {
-      "x": -23014.61,
-      "z": -27963.93
+      "x": -23012.65,
+      "z": -27966.0
      },
      "ends": [
       {
        "ident": "34L",
-       "x": -22950.36,
-       "z": -26090.55,
-       "headingTrue": 358.04,
-       "headingGeo": 359.16,
+       "x": -22947.92,
+       "z": -26092.73,
+       "headingTrue": 358.02,
+       "headingGeo": 359.15,
        "elevation": 99.1
       },
       {
        "ident": "16R",
-       "x": -23078.87,
-       "z": -29837.3,
-       "headingTrue": 178.04,
-       "headingGeo": 179.16,
-       "elevation": 66.5
+       "x": -23077.39,
+       "z": -29839.27,
+       "headingTrue": 178.02,
+       "headingGeo": 179.15,
+       "elevation": 66.8
       }
      ]
     },
     {
      "id": "17L/35R",
      "width": 60.0,
-     "length": 4095.2,
+     "length": 4098.9,
      "surface": "asphalt",
      "elevation": 94.5,
      "center": {
-      "x": -21310.49,
-      "z": -27850.49
+      "x": -21308.22,
+      "z": -27849.95
      },
      "ends": [
       {
        "ident": "35R",
-       "x": -21239.66,
-       "z": -25804.09,
+       "x": -21237.43,
+       "z": -25801.7,
        "headingTrue": 358.02,
        "headingGeo": 359.16,
        "elevation": 94.5
       },
       {
        "ident": "17L",
-       "x": -21381.33,
-       "z": -29896.88,
+       "x": -21379.01,
+       "z": -29898.2,
        "headingTrue": 178.02,
        "headingGeo": 179.16,
        "elevation": 61.6
@@ -102,28 +102,28 @@
     {
      "id": "17R/35L",
      "width": 45.0,
-     "length": 4099.6,
+     "length": 4098.9,
      "surface": "asphalt",
      "elevation": 94.5,
      "center": {
-      "x": -21520.88,
-      "z": -27843.12
+      "x": -21518.08,
+      "z": -27842.66
      },
      "ends": [
       {
        "ident": "35L",
-       "x": -21450.35,
-       "z": -25794.52,
-       "headingTrue": 358.03,
-       "headingGeo": 359.17,
+       "x": -21447.22,
+       "z": -25794.42,
+       "headingTrue": 358.02,
+       "headingGeo": 359.16,
        "elevation": 94.5
       },
       {
        "ident": "17R",
-       "x": -21591.42,
-       "z": -29891.72,
-       "headingTrue": 178.03,
-       "headingGeo": 179.17,
+       "x": -21588.93,
+       "z": -29890.91,
+       "headingTrue": 178.02,
+       "headingGeo": 179.16,
        "elevation": 61.6
       }
      ]
@@ -131,31 +131,63 @@
     {
      "id": "18/36",
      "width": 45.0,
-     "length": 3036.6,
+     "length": 3059.4,
      "surface": "asphalt",
      "elevation": 94.2,
      "center": {
-      "x": -18868.32,
-      "z": -27413.87
+      "x": -18866.65,
+      "z": -27414.85
      },
      "ends": [
       {
        "ident": "36",
-       "x": -18815.55,
-       "z": -25896.49,
-       "headingTrue": 358.01,
-       "headingGeo": 359.17,
+       "x": -18813.85,
+       "z": -25886.08,
+       "headingTrue": 358.02,
+       "headingGeo": 359.18,
        "elevation": 94.2
       },
       {
        "ident": "18",
-       "x": -18921.1,
-       "z": -28931.26,
-       "headingTrue": 178.01,
-       "headingGeo": 179.17,
+       "x": -18919.44,
+       "z": -28943.62,
+       "headingTrue": 178.02,
+       "headingGeo": 179.18,
        "elevation": 67.4
       }
      ]
+    },
+    {
+     "id": "09/27",
+     "width": 45.0,
+     "length": 2819.6,
+     "surface": "concrete",
+     "elevation": 83.5,
+     "center": {
+      "x": -16583.74,
+      "z": -25002.69
+     },
+     "ends": [
+      {
+       "ident": "09",
+       "x": -17992.68,
+       "z": -24953.11,
+       "headingTrue": 87.98,
+       "headingGeo": 89.15,
+       "elevation": 83.5,
+       "landing": false
+      },
+      {
+       "ident": "27",
+       "x": -15174.8,
+       "z": -25052.27,
+       "headingTrue": 267.98,
+       "headingGeo": 269.15,
+       "elevation": 83.5,
+       "landing": false
+      }
+     ],
+     "departureOnly": true
     }
    ]
   },
@@ -166,32 +198,32 @@
    "military": false,
    "center": {
     "x": 29069.9,
-    "z": 13770.1
+    "z": 13769.5
    },
    "runways": [
     {
      "id": "06L/24R",
      "width": 45.0,
-     "length": 3001.0,
-     "surface": "asphalt",
+     "length": 3000.0,
+     "surface": "concrete",
      "elevation": 92.7,
      "center": {
-      "x": 28543.32,
-      "z": 13409.81
+      "x": 28543.66,
+      "z": 13408.76
      },
      "ends": [
       {
        "ident": "06L",
-       "x": 27211.2,
-       "z": 14100.46,
+       "x": 27211.92,
+       "z": 14099.06,
        "headingTrue": 62.6,
        "headingGeo": 64.1,
-       "elevation": 89.3
+       "elevation": 89.0
       },
       {
        "ident": "24R",
-       "x": 29875.44,
-       "z": 12719.16,
+       "x": 29875.39,
+       "z": 12718.45,
        "headingTrue": 242.6,
        "headingGeo": 244.1,
        "elevation": 92.7
@@ -201,29 +233,29 @@
     {
      "id": "06R/24L",
      "width": 60.0,
-     "length": 3540.4,
-     "surface": "asphalt",
-     "elevation": 88.1,
+     "length": 3540.0,
+     "surface": "concrete",
+     "elevation": 93.9,
      "center": {
-      "x": 29596.5,
-      "z": 14130.48
+      "x": 29596.23,
+      "z": 14130.31
      },
      "ends": [
       {
        "ident": "06R",
-       "x": 28024.57,
-       "z": 14944.48,
-       "headingTrue": 62.62,
-       "headingGeo": 64.13,
-       "elevation": 88.1
+       "x": 28024.8,
+       "z": 14944.93,
+       "headingTrue": 62.6,
+       "headingGeo": 64.11,
+       "elevation": 82.3
       },
       {
        "ident": "24L",
-       "x": 31168.44,
-       "z": 13316.47,
-       "headingTrue": 242.62,
-       "headingGeo": 244.13,
-       "elevation": 88.1
+       "x": 31167.66,
+       "z": 13315.7,
+       "headingTrue": 242.6,
+       "headingGeo": 244.11,
+       "elevation": 93.9
       }
      ]
     }
@@ -232,40 +264,39 @@
   {
    "icao": "LTBA",
    "name": "Atatürk Havalimanı",
-   "elevation": 49.7,
+   "elevation": 28.7,
    "military": false,
    "center": {
-    "x": -12585.8,
-    "z": 6261.8
+    "x": -12578.1,
+    "z": 6254.3
    },
    "runways": [
     {
      "id": "05/23",
      "width": 60.0,
-     "length": 2717.1,
+     "length": 2579.5,
      "surface": "asphalt",
-     "elevation": 28.4,
+     "elevation": 28.3,
      "center": {
-      "x": -12585.76,
-      "z": 6261.78
+      "x": -12578.11,
+      "z": 6254.3
      },
      "ends": [
       {
        "ident": "05",
-       "x": -13730.61,
-       "z": 6993.18,
-       "headingTrue": 57.43,
-       "headingGeo": 58.61,
-       "displaced": 208.7,
-       "elevation": 28.4
+       "x": -13664.46,
+       "z": 6949.5,
+       "headingTrue": 57.38,
+       "headingGeo": 58.57,
+       "elevation": 28.3,
+       "displaced": 130.0
       },
       {
        "ident": "23",
-       "x": -11440.92,
-       "z": 5530.39,
-       "headingTrue": 237.43,
-       "headingGeo": 238.61,
-       "displaced": 61.4,
+       "x": -11491.76,
+       "z": 5559.1,
+       "headingTrue": 237.38,
+       "headingGeo": 238.57,
        "elevation": 27.4
       }
      ]
