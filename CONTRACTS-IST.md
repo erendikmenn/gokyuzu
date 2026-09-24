@@ -275,3 +275,66 @@ needs `['assets/ist/terrain', 'h']` in `SKIP_UNDER` like San Francisco's):
   `IST_WORLD=<module>` flies the same flights against another world (used while designing, with the raw Copernicus DSM).
 - **Engine hooks**: none outstanding (orbit markers, `useRunways` hand-over and per-end threshold elevations are in).
   No wind in the flight models, so no crosswind variants.
+
+### 6.A Airports + city (airports + city agent)
+- **Sources**: OpenStreetMap = Geofabrik `turkey-latest.osm.pbf` (downloaded once, pyosmium; no Overpass); Overture Maps
+  buildings release 2026-09-23.0 (AWS Open Data, anonymous S3 `overturemaps-us-west-2`, only the parquet row groups whose
+  bbox statistics touch the region; its OpenStreetMap rows are dropped, its Microsoft ML footprints (conf ≥ 0.8, no OSM
+  overlap) fill gaps); OurAirports runways.csv (public domain, AIP end elevations); AIP aerodrome elevations. Caches:
+  `assets/ist/{city,airports}/_cache/` (gitignored, never published).
+- **`data/ist/runways.json`** (`tools/geo/airports_runways.py`), San Francisco's format: LTFM 16L/34R, 16R/34L, 17L/35R,
+  17R/35L, 18/36 (3749 / 3749 / 4095 / 4100 / 3037 m, 45–60 m wide; AIP 3750 / 3750 / 4100 / 4100 / 3060), LTFJ 06L/24R
+  3001 m, 06R/24L 3540 m, LTBA 05/23 2717 m (its only runway today; 17/35 is Millet Bahçesi; `displaced` 209 / 61 m).
+  `ends[i]` = physical pavement ends; `headingTrue` = direction between the ends in the local frame (grid north, what
+  the game flies; LTFM 358.0°), `headingGeo` = geodetic true bearing (+1.1–1.5° convergence). **`ends[i].elevation`** =
+  published end elevation (LTFM 94–99 m south → 62–67 m north, LTFJ 88–93 m, LTBA 27–28 m); runway `elevation` = the
+  higher end, so code that reads one value errs above the ground (prefer the end value: autopilot glideslope
+  `fixedwing-autopilot.js`, `missions/runtime.js`, `audio/index.js`). `magneticDeclination` 6.3. No separate ILS/nav
+  file (San Francisco has none either).
+- **Airports** `assets/ist/airports/` (`airports_fetch.py` → `airports_build.py` → Blender `build_buildings.py` →
+  `tools/assets/textures.mjs --only assets/ist/airports`): `<icao>.json/.bin` exactly as San Francisco's (surfaces,
+  markings with ICAO leading-zero designators, 22.2k lights, ALSF-2 / MALSR stations at their end's elevation, PAPI,
+  localizer / glideslope, holds + signs, 1085 stands, OSM jet bridges, windsocks, floodlights, colliders) plus
+  `gridRot` (radians); towers as `tower_generic` (LTFM 90 m, LTFJ 91 m, LTBA); `<icao>_buildings.glb` (188 / 177 / 161
+  buildings, KTX2 facades in `shared/`); `manifest.json` `{ buildings, lods, airports, tex, props }` with `tex` / `props`
+  pointing at San Francisco's identical generic files (no second copy); `exclusions.json` (OSM ids + airside zones
+  for the city). Published ≈ 13 MB.
+- **City** `assets/ist/city/` (`city_fetch.py` → `city_osm.py` → `city_prep.py` (dispatches to `city_ist.py`) →
+  `city_build.py` (Python builder `city_mesh.py`) → `city_trees.py`; `city_atlas.py` copies San Francisco's atlas):
+  same `index.json` / tile / `obst/` / `trees/` formats. 946,768 buildings (OSM 691,756 + Overture ML 255,012); heights
+  from `height`, else `building:levels` × 3.2 m (+0.8), else estimated (70,743 tagged): per mahalle the empirical
+  distribution of tagged buildings of the same footprint class, else district / zone priors (historic peninsula
+  2–5 storeys, capped around Sultanahmet / Ayasofya / Süleymaniye / Yeni Cami; Levent, Maslak, Ataşehir, Esenyurt
+  high), footprint class caps. Median 13.0 m, p90 23.2 m, p99 42.4 m. 449,887 hipped / gabled tile roofs. 2,683 generic
+  mosques: hall + drum + lead dome + 1–2 minarets (OSM minaret nodes where mapped, else the corners away from the qibla),
+  merged into the tiles (no draw calls of their own). Landmarks: `data/ist/landmarks-exclude.json` ids + zones (and
+  their model bounds), minarets / columns / TV towers never generic. **Approach surfaces**: every runway end, out to
+  5 km, 150 m each side + 15 %: buildings (25 capped) and trees (36 removed) stay ≥ 30 m below a 3° path aimed 300 m past
+  the threshold (checked on the published terrain: min 30.0 m buildings, 31.1 m trees; merged LOD1/2 blocks can be a
+  few metres above a capped member, the obstacle rasters are exact).
+- **Tile format differences the engine already handles** (checked in the game with `?map=ist`):
+  geometry is `EXT_meshopt_compression` + `KHR_mesh_quantization` instead of Draco (float32 POSITION / NORMAL /
+  TEXCOORD_0 / TEXCOORD_1 through the exponential filter, TEXCOORD_2 uint16 (layer, seed 0–255), COLOR_0 uint8; plain,
+  non-interleaved attributes); LOD0 is ONE mesh per 1 km stored at sub-tile (2i, 2j) (the other three are absent);
+  LOD1 = merged height-class blocks with `placement: 'vertex'` in index.json (no TEXCOORD_1); LOD3 exists only for the
+  48 cells with towers ≥ 90 m. Obstacle rasters include every building / dome / minaret overlapping a tile.
+- **Trees**: 9,150,277 (forests of the north 8.3 M at 9–11 m spacing, parks, cemetery cypresses, yards, scrub, OSM
+  trees / rows), San Francisco's 9 species models (copied), same `trees/<i>_<j>.bin` format.
+- **Size**: published city ≈ 683 MB (l0 347, l1 159, l2 37, l3 0.5, obst 25, trees 113, atlas 1.2, index 0.7) vs San
+  Francisco 449 MB: 1.85× the buildings and 4.9× the trees (the forests), meshopt ~24 B/triangle vs Draco 14.7 (meshopt
+  decodes ~10× faster on phones and is compressed further by any gzip / brotli on the way), but 15.4 triangles per
+  building at LOD0 vs San Francisco's 34.9.
+- **Budgets measured in the game** (city buildings layer incl. the shadow pass, 1920×1080, `tools/perf` probes; San
+  Francisco worst of downtown-300 / birdseye / bay-3000 / Sunset-150 / Mission-150 / golden-gate): low 28 calls /
+  0.25 M tris (SF 37 / 0.53 M), medium 41 / 0.42 M (SF 47 / 0.55 M), high 76 / 0.86 M (SF 132 / 2.32 M), ultra 103 /
+  1.08 M (SF 142 / 2.36 M); loaded city geometry ≤ 242 MB (SF ≤ 649 MB); texture memory identical (same atlas); trees
+  ≤ 58 calls / 0.40 M (SF ≤ 77 / 6.26 M). First playable download: LTFM 35L 30–33 MB, LTFJ 06L 32 MB vs SFO 28R
+  33–34 MB; after streaming settles 53 / 65 MB vs 70 MB.
+- **Rebuild** (`export GEO_REGION=ist; P=.venv/bin/python`): `$P tools/geo/city_fetch.py; $P tools/geo/city_osm.py;
+  $P tools/geo/airports_fetch.py; $P tools/geo/airports_runways.py; $P tools/geo/airports_build.py;` Blender
+  `build_buildings.py -- ltfm|ltfj|ltba` (with GEO_REGION); `node tools/assets/textures.mjs --only assets/ist/airports;
+  $P tools/geo/city_atlas.py; $P tools/geo/city_prep.py; $P tools/geo/city_build.py --jobs 14; $P tools/geo/city_trees.py;
+  $P tools/geo/city_build.py --index-only`. Re-run `city_prep.py` + `city_build.py` after `landmarks-exclude.json`,
+  `runways.json` or the terrain pack change (the build is incremental). With GEO_REGION unset every script resolves to
+  San Francisco's old paths / constants (airports and atlas / index / trees / one prep tile rebuilt into scratch:
+  byte-identical to the original code's output).
