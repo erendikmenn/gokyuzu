@@ -333,3 +333,27 @@ Players keep files in their browser cache, so every asset URL carries a content 
   Setup: `tools/analytics/setup.py <target>` (admin profile). The local dev server answers `/_e` with 204 and prints it.
 - Report: `.venv/bin/python tools/analytics/report.py [production|staging] [--days N]` (read-only IAM user
   `gokyuzu-analytics`); visitors are salted hashes, raw IPs are never printed.
+
+## 12. Missions, landing score, failures, leaderboard (wave 7)
+
+The owner's rules: no visual/art work. Gameplay markers (rings, gates, pad outlines) and UI panels are allowed but kept plain
+and cheap (instanced, no new heavy assets). Everything must stay optimized: no per-frame allocations, lazy-loaded code
+(missions are their own chunk in the production bundle), touch/mobile and desktop both supported, Turkish player text.
+
+- **Failures (flight models)**: `flight.failures` = `{ inject(kind, opts?), clear(kind?), active /* Map kind → opts */ }`
+  and `flight.on('failure', { kind, on })`. Kinds: `engine` (`{ index }`, 0-based; fixed wing and UH-60), `engineAll`,
+  `fire` (`{ index }`, implies the engine fails after a delay unless handled), `hydraulic` (fixed wing: FBW reversion /
+  manual reversion per type), `gear` (`{ which: 'nose'|'left'|'right'|'all' }`: stays up), `tailRotor` (UH-60). The
+  aural/visual alerts follow the real systems through `flight.warnings.*` flags (audio maps them in `src/audio/alertlogic.js`).
+  Free flight can enable random failures (setting `failures: 'off'|'rare'|'realistic'`, default off).
+- **Landing score**: every touchdown emits `flight.on('touchdown', info)` (existing) and the missions/landing module computes
+  a score card: vertical speed (ft/min), centreline offset (m), touchdown distance from the threshold (m), bank/crab, bounce,
+  runway yes/no → 0–3 stars and a Turkish rating. Telemetry: `land` gains `fpm`, `cl`, `tdz`, `st` (stars).
+- **Missions**: `src/missions/**` defines missions as data + small objective functions (reach point, pass gate/ring, land on
+  runway X with ≥ N stars, hover over pad, survive failure …) evaluated from the flight state; start via the menu tab
+  "Görevler" or `?mission=<id>` (`&daily=YYYYMMDD` for the daily mission). Progress (stars, best scores) in localStorage.
+  Telemetry: `mission` (`id`, `st` = start|done|fail|quit, `stars`, `score`, `sec`), `share` (`id`, `via`).
+- **Leaderboard (staging first)**: client `src/net/leaderboard.js` → `submitScore({ mission, day, score, stars, ac, name? })`
+  and `topScores({ mission, day })`; both resolve `null` when the service is unavailable (the UI then hides the table).
+  The service lives on the game's own origin under `/api/` (no third-party calls from the page). Names are optional,
+  short, filtered; no other personal data. Production is only connected with the owner's approval.
