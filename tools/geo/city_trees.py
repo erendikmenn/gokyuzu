@@ -547,7 +547,8 @@ def main_ist():
         for ti, si in zip(*st.query(shapely.points(xy), predicate='intersects')):
             x, z, s_, h, key = trees[ti]
             lim = city_ist.approach_limit(surfs[si], x, z)
-            if lim is not None and ground(x, z) + h > lim:
+            hq = min(255, max(1, int(round(h * 4)))) / 4          # the height as stored (0.25 m steps)
+            if lim is not None and ground(x, z) + hq > lim:
                 cut.add(int(ti))
         trees = [t for k, t in enumerate(trees) if k not in cut]
         say(f'removed {len(cut)} trees reaching into the approach surfaces')

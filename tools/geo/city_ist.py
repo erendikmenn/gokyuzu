@@ -499,18 +499,39 @@ def sample_normal(key, mu, sd):
     return mu + sd * math.sqrt(-2 * math.log(u1)) * math.cos(2 * math.pi * u2)
 
 
-def tagged_height(t):
-    """(height to the roof / eave, min_height, known) from OSM / Overture tags."""
+H_MAX = 250.0          # nothing generic is taller (the landmarks agent models the >= 150 m skyline)
+
+
+def plausible_height(h, lv, area):
+    """False for heights that cannot be the building's height: an elevation / altitude in the height tag (ÖzdilekPark:
+    height=275 on 35 storeys), more than ~5.5 m per storey beyond a 15 m spire / roof allowance, or a slenderness a
+    building of that footprint cannot have (height > 8 x sqrt(area), towers >= 60 m)."""
+    if h > H_MAX:
+        return False
+    if lv:
+        if h > lv * 5.5 and h - lv * 4.5 > 15.0:
+            return False
+    if area and h >= 60.0 and h > 8.0 * math.sqrt(area):
+        return False
+    return True
+
+
+def tagged_height(t, area=None):
+    """(height to the roof / eave, min_height, known) from OSM / Overture tags; implausible values are not used."""
     h = parse_len(t.get('height'))
     mh = parse_len(t.get('min_height')) or 0.0
     lv = parse_levels(t.get('building:levels'))
-    if h is not None and h > 1.5:
+    if lv is not None and (lv * FLOOR > H_MAX or (area and lv * FLOOR >= 60 and lv * FLOOR > 8.0 * math.sqrt(area) + 20)):
+        lv = None                          # a storey count no footprint of this size carries
+    if h is not None and h > 1.5 and plausible_height(h, lv, area):
         if lv and h < lv * 2.2:            # inconsistent (e.g. height = storey height): trust the levels
             h = lv * FLOOR + 0.8
+        if mh >= h - 1.0:
+            mh = 0.0
         return h, mh, True
     if lv is not None:
         mlv = parse_levels(t.get('building:min_level')) or 0.0
-        return lv * FLOOR + (0.8 if lv > 1 else 0.4), max(mh, mlv * FLOOR), True
+        return lv * FLOOR + (0.8 if lv > 1 else 0.4), max(mh if mh < lv * FLOOR - 1 else 0.0, mlv * FLOOR), True
     return None, mh, False
 
 
@@ -590,7 +611,7 @@ def mosque_cap(b):
 def building_height(b, emp):
     """Sets b['H'] (eave / roof top), b['base'], b['known'], b['levels']."""
     t = b['tags']
-    h, mh, known = tagged_height(t)
+    h, mh, known = tagged_height(t, b['area'])
     b['base'] = mh if mh and mh < (h or 0) - 2 else 0.0
     cap = mosque_cap(b)
     if known:
@@ -897,11 +918,11 @@ def main():
         for bi, b in enumerate(buildings):
             if b['src'] != 'osm':
                 continue
-            h, _, known = tagged_height(b['tags'])
+            h, _, known = tagged_height(b['tags'], b['poly'].area)
             if not known or h < 35 or is_mosque_tags(b['tags']):
                 continue
             idx = part_tree.query(b['poly'].buffer(2.0), predicate='contains')
-            ps = [parts[i] for i in idx if parse_len(parts[i]['tags'].get('height')) or parse_levels(parts[i]['tags'].get('building:levels'))]
+            ps = [parts[i] for i in idx if tagged_height(parts[i]['tags'], parts[i]['poly'].area)[2]]
             if not ps:
                 continue
             if unary_union([p['poly'] for p in ps]).area < 0.6 * b['poly'].area:
@@ -982,14 +1003,14 @@ def main():
 
     # ---- heights: tagged first, then the per-neighbourhood empirical distribution of the tagged ones
     for b in buildings:
-        h, mh, known = tagged_height(b['tags'])
+        h, mh, known = tagged_height(b['tags'], b['area'])
         b['known'] = known
     emp = defaultdict(list)
     for b in buildings:
         if b['known'] and b['mh'] >= 0 and not b.get('mosque'):
             lv = parse_levels(b['tags'].get('building:levels'))
             if lv is None:
-                lv = (tagged_height(b['tags'])[0] - 0.8) / FLOOR
+                lv = (tagged_height(b['tags'], b['area'])[0] - 0.8) / FLOOR
             if 0.5 <= lv <= 60:
                 emp[(b['mh'], area_class(b['area']))].append(lv)
     emp = {k: sorted(v) for k, v in emp.items()}

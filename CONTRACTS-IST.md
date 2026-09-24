@@ -309,23 +309,27 @@ needs `['assets/ist/terrain', 'h']` in `SKIP_UNDER` like San Francisco's):
 - **City** `assets/ist/city/` (`city_fetch.py` → `city_osm.py` → `city_prep.py` (dispatches to `city_ist.py`) →
   `city_build.py` (Python builder `city_mesh.py`) → `city_trees.py`; `city_atlas.py` copies San Francisco's atlas):
   same `index.json` / tile / `obst/` / `trees/` formats. 946,768 buildings (OSM 691,756 + Overture ML 255,012); heights
-  from `height`, else `building:levels` × 3.2 m (+0.8), else estimated (70,743 tagged): per mahalle the empirical
+  from `height`, else `building:levels` × 3.2 m (+0.8), else estimated (70,703 tagged). Tags are rejected when
+  implausible: > 250 m, > 5.5 m per storey beyond a 15 m allowance, or a ≥ 60 m height / storey count above
+  8 × √footprint (ÖzdilekPark's `height=275` is an elevation). Otherwise estimated: per mahalle the empirical
   distribution of tagged buildings of the same footprint class, else district / zone priors (historic peninsula
   2–5 storeys, capped around Sultanahmet / Ayasofya / Süleymaniye / Yeni Cami; Levent, Maslak, Ataşehir, Esenyurt
   high), footprint class caps. Median 13.0 m, p90 23.2 m, p99 42.4 m. 449,887 hipped / gabled tile roofs. 2,683 generic
   mosques: hall + drum + lead dome + 1–2 minarets (OSM minaret nodes where mapped, else the corners away from the qibla),
   merged into the tiles (no draw calls of their own). Landmarks: `data/ist/landmarks-exclude.json` ids + zones (and
-  their model bounds), minarets / columns / TV towers never generic. **Approach surfaces**: every runway end, out to
-  5 km, 150 m each side + 15 %: buildings (25 capped) and trees (36 removed) stay ≥ 30 m below a 3° path aimed 300 m past
-  the threshold (checked on the published terrain: min 30.0 m buildings, 31.1 m trees; merged LOD1/2 blocks can be a
-  few metres above a capped member, the obstacle rasters are exact).
+  their model bounds), minarets / columns / TV towers never generic; airport `exclusions.json` (terminal parts, car
+  parks, TWR-1, RWY 09 zone). **Approach surfaces**: all 18 ends of the AIP `runways.json` (LTFM 09 / 27 included,
+  LTBA 05 from its displaced threshold), out to 5 km, 150 m each side + 15 %: buildings (17 capped) and trees (1,574
+  removed, incl. the group ~550 m before LTFM 27) stay ≥ 30 m below a 3° path aimed 300 m past the threshold, checked
+  on the final terrain (b72bbe2): min 30.0 m buildings, 30.0 m trees (merged LOD1/2 blocks can be a few metres above a
+  capped member, the obstacle rasters are exact). Buildings / trees are dropped onto the live terrain at runtime.
 - **Tile format differences the engine already handles** (checked in the game with `?map=ist`):
   geometry is `EXT_meshopt_compression` + `KHR_mesh_quantization` instead of Draco (float32 POSITION / NORMAL /
   TEXCOORD_0 / TEXCOORD_1 through the exponential filter, TEXCOORD_2 uint16 (layer, seed 0–255), COLOR_0 uint8; plain,
   non-interleaved attributes); LOD0 is ONE mesh per 1 km stored at sub-tile (2i, 2j) (the other three are absent);
   LOD1 = merged height-class blocks with `placement: 'vertex'` in index.json (no TEXCOORD_1); LOD3 exists only for the
   48 cells with towers ≥ 90 m. Obstacle rasters include every building / dome / minaret overlapping a tile.
-- **Trees**: 9,150,277 (forests of the north 8.3 M at 9–11 m spacing, parks, cemetery cypresses, yards, scrub, OSM
+- **Trees**: 9,149,259 (forests of the north 8.3 M at 9–11 m spacing, parks, cemetery cypresses, yards, scrub, OSM
   trees / rows), San Francisco's 9 species models (copied), same `trees/<i>_<j>.bin` format.
 - **Size**: published city ≈ 683 MB (l0 347, l1 159, l2 37, l3 0.5, obst 25, trees 113, atlas 1.2, index 0.7) vs San
   Francisco 449 MB: 1.85× the buildings and 4.9× the trees (the forests), meshopt ~24 B/triangle vs Draco 14.7 (meshopt
