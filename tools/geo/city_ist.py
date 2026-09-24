@@ -12,7 +12,7 @@ neighbourhood has enough of them, else per district (admin_level 6) priors (hist
 Ataşehir / Esenyurt / Başakşehir high), footprint area and land use / building type.
 
 Mosques (building=mosque, place_of_worship + religion=muslim, point mosques inside a footprint): prayer hall walls, a
-lead-grey dome on a drum and 1 / 2 / 4 minarets (OSM minaret positions where mapped, else the corners away from the
+lead-grey dome on a drum and 1 / 2 minarets (OSM minaret positions where mapped, else the corners away from the
 qibla) - low-poly template geometry merged into the tile meshes (no extra draw calls).
 Landmarks built by the landmarks agent (data/ist/landmarks.json ids / radii / polygons, assets/ist/landmarks/index.json
 bounds, plus the fixed list below) and the airports (assets/ist/airports/exclusions.json, runway strips) are left out.
@@ -309,6 +309,137 @@ def load_airport_exclusions():
                 a, b = r['ends']
                 zones.append(LineString([(a['x'], a['z']), (b['x'], b['z'])]).buffer(r['width'] / 2 + 120, cap_style=2))
     return ids, zones
+
+
+# ---------------------------------------------------------------------------------------------- approach surfaces
+APPROACH_LEN, APPROACH_HALF, APPROACH_DIV = 5000.0, 150.0, 0.15    # ICAO approach surface: 150 m each side, +15 %
+GP_TAN, GP_AIM, GP_CLEAR = math.tan(math.radians(3.0)), 300.0, 30.0   # 3° path aimed 300 m past the threshold, 30 m below
+
+
+def terrain_sampler():
+    """Heights of the published terrain pack (assets/<map>/terrain/h/<deepest>.bin: 64-quad tiles, f32 hmin, f32 scale,
+    u16[67 x 67] rows +z with a 1-sample border), bilinear; None when the pack is not built."""
+    tdir = os.path.join(os.path.dirname(OUT), 'terrain')
+    ip = os.path.join(tdir, 'index.json')
+    if not os.path.exists(ip):
+        return None
+    idx = json.load(open(ip))
+    levels = sorted(int(f[:-4]) for f in os.listdir(os.path.join(tdir, 'h')) if f.endswith('.bin'))
+    if not levels:
+        return None
+    L = levels[-1]
+    rank, cnt = {}, 0
+    for n in idx['nodes']:
+        if n[0] == L:
+            rank[(n[1], n[2])] = cnt
+            cnt += 1
+    RS, RX, RZ, TB, G = idx['rootSize'], idx['rootMinX'], idx['rootMinZ'], idx['tileBytes'], idx['grid']
+    NS = G + 3
+    size = RS / (1 << L)
+    sp = size / G
+    f = open(os.path.join(tdir, 'h', f'{L}.bin'), 'rb')
+    cache = {}
+
+    def tile(i, j):
+        k = (i, j)
+        if k not in cache:
+            if k not in rank:
+                cache[k] = None                    # all water (or outside the deepest level): sea level
+            else:
+                f.seek(rank[k] * TB)
+                b = f.read(TB)
+                hmin, scale = np.frombuffer(b, np.float32, 2)
+                cache[k] = hmin + np.frombuffer(b, np.uint16, NS * NS, 8).reshape(NS, NS).astype(np.float32) * scale
+        return cache[k]
+
+    def h(x, z):
+        i, j = int(math.floor((x - RX) / size)), int(math.floor((z - RZ) / size))
+        t = tile(i, j)
+        if t is None:
+            return 0.0
+        fx, fz = (x - RX - i * size) / sp + 1, (z - RZ - j * size) / sp + 1
+        c, r = min(int(fx), NS - 2), min(int(fz), NS - 2)
+        ax, az = fx - c, fz - r
+        return float((t[r, c] * (1 - ax) + t[r, c + 1] * ax) * (1 - az) + (t[r + 1, c] * (1 - ax) + t[r + 1, c + 1] * ax) * az)
+    return h
+
+
+def approach_surfaces():
+    """Per landing end of data/<map>/runways.json: threshold (x, z), unit vector pointing away from the runway along
+    the approach, threshold elevation, and the surface trapezoid (local m)."""
+    out = []
+    rw = os.path.join(DATA_DIR, 'runways.json')
+    if not os.path.exists(rw):
+        return out
+    for apt in json.load(open(rw))['airports']:
+        for r in apt['runways']:
+            for e in r['ends']:
+                hd = math.radians(e['headingTrue'])            # landing / take-off direction from this end
+                u = np.array([math.sin(hd), -math.cos(hd)])
+                thr = np.array([e['x'], e['z']]) + u * e.get('displaced', 0.0)
+                out_dir = -u
+                nrm = np.array([-out_dir[1], out_dir[0]])
+                far = thr + out_dir * APPROACH_LEN
+                wf = APPROACH_HALF + APPROACH_DIV * APPROACH_LEN
+                poly = Polygon([tuple(thr + nrm * APPROACH_HALF), tuple(far + nrm * wf), tuple(far - nrm * wf),
+                                tuple(thr - nrm * APPROACH_HALF)])
+                out.append({'id': f"{apt['icao']} {e['ident']}", 'thr': thr, 'dir': out_dir, 'nrm': nrm,
+                            'elev': e.get('elevation', r['elevation']), 'poly': poly})
+    return out
+
+
+def approach_limit(surf, x, z):
+    """Highest allowed top (m MSL) at (x, z) in an approach surface, or None outside it."""
+    v = np.array([x, z]) - surf['thr']
+    d = float(v @ surf['dir'])
+    t = abs(float(v @ surf['nrm']))
+    if d < 0 or d > APPROACH_LEN or t > APPROACH_HALF + APPROACH_DIV * d:
+        return None
+    return surf['elev'] + GP_TAN * (d + GP_AIM) - GP_CLEAR
+
+
+def apply_approach_caps(buildings, say):
+    """Buildings inside a runway's approach surface stay >= 30 m below the 3° path: capped, or dropped when the cap
+    leaves less than one storey. Returns the kept list."""
+    surfs = approach_surfaces()
+    ground = terrain_sampler()
+    if not surfs:
+        return buildings
+    if ground is None:
+        say('  (no terrain pack: approach caps use sea level as the ground)')
+        ground = lambda x, z: 0.0
+    tree = STRtree([b['p0'] for b in buildings])
+    drop, capped = set(), 0
+    for sf in surfs:
+        for bi in tree.query(sf['poly'], predicate='intersects'):
+            b = buildings[bi]
+            if bi in drop:
+                continue
+            pts = np.asarray(b['p0'].exterior.coords)
+            lims = [approach_limit(sf, px, pz) for px, pz in pts]
+            lims = [l for l in lims if l is not None]
+            if not lims:
+                continue
+            g = ground(b['ax'] if 'ax' in b else b['cx'], b['az'] if 'az' in b else b['cz'])
+            allowed = min(lims) - g                        # m above the building's anchor ground
+            top = b['H'] + (b['roof'].get('rise', 0.0) if b['roof']['t'] != 'flat' else 0.0)
+            mq = b.get('mq')
+            if mq:
+                mq['m'] = [m for m in mq['m'] if m[3] <= allowed]
+                if mq['d'][3] + mq['d'][4] + mq['d'][5] > allowed:
+                    b.pop('mq', None)
+                    b['mosque'] = False
+            if top <= allowed:
+                continue
+            if allowed < 3.0:
+                drop.add(bi)
+                continue
+            b['roof'] = {'t': 'flat'}
+            b['H'] = round(float(allowed), 2)
+            b['levels'] = max(1, int((allowed - 0.8) // FLOOR))
+            capped += 1
+    say(f'  approach surfaces ({len(surfs)} ends, 5 km, 30 m under the 3° path): {capped} buildings capped, {len(drop)} dropped')
+    return [b for i, b in enumerate(buildings) if i not in drop]
 
 
 # ------------------------------------------------------------------------------------------------------------ heights
@@ -677,7 +808,7 @@ def mosque_parts(b, rect_info, minaret_pts):
         hall = max(4.5, known_h - drum - rise)
     b['H'] = round(hall, 2)
     b['levels'] = 1
-    n_min = 1 if A < 500 else 2 if A < 2000 else 4
+    n_min = 1 if A < 500 else 2          # (most large Ottoman mosques have two; four and six are the landmarks)
     mh = 22.0 if A < 200 else 30.0 if A < 500 else 42.0 if A < 2000 else 56.0
     mh *= 0.9 + 0.2 * rnd01(b['id'], 'mh')
     mr = 1.1 if A < 200 else 1.4 if A < 500 else 1.8 if A < 2000 else 2.2
@@ -694,8 +825,6 @@ def mosque_parts(b, rect_info, minaret_pts):
         order = np.argsort(corners @ qd)       # smallest = farthest from the qibla wall (entrance side)
         cen = np.array([cx, cz])
         pick = list(order[:2]) if n_min >= 2 else [order[0] if rnd01(b['id'], 'mc') < 0.5 else order[1]]
-        if n_min >= 4:
-            pick = list(order)
         for k in pick:
             v = corners[k] - cen
             n = np.linalg.norm(v) or 1.0
@@ -892,6 +1021,9 @@ def main():
         classify(b)
     say(f'  roofs: {n_pitched} pitched; styles {Counter(ATLAS["layers"][b["style"]]["name"] for b in buildings).most_common(8)}')
 
+    # ---- runway approach surfaces: nothing within 30 m of the 3° glide path (CONTRACTS-IST §6.A)
+    buildings = apply_approach_caps(buildings, say)
+
     # ---- party walls / street-facing edges (probes 0.9 m outside every <= 5 m wall segment)
     compute_edges(buildings, say)
 
@@ -909,7 +1041,6 @@ def main():
         json.dump({'tile': [i, j], 'size': T1, 'origin': [i * T1, j * T1], 'buildings': recs},
                   open(os.path.join(TILES, f'L1_{i}_{j}.json'), 'w'), separators=(',', ':'))
         index.append({'i': i, 'j': j, 'n': len(recs)})
-        write_obstacles(i, j, [buildings[bi] for bi in ids])
     json.dump(index, open(os.path.join(TILES, 'index_L1.json'), 'w'))
     say(f'  wrote {len(index)} L1 tiles')
     if only is None:
@@ -917,6 +1048,7 @@ def main():
             if f.startswith('L1_') and tuple(int(v) for v in f[3:-5].split('_')) not in by_tile:
                 os.remove(os.path.join(TILES, f))
         write_stats(buildings)
+        write_all_obstacles(say)
         write_far(None, say)
     say('done')
 
@@ -997,26 +1129,17 @@ def solid_top(b):
     return top
 
 
-def write_obstacles(i, j, blds):
+def write_obstacles(i, j, items):
     """4 m raster of the tallest solid per cell (uint16 index+1) + solids table (anchor x, z, top above anchor ground).
-    Mosque domes and minarets are extra solids anchored at their own positions."""
+    items: (top, anchor x, anchor z, footprint polygon) - every solid overlapping the tile, whatever tile owns it."""
     from rasterio import features
     from rasterio.transform import from_origin
     n = int(T1 / OBST_CELL)
     x0, z0 = i * T1, j * T1
     tr = from_origin(x0, z0, OBST_CELL, -OBST_CELL)
-    items = []
-    for b in blds:
-        items.append((solid_top(b), b['ax'], b['az'], b['p0'].buffer(1.0)))
-        mq = b.get('mq')
-        if mq:
-            cx, cz, r, y0, drum, rise = mq['d']
-            items.append((y0 + drum + rise, cx, cz, Point(cx, cz).buffer(r * 0.8, 8)))
-            for (x, z, mr, h) in mq['m']:
-                items.append((h, x, z, Point(x, z).buffer(mr + 1.0, 8)))
     if not items:
         return
-    items.sort(key=lambda t: t[0])
+    items = sorted(items, key=lambda t: t[0])
     solids, shapes = [], []
     for top, ax, az, g in items:
         solids.append((ax, az, top))
@@ -1026,6 +1149,41 @@ def write_obstacles(i, j, blds):
     body = np.asarray(solids, np.float32).tobytes() + ras.astype('<u2').tobytes()
     with gzip.open(os.path.join(OBST, f'{i}_{j}.bin.gz'), 'wb', compresslevel=9) as f:
         f.write(head + body)
+
+
+def write_all_obstacles(say=print):
+    """Obstacle rasters from the L1 tile records: every building / dome / minaret goes into every 1 km tile its
+    footprint (+1 m) overlaps, so buildings across a tile border have no collision gap (San Francisco rasterises a
+    building only into the tile that owns its anchor)."""
+    solids = []
+    for f in sorted(os.listdir(TILES)):
+        if not f.startswith('L1_'):
+            continue
+        for r in json.load(open(os.path.join(TILES, f)))['buildings']:
+            try:
+                p = Polygon(r['p'])
+            except Exception:
+                continue
+            top = r['h'] + (r['roof'].get('rise', 0.0) if r['roof']['t'] != 'flat' else 0.0)
+            solids.append((top, r['a'][0], r['a'][1], p.buffer(1.0)))
+            mq = r.get('mq')
+            if mq:
+                cx, cz, rr, y0, drum, rise = mq['d']
+                solids.append((y0 + drum + rise, cx, cz, Point(cx, cz).buffer(rr * 0.8, 8)))
+                for (x, z, mr, h) in mq['m']:
+                    solids.append((h, x, z, Point(x, z).buffer(mr + 1.0, 8)))
+    tiles = defaultdict(list)
+    for s_ in solids:
+        minx, minz, maxx, maxz = s_[3].bounds
+        for i in range(int(math.floor(minx / T1)), int(math.floor(maxx / T1)) + 1):
+            for j in range(int(math.floor(minz / T1)), int(math.floor(maxz / T1)) + 1):
+                tiles[(i, j)].append(s_)
+    for f in os.listdir(OBST):
+        if f.endswith('.bin.gz'):
+            os.remove(os.path.join(OBST, f))
+    for (i, j), items in tiles.items():
+        write_obstacles(i, j, items)
+    say(f'  wrote {len(tiles)} obstacle tiles ({len(solids)} solids)')
 
 
 # --------------------------------------------------------------------------------------------------------- far LOD
@@ -1150,5 +1308,7 @@ def write_stats(buildings):
 if __name__ == '__main__':
     if '--far-only' in sys.argv:
         write_far()
+    elif '--obst-only' in sys.argv:
+        write_all_obstacles()
     else:
         main()

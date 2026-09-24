@@ -537,6 +537,20 @@ def main_ist():
     bad = set(ex_all.query(shapely.points(xy), predicate='intersects')[0].tolist())
     trees = [t for k, t in enumerate(trees) if k not in bad]
     say(f'excluded {len(bad)} trees (airports / landmarks)')
+    # runway approach surfaces: tree tops >= 30 m below the 3° glide path (city_ist.apply_approach_caps)
+    surfs = city_ist.approach_surfaces()
+    ground = city_ist.terrain_sampler() or (lambda x, z: 0.0)
+    if surfs:
+        st = STRtree([sf['poly'] for sf in surfs])
+        xy = np.array([(t[0], t[1]) for t in trees])
+        cut = set()
+        for ti, si in zip(*st.query(shapely.points(xy), predicate='intersects')):
+            x, z, s_, h, key = trees[ti]
+            lim = city_ist.approach_limit(surfs[si], x, z)
+            if lim is not None and ground(x, z) + h > lim:
+                cut.add(int(ti))
+        trees = [t for k, t in enumerate(trees) if k not in cut]
+        say(f'removed {len(cut)} trees reaching into the approach surfaces')
     write_tiles(trees)
     say('done')
 
