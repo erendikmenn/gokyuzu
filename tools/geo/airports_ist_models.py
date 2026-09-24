@@ -317,7 +317,8 @@ def ltfm_terminal(hall_l, canopy_l, piers_l, h_hall=45.0, h_pier=27.0):
     covered, n_dome = dome_roof(fm, roof, origin, ang, Mu, Mv, (-int(math.ceil(umax / Mu)), int(math.ceil(umax / Mu))),
                                 (int(math.floor(vmin / Mv)), int(math.ceil(vmax / Mv))), z_edge, z_apex)
     # hall walls: full-height glazing up to the roof edge
-    _edge_walls(fm, hall, -3.0, z_edge, 'fac_glass', others=[(q, h_pier) for q in [to_b(p, fm) for p in piers_l]])
+    # walls reach 8 m below the anchor's ground: the graded apron falls up to ~5 m along a 1 km pier
+    _edge_walls(fm, hall, -8.0, z_edge, 'fac_glass', others=[(q, h_pier) for q in [to_b(p, fm) for p in piers_l]])
     # canopy: soffit, fascia, columns
     fm.cap(canopy, z_wall, 'ist_soffit', up=False)
     ring = ccw_ring(roof)
@@ -338,7 +339,7 @@ def ltfm_terminal(hall_l, canopy_l, piers_l, h_hall=45.0, h_pier=27.0):
         pm = FM(f'terminal_ist_pier{k}', (c.x, c.y), kind='pier')
         pb = to_b(pl.simplify(1.2), pm)
         others = [(to_b(hall_l, pm), h_hall)] + [(to_b(q, pm), h_pier) for j, q in enumerate(piers_l) if j != k]
-        _edge_walls(pm, pb, -3.0, h_pier - 7.0, 'fac_terminal', others=others, tile_=(9.0, h_pier - 7.0))
+        _edge_walls(pm, pb, -8.0, h_pier - 7.0, 'fac_terminal', others=others, tile_=(9.0, h_pier - 7.0))
         vault_roof(pm, pb, [0.0, 4.0, 9.0, 14.0, 19.0], [h_pier - 7.0, h_pier - 4.2, h_pier - 2.0, h_pier - 0.8, h_pier - 0.3])
         out.append(pm)
     print(f'LTFM terminal: {n_dome} domes, hall {out[0].tris()} tris, piers {[o.tris() for o in out[1:]]}')
@@ -554,6 +555,6 @@ def barrel_roof(fm, poly_b, ang, z_eave, rise, segments=None, mat='roof_metal', 
             b = (A[0] + (B[0] - A[0]) * (j + 1) / n, A[1] + (B[1] - A[1]) * (j + 1) / n)
             za, zb = z_of(*a), z_of(*b)
             L = math.dist(a, b)
-            fm.face([(a[0], a[1], -3.0), (b[0], b[1], -3.0), (b[0], b[1], zb), (a[0], a[1], za)],
-                    [(u / tw, -3.0 / th), ((u + L) / tw, -3.0 / th), ((u + L) / tw, zb / th), (u / tw, za / th)], wall_mat)
+            fm.face([(a[0], a[1], -6.0), (b[0], b[1], -6.0), (b[0], b[1], zb), (a[0], a[1], za)],
+                    [(u / tw, -6.0 / th), ((u + L) / tw, -6.0 / th), ((u + L) / tw, zb / th), (u / tw, za / th)], wall_mat)
             u += L

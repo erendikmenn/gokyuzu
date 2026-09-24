@@ -664,7 +664,7 @@ class Airport:
         self.mark(text.intersection(self.paved), WHITE)
 
     # ------------------------------------------------------------ stands, gates, jet bridges
-    def build_stands(self, stand_lines, jet_lines, terminals, occupancy=0.72, wide_refs=()):
+    def build_stands(self, stand_lines, jet_lines, terminals, occupancy=0.72, wide_refs=(), jb_boost=True):
         term = unary_union(terminals) if terminals else Polygon()
         jet_ends = []
         for ln, tags, wid in jet_lines:
@@ -743,7 +743,7 @@ class Airport:
             if len(members) == 1:
                 i = members[0]
                 has_jb = any(jb['stand'] is stops[i] for jb in jet_ends)
-                stops[i]['occ'] = (stops[i]['cls'] != 'small') and self.rng.random() < (occupancy if has_jb else occupancy * 0.8)
+                stops[i]['occ'] = (stops[i]['cls'] != 'small') and self.rng.random() < (occupancy if has_jb and jb_boost else occupancy * 0.8)
                 continue
             for i in members:
                 stops[i]['occ'] = False
@@ -997,7 +997,7 @@ def osm_airport(icao, cfg):
     jets = list(osm.lines(el, lambda t: t.get('aeroway') == 'jet_bridge'))
     if cfg.get('extra_jets'):          # İstanbul: bridges derived from the terminal's fixed links + stands
         jets += cfg['extra_jets'](el, terms, stands, jets)
-    ap.build_stands(stands, jets, terms, wide_refs=cfg.get('wide_refs', ()))
+    ap.build_stands(stands, jets, terms, wide_refs=cfg.get('wide_refs', ()), jb_boost=cfg.get('jb_boost', True))
     return ap, el
 
 
@@ -1369,6 +1369,7 @@ def build_ltfm():
     canopy = [r for r in parts if fh(r[1], 'min_height') >= 20 and r[0].area > 5000]
     piers = [r for r in parts if 20 <= fh(r[1], 'height') < 40 and not fh(r[1], 'min_height') and r[0].area > 15000]
     cfg['extra_jets'] = fixed_link_jets
+    cfg['jb_boost'] = False      # the derived bridges do not fill more stands: parked aircraft exactly as before
     ap = ist_airport('LTFM', cfg, 'İstanbul Havalimanı kulesi', 572703385, skip=(outline[2],))
     add_windsocks(ap, ('34R', '35L', '16L', '17R'))
     remove = []
