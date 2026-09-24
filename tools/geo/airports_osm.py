@@ -4,8 +4,7 @@ import numpy as np
 from shapely.geometry import Polygon, LineString, Point, MultiPolygon
 from shapely.ops import unary_union, linemerge, polygonize
 from geo import lonlat_to_local, _fwd, E0, N0
-
-ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+from airports_lib import ROOT, RAW_OSM
 
 
 def local_pts(geom):
@@ -16,7 +15,7 @@ def local_pts(geom):
 
 
 def load(name):
-    return json.load(open(os.path.join(ROOT, 'data', 'sf', 'raw', 'osm', f'airports_{name}.json')))['elements']
+    return json.load(open(os.path.join(RAW_OSM, f'airports_{name}.json')))['elements']
 
 
 def ways(elements, pred):

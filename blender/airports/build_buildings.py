@@ -1,6 +1,7 @@
 """W4 airports: build all airport buildings of one airport in Blender and export assets/sf/airports/<icao>_buildings.glb
 
   /Applications/Blender.app/Contents/MacOS/Blender -b -P blender/airports/build_buildings.py -- ksfo [--blend]
+  GEO_REGION=ist /Applications/Blender.app/Contents/MacOS/Blender -b -P blender/airports/build_buildings.py -- ltfm
 
 Input: assets/sf/airports/<icao>.json (tools/geo/airports_build.py). Each building / structure becomes one top-level
 object whose origin is on the ground at its anchor (the runtime drops it on the terrain and merges by material).
@@ -18,7 +19,7 @@ import structures as S
 
 argv = sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else []
 ICAO = (argv[0] if argv else 'ksfo').lower()
-OUT = os.path.join(REPO, 'assets', 'sf', 'airports')
+OUT = os.path.join(REPO, 'assets', os.environ.get('GEO_REGION', 'sf'), 'airports')   # map (tools/geo/geo.py)
 meta = json.load(open(os.path.join(OUT, f'{ICAO}.json')))
 rng = random.Random(42)
 

@@ -1,6 +1,8 @@
 """Airport layout pipeline (W4): OSM + data/sf/runways.json -> assets/sf/airports/<icao>.json + <icao>.bin
 
 Usage: .venv/bin/python tools/geo/airports_build.py [ksfo] [koak] [kngz]   (default: all)
+       GEO_REGION=ist .venv/bin/python tools/geo/airports_build.py [ltfm] [ltfj] [ltba]
+       (İstanbul: data/ist/runways.json from tools/geo/airports_runways.py, OSM from airports_fetch.py)
 
 Per airport it produces
   surfaces  (draped meshes, x/z relative to the airport origin; runtime samples terrain heights per vertex)
@@ -19,7 +21,7 @@ from shapely import affinity
 from airports_lib import *
 import airports_osm as osm
 
-RUNWAYS = json.load(open(os.path.join(ROOT, 'data', 'sf', 'runways.json')))
+RUNWAYS = json.load(open(os.path.join(DATA_DIR, 'runways.json')))
 
 # ---------------------------------------------------------------- light types (runtime table in airports_lights.js)
 L_EDGE_W, L_EDGE_Y, L_CL_W, L_CL_R, L_TDZ, L_THR_G, L_END_R, L_APP_W, L_APP_R, L_SFL, L_PAPI, L_TWY_B, L_TWY_G, \
@@ -1130,9 +1132,121 @@ def build_koak():
     return ap
 
 
+# ==================================================================== İstanbul (GEO_REGION=ist): LTFM, LTFJ, LTBA from OSM
+def grid_rot(ap):
+    """Apron / taxiway texture grid rotation (radians, like the runtime's San Francisco constants) =
+    -(main runway heading mod 90 deg); src/world-sf/airports.js reads meta.gridRot."""
+    h = ap.rf[0].r['ends'][0]['headingTrue']
+    return round(math.radians(-(h % 90.0)), 5)
+
+
+def osm_tower(ap, el, name, oid=None, default_h=60.0):
+    """Control tower from an OSM man_made=tower / aeroway=tower polygon -> 'tower_generic' structure (+ lights)."""
+    best = None
+    for g, t, i, ty in osm.polygons(el, lambda t: t.get('man_made') == 'tower' or t.get('aeroway') == 'tower'):
+        if oid is not None and i != oid:
+            continue
+        h = None
+        try:
+            h = float(str(t.get('height', '')).replace('m', '').strip())
+        except ValueError:
+            pass
+        if best is None or (h or 0) > (best[1] or 0):
+            best = (g, h, i)
+    if best is None:
+        return
+    g, h, i = best
+    top = h or default_h
+    c = g.centroid
+    r = max(4.5, min(9.0, math.sqrt(g.area / math.pi)))
+    cx, cz = c.x - ap.origin[0], c.y - ap.origin[1]
+    ap.structures.append({'kind': 'tower_generic', 'x': round(cx, 2), 'z': round(cz, 2), 'r': round(r, 2), 'cab0': round(top - 9.0, 2),
+                          'top': top, 'collide': [round(cx, 2), round(cz, 2), r, top], 'name': name})
+    ap.exclude_ids.append(f'w{i}')
+    ap.light(c.x, c.y, top + 4.5, L_OBS_FL)
+    ap.light(c.x + 1.0, c.y, top + 2.5, L_BEACON)
+    return i
+
+
+def ist_airport(icao, cfg, tower_name, tower_id=None, core=None):
+    ap, el = osm_airport(icao, cfg)
+    zone = airport_zone(ap)
+    ad = [g for g, t, i, ty in osm.polygons(el, lambda t: t.get('aeroway') == 'aerodrome')]
+    if core is not None:
+        zone = unary_union([zone, core])
+    if ad:
+        # terminal / cargo / maintenance areas inside the aerodrome fence (not the neighbourhoods around it)
+        zone = unary_union([zone, unary_union(ad).buffer(0).intersection(ap.paved.buffer(700))])
+    tid = osm_tower(ap, el, tower_name, tower_id)
+    collect_buildings(ap, el, zone, skip_ids=(tid,) if tid else ())
+    for p, t, i in osm.nodes(el, lambda t: t.get('aeroway') == 'windsock'):
+        ap.props.append({'t': 'windsock', 'x': round(p[0] - ap.origin[0], 2), 'z': round(p[1] - ap.origin[1], 2), 'h': 0})
+    ap.lines_extra['gridRot'] = grid_rot(ap)
+    ap.structures_zone = zone
+    return ap
+
+
+def all_ends(icao, **kw):
+    apt = next(a for a in RUNWAYS['airports'] if a['icao'] == icao)
+    out = {}
+    for r in apt['runways']:
+        for e in r['ends']:
+            c = dict(kw)
+            if e.get('displaced'):
+                c['disp'] = e['displaced']
+            out[e['ident']] = c
+    return out
+
+
+def build_ltfm():
+    apt = next(a for a in RUNWAYS['airports'] if a['icao'] == 'LTFM')
+    cfg = {
+        'priority': [r['id'] for r in apt['runways']],
+        'marking': 'P', 'leading_zero': True,
+        # CAT II/III ILS on every runway end (ALSF-2 is the closest approach-light layout the runtime draws)
+        'ends': all_ends('LTFM', als='ALSF2', papi='L', tdz=True),
+        'taxi_width': 23.0, 'taxilane_width': 18.0,
+        'radius': 5500,
+    }
+    ap = ist_airport('LTFM', cfg, 'İstanbul Havalimanı kulesi', 572703385)
+    add_windsocks(ap, ('34R', '35L', '16L', '17R'))
+    return ap
+
+
+def build_ltfj():
+    apt = next(a for a in RUNWAYS['airports'] if a['icao'] == 'LTFJ')
+    cfg = {
+        'priority': ['06R/24L', '06L/24R'],
+        'marking': 'P', 'leading_zero': True,
+        'ends': {'06R': {'als': 'ALSF2', 'papi': 'L', 'tdz': True}, '24L': {'als': 'MALSR', 'papi': 'L', 'tdz': True},
+                 '06L': {'als': 'ALSF2', 'papi': 'L', 'tdz': True}, '24R': {'als': 'MALSR', 'papi': 'L', 'tdz': True}},
+        'taxi_width': 23.0, 'taxilane_width': 16.0,
+        'radius': 3500,
+    }
+    ap = ist_airport('LTFJ', cfg, 'Sabiha Gökçen kulesi', 1159751665)
+    add_windsocks(ap, ('06L', '24R'))
+    return ap
+
+
+def build_ltba():
+    cfg = {
+        'priority': ['05/23'],
+        'marking': 'P', 'leading_zero': True,
+        'ends': all_ends('LTBA', papi='L', tdz=True),
+        'taxi_width': 23.0, 'taxilane_width': 16.0,
+        'radius': 3000,
+    }
+    cfg['ends']['05']['als'] = 'ALSF2'
+    cfg['ends']['23']['als'] = 'MALSR'
+    ap = ist_airport('LTBA', cfg, 'Atatürk kulesi', 245003917)
+    add_windsocks(ap, ('05', '23'))
+    return ap
+
+
 # ==================================================================== main
 def main():
-    which = [a.lower() for a in sys.argv[1:]] or ['ksfo', 'koak', 'kngz']
+    default = ['ksfo', 'koak', 'kngz'] if REGION_ID == 'sf' else [a['icao'].lower() for a in RUNWAYS['airports']]
+    which = [a.lower() for a in sys.argv[1:]] or default
     excl = {}
     ex_path = os.path.join(OUT, 'exclusions.json')
     if os.path.exists(ex_path):
@@ -1145,6 +1259,8 @@ def main():
         elif w == 'kngz':
             import airports_kngz
             ap = airports_kngz.build(Airport)
+        elif w in ('ltfm', 'ltfj', 'ltba'):
+            ap = {'ltfm': build_ltfm, 'ltfj': build_ltfj, 'ltba': build_ltba}[w]()
         else:
             continue
         ap.export()
@@ -1157,6 +1273,11 @@ def main():
     man = json.load(open(man_p)) if os.path.exists(man_p) else {}
     man['lods'] = {aid: os.path.exists(os.path.join(ROOT, 'assets', 'aircraft', aid, f'{aid}_lod.glb'))
                    for aid in ('a320neo', 'b737', 'f16', 'f22', 'uh60')}
+    if REGION_ID != 'sf':
+        # other maps reuse San Francisco's generic ground textures and props (same files: one download, one cache entry)
+        man['airports'] = [a['icao'].lower() for a in RUNWAYS['airports']]
+        man['tex'] = 'assets/sf/airports/tex/'
+        man['props'] = 'assets/sf/airports/props.glb'
     json.dump(man, open(man_p, 'w'), indent=1)
     save_json(ex_path, {'note': 'W4 airports: generic city buildings must not be generated for these OSM ids (w=way, r=relation) '
                                 'or with a centroid inside these local-coordinate polygons (airside + modelled airport buildings).',

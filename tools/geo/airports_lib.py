@@ -11,8 +11,12 @@ from shapely.ops import unary_union
 from shapely import affinity
 from shapely.prepared import prep
 
-ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-OUT = os.path.join(ROOT, 'assets', 'sf', 'airports')
+import sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from geo import ROOT, ASSETS_DIR, DATA_DIR, REGION_ID  # noqa: E402  (GEO_REGION selects the map, see geo.py)
+OUT = os.path.join(ASSETS_DIR, 'airports')
+# raw OSM of the airports: San Francisco from Overpass (data/sf/raw/osm), other maps from the Geofabrik extract
+RAW_OSM = os.path.join(DATA_DIR, 'raw', 'osm') if REGION_ID == 'sf' else os.path.join(OUT, '_cache', 'raw')
 
 # marking colour classes (runtime maps these to paint colours)
 WHITE, YELLOW, BLACK, RED, RUBBER, ORANGE, GREEN = 0, 1, 2, 3, 4, 5, 6
