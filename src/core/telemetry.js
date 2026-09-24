@@ -119,6 +119,8 @@ export function trackEvent(type, data = {}) {
 function reportError(message, file, line) {
   if (errors++ >= 5) return;   // a broken frame loop must not flood the log
   const msg = String(message || 'unknown');
-  const foreign = msg === 'Script error.' || (file && /^https?:/.test(file) && !String(file).startsWith(location.origin));
+  // any script not served from this origin is foreign: other sites, and browser extensions (chrome-extension://…,
+  // e.g. an injected "200.js" throwing "reading 'M_ID'" on one Windows Chrome)
+  const foreign = msg === 'Script error.' || (file && !String(file).startsWith(location.origin));
   send('err', { e: msg, f: file ? `${String(file).split('/').pop()}:${line}` : '', x: foreign ? 'foreign' : '' });
 }
