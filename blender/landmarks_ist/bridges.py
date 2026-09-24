@@ -277,6 +277,9 @@ class Suspension:
             ga = self.g(sa)
             L = sp['anchor_len']
             y0, y1 = (sa - L, sa + 8) if sa < 0 else (sa - 8, sa + L)
+            if lod >= 1:      # far LODs: one block (12 triangles), collision from LOD0 only
+                b['concrete'].box((-sp['cable_x'] - 9, y0, ga - 15), (sp['cable_x'] + 9, y1, za + 2), faces='xXyYZ')
+                continue
             for sx in (-1, 1):
                 xa, xb = sorted((sx * (sp['walk_half'] - 0.5), sx * (sp['cable_x'] + 9.0)))
                 b['concrete'].box((xa, y0, ga - 15), (xb, y1, za + 2), faces='xXyYZ')

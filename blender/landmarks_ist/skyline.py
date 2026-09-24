@@ -231,7 +231,7 @@ def tower(b, bl, lod, idx, anchored):
 
     if lod == 2:
         # far LOD: oriented box (+ the sloped / pointed top of the crowned towers); low towers dropped
-        if roof < 150.0:
+        if roof < 160.0:
             return top
         R = rect(cx, cy, 2 * hl, 2 * hs, ang)
         if form == 'slant':
