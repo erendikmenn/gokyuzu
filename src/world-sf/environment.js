@@ -178,12 +178,13 @@ export async function createEnvironment(ctx) {
         if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; }   // reallocated on the next shadow pass
         shadowEco.reset();
       }
-      // shadowCascades 1 = a short shadow range (500 m) for both cascades; the far one is re-rendered every second frame
-      // (environment-shadows.js). A real single cascade (only the near ~130 m, same texel size) is available as
+      // shadowCascades 1 = a short shadow range (500 m) for both cascades; with 2 (high / ultra, 1.6 km) the far one is
+      // re-rendered every second frame (environment-shadows.js). A real single cascade (only the near ~130 m, same texel size) is available as
       // quality.shadowSingleCascade / ?shadowsingle=1 but not used by any preset: it removes the shadows of airport lamps
       // and buildings at 130–500 m on tablets (refshots tablet-ist-free-ltfm), a visible change.
       sun.shadow.camera.far = (qq.shadowCascades || 2) >= 2 ? shadowDist : Math.min(shadowDist, 500);
       shadowEco.setCascades(qq.shadowSingleCascade || q.get('shadowsingle') === '1' ? 1 : 2);
+      shadowEco.setAlternate((qq.shadowCascades || 2) >= 2);
       clouds.setQuality(qq.clouds || 'high');
       if (bank) bank.setQuality(qq.clouds || 'high');
       quality = qq;

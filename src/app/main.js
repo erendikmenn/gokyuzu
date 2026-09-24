@@ -8,7 +8,7 @@ import { AIRCRAFT, loadAircraftDefinition } from '../aircraft/registry.js';
 import { createFixedWingModel } from '../flight/fixedwing.js';
 import { createHelicopterModel } from '../flight/helicopter.js';
 import { createInput } from '../flight/input.js';
-import { createDisplay, loadAvionicsFonts } from '../avionics/index.js';
+// (avionics, the cockpit displays: a chunk of its own, loaded when a cockpit's displays are bound; see avionics())
 import { createAudioSystem } from '../audio/index.js';
 import { createMenu, createLoadingScreen, createHUD, createCameraRig, createOnboarding } from '../ui/index.js';
 import { MAPS, pickMap, loadMap, useMap, mapHooks } from '../maps/index.js';   // maps: San Francisco, İstanbul
@@ -341,7 +341,7 @@ const rigView = {
  * arrives (a LOD stand-in hands it over to the full rig at the swap). Returns the load promise (null when deferred).
  */
 function setupCockpit(def) {
-  const loadCockpit = () => (loadAvionicsFonts(), loader.loadGLTF(def.model.cockpitUrl)).then((g) => {
+  const loadCockpit = () => (avionics().then((m) => m.loadAvionicsFonts()).catch(() => {}), loader.loadGLTF(def.model.cockpitUrl)).then((g) => {
     const rig = state.rig;
     if (!rig || state.def !== def || rig.cockpitReady || g.scene.parent) return;   // (attached already / other aircraft)
     if (state.standIn && rig === state.standIn.rig) state.standIn.cockpit = { scene: g.scene, snap: snapshotNodes(g.scene) };
@@ -530,24 +530,40 @@ function setupShadows(root) {
   });
 }
 
+// The avionics (≈ 2,500 lines of display drawing code) are not needed for the menu or the first frame: their own chunk,
+// fetched when a cockpit's displays are bound (the start bundle is smaller; from the cache it resolves in a few ms).
+let avionicsP = null;
+const avionics = () => avionicsP || (avionicsP = import('../avionics/index.js').catch((e) => { avionicsP = null; throw e; }));
 function bindDisplays(def, rig) {
-  for (const [meshName, type] of Object.entries(def.model.displays || {})) {
-    const mesh = rig.screens[meshName];
-    if (!mesh) { console.warn(`[app] screen mesh ${meshName} missing`); continue; }
-    if (state.displays.some((d) => d.mesh === mesh)) continue;
-    // mesh/eye/root let the avionics align HUD symbology with the real glass and skip redraws of off-screen displays
-    const display = createDisplay(type, { mesh, eye: rig.eye.pilot, root: rig.object });
-    mesh.material = bindScreenMaterial(display, type);
-    state.displays.push({ display, mesh });
-  }
+  const list = Object.entries(def.model.displays || {});
+  if (!list.length) return;
+  avionics().then(({ createDisplay }) => {
+    if (state.def && state.def !== def) return;   // another aircraft meanwhile
+    let added = 0;
+    for (const [meshName, type] of list) {
+      const mesh = rig.screens[meshName];
+      if (!mesh) { console.warn(`[app] screen mesh ${meshName} missing`); continue; }
+      if (state.displays.some((d) => d.mesh === mesh)) continue;
+      // mesh/eye/root let the avionics align HUD symbology with the real glass and skip redraws of off-screen displays
+      const display = createDisplay(type, { mesh, eye: rig.eye.pilot, root: rig.object });
+      mesh.material = bindScreenMaterial(display, type);
+      state.displays.push({ display, mesh });
+      added++;
+    }
+    if (added) renderer.compileAsync(rig.object, camera, scene).catch(() => {});   // the screen materials before their first frame
+  }).catch((e) => { if (!isNetworkError(e)) console.warn('[app] avionics', e); });
 }
 
-/** Self-lit screen material: LCDs keep their exact colors (no tone mapping); HUD symbology is added onto the combiner glass. */
+/**
+ * Self-lit screen material: LCDs keep their exact colors (no tone mapping); HUD symbology is added onto the combiner
+ * glass. HUD canvases upload premultiplied (src/avionics/index.js): additive blending with premultipliedAlpha is (ONE, ONE).
+ */
 function bindScreenMaterial(display, type) {
   const hud = type.endsWith('.hud');
   return new THREE.MeshBasicMaterial({
     map: display.texture, toneMapped: false,
     transparent: hud, blending: hud ? THREE.AdditiveBlending : THREE.NormalBlending, depthWrite: !hud,
+    premultipliedAlpha: hud && display.texture.premultiplyAlpha === true,
     polygonOffset: true, polygonOffsetFactor: -1,
   });
 }

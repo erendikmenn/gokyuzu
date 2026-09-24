@@ -4,10 +4,12 @@
 //      compare against the depth texture): 128 MB of GPU memory at 4096² per cascade (high / ultra), 32 MB at 2048²
 //      (medium / tablet / laptop). The texture is detached and deleted after three builds the target; the framebuffer
 //      stays complete with its depth attachment (colour writes of the depth pass go nowhere).
-//   2. the far cascade (high / ultra ≈ 120 m – 1.6 km at 1.5 m per texel; medium / tablets ≈ 120 – 500 m) is
-//      re-rendered every second frame; in between it keeps its map and its matrix from the frame it was drawn
-//      (world-consistent: static casters are exact, a moving caster's far shadow lags one frame). Its caster pass is the
-//      larger one (city blocks, landmarks, airports; the aircraft is in both cascades).
+//   2. high / ultra: the far cascade (≈ 120 m – 1.6 km at 1.5 m per texel) is re-rendered every second frame; in
+//      between it keeps its map and its matrix from the frame it was drawn (world-consistent: static casters are exact, a
+//      moving caster's far shadow lags one frame). Its caster pass is the larger one there (city blocks, landmarks,
+//      airports). Desktop high, SFO→city cruise, interleaved: GPU 8.10 → 7.47 ms/frame, calls 743 → 678. Not on the
+//      500 m "1 cascade" presets (medium / tablets / laptops): their far cascade holds few casters and alternating
+//      measured 5 % slower there (tablet, İstanbul cruise).
 //   3. optional (setCascades(1), no preset uses it): a real single cascade, only the near one with exactly today's split
 //      (~130 m on a 500 m range, same texel size for the aircraft) in a 1×1 atlas: half the memory and half the caster
 //      pass, but the shadows of lamps / buildings at 130–500 m disappear (a visible change on tablets).
@@ -79,6 +81,8 @@ export function createShadowEconomy(renderer, sun) {
         if (skipFar) rt.scissor.set(0, 0, shadow.mapSize.x, shadow.mapSize.y);
       }
     },
+    /** Re-render the far cascade every second frame (true on long-range 2-cascade presets). */
+    setAlternate(on) { alternate = !!on && q.get('shadowfar') !== '1'; if (!alternate) skipFar = false; },
     get skipFar() { return skipFar; },
     get cascades() { return cascades; },
     /** A new map (size change / quality): nothing to keep. */

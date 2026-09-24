@@ -111,8 +111,10 @@ function createCore(type, def, w, h, opts, shareable) {
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.anisotropy = 8;
-  // HUDs: straight (non-premultiplied) alpha upload → correct with THREE.AdditiveBlending (SRC_ALPHA, ONE).
-  texture.premultiplyAlpha = false;
+  // HUDs (transparent canvases): premultiplied upload, the canvas's own storage format (WebKit un-premultiplied every
+  // upload: ~0.26 ms per HUD frame); the screen material (main.js bindScreenMaterial) blends it with (ONE, ONE), which
+  // adds the same colour × alpha as straight alpha with (SRC_ALPHA, ONE). Opaque panels: straight, as before.
+  texture.premultiplyAlpha = transparent;
   texture.name = `avionics:${type}`;
   const sx = w / def.vw, sy = h / def.vh;
   const env = {
