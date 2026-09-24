@@ -1,6 +1,6 @@
 {
  "version": 1,
- "note": "Landmarks agent (tools/geo/landmarks_ist_layout.py). Generic city buildings must not duplicate these landmark models: drop OSM buildings / building:parts / minarets whose id is listed (w<way>, r<relation>, n<node>, the city pipeline's id format), and any footprint whose centroid falls inside a zone (local metres [x, z], Overture buildings have no OSM id). Bridges are not buildings and are not listed.",
+ "note": "Landmarks agent (tools/geo/landmarks_ist_layout.py). Generic city buildings must not duplicate these landmark models: drop OSM buildings / building:parts / minarets whose id is listed (w<way>, r<relation>, n<node>, the city pipeline's id format), and any footprint whose centroid falls inside a zone (local metres [x, z], Overture buildings have no OSM id). Bridge entries: the towers (OSM maps the tower legs / portal beams of 15 Temmuz and FSM as building:part \"column\" 165 m).",
  "landmarks": {
   "camlica_camii": {
    "name": "\u00c7aml\u0131ca Camii",
@@ -6626,6 +6626,153 @@
      ]
     ]
    ]
+  },
+  "bogazici": {
+   "name": "15 Temmuz \u015eehitler K\u00f6pr\u00fcs\u00fc",
+   "osmIds": [
+    "w403142701",
+    "w403142702",
+    "w403150245",
+    "w403150246",
+    "w403255153",
+    "w403255154",
+    "w403255155",
+    "w403255156",
+    "w403255157"
+   ],
+   "zones": [
+    [
+     [
+      4687.7,
+      -2816.0
+     ],
+     [
+      4595.1,
+      -2739.7
+     ],
+     [
+      4626.9,
+      -2701.1
+     ],
+     [
+      4719.5,
+      -2777.4
+     ]
+    ],
+    [
+     [
+      5370.7,
+      -1987.2
+     ],
+     [
+      5278.1,
+      -1910.9
+     ],
+     [
+      5309.9,
+      -1872.3
+     ],
+     [
+      5402.5,
+      -1948.6
+     ]
+    ]
+   ]
+  },
+  "fsm": {
+   "name": "Fatih Sultan Mehmet K\u00f6pr\u00fcs\u00fc",
+   "osmIds": [
+    "w403376602",
+    "w403376603",
+    "w403376604",
+    "w403376605",
+    "w403376606",
+    "w403379442",
+    "w403379443",
+    "w403379444",
+    "w403379445",
+    "w403379446"
+   ],
+   "zones": [
+    [
+     [
+      6588.6,
+      -7479.4
+     ],
+     [
+      6599.0,
+      -7359.8
+     ],
+     [
+      6648.8,
+      -7364.1
+     ],
+     [
+      6638.5,
+      -7483.7
+     ]
+    ],
+    [
+     [
+      7674.6,
+      -7573.1
+     ],
+     [
+      7684.9,
+      -7453.6
+     ],
+     [
+      7734.7,
+      -7457.9
+     ],
+     [
+      7724.4,
+      -7577.4
+     ]
+    ]
+   ]
+  },
+  "yss": {
+   "name": "Yavuz Sultan Selim K\u00f6pr\u00fcs\u00fc",
+   "osmIds": [],
+   "zones": [
+    [
+     [
+      10476.3,
+      -20384.7
+     ],
+     [
+      10417.8,
+      -20279.9
+     ],
+     [
+      10461.4,
+      -20255.6
+     ],
+     [
+      10519.9,
+      -20360.4
+     ]
+    ],
+    [
+     [
+      11705.7,
+      -19698.5
+     ],
+     [
+      11647.2,
+      -19593.8
+     ],
+     [
+      11690.9,
+      -19569.4
+     ],
+     [
+      11749.4,
+      -19674.2
+     ]
+    ]
+   ]
   }
  },
  "osmIds": [
@@ -6801,9 +6948,24 @@
   "w401078313",
   "w401078314",
   "w401078315",
+  "w403142701",
+  "w403142702",
+  "w403150245",
+  "w403150246",
+  "w403255153",
+  "w403255154",
+  "w403255155",
+  "w403255156",
   "w403255157",
+  "w403376602",
+  "w403376603",
+  "w403376604",
   "w403376605",
+  "w403376606",
   "w403379442",
+  "w403379443",
+  "w403379444",
+  "w403379445",
   "w403379446",
   "w437761713",
   "w437761714",
