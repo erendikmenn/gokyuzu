@@ -21,6 +21,11 @@ export function createMemoryDb() {
       items.set(k, { ...item });
       return { written: true, old };
     },
+    /** Set the nickname of an existing entry. */
+    async setName(pk, sk, n) {
+      const it = items.get(key(pk, sk));
+      if (it) it.n = n;
+    },
     /** Best n entries of a board, best first. */
     async top(pk, n) {
       return board(pk).slice(0, n).map((it) => ({ ...it }));
