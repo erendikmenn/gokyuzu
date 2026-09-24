@@ -111,6 +111,10 @@ export default {
     tvc: { max: 20, arm: 7.2 },
     trimRange: null, takeoffTrim: 0,
     rotRate: 8, blendTime: 1.0,
+    // pitch loop gains scheduled below this pitch control power (stabilator + thrust vectoring moment / inertia,
+    // rad/s² per unit; ≈ 190 KIAS at 29.3 t with approach thrust): no stabilator rate saturation / pitch limit cycle
+    // on approach (fixedwing-fcs.js)
+    cpRef: 5,
   },
   limits: { vmo: 800 * KT, mmo: 2.25, vle: 250 * KT, vfeAuto: 250 * KT, nMax: 9 },
   autopilot: { vsMax: 60, bankMax: 45, rollRate: 30, athrMax: 1.0, Kgamma: 1.2, flareHeight: 9, flareSink: 1.0, flareTau: 5, retardHeight: 4 },

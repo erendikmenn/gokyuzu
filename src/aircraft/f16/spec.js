@@ -116,6 +116,9 @@ export default {
     rates: { elevator: 2.4, aileron: 2.6, rudder: 4 },
     trimRange: null, takeoffTrim: 0,
     rotRate: 8, blendTime: 1.0,
+    // pitch loop gains scheduled below this pitch control power (stabilator moment / inertia, rad/s² per unit;
+    // ≈ 225 KIAS at 12 t): no stabilator rate saturation / pitch limit cycle on approach (fixedwing-fcs.js)
+    cpRef: 5,
   },
   limits: { vmo: 800 * KT, mmo: 2.05, vle: 300 * KT, vfeAuto: 300 * KT, nMax: 9 },
   autopilot: { vsMax: 60, bankMax: 45, rollRate: 30, athrMax: 1.0, Kgamma: 1.2, flareHeight: 9, flareSink: 1.0, flareTau: 5, retardHeight: 4 },

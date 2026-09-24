@@ -6,6 +6,8 @@
 //                  path hold (bank compensated, keyboard friendly); roll = roll-rate command (expo shaped), released =
 //                  bank hold; yaw = turn coordination (stability-axis roll) + sideslip command from the pedals.
 //                  F-22: pitch thrust vectoring supplies the moment the stabilators cannot (low speed / high AoA).
+//                  Pitch loop gains scheduled with the pitch control power (low dynamic pressure: slower loops that
+//                  stay within the stabilator rate, see pitchLoopScale); no post-stall AoA with the gear handle down.
 //   'airbus'       A320 normal law: sidestick = load-factor demand (C*), auto-trim, flight path held when released,
 //                  bank compensation to 33°, protections (bank 67° / 33° return, pitch +30°/-15°, load factor, alpha
 //                  prot / alpha max / alpha floor, high speed), flare mode below 50 ft; ground = rotation rate law.
@@ -67,6 +69,24 @@ export function createFCS(m) {
   }
   st.alphaForCL = alphaForCL;
 
+  /**
+   * Fighters (fcs.cpRef): pitch loop bandwidth scheduled with the pitch control power. The NDI divides the demanded pitch
+   * acceleration by the stabilator's control power (Mde / I, rad/s² per unit), so with fixed gains the surface motion it
+   * asks for grows as 1 / dynamic pressure: on approach it exceeds the actuator rate (F-16 60°/s), the stabilator lags
+   * at its rate limit and one firm input leaves a pitch limit cycle that sustains itself hands-off (F-16 160 KIAS gear
+   * down: ±40°/s, ±12° of pitch, 1.8 s). Below cpRef the pitch-rate, AoA and flight-path gains and the pitch-rate limit
+   * all scale with √(control power × actuator rate / cpRef): the loops slow down together (same damping ratios as at
+   * speed) and the rate-saturation amplitude, ∝ control power / (Kq Ka)^1.5, stays above its value at cpRef. Like the
+   * dynamic-pressure scheduled gains of a real FLCS; a hydraulic loss (slower surfaces) slows the loops too, pitch
+   * thrust vectoring (F-22, with thrust) adds control power.
+   */
+  function pitchLoopScale() {
+    if (!F.cpRef) return 1;
+    let M = Math.abs(m.mom.Mde);
+    if (F.tvc && m.fx.tvc) M += m.pp.st.thrust * F.tvc.arm * Math.sin(F.tvc.max * DEG);
+    return Math.sqrt(clamp(((M / m.I.pitch) * m.fx.rateScale) / F.cpRef, 0.2, 1));
+  }
+
   /** Pitch NDI: total pitch control (elevator + trim units) for a desired pitch acceleration. */
   function ndiPitch(qdotDes) {
     const ad = m.ad, I = m.I, w = m._omega;
@@ -75,21 +95,22 @@ export function createFCS(m) {
     return (Mreq - m.mom.Mbase) / Mde;
   }
 
-  function qFromN(nCmd, aMax, aMin, aOverride = null) {
+  function qFromN(nCmd, aMax, aMin, aOverride = null, kL = 1) {
     const ad = m.ad;
     const aCmd = aOverride ?? clamp(m.alphaForN(nCmd), aMin, aMax);
     // pitch rate = rotation of the flight path at the present load factor + first-order AoA tracking (no overshoot)
     const nNow = m.nForAlpha(ad.alpha);
     const V = Math.max(ad.V, 30);
     // faster AoA tracking at small commanded AoA (g onset at speed), the nominal gain near the AoA limit
-    const Ka = (F.Ka ?? 2) * lerp(F.KaBoost ?? 1, 1, smoothstep(8 * DEG, 20 * DEG, aCmd));
+    const Ka = (F.Ka ?? 2) * lerp(F.KaBoost ?? 1, 1, smoothstep(8 * DEG, 20 * DEG, aCmd)) * kL;
     let q = (G0 / V) * (nNow - Math.cos(ad.gamma) * Math.cos(ad.phi)) + Ka * (aCmd - ad.alpha);
     st.aCmd = aCmd;
-    return clamp(q, -(F.qMax ?? 0.5), F.qMax ?? 0.5);
+    const qMax = (F.qMax ?? 0.5) * kL;
+    return clamp(q, -qMax, qMax);
   }
 
-  /** Flight path hold / stick → load factor demand (FBW laws). */
-  function stickToN(h, s, ad) {
+  /** Flight path hold / stick → load factor demand (FBW laws); kL = pitch loop scale (flight-path gain). */
+  function stickToN(h, s, ad, kL = 1) {
     const nMax = m.sys.flapPos > 0.5 || m.sys.gear > 0.5 ? (F.nMaxFlaps ?? F.nMax) : F.nMax;
     const nMin = m.sys.flapPos > 0.5 || m.sys.gear > 0.5 ? (F.nMinFlaps ?? F.nMin) : F.nMin;
     let n;
@@ -110,7 +131,7 @@ export function createFCS(m) {
       n = nLevel(ad.gamma, ad.phi);
       if (st.holding && !vertical && Math.abs(ad.phi) < 75 * DEG) {
         const dg = wrapPi(st.gammaRef - ad.gamma);
-        n += ((Math.max(ad.V, 30) * (F.Kg ?? 0.6) * dg) / G0) * Math.cos(ad.phi) / Math.max(Math.cos(ad.phi) ** 2, 0.25);
+        n += ((Math.max(ad.V, 30) * (F.Kg ?? 0.6) * kL * dg) / G0) * Math.cos(ad.phi) / Math.max(Math.cos(ad.phi) ** 2, 0.25);
       } else if (vertical) st.gammaRef = ad.gamma;
     } else {
       st.holding = false; st.holdT = 0;
@@ -142,6 +163,8 @@ export function createFCS(m) {
     const altLaw = law === 'airbus' && fx.law !== 'normal';                            // alternate / direct law
     const conv = law === 'conventional' || (altLaw && (fx.law === 'direct' || m.sys.gearHandleDown));   // direct pitch
     st.conv = conv;
+    const kL = pitchLoopScale();
+    st.kL = kL;
     // AoA limits of the law (config dependent for the airbus: alpha max just below the stall)
     let aMax, aMin = Math.max(lp.alphaStallNeg + 2 * DEG, (F.alphaMin ?? -10) * DEG);
     if (law === 'airbus' || law === 'conventional') {
@@ -168,9 +191,9 @@ export function createFCS(m) {
     if (apOut.active && apOut.nCmd != null) {
       let n = apOut.nCmd;
       n = pitchAttitudeLimit(n, ad);
-      qCmd = qFromN(n, Math.min(aMax, st.alphaProtA || aMax), aMin);
+      qCmd = qFromN(n, Math.min(aMax, st.alphaProtA || aMax), aMin, null, kL);
       st.nCmd = n;
-      uAir = ndiPitch((F.Kq ?? 4) * (qCmd - ad.q));
+      uAir = ndiPitch((F.Kq ?? 4) * kL * (qCmd - ad.q));
       st.holding = false;
     } else if (conv) {
       // yoke = elevator around the trim; the elevator feel limits authority at speed
@@ -214,7 +237,7 @@ export function createFCS(m) {
           const over = Math.max(ad.ias - (vmo + 6 * 0.5144), (ad.M - (mmo + 0.01)) * 650);
           st.highSpeed = over > 0;
           if (s < 0) sEff = s * (1 - smoothstep(-6 * 0.5144, 2 * 0.5144, over));
-          n = stickToN(h, sEff, ad);
+          n = stickToN(h, sEff, ad, kL);
           if (over > -2 * 0.5144) {
             const V = Math.max(ad.V, 30);
             const nUp = Math.cos(ad.gamma) * Math.cos(ad.phi) + (V * 0.012 * (over + 2 * 0.5144)) / G0;
@@ -222,18 +245,20 @@ export function createFCS(m) {
             st.holding = false;
           }
           n = pitchAttitudeLimit(n, ad);
-        } else n = stickToN(h, s, ad);
-        // post-stall (F-22): past ~half stick, when the g demand cannot be met, the stick drives AoA beyond CLmax
+        } else n = stickToN(h, s, ad, kL);
+        // post-stall (F-22): past ~half stick, when the g demand cannot be met, the stick drives AoA beyond CLmax — not
+        // with the gear handle down (on final a firm keyboard press would otherwise command 40–55° of AoA)
         let aOver = null;
-        if (law === 'fighter' && aMax > lp.alphaStall + 2 * DEG && s > 0.5 && m.nForAlpha(lp.alphaStall) < n) {
+        if (law === 'fighter' && aMax > lp.alphaStall + 2 * DEG && s > 0.5 && m.nForAlpha(lp.alphaStall) < n
+          && !m.sys.gearHandleDown) {
           const k = (s - 0.5) / 0.5;
           aOver = lp.alphaStall - 3 * DEG + (aMax - lp.alphaStall + 3 * DEG) * k * k;
           aOver = Math.max(aOver, Math.min(m.alphaForN(n), aMax));
         }
-        qCmd = qFromN(n, aMax, aMin, aOver);
+        qCmd = qFromN(n, aMax, aMin, aOver, kL);
         st.nCmd = n;
       }
-      uAir = ndiPitch((F.Kq ?? 4) * (qCmd - ad.q));
+      uAir = ndiPitch((F.Kq ?? 4) * kL * (qCmd - ad.q));
     }
 
     // ground law (weight on wheels): direct elevator, with the rotation rate limited to rotRate x stick and the

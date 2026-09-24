@@ -276,6 +276,122 @@ function idleAfterTakeoff(id, recover = null, secs = 90, idle = true) {
   return res;
 }
 
+// ---- approach pitch handling (fighters) ---------------------------------------------------------------
+/** Fake keyboard on the real input module (src/flight/input.js ramps: a tap = small, a hold = full deflection). */
+function keyboard(spec) {
+  const listeners = {};
+  const inp = createInput({ addEventListener: (t, cb) => { (listeners[t] ||= []).push(cb); } });
+  inp.setAircraft(spec);
+  const ev = (type, code) => { for (const cb of listeners[type] || []) cb({ code, key: '', repeat: false, preventDefault() {}, target: null }); };
+  return { input: inp, down: (code) => ev('keydown', code), up: (code) => ev('keyup', code) };
+}
+
+/** Trimmed on a 3° descent (clean: level) at `kias`, gear down with the (automatic) landing flaps. */
+function approachStart(id, kias, { gear = true, alt = 1500 } = {}) {
+  const spec = SPECS[id], world = flatWorld(), f = model(id);
+  const speed = tasFromCas(kias * KT, alt);
+  f.reset({ x: 0, z: 0, heading: 0, altitude: alt, speed }, world, { approach: false, gearDown: gear, flapIndex: gear ? spec.landingFlapIndex : 0,
+    verticalSpeed: gear ? -speed * Math.sin(3 * RAD) : 0 });
+  return { f, world };
+}
+
+/** Pitch-rate reversals (|q| > thr °/s) in rec[i].q between t0 and t1. */
+function pitchReversals(rec, t0, t1, thr = 2) {
+  let n = 0, last = 0;
+  for (const r of rec) if (r.t >= t0 && r.t <= t1 && Math.abs(r.q) > thr) { const s = Math.sign(r.q); if (last && s !== last) n++; last = s; }
+  return n;
+}
+
+/**
+ * Pull key held `hold` s on a 3° approach at `kias` (keyboard ramps of input.js), then released. The free response is
+ * measured from the attitude peak (first q zero crossing after the release): damping ratio from the ratio of the next two
+ * pitch-rate lobes (r = exp(−πζ/√(1−ζ²))), pitch-rate reversals from 2 s after the release, attitude excursion.
+ */
+function approachKeyPress(id, kias, hold) {
+  const { f, world } = approachStart(id, kias);
+  const kb = keyboard(SPECS[id]);
+  const inp = input({ throttle: f.throttle });
+  const rec = [], dt = 1 / 60, th0 = f.pitch;
+  fly(f, world, inp, 16, dt, (t, f, inp) => {
+    if (Math.abs(t - 1) < dt / 2) kb.down('KeyS');
+    if (Math.abs(t - 1 - hold) < dt / 2) kb.up('KeyS');
+    kb.input.update(dt);
+    inp.pitch = kb.input.state.pitch;
+    rec.push({ t, q: f.ad.q * DEG, th: f.pitch });
+  });
+  let i = rec.findIndex((r) => r.t >= 1 + hold);
+  while (i > 0 && i < rec.length - 1 && rec[i].q * rec[i + 1].q > 0) i++;
+  const lobes = [];
+  let cur = 0;
+  for (const r of rec.slice(i + 1)) {
+    if (!cur || Math.sign(r.q) === Math.sign(cur)) { if (Math.abs(r.q) > Math.abs(cur)) cur = r.q; } else { lobes.push(cur); cur = r.q; }
+  }
+  lobes.push(cur);
+  const ratio = lobes.length > 1 && lobes[0] ? Math.abs(lobes[1] / lobes[0]) : 0;
+  const d = -Math.log(Math.max(ratio, 1e-9));
+  const zeta = ratio > 0 ? d / Math.sqrt(Math.PI * Math.PI + d * d) : 1;
+  return { zeta, lobes: lobes.slice(0, 2), rev: pitchReversals(rec, 3 + hold, 16), dTheta: Math.max(...rec.map((r) => r.th)) - th0, crashed: f.crashed };
+}
+
+/**
+ * Full-stick doublet (0.6 s aft, 0.6 s forward) then hands off: pitch-rate reversals (|q| > 2°/s) 8–22 s — a limit cycle
+ * gives ≈ 15 (the F-16 before the fix: ±40°/s), a damped response none; largest |q| in that window.
+ */
+function pitchDoublet(id, kias, gear) {
+  const { f, world } = approachStart(id, kias, { gear, alt: 2500 });
+  const inp = input({ throttle: f.throttle });
+  const rec = [];
+  fly(f, world, inp, 22.2, 1 / 60, (t, f, inp) => { inp.pitch = t >= 1 && t < 1.6 ? 1 : t >= 1.6 && t < 2.2 ? -1 : 0; rec.push({ t, q: f.ad.q * DEG }); });
+  return { rev: pitchReversals(rec, 8, 22.2), qMax: Math.max(...rec.filter((r) => r.t > 8).map((r) => Math.abs(r.q))) };
+}
+
+/**
+ * Keyboard pilot on a 3° approach at VAPP from 5 km, `high` m above the path: pull / push taps of 0.05–0.5 s sized to the
+ * vertical-speed error (0.2 s reaction delay, 0.5 s to watch the result), throttle for VAPP, one flare press sized to the
+ * sink rate at 7 m, hands off to the touchdown. Approach: attitude spread, pitch-rate reversals per minute.
+ */
+function keyboardLanding(id, high) {
+  const spec = SPECS[id];
+  const world = flatWorld({ runways: TEST_RUNWAYS });
+  const f = model(id);
+  const d0 = 5000, aim = 300;
+  f.reset({ x: 0, z: d0, heading: 0, altitude: ELEV + (d0 + aim) * Math.tan(3 * RAD) + high, speed: 70 }, world, { approach: true });
+  const kb = keyboard(spec);
+  const inp = input({ throttle: f.throttle });
+  const res = { td: null, crash: null, dist: NaN };
+  f.on('touchdown', (e) => { if (!res.td) { res.td = e; res.dist = -f.position.z; } });
+  f.on('crash', (e) => { res.crash = e.reason; });
+  const vapp = f.vSpeeds.vapp, seen = [], rec = [];
+  let thrI = f.throttle, flare = false, flared = false, key = null, until = 0, next = 0;
+  fly(f, world, inp, 200, 1 / 60, (t, f, inp) => {
+    if (res.td) { if (key) { kb.up(key); key = null; } kb.input.update(1 / 60); inp.pitch = 0; inp.throttle = 0; inp.brake = 1; return f.groundSpeed > 20; }
+    const hgs = ELEV + f.gearHeight + Math.max(f.position.z + aim, 0) * Math.tan(3 * RAD);
+    if (f.agl < 7) flare = true;
+    const vsT = -Math.hypot(f.velocity.x, f.velocity.z) * Math.tan(3 * RAD) + clamp((hgs - f.position.y) * 0.1, -1.5, 1.5);
+    seen.push(vsT - f.verticalSpeed);
+    const e = seen.length > 12 ? seen.shift() : seen[0];
+    if (!flare) {
+      if (!key && t >= next) {
+        if (Math.abs(e) > 0.35) { key = e > 0 ? 'KeyS' : 'KeyW'; until = t + clamp(0.05 + 0.14 * Math.abs(e), 0.05, 0.5); kb.down(key); } else next = t + 0.2;
+      }
+      if (key && t >= until) { kb.up(key); key = null; next = t + 0.5; }
+      if (t > 3) rec.push({ t, q: f.ad.q * DEG, th: f.pitch });
+    } else if (!flared) {
+      if (key) kb.up(key);
+      flared = true; key = 'KeyS'; until = t + clamp(-f.verticalSpeed * 0.1, 0.15, 0.8); kb.down(key);
+    } else if (key && t >= until) { kb.up(key); key = null; }
+    kb.input.update(1 / 60);
+    inp.pitch = kb.input.state.pitch;
+    inp.roll = rollStick(f, clamp(-f.position.x * 0.3, -10, 10));
+    const se = vapp - f.ias;
+    thrI = clamp(thrI + se * 0.004, 0, 1);
+    inp.throttle = flare && f.agl < 5 ? 0 : clamp(thrI + se * 0.05, 0, spec.abDetent ?? 1);
+  });
+  const mins = rec.length ? (rec[rec.length - 1].t - rec[0].t) / 60 : 1;
+  return { ...res, fpm: res.td ? res.td.verticalSpeed / FPM : NaN, pitchTd: res.td ? res.td.pitch : NaN, vapp: kt(vapp),
+    thPP: Math.max(...rec.map((r) => r.th)) - Math.min(...rec.map((r) => r.th)), revMin: pitchReversals(rec, 0, 1e9, 3) / mins };
+}
+
 // ======================================================================================================
 // 0. module sanity: atmosphere, airspeed conversion, Turkish text
 {
@@ -654,6 +770,41 @@ for (const id of IDS) {
     fly(r, world, ri, 3, 1 / 60, (t, f, inp) => { inp.roll = 1; pMax = Math.max(pMax, f.ad.p * DEG); });
     note(id, 'Full wheel @250 KIAS: roll rate', `${pMax.toFixed(0)}°/s`, '≈20–35°/s');
     check(id, 'Roll performance: full wheel 18–40°/s', pMax > 18 && pMax < 40, `${pMax.toFixed(1)}°/s`);
+  }
+
+  // ---------------------------------------------------------------------------------------------- 7b approach pitch
+  // the owner's report: the F-16 (and F-22) thrown up and down in pitch at low speed, landing impossible to control. Cause:
+  // fixed FBW pitch gains; at approach dynamic pressure the NDI asked for more stabilator rate than the actuator has, the
+  // surface ran rate limited and one firm keyboard press left a pitch limit cycle (F-16 160 KIAS: ±40°/s, ±12°) that
+  // went on hands-off. fcs.cpRef schedules the pitch loop gains with the control power (fixedwing-fcs.js pitchLoopScale).
+  if (isF) {
+    const presses = [];
+    for (const k of [140, 155, 170]) for (const hold of [0.4, 0.7]) presses.push({ k, hold, ...approachKeyPress(id, k, hold) });
+    const worst = presses.reduce((a, b) => (b.zeta < a.zeta ? b : a));
+    const maxRev = Math.max(...presses.map((p) => p.rev));
+    note(id, 'Approach 140–170 KIAS, key held 0.4 / 0.7 s: min ζ / pitch bump', `${worst.zeta.toFixed(2)} (${worst.k} kt, ${worst.hold} s) / ${Math.max(...presses.map((p) => p.dTheta)).toFixed(1)}°`, 'well damped (ζ ≥ 0.5)');
+    check(id, 'Approach 140/155/170 KIAS (gear down, 3°): key held 0.4 / 0.7 s → pitch damped ζ ≥ 0.5, ≤ 2 reversals after',
+      presses.every((p) => p.zeta >= 0.5 && p.rev <= 2 && !p.crashed),
+      presses.map((p) => `${p.k}/${p.hold}: ζ ${p.zeta.toFixed(2)} rev ${p.rev}`).join(', '));
+    const dg = pitchDoublet(id, 160, true), dc = pitchDoublet(id, 180, false);
+    check(id, 'Full-stick doublet then hands off (160 KIAS gear down, 180 KIAS clean): no pitch limit cycle (≤ 2 reversals 8–22 s)',
+      dg.rev <= 2 && dc.rev <= 2, `reversals ${dg.rev} / ${dc.rev}, max |q| 8–22 s ${dg.qMax.toFixed(1)} / ${dc.qMax.toFixed(1)}°/s`);
+    {
+      const { f, world } = approachStart(id, 140);
+      const inp = input({ throttle: f.throttle });
+      const rec = [];
+      fly(f, world, inp, 30, 1 / 60, (t, f) => { if (t > 5) rec.push({ q: f.ad.q * DEG, vs: f.verticalSpeed / FPM }); });
+      const pp = (k) => Math.max(...rec.map((r) => r[k])) - Math.min(...rec.map((r) => r[k]));
+      check(id, 'Hands-off 30 s on a 3° approach at 140 KIAS: steady (q p-p < 0.2°/s, V/S p-p < 60 ft/min)', pp('q') < 0.2 && pp('vs') < 60,
+        `q p-p ${pp('q').toFixed(2)}°/s, V/S p-p ${pp('vs').toFixed(0)} ft/min`);
+    }
+    const lands = [40, -20].map((high) => ({ high, ...keyboardLanding(id, high) }));
+    const strike = spec.structure.tail.strikeDeg;
+    note(id, 'Keyboard pilot, VAPP approach (40 m high / 20 m low)', lands.map((l) => `${l.fpm.toFixed(0)} fpm @ ${l.dist.toFixed(0)} m`).join(' / '), 'TDZ, < 600 ft/min');
+    check(id, `Keyboard pilot (input.js taps) at VAPP from 40 m high / 20 m low: TDZ, < 600 ft/min, pitch < ${strike}° (tail), steady approach`,
+      lands.every((l) => l.td && !l.crash && l.td.onRunway && l.dist > 150 && l.dist < 900 && Math.abs(l.fpm) < 600 && l.pitchTd < strike && l.thPP < 10 && l.revMin <= 15),
+      lands.map((l) => (l.crash ? `${l.high} m: ${l.crash}` : l.td ? `${l.high} m: ${l.fpm.toFixed(0)} fpm, ${l.pitchTd.toFixed(1)}°, ${l.dist.toFixed(0)} m, θ spread ${l.thPP.toFixed(1)}°, ${l.revMin.toFixed(1)} rev/min`
+        : `${l.high} m: no touchdown`)).join('; ') + ` (VAPP ${lands[0].vapp.toFixed(0)} kt)`);
   }
 
   // ---------------------------------------------------------------------------------------------- 8 hands-off
