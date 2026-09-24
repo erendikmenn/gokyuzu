@@ -71,7 +71,8 @@ const record = (label, m) => { (lat[label] ||= []).push(m); };
 
 console.log(`Leaderboard check · ${target} · ${BASE}${WRITE ? '' : ' (read-only)'}\n`);
 const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-const M = 'selftest';
+// the `selftest` board exists only on staging (rules.test); production reads a real mission board (daily boards too)
+const M = WRITE ? 'selftest' : 'gg-under';
 
 // ---- reads ----------------------------------------------------------------------------------------------------------
 let r = await get({ mission: M, n: '10' });
