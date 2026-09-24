@@ -10,7 +10,7 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 CACHE = os.path.join(ROOT, 'data', 'sf', 'raw', 'osm_landmarks')
 ENDPOINTS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter',
              'https://maps.mail.ru/osm/tools/overpass/api/interpreter']
-HEADERS = {'User-Agent': 'GokyuzuSF-flightsim-offline-pipeline/1.0 (landmarks; contact <email-removed>)',
+HEADERS = {'User-Agent': 'gokyuzu-sf-pipeline/1.0',
            'Accept': 'application/json'}
 
 # bbox = (south, west, north, east)
