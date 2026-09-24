@@ -67,15 +67,40 @@ export const PATHS = {
     [-1288, -522], [-1648, -665], [-1822, -809], [-2374, -1631], [-2885, -2091], [-3102, -2568], [-3029, -3096]],
 };
 
-// runway thresholds used to place starts (data/ist/runways.json: x, z, true heading of the landing direction)
-const RW_ENDS = {
-  'LTFJ 06L': { x: 27211.2, z: 14100.5, hdg: 62.6, elev: 92.6 },
-  'LTFJ 06R': { x: 28024.6, z: 14944.5, hdg: 62.62, elev: 95.1 },
-  'LTBA 05': { x: -13730.6, z: 6993.2, hdg: 57.43, elev: 26.1 },
-  'LTBA 23': { x: -11440.9, z: 5530.4, hdg: 237.43, elev: 26.1 },
-  'LTFM 35L': { x: -21450.3, z: -25794.5, hdg: 358.03, elev: 99.1 },
-  'LTFM 35R': { x: -21239.7, z: -25804.1, hdg: 358.02, elev: 99.1 },
+// ---- runway thresholds (data/ist/runways.json) ----
+/**
+ * Runway ends of a runways.json object as { 'LTFM 35L': { x, z, hdg (true heading of the landing direction), elev } },
+ * read like the engine's map module (src/maps/ist.js): the threshold's own elevation on sloped runways
+ * (ends[i].elevation), else the runway's, else the airport's.
+ */
+export function runwayThresholds(runways) {
+  const out = {};
+  for (const a of (runways && runways.airports) || []) {
+    for (const r of a.runways || []) {
+      for (const e of r.ends || []) out[`${a.icao} ${e.ident}`] = { x: e.x, z: e.z, hdg: e.headingTrue, elev: e.elevation ?? r.elevation ?? a.elevation ?? 0 };
+    }
+  }
+  return out;
+}
+/**
+ * The thresholds the missions are built on until the engine hands over the map's runways.json (useRunways): the file's
+ * values (tests/missions-ist.test.mjs keeps this table equal to it).
+ */
+export const RW_FALLBACK = {
+  'LTFJ 06L': { x: 27211.2, z: 14100.5, hdg: 62.6, elev: 89.3 },
+  'LTFJ 06R': { x: 28024.6, z: 14944.5, hdg: 62.62, elev: 88.1 },
+  'LTBA 05': { x: -13730.6, z: 6993.2, hdg: 57.43, elev: 28.4 },
+  'LTBA 23': { x: -11440.9, z: 5530.4, hdg: 237.43, elev: 27.4 },
+  'LTFM 35L': { x: -21450.3, z: -25794.5, hdg: 358.03, elev: 94.5 },
+  'LTFM 35R': { x: -21239.7, z: -25804.1, hdg: 358.02, elev: 94.5 },
 };
+const RW_ENDS = { ...RW_FALLBACK };
+/** The map's runways.json (src/maps/index.js loadMap): mission geometry from the file's thresholds from now on. */
+export function useRunways(runways) {
+  const t = runwayThresholds(runways);
+  for (const k of Object.keys(t)) RW_ENDS[k] = t[k];
+  return RW_ENDS;
+}
 export { RW_ENDS };
 
 const GS = Math.tan(3 * Math.PI / 180);
@@ -177,8 +202,10 @@ export const MISSIONS = [
       score: { base: 0, landing: 20 },                     // landing points × 20 (0–2000)
       stars: 'landing',
     }),
-    // southbound finals start over the Black Sea coast: the map ends ≈ 7.7 km north of the 16 / 17 / 18 thresholds
-    daily: (r) => { const rw = ['35L', '35R', '34L', '34R', '36', '17L', '17R', '16R', '18'][Math.floor(r() * 9)]; return { rw, dist: rw < '30' ? 5500 + Math.round(r() * 1500) : 7000 + Math.round(r() * 4000) }; },
+    // northbound finals: the runways fall ≈ 33 m to their north ends (runways.json per-end elevations) and the runtime's
+    // final start / the ILS glide path still use one elevation per runway (the south end's), which is right only for
+    // the 34 / 35 / 36 thresholds; southbound finals would also start over the Black Sea coast, ≤ 7.7 km out
+    daily: (r) => ({ rw: ['35L', '35R', '34L', '34R', '36'][Math.floor(r() * 5)], dist: 7000 + Math.round(r() * 4000) }),
     dailyNote: (p) => `Pist ${p.rw} · ${(p.dist / 1852).toFixed(1).replace('.', ',')} NM`,
   },
   {

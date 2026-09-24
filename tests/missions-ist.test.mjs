@@ -12,7 +12,7 @@ import { createFixedWingModel } from '../src/flight/fixedwing.js';
 import { createHelicopterModel } from '../src/flight/helicopter.js';
 import { runwayEnds } from '../src/flight/fixedwing-autopilot.js';
 import { createRoute } from '../src/nav/route.js';
-import { MISSIONS, BRIDGES, PLACES, PADS, PATHS, RW_ENDS, buildMission, dailyMissionId, dailyMission } from '../src/missions/ist/catalog.js';
+import { MISSIONS, BRIDGES, PLACES, PADS, PATHS, RW_ENDS, RW_FALLBACK, runwayThresholds, useRunways, buildMission, dailyMissionId, dailyMission } from '../src/missions/ist/catalog.js';
 import { MISSIONS as SF_MISSIONS } from '../src/missions/catalog.js';
 import { CHALLENGES as SF_CHALLENGES, createChallengeTracker, loadChallengeSet } from '../src/missions/challenges.js';
 import { CHALLENGES, challengesFor, maxChallengeScore } from '../src/missions/ist/challenges.js';
@@ -21,6 +21,8 @@ import { scoreLanding, sampleTouchdown } from '../src/missions/landing-score.js'
 import { dirOf, bearing, clamp, wrap180, KT, FT, FPM, DEG } from '../src/missions/util.js';
 
 const RUNWAYS = JSON.parse(readFileSync(new URL('../data/ist/runways.json', import.meta.url), 'utf8'));
+const FALLBACK_BEFORE = JSON.stringify(RW_ENDS);
+useRunways(RUNWAYS);   // as the engine does when the map loads: missions from the file's thresholds
 const REGION = JSON.parse(readFileSync(new URL('../data/ist/region.json', import.meta.url), 'utf8'));
 const BRIDGE_FILE = new URL('../data/ist/bridges.json', import.meta.url);
 const BRIDGE_DATA = existsSync(BRIDGE_FILE) ? JSON.parse(readFileSync(BRIDGE_FILE, 'utf8')) : null;
@@ -52,13 +54,16 @@ function inRing(r, x, z) {
   return c;
 }
 const seaAt = (x, z) => WATER.some((p) => inRing(p[0], x, z) && !p.slice(1).some((h) => inRing(h, x, z)));
-// runways (+ 150 m of land around them) at their elevation; pads and the Yenikapı field as small plateaus
+// runways (+ 150 m of land around them), sloped between their ends' elevations (runways.json per-end values, like the
+// terrain); pads and the Yenikapı field as small plateaus
 const RECTS = [];
 for (const apt of RUNWAYS.airports) for (const r of apt.runways) {
   const [a, b] = r.ends; const dx = b.x - a.x, dz = b.z - a.z, len = Math.hypot(dx, dz);
-  RECTS.push({ ax: a.x, az: a.z, ux: dx / len, uz: dz / len, len, half: r.width / 2, elev: r.elevation ?? apt.elevation });
+  const ev = (e) => e.elevation ?? r.elevation ?? apt.elevation;
+  RECTS.push({ ax: a.x, az: a.z, ux: dx / len, uz: dz / len, len, half: r.width / 2, ea: ev(a), eb: ev(b) });
 }
 const inRect = (r, x, z, m) => { const px = x - r.ax, pz = z - r.az, al = px * r.ux + pz * r.uz; return al >= -m && al <= r.len + m && Math.abs(px * -r.uz + pz * r.ux) <= r.half + m; };
+const rectElev = (r, x, z) => r.ea + (r.eb - r.ea) * clamp(((x - r.ax) * r.ux + (z - r.az) * r.uz) / r.len, 0, 1);
 const PLATEAUS = [{ ...PADS.yenikapi, r: 60 }, { ...PADS.kisikli, r: 60 }, { x: -2400, z: 2650, y: 5, r: 220 }];
 const plateau = (x, z) => PLATEAUS.find((p) => Math.hypot(x - p.x, z - p.z) < p.r) || null;
 // bridge decks (the landmark's deck profile when data/ist/bridges.json exists) and towers
@@ -89,7 +94,7 @@ const towerHit = (x, y, z) => DECKS.find((d) => {
 const span = { bottom: -Infinity, top: -Infinity };
 const fakeWorld = {
   runways: RUNWAYS, region: REGION,
-  getGroundHeight: (x, z) => { const p = plateau(x, z); if (p) return p.y; const r = RECTS.find((q) => inRect(q, x, z, 150)); return r ? r.elev : 0; },
+  getGroundHeight: (x, z) => { const p = plateau(x, z); if (p) return p.y; const r = RECTS.find((q) => inRect(q, x, z, 150)); return r ? rectElev(r, x, z) : 0; },
   isWater: (x, z) => !plateau(x, z) && !RECTS.some((r) => inRect(r, x, z, 150)) && seaAt(x, z),
   isOnRunway: (x, z) => RECTS.some((r) => inRect(r, x, z, 0)),
   getObstacleHeight: (x, z) => { deckAt(x, z, span); return span.top; },
@@ -240,12 +245,18 @@ const inside = (x, z) => { const b = REGION.local; return x > b.minX && x < b.ma
 
 // 2. geometry against data/ist: runway ends, bridges (landmarks pipeline), places on the right side of the water
 {
+  // the missions read the thresholds from runways.json (useRunways, per-end elevations of the sloped runways); the
+  // built-in table they start with until then must equal the file
   const bad = [];
-  for (const [name, e] of Object.entries(RW_ENDS)) {
-    const r = ENDS.find((x) => x.name === name);
-    if (!r || Math.hypot(r.x - e.x, r.z - e.z) > 3 || Math.abs(wrap180(r.course / DEG - e.hdg)) > 0.3 || Math.abs(r.elevation - e.elev) > 3) bad.push(`${name} ${r ? `${r.x.toFixed(0)},${r.z.toFixed(0)} ${(r.course / DEG).toFixed(2)} ${r.elevation}` : 'missing'}`);
+  const file = runwayThresholds(RUNWAYS);
+  for (const [name, e] of Object.entries(RW_FALLBACK)) {
+    const r = file[name];
+    if (!r || Math.hypot(r.x - e.x, r.z - e.z) > 1 || Math.abs(wrap180(r.hdg - e.hdg)) > 0.05 || Math.abs(r.elev - e.elev) > 0.2) bad.push(`${name} ${r ? `${r.x.toFixed(1)},${r.z.toFixed(1)} ${r.hdg} ${r.elev}` : 'missing'}`);
   }
-  check('Geometry: catalog runway thresholds = data/ist/runways.json (±3 m, ±0.3°, elevation ±3 m)', bad.length === 0, bad.join('; '));
+  const perEnd = file['LTFM 17L'] && file['LTFM 35R'] && file['LTFM 17L'].elev < file['LTFM 35R'].elev - 20;
+  check('Geometry: runway thresholds read from data/ist/runways.json (per-end elevations: LTFM 17L below 35R), the built-in fallback table = the file (±1 m, ±0.05°, ±0.2 m)',
+    bad.length === 0 && perEnd && JSON.parse(FALLBACK_BEFORE)['LTFM 35L'].elev === RW_FALLBACK['LTFM 35L'].elev && RW_ENDS['LTFM 17L'] && RW_ENDS['LTFM 17L'].elev === file['LTFM 17L'].elev,
+    bad.join('; ') || `LTFM 35R ${file['LTFM 35R'].elev} m, 17L ${file['LTFM 17L'].elev} m`);
   const bb = [];
   if (BRIDGE_DATA) {
     for (const [id, b] of Object.entries(BRIDGES)) {
@@ -769,14 +780,14 @@ const cbrief = (res) => `${res.m.params.rw || ''} ${res.card ? `${res.card.point
 {
   const out = []; let ok = true;
   const def = MISSIONS.find((x) => x.id === 'ist-ltfm-inis');
-  for (const [rw, dist] of [['35L', 8000], ['34R', 10000], ['36', 9000], ['17L', 6500], ['16R', 6000]]) {
+  for (const [rw, dist] of [['35L', 8000], ['35R', 11000], ['34R', 10000], ['34L', 7000], ['36', 9000]]) {
     const save = { ...def.params }; Object.assign(def.params, { rw, dist });
     const res = autoland('ist-ltfm-inis', null, 'a320neo');
     Object.assign(def.params, save);
     if (!(res.r.done && res.stars >= 2 && res.card.runway === `LTFM ${rw}`)) ok = false;
     out.push(cbrief(res));
   }
-  check('Mission ist-ltfm-inis (A320): finals to LTFM 35L / 34R / 36 / 17L / 16R, autoland → on the asked runway, ≥ 2★', ok, out.join(' || '));
+  check('Mission ist-ltfm-inis (A320): finals to LTFM 35L / 35R / 34R / 34L / 36 (sloped runways), autoland → on the asked runway, ≥ 2★', ok, out.join(' || '));
   const out2 = []; let ok2 = true;
   const d2 = MISSIONS.find((x) => x.id === 'ist-saw-inis');
   for (const rw of ['06L', '06R']) {
