@@ -1,30 +1,46 @@
 #!/usr/bin/env node
-// Long flight (default 10 min): an F-16 on autopilot tours the bay (downtown → Golden Gate → Oakland → SFO …, same legs
-// as tools/qa/perf.mjs) while the probe records, every --every seconds: frame time percentiles, CPU per subsystem,
-// uploads, compile stalls, long tasks, allocation rate + GC drops, JS heap, GPU bytes (GL-level), textures /
+// Long flight (default 10 min): an F-16 on autopilot tours the map (San Francisco: downtown → Golden Gate → Oakland →
+// SFO …, same legs as tools/qa/perf.mjs; İstanbul (--map ist): Boğaz → Levent → Bağcılar → historic peninsula → Kadıköy …
+// at 700 m) while the probe records, every --every seconds: frame time percentiles, CPU per subsystem, uploads, compile
+// stalls, long tasks, allocation rate + GC drops, JS heap, GPU bytes (GL-level and the game's own meter), textures /
 // geometries, terrain / city / tree streaming counters. Three windows add CDP detail:
 //   - a Chrome trace (--trace-secs, default 40 s): GC pauses (MinorGC / MajorGC) and main-thread event totals
 //   - a CPU profile (--profile-secs, default 40 s): top self-time functions and the functions inside long tasks
 //   - heap allocation sampling (--alloc-secs, default 30 s): top allocating functions (per-frame garbage)
-// usage: node tools/perf/soak.mjs [--minutes 10] [--preset high] [--cpu 1] [--size 1920x1080] [--every 20]
-//          [--aircraft f16] [--spawn AIR-CITY] [--tag name] [--webkit]
-import { launch, openGame, attach, save, arg, flag, sleep, OUT } from './lib.mjs';
+// At the end: growth (first sample after 1 min → last) and a leak verdict: least-squares slope of the JS heap, the GPU
+// meter and the texture / geometry counts over the second half of the flight (caches should be full by then), per minute.
+// usage: node tools/perf/soak.mjs [--minutes 10] [--map sf|ist] [--profile <tools/perf/matrix.mjs profile, e.g. phone-cpu4>]
+//          [--preset high] [--cpu 1] [--size 1920x1080] [--every 20] [--aircraft f16] [--spawn AIR-CITY] [--tag name] [--webkit]
+//          [--alt 700] [--base URL]
+import { launch, openGame, attach, save, arg, flag, sleep, OUT, BASE } from './lib.mjs';
+import { PROFILES } from './matrix.mjs';
 
 const minutes = Number(arg('--minutes', 10));
-const preset = arg('--preset', 'high');
-const cpu = Number(arg('--cpu', 1));
+const map = arg('--map', 'sf');
+const prof = arg('--profile', '') ? PROFILES[arg('--profile')] : null;
+if (arg('--profile', '') && !prof) throw new Error(`unknown profile ${arg('--profile')}`);
+const preset = prof ? prof.quality : arg('--preset', 'high');
+const cpu = prof ? prof.cpu : Number(arg('--cpu', 1));
 const every = Number(arg('--every', 20));
-const [width, height] = arg('--size', '1920x1080').split('x').map(Number);
-const engine = flag('--webkit') ? 'webkit' : 'chromium';
-const tag = arg('--tag', `soak-${engine}-${preset}${cpu > 1 ? `-cpu${cpu}` : ''}`);
+const [width, height] = prof ? [prof.width, prof.height] : arg('--size', '1920x1080').split('x').map(Number);
+const engine = prof ? prof.engine : flag('--webkit') ? 'webkit' : 'chromium';
+const tag = arg('--tag', `soak-${map}-${prof ? arg('--profile') : `${engine}-${preset}${cpu > 1 ? `-cpu${cpu}` : ''}`}`);
 const traceSecs = Number(arg('--trace-secs', 40)), profileSecs = Number(arg('--profile-secs', 40)), allocSecs = Number(arg('--alloc-secs', 30));
+const MAP = {
+  sf: { spawn: 'AIR-CITY', extra: '', legs: [340, 250, 160, 90, 20, 290], alt: 0 },
+  // start over the Boğaz; legs over Levent / Sarıyer, the European side (Bağcılar, Başakşehir), the historic peninsula,
+  // the Asian side (Kadıköy, Ataşehir) and back: every city / tree / terrain area of the core streams in and out
+  ist: { spawn: 'IST-AIR-BOGAZ', extra: '&map=ist', legs: [20, 300, 230, 140, 90, 350], alt: 700 },
+}[map];
 
-const { browser, page, cdp, log } = await launch({ engine, width, height, gl: 'mem', heap: true, cpuThrottle: cpu });
-const out = { preset, cpu, engine, width, height, series: [], windows: {} };
-const loadS = await openGame(page, { aircraft: arg('--aircraft', 'f16'), spawn: arg('--spawn', 'AIR-CITY'), quality: preset });
+const { browser, page, cdp, log } = await launch({ engine, width, height, dpr: prof ? prof.dpr : 1, gl: 'mem', heap: true, cpuThrottle: cpu, hasTouch: prof && prof.touch, isMobile: prof && prof.mobile });
+const out = { map, profile: arg('--profile', null), preset, cpu, engine, width, height, series: [], windows: {} };
+const loadS = await openGame(page, { aircraft: arg('--aircraft', 'f16'), spawn: arg('--spawn', MAP.spawn), quality: preset, pr: prof ? prof.pr : 1, extra: `${prof ? prof.extra : ''}${MAP.extra}&telemetry=0`, base: arg('--base', BASE) });
 await attach(page, { gpu: engine === 'chromium', subs: true });
 out.loadS = loadS;
 console.log(`loaded in ${loadS}s`);
+const alt = Number(arg('--alt', MAP.alt || 0));
+if (alt) await page.evaluate((alt) => { const g = window.__game, s = g.spawn; g.flight.reset({ x: s.x, z: s.z, heading: s.heading, altitude: alt, speed: g.def.spec.spawnSpeed }, g.world); }, alt);
 
 const tap = async (code) => { await page.keyboard.down(code); await sleep(60); await page.keyboard.up(code); };
 // camera chase, autopilot on (heading hold); steer the AP heading with A/D like a player
@@ -32,7 +48,7 @@ await page.evaluate(() => window.__game.cameraRig.setMode('chase'));
 await tap('Digit7');   // throttle 70 %
 await sleep(300);
 await tap('KeyO');
-const legs = [340, 250, 160, 90, 20, 290];
+const legs = MAP.legs;
 const t0 = Date.now();
 let nextSample = 0, traceAt = 90, profAt = 200, allocAt = 320;
 const secs = () => (Date.now() - t0) / 1000;
@@ -44,11 +60,12 @@ async function sample() {
     const sum = P.summary(); P.mark();
     const city = (w.layers || []).find((l) => l.object && l.object.name === 'city');
     const f = g.flight;
-    return { ...sum, pos: [Math.round(f.position.x), Math.round(f.position.y), Math.round(f.position.z)], crashed: f.crashed, terrain: { ...(w.terrain.stats || {}) }, city: city && city.stats ? { loaded: city.stats.loaded, visible: city.stats.visible, queued: city.stats.queued, trees: city.stats.trees } : null };
+    const m = g.gpu && g.gpu.meter && g.gpu.meter.snapshot ? g.gpu.meter.snapshot() : null;
+    return { ...sum, meter: m, quality: g.quality && g.quality.id, pos: [Math.round(f.position.x), Math.round(f.position.y), Math.round(f.position.z)], crashed: f.crashed, terrain: { ...(w.terrain.stats || {}) }, city: city && city.stats ? { loaded: city.stats.loaded, visible: city.stats.visible, queued: city.stats.queued, trees: city.stats.trees } : null };
   });
   const row = { t: Math.round(secs()), pos: s.pos, crashed: s.crashed, fps: s.fps, p50: s.frameMs.p50, p95: s.frameMs.p95, p99: s.frameMs.p99, max: s.frameMs.max, over50: s.hitches.over50, over100: s.hitches.over100,
     cpu: s.cpuMs.mean, cpuP95: s.cpuMs.p95, gpu: s.gpuMs && s.gpuMs.mean, sub: s.subMean, subP95: s.subP95, upMBs: s.uploadMBPerSec, up: s.uploadMsPerFrame, compileMs: s.compileMs, links: s.links,
-    longTasks: s.longTasks, alloc: s.alloc, heapMB: s.heapMB, gpuMB: s.gpuBytesMB, calls: s.info.calls, tris: s.info.triangles, programs: s.info.programs, textures: s.info.textures, geometries: s.info.geometries,
+    longTasks: s.longTasks, alloc: s.alloc, heapMB: s.heapMB, gpuMB: s.gpuBytesMB, meterMB: s.meter ? s.meter.gpu : null, meterPeakMB: s.meter ? s.meter.peak : null, quality: s.quality, calls: s.info.calls, tris: s.info.triangles, programs: s.info.programs, textures: s.info.textures, geometries: s.info.geometries,
     terrain: s.terrain, city: s.city };
   out.series.push(row);
   console.log(`t=${row.t}s pos ${row.pos} fps ${row.fps} p95 ${row.p95} p99 ${row.p99} max ${row.max} >50ms ${row.over50} | cpu ${row.cpu} gpu ${row.gpu} | up ${row.upMBs} MB/s compile ${row.compileMs} ms (${row.links}) | alloc ${row.alloc && row.alloc.MBperSec} MB/s gc ${row.alloc && row.alloc.gcDrops} | heap ${row.heapMB} gpu ${row.gpuMB && (row.gpuMB.tex + row.gpuMB.buf).toFixed(0)} MB tex ${row.textures} geo ${row.geometries} | terrain ${row.terrain.loaded}/${row.terrain.textures} city ${row.city && row.city.loaded}`);
@@ -147,6 +164,21 @@ await sample();
 const first = out.series[1] || out.series[0], last = out.series[out.series.length - 1];
 out.growth = { heapMB: +(last.heapMB - first.heapMB).toFixed(1), gpuMB: last.gpuMB && first.gpuMB ? +((last.gpuMB.tex + last.gpuMB.buf) - (first.gpuMB.tex + first.gpuMB.buf)).toFixed(1) : null, textures: last.textures - first.textures, geometries: last.geometries - first.geometries, overMinutes: +((last.t - first.t) / 60).toFixed(1) };
 out.maxima = { heapMB: Math.max(...out.series.map((r) => r.heapMB || 0)), gpuMB: Math.max(...out.series.map((r) => (r.gpuMB ? r.gpuMB.tex + r.gpuMB.buf : 0))), frameMax: Math.max(...out.series.map((r) => r.max || 0)), over100: out.series.reduce((a, r) => a + (r.over100 || 0), 0), over50: out.series.reduce((a, r) => a + (r.over50 || 0), 0) };
+// leak verdict: slope over the second half (caches are full by then; a steady rise there is growth, not warm-up)
+const slope = (key) => {
+  const tEnd = out.series[out.series.length - 1].t;
+  const pts = out.series.filter((r) => r.t >= tEnd / 2 && key(r) != null).map((r) => [r.t / 60, key(r)]);
+  if (pts.length < 3) return null;
+  const n = pts.length, mx = pts.reduce((a, p) => a + p[0], 0) / n, my = pts.reduce((a, p) => a + p[1], 0) / n;
+  const sxx = pts.reduce((a, p) => a + (p[0] - mx) ** 2, 0), sxy = pts.reduce((a, p) => a + (p[0] - mx) * (p[1] - my), 0);
+  return sxx ? +(sxy / sxx).toFixed(2) : null;
+};
+out.secondHalfSlopePerMin = { heapMB: slope((r) => r.heapMB), meterMB: slope((r) => r.meterMB), glMB: slope((r) => (r.gpuMB ? r.gpuMB.tex + r.gpuMB.buf : null)), textures: slope((r) => r.textures), geometries: slope((r) => r.geometries) };
+out.maxima.meterMB = Math.max(...out.series.map((r) => r.meterMB || 0));
+out.maxima.meterPeakMB = Math.max(...out.series.map((r) => r.meterPeakMB || 0));
+out.qualitySteps = [...new Set(out.series.map((r) => r.quality))];
+out.verdict = Object.entries(out.secondHalfSlopePerMin).filter(([k, v]) => v != null && ((/MB$/.test(k) && v > 10) || (!/MB$/.test(k) && v > 20))).map(([k, v]) => `${k} +${v}/min`).join(', ') || 'flat (no growth in the second half)';
+console.log('second-half slope per minute', JSON.stringify(out.secondHalfSlopePerMin), '->', out.verdict);
 out.errors = log.errors.slice(0, 10);
 console.log('growth', JSON.stringify(out.growth), 'maxima', JSON.stringify(out.maxima));
 save(`${tag}.json`, out);

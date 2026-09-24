@@ -31,14 +31,20 @@ export const UNCAPPED_ARGS = ['--disable-gpu-vsync', '--disable-frame-rate-limit
  * Launch a browser + page with the probe installed.
  * opts: engine 'chromium'|'webkit', width, height, dpr, gl 'off'|'light'|'mem', clock 'real'|'virtual', uncapped,
  *       cpuThrottle (CDP Emulation.setCPUThrottlingRate), network { latency, down, up } (CDP, kbit/s), cache false →
- *       cache disabled, settings (localStorage gokyuzu.settings merge), extraArgs, heap (per-frame heap deltas → allocation rate / GC drops).
+ *       cache disabled, settings (localStorage gokyuzu.settings merge), extraArgs, heap (per-frame heap deltas → allocation rate / GC drops),
+ *       audit (probe.js DOM-mutation / 2D-canvas / Web Audio counters), hasTouch / isMobile / userAgent (device profiles).
  */
 export async function launch(opts = {}) {
   const { engine = 'chromium', width = 1920, height = 1080, dpr = 1, gl = 'light', clock = 'real', uncapped = false } = opts;
   const browser = engine === 'webkit'
     ? await webkit.launch()
     : await chromium.launch({ args: [...GPU_ARGS, ...(uncapped ? UNCAPPED_ARGS : []), ...(opts.extraArgs || [])] });
-  const context = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: dpr, ignoreHTTPSErrors: true });
+  // touch devices (tools/perf/matrix.mjs tablet / phone profiles): hasTouch → (pointer: coarse), maxTouchPoints > 0
+  const ctxOpts = { viewport: { width, height }, deviceScaleFactor: dpr, ignoreHTTPSErrors: true };
+  if (opts.hasTouch) ctxOpts.hasTouch = true;
+  if (opts.isMobile && engine === 'chromium') ctxOpts.isMobile = true;
+  if (opts.userAgent) ctxOpts.userAgent = opts.userAgent;
+  const context = await browser.newContext(ctxOpts);
   const page = await context.newPage();
   const log = { errors: [], warnings: [], console: [], ready: null, http: [] };
   page.on('console', (m) => {
@@ -61,7 +67,7 @@ export async function launch(opts = {}) {
     } catch { /* ignore */ }
     // eslint-disable-next-line no-eval
     (0, eval)(probe);
-  }, { cfg: { gl, clock, heap: !!opts.heap }, settings, probe: PROBE });
+  }, { cfg: { gl, clock, heap: !!opts.heap, audit: !!opts.audit }, settings, probe: PROBE });
   let cdp = null;
   if (engine === 'chromium') {
     cdp = await context.newCDPSession(page);
@@ -115,7 +121,23 @@ export const POSES = {
   'free-sfo':      { ac: { x: 5000, z: 5000, alt: 2000, hdg: 0 }, free: { pos: [1800, 90, 1500], look: [300, 5, -400], fov: 60 }, label: 'Free camera: SFO terminals' },
   // close-up of the aircraft skin (texture resolution / compression checks): camera 3/4 front-left at ~2.2 x length
   'aircraft-close': { ac: { spawn: 'KSFO-28R' }, free: { rel: [-0.9, 0.35, -1.6], fov: 40 }, label: 'Aircraft close-up (skin textures)' },
+  // San Francisco poses of the device matrix (tools/perf/matrix.mjs; alt = m MSL unless agl)
+  'ggb-low':      { ac: { x: -12600, z: -23000, alt: 120, hdg: 100 }, cam: 'chase', label: 'Golden Gate low (120 m, under the tower tops) from the west' },
+  'bay-3000ft':   { ac: { x: 3000, z: -10000, alt: 914, hdg: 330 }, cam: 'chase', label: 'Bay cruise at 3000 ft toward SF' },
+  // İstanbul (?map=ist; spawn poses need the page opened at LTFM-35L). Local frame of data/ist/region.json (origin Galata Kulesi)
+  'ist-peninsula':   { map: 'ist', ac: { x: 700, z: 4000, alt: 300, hdg: 345 }, cam: 'chase', label: 'Historic peninsula (Sultanahmet, Ayasofya, Topkapı) at 300 m from the Marmara' },
+  'ist-levent':      { map: 'ist', ac: { x: 2000, z: -3900, alt: 400, hdg: 24 }, cam: 'chase', label: 'Toward the Levent skyline at 400 m' },
+  'ist-bogaz':       { map: 'ist', ac: { x: 4690, z: -2090, alt: 38, hdg: 50.5 }, cam: 'chase', label: 'Boğaz at 38 m, 400 m before passing under 15 Temmuz Şehitler Köprüsü' },
+  'ist-ltfm-ground': { map: 'ist', ac: { spawn: 'LTFM-35L' }, cam: 'chase', label: 'LTFM 35L on the ground, chase view' },
+  'ist-bagcilar':    { map: 'ist', ac: { x: -13300, z: -1911, alt: 150, agl: true, hdg: 90 }, cam: 'chase', label: 'Bağcılar at 150 m AGL (dense residential city + trees), heading east' },
+  'ist-cockpit':     { map: 'ist', ac: { spawn: 'LTFM-35L' }, cam: 'cockpit', label: 'Cockpit view at LTFM 35L' },
+  // İstanbul free cameras for the quality gate (aircraft parked out of view)
+  'ist-free-15temmuz':   { map: 'ist', ac: { x: 5000, z: 5000, alt: 2000, hdg: 0 }, free: { pos: [4380, 95, -1880], look: [4999, 80, -2344], fov: 60 }, label: 'Free camera: 15 Temmuz Şehitler Köprüsü from the Boğaz' },
+  'ist-free-sultanahmet': { map: 'ist', ac: { x: 5000, z: 5000, alt: 2000, hdg: 0 }, free: { pos: [720, 160, 2850], look: [400, 35, 2050], fov: 50 }, label: 'Free camera: Sultanahmet and Ayasofya from the Marmara' },
+  'ist-free-ltfm':       { map: 'ist', ac: { x: 5000, z: 5000, alt: 2000, hdg: 0 }, free: { pos: [-21000, 170, -24600], look: [-19901, 105, -25905], fov: 55 }, label: 'Free camera: LTFM terminal and runways' },
 };
+/** Map of a pose ('sf' unless the pose says otherwise). */
+export const poseMap = (name) => (POSES[name] && POSES[name].map) || 'sf';
 
 /** Put the aircraft and camera into a pose (flight paused). */
 export async function setPose(page, poseName) {
@@ -129,7 +151,11 @@ export async function setPose(page, poseName) {
       const s = g.spawn && g.spawn.id === p.ac.spawn ? g.spawn : null;
       start = s ? { x: s.x, z: s.z, heading: s.heading, altitude: s.altitude, speed: s.altitude ? g.def.spec.spawnSpeed : undefined } : null;
       if (!start) throw new Error('spawn pose needs the page opened at that spawn');
-    } else start = { x: p.ac.x, z: p.ac.z, heading: rad(p.ac.hdg), altitude: p.ac.alt, speed: g.def.spec.spawnSpeed };
+    } else {
+      let alt = p.ac.alt;
+      if (p.ac.agl && g.world && g.world.getGroundHeight) alt += Math.max(0, g.world.getGroundHeight(p.ac.x, p.ac.z) || 0);   // (coarse until the heights stream in: ±10 m)
+      start = { x: p.ac.x, z: p.ac.z, heading: rad(p.ac.hdg), altitude: alt, speed: g.def.spec.spawnSpeed };
+    }
     g.flight.reset(start, g.world);
     g.paused = true;
     const cr = g.cameraRig;

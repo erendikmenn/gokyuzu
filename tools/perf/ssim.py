@@ -2,12 +2,13 @@
 """Screenshot quality comparison for optimisation work (the visual gate of docs/perf/plan.md).
 
     .venv/bin/python tools/perf/ssim.py A.png B.png [--heatmap out.png]
-    .venv/bin/python tools/perf/ssim.py --dirs baseline/ candidate/ [--noise noise/] [--json out.json] [--heatmaps dir/]
+    .venv/bin/python tools/perf/ssim.py --dirs baseline/ candidate/ [--noise noise/ | --noise-json noise.json] [--json out.json] [--heatmaps dir/]
 
 Per image pair: SSIM (Gaussian 11x11, sigma 1.5, on luma, Wang et al. 2004), the minimum SSIM over 64 px tiles (catches
 a local break that a global mean hides), PSNR, and the share of pixels whose colour differs by more than 8/255 (any
 channel). With --dirs every file present in both folders is compared; --noise gives a second baseline capture of the
-same poses (run-to-run noise: streaming order, animation) so a candidate is judged against the noise floor:
+same poses (run-to-run noise: streaming order, animation) so a candidate is judged against the noise floor
+(--noise-json: the --json output of a baseline-vs-noise run, e.g. docs/perf/ref-2026-09/noise.json):
     PASS  when SSIM >= min(0.995, noise SSIM - 0.002) and tile-min SSIM >= noise tile-min - 0.02
 """
 import argparse
@@ -68,6 +69,7 @@ def main():
     ap.add_argument('--heatmap')
     ap.add_argument('--dirs', nargs=2)
     ap.add_argument('--noise')
+    ap.add_argument('--noise-json')
     ap.add_argument('--json')
     ap.add_argument('--heatmaps')
     a = ap.parse_args()
@@ -77,15 +79,34 @@ def main():
     base, cand = Path(a.dirs[0]), Path(a.dirs[1])
     out = {}
     fails = 0
+    noise_json = json.loads(Path(a.noise_json).read_text()) if a.noise_json else {}
     if a.heatmaps:
         Path(a.heatmaps).mkdir(parents=True, exist_ok=True)
-    for f in sorted(base.glob('*.png')):
-        g = cand / f.name
-        if not g.exists():
+    # references may be lossless WebP (docs/perf/ref-2026-09: same pixels, 40 % smaller) and candidates PNG: match by stem
+    def find(d, stem):
+        for ext in ('.png', '.webp'):
+            if (d / (stem + ext)).exists():
+                return d / (stem + ext)
+        return None
+    for f in sorted(list(base.glob('*.png')) + list(base.glob('*.webp'))):
+        g = find(cand, f.stem)
+        if g is None:
             continue
-        r = compare(f, g, str(Path(a.heatmaps) / f.name) if a.heatmaps else None)
-        if a.noise and (Path(a.noise) / f.name).exists():
-            n = compare(f, Path(a.noise) / f.name)
+        r = compare(f, g, str(Path(a.heatmaps) / (f.stem + '.png')) if a.heatmaps else None)
+        n = None
+        nf = find(Path(a.noise), f.stem) if a.noise else None
+        nk = next((k for k in (f.name, f.stem + '.png', f.stem + '.webp') if k in noise_json and 'ssim' in noise_json[k]), None)
+        if nf is not None:
+            n = compare(f, nf)
+        elif nk:
+            n = {k: noise_json[nk][k] for k in ('ssim', 'tileMin')}
+        if 'error' in r:
+            r['pass'] = False
+            fails += 1
+            out[f.name] = r
+            print(f"{f.name:40} {r['error']}  FAIL")
+            continue
+        if n:
             r['noise'] = n
             r['pass'] = r['ssim'] >= min(0.995, n['ssim'] - 0.002) and r['tileMin'] >= n['tileMin'] - 0.02
         else:

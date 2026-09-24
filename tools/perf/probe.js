@@ -92,6 +92,81 @@
     }).observe({ type: 'longtask', buffered: true });
   } catch { /* not supported (WebKit) */ }
 
+  // ------------------------------------------------------------------ opt-in overkill counters (cfg.audit; tools/perf/overkill.mjs)
+  // DOM mutations per frame (MutationObserver on the document), 2D-canvas work per frame (calls, canvases touched, pixels
+  // cleared), Web Audio nodes created / sources started. Counted into the current frame record (f.dom, f.c2d, f.c2dPx,
+  // f.c2dCanvases) so windows can be summarised like the other per-frame numbers.
+  if (cfg.audit) {
+    P.audit = { canvases: new Map(), audioNodes: {}, audioStarted: 0, domTargets: new Map() };
+    const onFrameCanvas = (cv, px) => {
+      const f = cur();
+      f.c2d = (f.c2d || 0) + 1;
+      if (px) f.c2dPx = (f.c2dPx || 0) + px;
+      if (!f.c2dSet) f.c2dSet = new Set();
+      f.c2dSet.add(cv);
+      let e = P.audit.canvases.get(cv);
+      if (!e) P.audit.canvases.set(cv, (e = { calls: 0, frames: 0, lastFrame: -1, clearPx: 0 }));
+      e.calls++;
+      if (e.lastFrame !== frameIdx) { e.frames++; e.lastFrame = frameIdx; }
+      if (px) e.clearPx += px;
+    };
+    const C2 = window.CanvasRenderingContext2D && CanvasRenderingContext2D.prototype;
+    const OC2 = window.OffscreenCanvasRenderingContext2D && OffscreenCanvasRenderingContext2D.prototype;
+    for (const proto of [C2, OC2]) {
+      if (!proto) continue;
+      for (const name of ['clearRect', 'fillRect', 'strokeRect', 'fillText', 'strokeText', 'fill', 'stroke', 'drawImage', 'putImageData', 'getImageData']) {
+        const orig = proto[name];
+        if (typeof orig !== 'function') continue;
+        proto[name] = function (...a) {
+          const px = name === 'clearRect' || name === 'fillRect' ? Math.abs((a[2] || 0) * (a[3] || 0)) * (this.getTransform ? Math.abs(this.getTransform().a * this.getTransform().d) : 1) : 0;
+          onFrameCanvas(this.canvas, name === 'clearRect' ? px : 0);
+          if (name === 'getImageData') { const f = cur(); f.c2dRead = (f.c2dRead || 0) + 1; }
+          return orig.apply(this, a);
+        };
+      }
+    }
+    const AC = window.BaseAudioContext && BaseAudioContext.prototype;
+    if (AC) for (const name of Object.getOwnPropertyNames(AC)) {
+      if (!/^create[A-Z]/.test(name) || name === 'createPeriodicWave') continue;
+      const d = Object.getOwnPropertyDescriptor(AC, name);
+      if (!d || typeof d.value !== 'function') continue;
+      const orig = d.value;
+      AC[name] = function (...a) { P.audit.audioNodes[name] = (P.audit.audioNodes[name] || 0) + 1; return orig.apply(this, a); };
+    }
+    for (const C of ['AudioScheduledSourceNode', 'AudioBufferSourceNode', 'OscillatorNode', 'ConstantSourceNode']) {
+      const pr = window[C] && window[C].prototype;
+      if (!pr || !Object.prototype.hasOwnProperty.call(pr, 'start')) continue;
+      const o = pr.start;
+      pr.start = function (...a) { P.audit.audioStarted++; const f = cur(); f.audioStarts = (f.audioStarts || 0) + 1; return o.apply(this, a); };
+    }
+    const startMO = () => {
+      try {
+        new MutationObserver((recs) => {
+          const f = cur(); f.dom = (f.dom || 0) + recs.length;
+          for (const r of recs) {
+            const el = r.target && (r.target.nodeType === 1 ? r.target : r.target.parentElement);
+            const key = el ? `${el.tagName.toLowerCase()}${el.id ? '#' + el.id : ''}${el.classList && el.classList.length ? '.' + [...el.classList].slice(0, 2).join('.') : ''}` : '?';
+            const k2 = `${r.type}${r.attributeName ? ':' + r.attributeName : ''} ${key}`;
+            P.audit.domTargets.set(k2, (P.audit.domTargets.get(k2) || 0) + 1);
+          }
+        }).observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
+      } catch { /* ignore */ }
+    };
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', startMO); else startMO();
+    P.auditWindow = (a, b) => {
+      const fr = P.frames.filter((f) => f.t >= a && f.t <= b && f.dt > 0);
+      const n = Math.max(1, fr.length), secs = Math.max(1e-3, (b - a) / 1000);
+      const sum = (k) => fr.reduce((s, f) => s + (f[k] || 0), 0);
+      return {
+        frames: fr.length, domMutationsPerFrame: +(sum('dom') / n).toFixed(1), c2dCallsPerFrame: +(sum('c2d') / n).toFixed(1),
+        c2dCanvasesPerFrame: +(fr.reduce((s, f) => s + (f.c2dSet ? f.c2dSet.size : 0), 0) / n).toFixed(2),
+        c2dClearMpxPerSec: +(sum('c2dPx') / 1e6 / secs).toFixed(2), c2dGetImageDataPerSec: +(sum('c2dRead') / secs).toFixed(1),
+        audioStartsPerSec: +(sum('audioStarts') / secs).toFixed(1),
+        canvasUploadMsPerFrame: +(fr.reduce((s, f) => s + (f.up.canvas || 0), 0) / n).toFixed(2),
+      };
+    };
+  }
+
   // ------------------------------------------------------------------ WebGL hooks
   const G = window.WebGL2RenderingContext && WebGL2RenderingContext.prototype;
   if (G && cfg.gl !== 'off') {
