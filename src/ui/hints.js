@@ -60,6 +60,7 @@ function idleDecay(c, s) {
 function apDisconnectAlert() {
   try {
     const a = typeof window !== 'undefined' ? window.__audioSys : null;
+    if (a && 'apdActive' in a) return a.apdActive;
     const d = a && typeof a.debug === 'function' ? a.debug() : null;
     return !!(d && d.apd);
   } catch { return false; }

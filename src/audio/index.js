@@ -1403,6 +1403,8 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
       return false;
     },
     get output() { return G ? G.out : null; },          // post-limiter master (dev tools tap this for recording)
+    /** true while an autopilot-disconnect alert sounds (cheap: the onboarding hints poll it; debug() builds a report) */
+    get apdActive() { return !!(inst && inst.apd); },
   };
   if (typeof window !== 'undefined') window.__audioSys = api;   // test hook (headless checks)
   return api;
