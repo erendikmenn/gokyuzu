@@ -91,7 +91,7 @@ export function createGpuGuard({ renderer, state, getQuality, onHalt = () => {},
   const t0 = performance.now();
   const gpuName = shortGpuName(renderer);   // read now: a lost context answers null
   let failing = false, restored = false, renderErrors = 0, lastRenderError = '';
-  let acc = 0, snapAcc = 0, sweepAcc = 6, overFor = 0, lastStep = -1e9, budgetReported = false;
+  let acc = 0, snapAcc = 0, sweepAcc = 6, overFor = 0, lastStep = -1e9, budgetReported = false, lastMb = 0, fallingAt = -1e9;
   const budgetOn = new URLSearchParams(location.search).get('gpubudget') !== '0';   // ?gpubudget=0: measure without the monitor
 
   function memory() {
@@ -206,13 +206,19 @@ export function createGpuGuard({ renderer, state, getQuality, onHalt = () => {},
       if ((sweepAcc += span) >= 8) { sweepAcc = 0; textures.sweep(state.scene); }
       const q = getQuality();
       if (!q || !state.readyAt || !q.gpuBudgetMB || !budgetOn) return;
-      const mb = meter.bytes / 1048576;
-      overFor = mb > q.gpuBudgetMB ? overFor + span : 0;
-      if (overFor >= 6 && performance.now() - lastStep > 20000) {
+      const mb = meter.bytes / 1048576, now = performance.now();
+      // after a step down, layers release their content over tens of seconds: judge again only once the meter has
+      // stopped falling for 10 s (or 60 s after the step), not while the first step is still taking effect (audit #14:
+      // an iPad went high → medium → low within 40 s)
+      if (mb < lastMb - 4) fallingAt = now;
+      lastMb = mb;
+      const settled = now - lastStep > 60000 || (now - lastStep > 20000 && now - fallingAt > 10000);
+      overFor = mb > q.gpuBudgetMB && settled ? overFor + span : 0;
+      if (overFor >= 6) {
         overFor = 0;
         const next = lowerQuality(q.id);
         if (next && onStepDown(next, 'budget')) {
-          lastStep = performance.now();
+          lastStep = now;
           report('budget', { from: q.id, next, over: Math.round(mb - q.gpuBudgetMB) });
         } else if (!budgetReported) {
           budgetReported = true;

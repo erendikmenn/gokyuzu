@@ -13,6 +13,8 @@ export const DEFAULT_SETTINGS = {
   tutorial: true,           // first-flight tutorial, opening key card and contextual hints (src/ui/tutorial.js)
   units: 'aviation',        // kt / ft (the only option for now)
   failures: 'off',          // random failures in free flight: 'off' | 'rare' | 'realistic' (src/flight/failures.js)
+  fps: null,                // frame rate cap in flight: null = auto (phones 30, tablets 60 → 30 when not held, desktop
+                            // the display's rate) | 30 | 60 | 0 = no limit (src/app/frame-pacing.js)
 };
 
 export function loadSettings() {

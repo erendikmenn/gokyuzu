@@ -114,6 +114,19 @@ export async function loadBankHeight() {
   }
 }
 
+// Until the real height map arrives (after the start), a 1×1 map "far below the fog": the ground fade is then a no-op,
+// and the fog bank has its final program from the first frame (setGround only swaps the texture: no recompile in flight).
+let neutralGround = null;
+function neutralGroundMap() {
+  if (!neutralGround) {
+    const tex = new THREE.DataTexture(new Uint16Array([THREE.DataUtils.toHalfFloat(-1000)]), 1, 1, THREE.RedFormat, THREE.HalfFloatType);
+    tex.minFilter = tex.magFilter = THREE.NearestFilter;
+    tex.needsUpdate = true;
+    neutralGround = { tex, xform: new THREE.Vector4(0, 0, 0.5, 0.5) };
+  }
+  return neutralGround;
+}
+
 export function createFogBank({ sunDir, sunE, amb, ground }) {
   const RINGS = 150, SEGS = 288;
   const g = 1.041, r0 = 8;   // outer radius ~81 km
@@ -135,11 +148,11 @@ export function createFogBank({ sunDir, sunE, amb, ground }) {
   const uniforms = THREE.UniformsUtils.merge([THREE.UniformsLib.fog, {
     uCamPos: { value: new THREE.Vector3() }, uTime: { value: 0 },
     uSunDir: { value: sunDir.clone() }, uSunE: { value: new THREE.Vector3(...sunE) }, uAmb: { value: new THREE.Vector3(...amb) },
-    uGround: { value: ground ? ground.tex : null }, uGroundXf: { value: ground ? ground.xform : new THREE.Vector4() },
+    uGround: { value: (ground || neutralGroundMap()).tex }, uGroundXf: { value: (ground || neutralGroundMap()).xform.clone() },
   }]);
   const mat = new THREE.ShaderMaterial({
     name: 'sf-fogbank',
-    defines: ground ? { SF_GROUND: 1, SF_BANK_DETAIL: '1.0' } : { SF_BANK_DETAIL: '1.0' },
+    defines: { SF_GROUND: 1, SF_BANK_DETAIL: '1.0' },
     uniforms,
     fog: true,
     transparent: true,
@@ -153,11 +166,23 @@ export function createFogBank({ sunDir, sunE, amb, ground }) {
       uniform vec3 uCamPos; uniform float uTime;
       varying vec3 vWorld;
       varying float vEdge;
+      varying float vCull;
       ${NOISE_GLSL}
       ${BANK_GLSL}
       void main() {
         vEdge = 1.0 - smoothstep(55000.0, 80000.0, polar.x);
         vec2 xz = uCamPos.xz + polar.x * vec2(cos(polar.y), sin(polar.y));
+        // cells that cannot hold fog, proved without noise (sfBankFoot > 0 needs x < -10100 m or < 2050 m from the Golden
+        // Gate tongue, and -62 km < x, -54 km < z < 18 km), with a margin wider than any grid cell at this radius: a
+        // triangle with such a vertex has no fog anywhere, so it is moved behind the far plane (clipped) and whatever is
+        // left of it is discarded (vCull). Most of the 81 km grid was shaded only to be discarded (overdraw: half a screen
+        // of fragments, 84–100 % thrown away, in every San Francisco view); the fog itself is unchanged.
+        float mg = polar.x * 0.07 + 20.0;
+        vec2 ta = vec2(-14500.0, -22750.0), tab = vec2(7600.0, 850.0);
+        float tt = clamp(dot(xz - ta, tab) / dot(tab, tab), 0.0, 1.0);
+        bool maybe = (xz.x < -10100.0 + mg || length(xz - ta - tab * tt) < 2050.0 + mg) && xz.x > -62000.0 - mg && xz.y > -54000.0 - mg && xz.y < 18000.0 + mg;
+        vCull = maybe ? 0.0 : 1.0;
+        if (!maybe) { vWorld = vec3(xz.x, -80.0, xz.y); gl_Position = vec4(0.0, 0.0, 2.0, 1.0); return; }
         float f = sfBankFoot(xz);
         float h = f > 0.001 ? sfBankTopD(xz, f, uTime, 0.0).x : -80.0;
         vWorld = vec3(xz.x, h, xz.y);
@@ -174,9 +199,11 @@ export function createFogBank({ sunDir, sunE, amb, ground }) {
       uniform sampler2D uGround; uniform vec4 uGroundXf;
       varying vec3 vWorld;
       varying float vEdge;
+      varying float vCull;
       ${NOISE_GLSL}
       ${BANK_GLSL}
       void main() {
+        if (vCull > 0.0) discard;
         #include <logdepthbuf_fragment>
         float f = sfBankFoot(vWorld.xz);
         if (f < 0.002 || vWorld.y < -1.0) discard;
@@ -211,7 +238,6 @@ export function createFogBank({ sunDir, sunE, amb, ground }) {
     setGround(g) {
       if (!g) return;
       uniforms.uGround.value = g.tex; uniforms.uGroundXf.value.copy(g.xform);
-      if (!mat.defines.SF_GROUND) { mat.defines.SF_GROUND = 1; mat.needsUpdate = true; }
     },
     /** clouds quality 'low' drops the finest billow octave */
     setQuality(c) {

@@ -15,6 +15,9 @@
     #hud { position: fixed; inset: 0; pointer-events: none; }
     #ui { position: fixed; inset: 0; pointer-events: none; }
     #ui > * { pointer-events: auto; }
+    /* phones (src/app/main.js): no backdrop blur. Every HUD panel re-blurred the moving 3D view on every frame: about
+       two thirds of the compositor's work in flight (17 blurred panels on a phone screen). The panels keep their tint. */
+    html.gk-noblur *, html.gk-noblur *::before, html.gk-noblur *::after { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
   </style>
   <script type="importmap">
     {

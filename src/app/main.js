@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { createAssetLoader, loadAssetVersions, loadBuildInfo, isNetworkError, retryDelay } from '../core/assets.js';
 import { modelSeen, noteModelLoaded, measuredMbps, loadGlbJson, parseSkeleton, graftLod, copyVisual } from './aircraft-lod.js';   // LOD-first start (plan #2)
+import { createFramePacer, PACE } from './frame-pacing.js';   // frame caps, idle / overlay / loading rates (energy)
 import { createSFWorld } from '../world-sf/index.js';
 import { AIRCRAFT, loadAircraftDefinition } from '../aircraft/registry.js';
 import { createFixedWingModel } from '../flight/fixedwing.js';
@@ -50,6 +51,8 @@ if (resume && resume.crash) {   // the previous page of this tab died without un
   }
 }
 let quality = resolveQuality(QUALITY[settings.quality] ? settings.quality : 'high');   // preset + device caps (src/core/quality.js)
+// phones: no backdrop blur behind the HUD / menus (index.html; ?blur=1 / ?blur=0 force it on / off)
+if (params.get('blur') === '0' || (quality.deviceClass === 'phone' && params.get('blur') !== '1')) document.documentElement.classList.add('gk-noblur');
 // maps hook (src/maps/index.js): ?map=, a deep link's mission / spawn, a resumed flight, else the menu's last choice
 let mapId = pickMap(params, resume);
 setTelemetryMap(mapId);
@@ -615,14 +618,97 @@ guardUnload(() => !!state.flight && !state.halted && !state.leaving);   // (robu
 // ---- loop ----
 const timer = new THREE.Timer();
 timer.connect(document);
-let fpsAcc = 0, fpsFrames = 0, displayAcc = 0, renderCount = 0;
+let fpsAcc = 0, fpsFrames = 0, fpsCpu = 0, fpsHitch = false, displayAcc = 0, renderCount = 0, simAcc = 0;
 const invertedInput = {};
+// Frame pacing (src/app/frame-pacing.js): the flight cap per device class / setting, and low or no drawing behind the
+// menu, the loading screen, the pause screen, the mission cards and the big map, and while parked with nothing moving.
+const pacer = createFramePacer({ deviceClass: quality.deviceClass, setting: params.has('fps') ? params.get('fps') : settings.fps, enabled: params.get('pace') !== '0' });
+state.pacing = pacer.stats;   // test hook
+let loadFailed = false, lastInteraction = -1e9, lastMoveAt = 0, shadowAt = 0;
+const interact = () => { lastInteraction = performance.now(); };
+for (const ev of ['pointerdown', 'wheel', 'keydown', 'touchstart', 'touchmove']) addEventListener(ev, interact, { capture: true, passive: true });
+addEventListener('pointermove', (e) => { if (e.buttons || e.pointerType === 'touch') interact(); }, { capture: true, passive: true });
+document.addEventListener('visibilitychange', () => { simAcc = 0; });   // (no catch-up step after a hidden period)
+// cockpit displays (2D canvas → texture uploads, plan 4.4): 15 Hz on phones, 30 Hz elsewhere
+const displayInterval = quality.deviceClass === 'phone' ? 1 / 15 : 1 / 30;
+const lastCamPose = new THREE.Vector3(), lastCamQ = new THREE.Quaternion(), lastAcPos = new THREE.Vector3();
+/** What the loop is doing now (frame-pacing.js modes). */
+function paceMode(now) {
+  if (document.hidden) return 'hidden';
+  if (!state.readyAt) return loading && !loadFailed ? 'loading' : 'idle';
+  if (state.paused || (state.mission && state.mission.hold)) return 'overlay';
+  if (navMap.isOpen) return 'map';
+  const f = state.flight;
+  return f && f.onGround && !f.crashed && now - lastMoveAt >= PACE.parkedAfterMs ? 'parked' : 'flight';
+}
+// what moves between simulation steps: the aircraft, the camera, a turning rotor, the controls and the animated surfaces
+const VIS_KEYS = ['flaps', 'slats', 'spoilers', 'speedbrake', 'gear', 'canopy', 'aileron', 'elevator', 'rudder', 'stabilator'];
+const lastVis = {};
+/** After a simulation step: anything moving restarts the parked timer and lets the shadow map update. */
+function noteMotion(now, flight, vis) {
+  const inp = input.state;
+  let moving = state.crashTimer > 0 || lastAcPos.distanceToSquared(flight.position) > 4e-4 || lastCamPose.distanceToSquared(camera.position) > 1e-4
+    || 1 - Math.abs(lastCamQ.dot(camera.quaternion)) > 1e-8
+    || (vis.rotor && vis.rotor.rpm > 0.05) || inp.pitch || inp.roll || inp.yaw || inp.brake;
+  for (const k of VIS_KEYS) { const v = vis[k]; if (typeof v === 'number') { if (Math.abs(v - (lastVis[k] ?? v)) > 1e-4) moving = true; lastVis[k] = v; } }
+  if (moving || lastInteraction > lastMoveAt) lastMoveAt = now;
+  lastAcPos.copy(flight.position); lastCamPose.copy(camera.position); lastCamQ.copy(camera.quaternion);
+}
+/**
+ * Shadow map: the same picture while nothing moves (parked, pause, mission cards: the sun is fixed and the world's
+ * casters are static), so the caster pass (35 % of the draw calls on high) is skipped there; refreshed every 2 s for
+ * content that streams in meanwhile, and on the first frame anything moves again.
+ */
+function paceShadows(now) {
+  const sm = renderer.shadowMap;
+  if (!sm.enabled) return;
+  const still = now - lastMoveAt > 300 && now - lastInteraction > 300;
+  sm.autoUpdate = !still || !pacer.enabled || pacer.stalled;
+  if (still && now - shadowAt > 2000) { sm.needsUpdate = true; shadowAt = now; }
+  if (!still) shadowAt = now;
+}
 function frame(ts) {
   requestAnimationFrame(frame);
   timer.update(ts);
-  const dt = Math.min(timer.getDelta(), 0.1);
-  input.update(dt);
+  const rawDt = timer.getDelta();
+  pacer.raf(ts);
+  input.update(Math.min(rawDt, 0.1));   // every refresh: keyboard ramps and gamepad edges stay exactly as before
   if (state.halted) return;   // robustness: graphics failure being handled (notice shown, page reloading)
+  simAcc += rawDt;
+  const t0 = performance.now();
+  const mode = paceMode(t0);
+  const { sim, draw } = pacer.decide(ts, mode, { interacting: t0 - lastInteraction < PACE.interactMs, warming: state.warming });
+  if (!state.readyAt && state.texQueue.length && !state.upgrade) renderer.initTexture(state.texQueue.shift());   // aircraft textures while the world loads
+  gpu.tick(Math.min(rawDt, 0.1));
+  if (!sim && !draw) return;
+  const dt = Math.min(simAcc, 0.1);
+  if (sim) { simAcc = 0; simulate(dt, t0); }
+  // robustness hook: a render that throws every frame draws nothing (the canvas shows the page background) → the guard
+  // recovers like after a context loss; texture releases, GPU budget and the flight snapshot run in gpu.tick
+  if (draw && state.warming !== true) {
+    if (state.readyAt) paceShadows(t0);
+    try { renderer.render(scene, camera); gpu.renderOk(); } catch (e) { gpu.renderFailed(e); }
+    renderCount++;
+    pacer.drawn(ts, mode, t0 - state.readyAt > 8000);   // (the first seconds of a flight stream and compile: not judged)
+    if (mode === 'flight') {   // dynamic resolution judges flight frames only (other modes draw slower on purpose)
+      const cpu = performance.now() - t0;
+      fpsAcc += dt; fpsFrames++; fpsCpu += cpu;
+      if (cpu > 50) fpsHitch = true;   // a streaming / compile hitch is CPU work: never a reason for fewer pixels
+      if (fpsAcc >= 1) {
+        const fps = fpsFrames / fpsAcc;
+        window.__fps = fps;
+        // target: the flight cap, 60 without one (never fewer pixels for more than 60 fps on a 120 Hz screen; the refresh
+        // estimate is not used: a GPU-bound device delivers every frame late and would look like a 30 Hz display)
+        const cap = pacer.cap(ts);
+        adaptResolution(fps, fpsAcc, fpsCpu / fpsFrames, cap > 0 ? Math.min(cap, 60) : 60, fpsHitch);
+        fpsAcc = 0; fpsFrames = 0; fpsCpu = 0; fpsHitch = false;
+      }
+    } else { fpsAcc = 0; fpsFrames = 0; fpsCpu = 0; fpsHitch = false; }
+  }
+  if (sim && state.upgrade) stepUpgrade(state.upgrade);
+}
+/** One simulation step (flight, rig, camera, world streaming, instruments, HUD, audio); t0 = this refresh's time. */
+function simulate(dt, t0) {
   const up = state.upgrade;   // LOD start: the full model replaces the stand-in between two frames once it is ready
   if (up && up.compiled && up.textures && !up.textures.length && up.replayed === up.log.length) swapAircraft(up);
   const { flight, rig, world } = state;
@@ -649,7 +735,7 @@ function frame(ts) {
     if (state.cockpitFill) state.cockpitFill.intensity = cameraRig.view === 'cockpit' ? 2.5 : 0;
     world.update(dt, camera);
     displayAcc += dt;
-    if (displayAcc > 1 / 30) { for (const d of state.displays) d.display.update(displayAcc, flight, world); displayAcc = 0; }
+    if (displayAcc > displayInterval) { for (const d of state.displays) d.display.update(displayAcc, flight, world); displayAcc = 0; }
     hud.update(flight, { world, spawn: state.spawn, view: cameraRig.view });
     navMap.update(dt, flight, world);   // navigation hook: track trail, map redraw while open
     onboarding.update(dt, flight, { view: cameraRig.view, paused: state.paused });   // onboarding hook
@@ -658,19 +744,7 @@ function frame(ts) {
     else if (ffc) ffc.update(dt, { paused: state.paused || !!state.warming });   // free-flight challenges hook
     touchUI.update(dt, flight, { view: cameraRig.view });   // mobile hook
     audio.update(dt, flight, { view: cameraRig.view, aircraftObject: rig.object, camera });
-  }
-  // robustness hook: a render that throws every frame draws nothing (the canvas shows the page background) → the guard
-  // recovers like after a context loss; texture releases, GPU budget and the flight snapshot run in gpu.tick
-  if (state.warming !== true) { try { renderer.render(scene, camera); gpu.renderOk(); } catch (e) { gpu.renderFailed(e); } renderCount++; }
-  if (state.upgrade) stepUpgrade(state.upgrade);
-  else if (state.texQueue.length && !state.readyAt) renderer.initTexture(state.texQueue.shift());   // aircraft textures while the world loads
-  gpu.tick(dt);
-  fpsAcc += dt; fpsFrames++;
-  if (fpsAcc >= 1) {
-    const fps = fpsFrames / fpsAcc;
-    window.__fps = fps;
-    adaptResolution(fps, fpsAcc);
-    fpsAcc = 0; fpsFrames = 0;
+    noteMotion(t0, flight, vis);   // frame pacing: parked with nothing moving
   }
 }
 // Camera sanity (robustness): a non-finite camera pose / lens draws nothing, and the rig's smoothing would keep it that
@@ -695,6 +769,7 @@ function setQualityLive(q, message) {
   pixelRatioLimits();
   pixelRatio = Math.min(Math.max(pixelRatio, minPixelRatio), maxPixelRatio);
   renderer.setPixelRatio(pixelRatio);
+  renderer.shadowMap.needsUpdate = true;   // (a new map size / range while the picture is still: frame pacing)
   if (shadowsChanged) {
     renderer.shadowMap.enabled = q.shadows;
     scene.traverse((o) => { if (o.material) [].concat(o.material).forEach((m) => { m.needsUpdate = true; }); });
@@ -710,22 +785,29 @@ function applySettings(next) {
   // only a changed choice moves the quality (a budget step-down stays until the player picks a preset)
   if (settings.quality !== appliedQualityId && QUALITY[settings.quality]) { appliedQualityId = settings.quality; setQualityLive(resolveQuality(settings.quality)); }
   if (audio.setVolumes) audio.setVolumes(settings.volumes);
+  if (!params.has('fps')) pacer.setSetting(settings.fps);   // frame rate: Otomatik / 30 / 60 / Sınırsız
   state.settings = settings; state.quality = quality;
 }
 window.addEventListener('gokyuzu:settings', (e) => applySettings(e.detail));
 Object.assign(state, { settings, quality });
 if (audio.setVolumes) audio.setVolumes(settings.volumes);
 
+// Dynamic resolution, judged on 1 s windows of flight frames against the rate the pacer aims at (30 on phones, the
+// display's rate on desktops): fewer pixels when the frames come too slowly although the main thread is not the reason
+// (GPU / compositor bound: WebGL calls are queued, so a GPU-bound frame shows as late frames, not as main-thread time),
+// more again after a sustained smooth period. Never for a CPU-bound device (the frame's main-thread work takes half the
+// budget: fewer pixels would only blur the picture) or a window with a streaming / shader-compile hitch (> 50 ms).
 let smoothFor = 0, sinceDrop = 99;
-function adaptResolution(fps, span) {
+function adaptResolution(fps, span, cpuMs, target, hitch) {
   if (!state.flight || maxPixelRatio === minPixelRatio) return;
-  if (!state.readyAt || performance.now() - state.readyAt < 6000) return;
+  if (!state.readyAt || performance.now() - state.readyAt < 6000 || hitch || !(target > 0)) { smoothFor = 0; return; }
   sinceDrop += span;
-  if (fps < 50 && pixelRatio > minPixelRatio) {
+  const budget = 1000 / target;
+  if (fps < target * 0.83 && cpuMs < budget * 0.5 && pixelRatio > minPixelRatio) {
     pixelRatio = Math.max(minPixelRatio, pixelRatio - 0.15);
     renderer.setPixelRatio(pixelRatio);
     smoothFor = 0; sinceDrop = 0;
-  } else if (fps > 58.5 && pixelRatio < maxPixelRatio) {
+  } else if (fps > target * 0.975 && pixelRatio < maxPixelRatio) {
     smoothFor += span;
     if (smoothFor > 8 && sinceDrop > 20) { pixelRatio = Math.min(maxPixelRatio, pixelRatio + 0.1); renderer.setPixelRatio(pixelRatio); smoothFor = 0; }
   } else smoothFor = 0;
@@ -753,6 +835,7 @@ start().catch(startFailed);
 
 /** Loading failed: connection error screen (other errors: their text) with "Tekrar dene", which reloads straight into the chosen flight. */
 function startFailed(e) {
+  loadFailed = true;   // frame pacing: nothing to draw behind the error screen
   const net = isNetworkError(e);
   (net ? console.warn : console.error)('[app] start failed', e);
   trackFail(state.world ? 'aircraft' : state.choice ? 'world' : 'menu', e && e.message, net);   // load failures were invisible in the analytics
