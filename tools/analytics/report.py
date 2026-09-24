@@ -242,6 +242,32 @@ def report_missions(beacons, visitors, top):
     return None
 
 
+FFC_NAMES = {'bridge': 'Golden Gate altı', 'lowpass': 'Alçak geçiş', 'baytour': 'Körfez turu', 'climb': 'Dik tırmanış', 'alcatraz': 'Alcatraz pedi',
+             'land': 'En iyi iniş', 'eng': 'Motor arızası', 'flameout': 'Alev sönmesi', 'ditch': 'Suya iniş', 'autorot': 'Otorotasyon'}
+
+
+def report_challenges(beacons, visitors):
+    """§12.1 `ffc` beacons (free-flight challenges): id, st = start|done|fail, score, stars, ac, sec — completions per entry."""
+    evs = real_events(beacons, visitors, {'ffc'})
+    if not evs:
+        print('Serbest uçuş görevleri: henüz sinyal yok.')
+        return
+    done, fail, starts, players = Counter(), Counter(), Counter(), set()
+    for _, vid, _, q in evs:
+        i = q.get('id') or '?'
+        st = q.get('st', '')
+        if st == 'done':
+            done[i] += 1
+            players.add(vid)
+        elif st == 'fail':
+            fail[i] += 1
+        elif st == 'start':
+            starts[i] += 1
+    print(f"Serbest uçuş görevleri: {sum(done.values())} tamamlanan ({len(players)} oyuncu) · başarısız {sum(fail.values())} · "
+          + ' · '.join(f"{FFC_NAMES.get(i, i)} {n}" + (f" (başla {starts[i]}, başarısız {fail[i]})" if starts[i] or fail[i] else '')
+                       for i, n in done.most_common() + [(i, 0) for i in sorted(set(starts) | set(fail)) if not done[i]]))
+
+
 def report_daily(by_day, days_seen, visitors):
     """Daily-mission participation: players of each day's mission / all players seen that day."""
     if not by_day:
@@ -581,6 +607,7 @@ def main():
 
     # wave 7 (§12): missions, daily mission, landing score, shares, failures, leaderboard, retention
     by_day = report_missions(beacons, visitors, top)
+    report_challenges(beacons, visitors)
     report_daily(by_day, days_seen, visitors)
     report_landings(beacons, visitors, top)
     report_shares(beacons, visitors, top)

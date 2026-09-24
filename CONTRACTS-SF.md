@@ -357,3 +357,32 @@ and cheap (instanced, no new heavy assets). Everything must stay optimized: no p
   and `topScores({ mission, day })`; both resolve `null` when the service is unavailable (the UI then hides the table).
   The service lives on the game's own origin under `/api/` (no third-party calls from the page). Names are optional,
   short, filtered; no other personal data. Production is only connected with the owner's approval.
+
+### 12.1 Free-flight challenges ("Serbest uçuş görevleri")
+
+The missions' siblings for a player who is just flying: the same catalog data, objectives, landing score, markers,
+pointer and leaderboard client, detected passively in free flight (no start button, no fixed start, every fitting
+aircraft). Mission mode is unchanged and never builds any of this.
+- **Code**: `src/missions/challenges.js` (entries + tracker, no DOM / three.js, Node-tested), `src/missions/ff-runtime.js`
+  (glue: flight sample, markers + pointer of the tracked entry, results, progress, telemetry), `src/ui/challenges-panel.js`
+  (panel), `src/ui/mission-parts.js` (pointer, star / row / leaderboard pieces shared with `src/ui/missions-hud.js`).
+  `src/app/main.js` imports `ff-runtime.js` when the main thread is idle after the first playable frame (its own chunk;
+  `?ffc=0` turns it off for measurements) and calls `ffc.update(dt, { paused })`, `ffc.onReset()`, `ffc.onCrash(flight)`.
+- **Entries** (`CHALLENGES`; `mission` = the sibling mission for "Görev olarak oyna", deep link `?mission=<id>`):
+  bridge (Golden Gate under the deck, any aircraft), low-pass / bay-tour (gate 1 starts the clock), climb (fixed wing:
+  the clock starts with the take-off roll from a standstill on a runway, done at 10,000 ft MSL), alcatraz (UH-60: hover
+  then pad), landing (every runway landing ≥ 1★), and emergencies with an explicit "Başlat" (airborne, fitting aircraft
+  and place): eng (A320 / 737), flameout (F-16), ditch (A320 / 737 over water), autorot (UH-60) — `flight.failures`
+  injected now, objective "land safely" (land / ditch objectives, autorotation landing profile). Per frame only distance
+  checks until the aircraft is near a target; objectives are allocation-free; the UI renders at ≤ 10 Hz, only while the
+  panel is open or after a change; markers exist only for the tracked entry (created and compiled on first use).
+- **UI**: desktop — a "Görevler n/m" tab at the right edge (key **Enter**, listed in F1), the panel beside the altitude
+  column; touch — a GÖREV button in the top-right row (`--gkx-slot-*` from `src/ui/touch.js`), the panel in the free side
+  area (`--gkx-side-*`: right of the stick's ring, left of the altitude column and the lever's buttons), closed by ✕ or
+  a tap outside. Opening it never pauses the flight. A result opens the panel (desktop) or a compact card at the top
+  centre (touch); after a crash the flight's results + the last entry's top 10 open beside the crash card (touch: after
+  the reset). The landing entry opens its result only for a new personal best.
+- **Leaderboards**: boards `ff-<id>` (not comparable to missions), all fitting aircraft (entries carry `ac`, shown in the
+  table), no daily boards; `infra/leaderboard/build_rules.mjs` derives score / time / star rules from `CHALLENGES`.
+- **Progress**: localStorage `gokyuzu.ffc` `{ v: 1, e: { [id]: { best, stars, runs, done, ac } } }` (`gokyuzu.missions`
+  untouched). **Telemetry**: `ffc` (`id` short code, `st` = start|done|fail, `score`, `stars`, `ac`, `sec`).
