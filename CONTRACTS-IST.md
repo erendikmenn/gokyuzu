@@ -201,8 +201,10 @@ needs `['assets/ist/terrain', 'h']` in `SKIP_UNDER` like San Francisco's):
   directory / props GLB (default the map's own `tex/`, `props.glb`), `buildings`, `lods` as sf) + `<icao>.json/.bin`
   (`gridRot` honoured). San Francisco-only features: Golden Gate fog bank, the Pacific water / horizon rule.
 - **Missions**: `src/missions/catalog.js` `createCatalog({ missions, bridges, store, seed, map, build?, dailyId? })`,
-  `loadMissionCatalog(map)` → `src/missions/<map>/catalog.js` (`MISSIONS`, `BRIDGES`; its own `buildMission` /
-  `dailyMissionId` are used when exported). Progress per map: `gokyuzu.missions` (sf) / `gokyuzu.missions.<map>`;
+  `loadMissionCatalog(map, runways?)` → `src/missions/<map>/catalog.js` (`MISSIONS`, `BRIDGES`; its own `buildMission` /
+  `dailyMissionId` are used when exported; `useRunways(runways)` gets the map's runways.json from the menu, the mission
+  runtime and the free-flight panel). Runway thresholds everywhere (`runwayEnds()`: glide path, autoland, route approaches,
+  EGPWS, mission final starts; the ILS in src/avionics/nav.js; the start points) use `ends[i].elevation ?? runway ?? airport`. Progress per map: `gokyuzu.missions` (sf) / `gokyuzu.missions.<map>`;
   free-flight `gokyuzu.ffc` / `gokyuzu.ffc.<map>`. `loadChallengeSet(map)` → `src/missions/<map>/challenges.js`
   (`CHALLENGES`, its own `createChallengeTracker` when exported; `def.trackable` honoured; boards `board` else
   `ff-<id>` / `ff-<map>-<id>`). No file yet → no menu tab / panel. `maxChallengeScore(c, buildMission)` takes the map's
