@@ -10,7 +10,9 @@
 //   rt.update(dt, { paused, view })                            // every frame, after flight.step
 //   rt.hold                                                    // true: main.js does not step the flight
 //   rt.claimCrash(flight)                                      // a water contact the ditching mission rates itself
-// ctx = { state, scene, camera, hud, input, audio, navRoute, landing, touch, resetFlight(), goToMenu(), leave(url), snapshot() }
+// ctx = { state, scene, camera, hud, input, audio, navRoute, landing, touch, via, resetFlight(), goToMenu(), leave(url), snapshot() }
+// Telemetry `mission` (CONTRACTS-SF.md §11): brief (via = menu | daily | link | ff), start, done, fail, quit, and the
+// players' choices on the cards: retry, next (to), menu (ph = brief | result).
 import { buildMission, MISSIONS, BRIDGES, recordResult, loadProgress, isUnlocked, AIRCRAFT_SHORT } from './catalog.js';
 import { createObjective } from './objectives.js';
 import { DEG, KT, FPM, clamp, dirOf } from './util.js';
@@ -184,7 +186,7 @@ export function createMissionRuntime(plan, ctx) {
     runs++;
     started = true;
     s.first = true;   // no gate / bridge crossing against a stale previous position
-    trackEvent('mission', { id: mission.id, st: 'start', ac: mission.aircraft, d: mission.day ? 1 : undefined, n: runs });
+    trackEvent('mission', { id: mission.id, st: 'start', ac: mission.aircraft, d: mission.day ? 1 : undefined, run: runs });   // (run: the attempt on this page; `n` is the envelope's sequence)
     ui.flash(objectives[0] ? objectives[0].label : mission.goal, 'go');
   }
 
@@ -232,11 +234,12 @@ export function createMissionRuntime(plan, ctx) {
     markers.clear();
     prepareShare();
     const next = nextMission();
+    const act = (st, extra) => trackEvent('mission', { id: mission.id, st, d: mission.day ? 1 : undefined, ...extra });
     ui.showResult(result, {
-      retry: () => ctx.resetFlight(),
-      next: next && next.id !== mission.id ? () => ctx.leave(missionUrl(next.id)) : null,
+      retry: () => { act('retry', { ok: result && result.ok ? 1 : 0 }); ctx.resetFlight(); },
+      next: next && next.id !== mission.id ? () => { act('next', { to: next.id }); ctx.leave(missionUrl(next.id)); } : null,
       nextTitle: next ? next.title : '',
-      menu: () => { ctx.goToMenu(); },
+      menu: () => { act('menu', { ph: 'result' }); ctx.goToMenu(); },
       share: (o) => shareResult(o),
     });
   }
@@ -245,6 +248,7 @@ export function createMissionRuntime(plan, ctx) {
     const q = new URLSearchParams();
     q.set('mission', id);
     if (day) q.set('daily', day);
+    q.set('from', 'next');   // "Sonraki görev": the next briefing reports via=next
     return `${location.pathname}?${q}`;
   }
 
@@ -313,16 +317,18 @@ export function createMissionRuntime(plan, ctx) {
         if (phase === 'run') trackEvent('mission', { id: mission.id, st: 'quit', sec: s.t.toFixed(1), why: 'restart' });
         phase = 'brief';
         setHold(true);
-        ui.showBrief(mission, { start: startRun, menu: () => ctx.goToMenu(), again: true, best: loadProgress().missions[mission.id] });
+        ui.showBrief(mission, { start: startRun, menu: () => { trackEvent('mission', { id: mission.id, st: 'menu', ph: 'brief' }); ctx.goToMenu(); }, again: true, best: loadProgress().missions[mission.id] });
       }
     },
     begin() {
       phase = 'brief';
       setHold(true);
       ui.setMission(mission);
+      // the briefing is shown (tests with ?mbrief=0 skip it but still count as reached): where the player came from
+      trackEvent('mission', { id: mission.id, st: 'brief', via: ctx.via || 'link', ac: mission.aircraft, d: mission.day ? 1 : undefined });
       if (new URLSearchParams(location.search).get('mbrief') === '0') { startRun(); return; }   // tests / tools: no briefing
       if (ctx.hud) ctx.hud.showMessage(`Görev: ${mission.title}`, 1300);   // replaces the free-flight start message
-      ui.showBrief(mission, { start: startRun, menu: () => ctx.goToMenu(), again: false, best: loadProgress().missions[mission.id] });
+      ui.showBrief(mission, { start: startRun, menu: () => { trackEvent('mission', { id: mission.id, st: 'menu', ph: 'brief' }); ctx.goToMenu(); }, again: false, best: loadProgress().missions[mission.id] });
     },
     /** A crash the mission rates itself (water contact during the ditching objective): true = no crash card / reset. */
     claimCrash(f) {

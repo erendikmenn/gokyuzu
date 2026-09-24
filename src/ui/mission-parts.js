@@ -10,6 +10,7 @@ import { injectCSS, BASE_CSS } from './styles.js';
 import { el } from './util.js';
 import { fmtInt } from '../missions/util.js';
 import { AIRCRAFT_SHORT } from '../missions/catalog.js';
+import { trackEvent } from '../core/telemetry.js';
 
 export const STAR = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.6l2.9 6 6.5.8-4.8 4.5 1.2 6.5L12 17.3l-5.8 3.1 1.2-6.5L2.6 9.4l6.5-.8z"/></svg>';
 export const ARROW = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l6.5 16L12 15.2 5.5 19z"/></svg>';
@@ -133,6 +134,8 @@ export function createPointer(root, { touch = false } = {}) {
  * Top 10 of a board and, for a finished run, the optional nickname + "Skoru gönder" (src/net/leaderboard.js). The block
  * stays hidden when the service is unavailable; the local dev server (tools/serve.mjs) has no /api/, so no request is
  * made there (each 404 would be a console error) unless ?lb=1.
+ * Telemetry `lb` (CONTRACTS-SF.md §11; never the nickname): show (b = board, d = 1 daily, c = entries), submit (b, r =
+ * rank, im = 1 improved, nm = 1 a nickname was given), fail (b: the submission did not go through).
  *   o = { board, day, ok, score, stars, sec, ac, title, showAc (aircraft next to each name: boards open to every aircraft) }
  */
 export async function showLeaderboard(lb, o) {
@@ -174,7 +177,11 @@ export async function showLeaderboard(lb, o) {
       send.disabled = true; send.textContent = 'Gönderiliyor…';
       const sec = typeof o.sec === 'number' && Number.isFinite(o.sec) ? Math.round(o.sec * 10) / 10 : undefined;
       const res = await mod.submitScore({ mission: o.board, day, score: o.score, stars: o.stars, ac: o.ac, name: chk.name || undefined, sec });
-      if (!res) { send.disabled = false; send.textContent = 'Tekrar dene'; note.textContent = 'Sıralama şu an ulaşılamıyor.'; note.className = 'bad'; return; }
+      if (!res) {
+        trackEvent('lb', { st: 'fail', b: o.board, d: day ? 1 : undefined });
+        send.disabled = false; send.textContent = 'Tekrar dene'; note.textContent = 'Sıralama şu an ulaşılamıyor.'; note.className = 'bad'; return;
+      }
+      trackEvent('lb', { st: 'submit', b: o.board, d: day ? 1 : undefined, r: res.rank ?? undefined, im: res.improved ? 1 : 0, nm: chk.name ? 1 : 0 });
       form.remove();
       note.className = res.nameRejected ? 'bad' : '';
       note.textContent = res.nameRejected ? 'Takma ad kabul edilmedi: skor isimsiz kaydedildi.' : res.rank ? `Sıran: ${res.rank}${res.improved ? '' : ' (en iyi skorun duruyor)'}` : 'Skor kaydedildi.';
@@ -186,4 +193,5 @@ export async function showLeaderboard(lb, o) {
   if (top === null) { lb.classList.remove('on'); return; }   // service unavailable: hide the table
   render(top, null);
   if (!top.entries || !top.entries.length) { el('small', null, list, 'Henüz skor yok: ilk sen ol!'); lb.classList.toggle('on', !!o.ok); }
+  if (lb.classList.contains('on')) trackEvent('lb', { st: 'show', b: o.board, d: day ? 1 : undefined, c: top.entries ? top.entries.length : 0 });
 }

@@ -3,6 +3,8 @@
 // tracked entry, results with the leaderboard, progress (localStorage `gokyuzu.ffc`) and the `ffc` telemetry event.
 // Lazily imported by src/app/main.js in free flight only, when the main thread is idle after the first playable frame
 // (its own chunk in the production bundle). Never created in mission mode.
+// Telemetry (CONTRACTS-SF.md §11): `ffc` = the challenges (start | done | fail | cancel | drop), `ffp` = the panel UI
+// (open with src, track / untrack, play) — separate types so panel clicks can never use up the `ffc` event cap.
 //
 //   const ffc = createFreeFlightChallenges(ctx)
 //   ffc.update(dt, { paused })   every frame (idle: the flight sample + a few distance checks; no allocation)
@@ -60,12 +62,12 @@ export function createFreeFlightChallenges(ctx) {
   // ---- panel ----
   const panel = createChallengesPanel(hud, {
     touch, keyLabel: 'Enter', keyCode: ['Enter', 'NumpadEnter'], canToggle: ctx.canToggle,
-    onTrack: (id) => setTracked(id),
+    onTrack: (id) => { const prev = tracked; setTracked(id); if (id) trackEvent('ffp', { st: 'track', id: TELE_ID[id] || id }); else if (prev) trackEvent('ffp', { st: 'untrack', id: TELE_ID[prev] || prev }); },
     onStart: (id) => startEmergency(id),
     onCancel: (id) => { tracker.cancel(id); dirty = true; },
     onPlay: (id) => playMission(id),
     onBoard: (id) => showBoard(id),
-    onToggle: (open) => { dirty = true; if (open) updateCount(false); },
+    onToggle: (open, src) => { dirty = true; if (open) { updateCount(false); trackEvent('ffp', { st: 'open', src }); } },
   });
   const views = entries.map((e) => ({
     id: e.id, title: e.def.title, hint: e.def.hint, group: e.def.group || '', emergency: e.def.kind === 'emergency',
@@ -143,8 +145,12 @@ export function createFreeFlightChallenges(ctx) {
   function playMission(id) {
     const e = byId[id];
     if (!e || !ctx.leave) return;
+    trackEvent('ffp', { st: 'play', id: TELE_ID[id] || id });
     const q = new URLSearchParams();
     q.set('mission', e.def.mission);
+    q.set('from', 'ff');   // the mission's `brief` event reports via=ff
+    const tel = new URLSearchParams(location.search).get('telemetry');
+    if (tel) q.set('telemetry', tel);   // an explicit opt-out (or a test's opt-in) carries over
     ctx.leave(`${location.pathname}?${q}`);
   }
   function resultExtras(e, r, prog = null) {
@@ -185,7 +191,12 @@ export function createFreeFlightChallenges(ctx) {
     }
     if (type === 'abort') {
       if (e.def.objective && e.def.objective.profile && landing && landing.setProfile) landing.setProfile(null);
-      if (hud && tracked === e.id && (data === 'time' || data === 'far')) hud.showMessage(`${e.def.title}: ${data === 'time' ? 'süre doldu' : 'yarıda kaldı'}`, 2200);
+      // "Vazgeç" on an emergency / a timed run abandoned (time limit, too far, landed before 10,000 ft); a flight reset and
+      // a rejected take-off (the climb re-arms) are not reported
+      const sec = Math.max(0, s.t - e.t0).toFixed(1);
+      if (data === 'cancel') trackEvent('ffc', { id: TELE_ID[e.id] || e.id, st: 'cancel', ac, sec });
+      else if (data === 'time' || data === 'gap' || data === 'far' || data === 'landed') trackEvent('ffc', { id: TELE_ID[e.id] || e.id, st: 'drop', why: data, ac, sec });
+      if (hud && tracked === e.id && (data === 'time' || data === 'gap' || data === 'far')) hud.showMessage(`${e.def.title}: ${data === 'time' ? 'süre doldu' : 'yarıda kaldı'}`, 2200);
       if (tracked === e.id) syncMarkers(true);
       updateCount();
       return;

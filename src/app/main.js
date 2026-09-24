@@ -191,6 +191,8 @@ async function start() {
     await landingP;
     state.mission = missionMod.createMissionRuntime(plan, {
       state, scene, camera, hud, input, audio, navRoute, landing, touch: touchUI.active, resetFlight, goToMenu,
+      // where the player came from (telemetry `mission` brief): the menu / its daily card, a link, or "Görev olarak oyna"
+      via: missionReq ? ({ ff: 'ff', next: 'next' }[params.get('from')] || 'link') : choice.mission && choice.mission.daily ? 'daily' : 'menu',
       leave: (url) => { state.leaving = true; location.href = url; },
       snapshot: () => { renderer.render(scene, camera); return renderer.domElement; },   // share card image (same task as the render)
     });

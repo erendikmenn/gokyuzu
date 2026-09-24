@@ -4,11 +4,15 @@
 // screen (the catalog is small; the mission runtime itself only loads when a mission starts).
 //
 //   mountMissions({ root, brand, foot, container, touch, start })   // start({ id, daily }) closes the menu into the mission
+// Telemetry `mmenu` (CONTRACTS-SF.md §11): open (via = tab | daily: the panel opened from "Görevler" / the daily card),
+// daily (the daily mission's details viewed), detail (id: a mission's details viewed by the player; once per mission and
+// page, so browsing never uses up the event cap).
 import { injectCSS } from './styles.js';
 import { el } from './util.js';
 import { shared } from './shared.js';
 import { MISSIONS, buildMission, dailyMissionId, loadProgress, totalStars, isUnlocked, AIRCRAFT_SHORT, LEVEL_LABEL } from '../missions/catalog.js';
 import { istanbulDay, secondsToNextDay, fmtClock, fmtInt, fmtTime, dayLabel } from '../missions/util.js';
+import { trackEvent } from '../core/telemetry.js';
 
 const STAR = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.6l2.9 6 6.5.8-4.8 4.5 1.2 6.5L12 17.3l-5.8 3.1 1.2-6.5L2.6 9.4l6.5-.8z"/></svg>';
 const LOCK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>';
@@ -132,6 +136,13 @@ export function mountMissions({ root, brand, foot, container, touch = false, sta
   let day = istanbulDay();
   let daily = buildMission(dailyMissionId(day), day);
   let panel = null, timer = 0, sel = null;
+  const seen = new Set();
+  /** A player's look at a mission (click / arrow key; the automatic first selection is not one). */
+  function viewed(id) {
+    if (seen.has(id)) return;
+    seen.add(id);
+    trackEvent('mmenu', id === 'daily' ? { st: 'daily', id: daily.id } : { st: 'detail', id });
+  }
 
   // ---------- entry: "Görevler" + "Günün görevi" ----------
   const entry = el('div', 'gkmm-entry');
@@ -183,6 +194,8 @@ export function mountMissions({ root, brand, foot, container, touch = false, sta
   let cards = [], dayBtn = null, side = null, list = null;
   function openPanel(which) {
     if (panel) return;
+    trackEvent('mmenu', { st: 'open', via: which === 'daily' ? 'daily' : 'tab' });
+    if (which === 'daily') viewed('daily');
     shared.modalOpen = (shared.modalOpen || 0) + 1;
     panel = el('div', 'gkmm', root);
     panel.setAttribute('role', 'dialog');
@@ -224,7 +237,7 @@ export function mountMissions({ root, brand, foot, container, touch = false, sta
     const cd = el('span', 'gkmm-cd', dayBtn);
     el('small', null, cd, 'Yeni görev');
     el('b', null, cd, fmtClock(secondsToNextDay()));
-    dayBtn.addEventListener('click', () => select('daily', true));
+    dayBtn.addEventListener('click', () => { viewed('daily'); select('daily', true); });
     dayBtn.addEventListener('dblclick', () => go());
     // cards
     const grid = el('div', 'gkmm-grid', list);
@@ -241,7 +254,7 @@ export function mountMissions({ root, brand, foot, container, touch = false, sta
       const f = el('span', 'f', b, p && p.done ? `${fmtInt(p.best)} puan` : locked ? '' : 'yeni');
       f.append(stars(p ? p.stars || 0 : 0));
       if (locked) { const l = el('span', 'gkmm-lock', b); l.innerHTML = LOCK; l.append(`${m.unlock} yıldız`); }
-      b.addEventListener('click', () => select(m.id, true));
+      b.addEventListener('click', () => { viewed(m.id); select(m.id, true); });
       b.addEventListener('dblclick', () => { if (!locked) go(); });
       return b;
     });
@@ -308,8 +321,8 @@ export function mountMissions({ root, brand, foot, container, touch = false, sta
     const i = ids.indexOf(sel);
     if (e.code === 'Escape') { e.preventDefault(); if (panel.classList.contains('detail')) panel.classList.remove('detail'); else closePanel(); }
     else if (e.code === 'Enter' || e.code === 'NumpadEnter') { e.preventDefault(); go(); }
-    else if (e.code === 'ArrowDown' || e.code === 'ArrowRight') { e.preventDefault(); select(ids[(i + 1) % ids.length]); }
-    else if (e.code === 'ArrowUp' || e.code === 'ArrowLeft') { e.preventDefault(); select(ids[(i - 1 + ids.length) % ids.length]); }
+    else if (e.code === 'ArrowDown' || e.code === 'ArrowRight') { e.preventDefault(); const n = ids[(i + 1) % ids.length]; viewed(n); select(n); }
+    else if (e.code === 'ArrowUp' || e.code === 'ArrowLeft') { e.preventDefault(); const n = ids[(i - 1 + ids.length) % ids.length]; viewed(n); select(n); }
   }
 
   return { open: openPanel, close: closePanel, get isOpen() { return !!panel; }, daily: () => ({ id: daily.id, day, title: daily.title }), select, go };

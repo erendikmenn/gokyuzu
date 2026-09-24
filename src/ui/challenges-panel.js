@@ -186,7 +186,7 @@ export function createChallengesPanel(hud, o = {}) {
   note.setAttribute('role', 'status');
   let noteT = null, noteOpen = null;
 
-  let isOpen = false, view = 'list', rows = new Map(), selected = null, fresh = false, unseen = null;
+  let isOpen = false, view = 'list', rows = new Map(), selected = null, fresh = false, unseen = null, nextSrc = null;
   const fk = () => {
     if (touch) return 1;
     const ps = parseFloat(getComputedStyle(root).getPropertyValue('--ps')) || 1;
@@ -228,21 +228,23 @@ export function createChallengesPanel(hud, o = {}) {
   addEventListener('resize', () => { if (isOpen) place(); });
   let placeT = 0;
 
-  function setOpen(on, byUser = false) {
+  // src: how it opened — 'key' (Enter), 'tab' (the tab / GÖREV button), 'card' (the compact result card), 'auto' (a
+  // result or a crash opened it)
+  function setOpen(on, byUser = false, src = 'auto') {
     if (on === isOpen) return;
     // opened by the player (tab, Enter): a result announced by the compact card and not opened yet, else the list
     // (unless a result arrived that has not been seen yet)
-    if (on && byUser && unseen) { const fn = unseen; unseen = null; hideNote(); fn(); return; }
+    if (on && byUser && unseen) { const fn = unseen; unseen = null; hideNote(); nextSrc = src; fn(); nextSrc = null; return; }
     if (on && byUser && view === 'result' && !fresh) showList();
     if (!on) fresh = false;
     isOpen = on;
     root.classList.toggle('open', on);
     tab.setAttribute('aria-expanded', String(on));
     if (on) { place(); if (touch) hideNote(); }
-    if (o.onToggle) o.onToggle(on);
+    if (o.onToggle) o.onToggle(on, nextSrc || src);
   }
   const close = () => setOpen(false);
-  tab.addEventListener('click', (e) => { e.stopPropagation(); tab.blur(); setOpen(!isOpen, true); });
+  tab.addEventListener('click', (e) => { e.stopPropagation(); tab.blur(); setOpen(!isOpen, true, 'tab'); });
   xBtn.addEventListener('click', (e) => { e.stopPropagation(); close(); });
   // keep the keyboard for flying: buttons never keep the focus
   root.addEventListener('pointerup', () => { const a = document.activeElement; if (a && root.contains(a) && a.tagName !== 'INPUT') a.blur(); });
@@ -261,7 +263,7 @@ export function createChallengesPanel(hud, o = {}) {
       if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(t.tagName || ''))) return;
       if (o.canToggle && !o.canToggle()) return;
       e.preventDefault();
-      setOpen(!isOpen, true);
+      setOpen(!isOpen, true, 'key');
     });
   }
 
@@ -398,7 +400,7 @@ export function createChallengesPanel(hud, o = {}) {
   }
 
   function hideNote() { note.classList.remove('on'); if (noteT) { clearTimeout(noteT); noteT = null; } }
-  note.addEventListener('click', (e) => { e.stopPropagation(); const fn = noteOpen; unseen = null; hideNote(); if (fn) fn(); });
+  note.addEventListener('click', (e) => { e.stopPropagation(); const fn = noteOpen; unseen = null; hideNote(); nextSrc = 'card'; if (fn) fn(); nextSrc = null; });
 
   return {
     root,

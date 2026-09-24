@@ -13,7 +13,9 @@
 //   tr.onReset()                 flight reset: running runs end silently
 //   tr.canStart(id, s, flight)   → { ok, reason } (emergencies)   tr.start(id, s, flight) → { ok, reason }   tr.cancel(id)
 //   tr.entries                   [{ def, id, board, status: 'idle'|'armed'|'run', t0, target, markers(), view(s) }]
-// emit(type, entry, data): 'start' (a run began), 'done' / 'fail' (data = result), 'abort' (silently ended), 'message' (text).
+// emit(type, entry, data): 'start' (a run began), 'done' / 'fail' (data = result), 'abort' (silently ended; data = why:
+// 'time' | 'gap' | 'far' | 'landed' (timed run abandoned), 'cancel' (Vazgeç), 'reset', 'stopped' (rejected take-off)),
+// 'message' (text).
 // result = { id, board, title, ok, reason, score, stars, time (s from the run start | null), rows [[label, value, points]], ac, landing? }
 //
 // Detection (per frame only a distance check until the aircraft is near a target; objectives are allocation-free):
@@ -243,7 +245,9 @@ export function createChallengeTracker(o = {}) {
       const el = s.t - e.t0;
       e.lastT = el;
       const g = obj.gates[obj.index], dx = s.x - g.x, dz = s.z - g.z;
-      if (el > def.limit || s.t - lastT > GATE_GAP || dx * dx + dz * dz > GATE_FAR * GATE_FAR) { drop(el > def.limit ? 'time' : 'far'); return; }
+      if (el > def.limit) { drop('time'); return; }
+      if (s.t - lastT > GATE_GAP) { drop('gap'); return; }
+      if (dx * dx + dz * dz > GATE_FAR * GATE_FAR) { drop('far'); return; }
       const i0 = obj.index;
       obj.update(s);
       if (obj.index !== i0) lastT = s.t;
