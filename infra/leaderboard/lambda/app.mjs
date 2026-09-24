@@ -90,14 +90,22 @@ export function createApp({ db, salt, rules, stage = 'staging', origins = [], no
       ...(s.test ? { exp: tSec + TEST_TTL } : s.day ? { exp: Math.floor((s.dayMs + DAILY_TTL * DAY_MS) / 1000) } : {}),
     };
     const put = await db.putBest(item);
-    const best = put.written || !put.old ? item : put.old;
+    let best = put.written || !put.old ? item : put.old;
+    // the game submits a finished run at once without a nickname; a nickname sent afterwards (same or lower score)
+    // names the player's existing best entry on this board
+    if (!put.written && put.old && s.name && put.old.n !== s.name) {
+      await db.setName(pk, item.sk, s.name);
+      best = { ...put.old, n: s.name };
+    }
     const [above, board] = await Promise.all([db.countAbove(pk, best.rk, RANK_CAP), db.top(pk, 10)]);
+    // the rank index is eventually consistent: show the fresh nickname on the player's own row at once
+    const top = board.map((it) => (it.rk === best.rk && best.n && !it.n ? { ...it, n: best.n } : it)).map(entry);
     return reply(200, {
       ok: true, improved: put.written,
       best: { score: best.sc, stars: best.st, ac: best.ac, sec: best.sec ?? null },
       rank: above >= RANK_CAP ? null : above + 1,
       name: best.n || null, nameRejected: s.nameRejected,
-      top: board.map(entry),
+      top,
     });
   }
 

@@ -48,6 +48,17 @@ export async function createDynamoDb(table, region = process.env.AWS_REGION) {
         throw e;
       }
     },
+    /** Set the nickname of an existing entry (a nickname added after the automatic submission). */
+    async setName(pk, sk, n) {
+      try {
+        await client.send(new UpdateItemCommand({
+          TableName: table, Key: marshal({ pk, sk }), UpdateExpression: 'SET #n = :n', ConditionExpression: 'attribute_exists(pk)',
+          ExpressionAttributeNames: { '#n': 'n' }, ExpressionAttributeValues: { ':n': S(n) },
+        }));
+      } catch (e) {
+        if (e.name !== 'ConditionalCheckFailedException') throw e;
+      }
+    },
     async top(pk, n) {
       const r = await client.send(new QueryCommand({
         TableName: table, IndexName: 'rank', KeyConditionExpression: 'pk = :pk', ExpressionAttributeValues: { ':pk': S(pk) },

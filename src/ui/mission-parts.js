@@ -131,13 +131,15 @@ export function createPointer(root, { touch = false } = {}) {
 }
 
 /**
- * Top 10 of a board and, for a finished run, the optional nickname + "Skoru gönder" (src/net/leaderboard.js). The block
+ * Top 10 of a board; a finished run is submitted automatically and can be named afterwards (src/net/leaderboard.js). The block
  * stays hidden when the service is unavailable; the local dev server (tools/serve.mjs) has no /api/, so no request is
  * made there (each 404 would be a console error) unless ?lb=1.
- * Telemetry `lb` (CONTRACTS-SF.md §11; never the nickname): show (b = board, d = 1 daily, c = entries), submit (b, r =
- * rank, im = 1 improved, nm = 1 a nickname was given), fail (b: the submission did not go through).
+ * Telemetry `lb` (CONTRACTS-SF.md §11; never the nickname): show (b = board, d = 1 daily, c = entries), submit (automatic,
+ * au = 1; b, r = rank, im = 1 improved, nm = 1 sent with a saved nickname), name (a nickname added afterwards, ok = 1
+ * accepted), fail (b: the submission did not go through).
  *   o = { board, day, ok, score, stars, sec, ac, title, showAc (aircraft next to each name: boards open to every aircraft) }
  */
+const submitted = new Map();   // result key → Promise of the submission answer (one submission per finished run)
 export async function showLeaderboard(lb, o) {
   if (/^(localhost|127\.|\[::1\])/.test(location.hostname) && new URLSearchParams(location.search).get('lb') !== '1') return;
   let mod;
@@ -158,40 +160,70 @@ export async function showLeaderboard(lb, o) {
   lb.textContent = '';
   el('h3', null, lb, o.title || 'Sıralama');
   const list = el('ol', null, lb);
-  if (o.ok) {
-    const form = el('form', null, lb);
-    const input = el('input', null, form);
-    input.type = 'text'; input.maxLength = mod.NAME_MAX || 16; input.placeholder = 'Takma ad (isteğe bağlı)'; input.autocomplete = 'off'; input.enterKeyHint = 'send';
-    input.value = mod.savedName ? mod.savedName() : '';
-    input.addEventListener('keydown', (e) => e.stopPropagation());   // typing never flies the aircraft
-    input.addEventListener('keyup', (e) => e.stopPropagation());
-    const send = el('button', 'gkq-btn teal', form, 'Skoru gönder');
-    send.type = 'submit';
-    const note = el('small', null, lb, 'İsim yazmazsan "İsimsiz pilot" görünür. Başka bir bilgi gönderilmez.');
-    form.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      input.blur();
-      const name = input.value.trim();
-      const chk = mod.cleanName ? mod.cleanName(name) : { ok: true };
-      if (!chk.ok) { note.textContent = 'Bu takma ad kullanılamıyor: harf, rakam, boşluk, _ ve - (en çok 16).'; note.className = 'bad'; return; }
-      send.disabled = true; send.textContent = 'Gönderiliyor…';
-      const sec = typeof o.sec === 'number' && Number.isFinite(o.sec) ? Math.round(o.sec * 10) / 10 : undefined;
-      const res = await mod.submitScore({ mission: o.board, day, score: o.score, stars: o.stars, ac: o.ac, name: chk.name || undefined, sec });
-      if (!res) {
-        trackEvent('lb', { st: 'fail', b: o.board, d: day ? 1 : undefined });
-        send.disabled = false; send.textContent = 'Tekrar dene'; note.textContent = 'Sıralama şu an ulaşılamıyor.'; note.className = 'bad'; return;
-      }
-      trackEvent('lb', { st: 'submit', b: o.board, d: day ? 1 : undefined, r: res.rank ?? undefined, im: res.improved ? 1 : 0, nm: chk.name ? 1 : 0 });
-      form.remove();
-      note.className = res.nameRejected ? 'bad' : '';
-      note.textContent = res.nameRejected ? 'Takma ad kabul edilmedi: skor isimsiz kaydedildi.' : res.rank ? `Sıran: ${res.rank}${res.improved ? '' : ' (en iyi skorun duruyor)'}` : 'Skor kaydedildi.';
-      if (o.onSubmitted) o.onSubmitted(res);
-      render(res.top ? { entries: res.top } : null, res.rank);
-    });
+  if (!o.ok) {   // a failed run: the table only
+    const top = await mod.topScores({ mission: o.board, day, n: 10 });
+    if (top === null) { lb.classList.remove('on'); return; }   // service unavailable: hide the table
+    render(top, null);
+    if (!top.entries || !top.entries.length) el('small', null, list, 'Henüz skor yok: ilk sen ol!');
+    if (lb.classList.contains('on')) trackEvent('lb', { st: 'show', b: o.board, d: day ? 1 : undefined, c: top.entries ? top.entries.length : 0 });
+    return;
   }
-  const top = await mod.topScores({ mission: o.board, day, n: 10 });
-  if (top === null) { lb.classList.remove('on'); return; }   // service unavailable: hide the table
-  render(top, null);
-  if (!top.entries || !top.entries.length) { el('small', null, list, 'Henüz skor yok: ilk sen ol!'); lb.classList.toggle('on', !!o.ok); }
-  if (lb.classList.contains('on')) trackEvent('lb', { st: 'show', b: o.board, d: day ? 1 : undefined, c: top.entries ? top.entries.length : 0 });
+  // a finished run is submitted at once (anonymous, or with the nickname saved on this device); the player can add a
+  // nickname afterwards, which names the same entry. One submission per result, also when the card is shown again.
+  const note = el('small', null, lb, 'Skorun gönderiliyor…');
+  lb.classList.add('on');
+  const sec = typeof o.sec === 'number' && Number.isFinite(o.sec) ? Math.round(o.sec * 10) / 10 : undefined;
+  const saved = mod.savedName ? mod.savedName() : '';
+  const key = `${o.board}|${day}|${o.score}|${o.stars}|${sec}|${o.ac}`;
+  let first = submitted.get(key);
+  const fresh = !first;
+  if (fresh) { first = mod.submitScore({ mission: o.board, day, score: o.score, stars: o.stars, ac: o.ac, name: saved || undefined, sec }); submitted.set(key, first); }
+  const res = await first;
+  if (fresh && submitted.size > 50) submitted.delete(submitted.keys().next().value);
+  if (!res) {   // not accepted / unreachable: the table if it answers, and a manual retry
+    submitted.delete(key);
+    if (fresh) trackEvent('lb', { st: 'fail', b: o.board, d: day ? 1 : undefined });
+    const top = await mod.topScores({ mission: o.board, day, n: 10 });
+    if (top === null) { lb.classList.remove('on'); return; }
+    render(top, null);
+    note.textContent = 'Skorun gönderilemedi.'; note.className = 'bad';
+    const again = el('button', 'gkq-btn teal', lb, 'Tekrar dene');
+    again.type = 'button';
+    again.addEventListener('click', () => { showLeaderboard(lb, o).catch(() => {}); });
+    return;
+  }
+  if (fresh) {
+    trackEvent('lb', { st: 'submit', b: o.board, d: day ? 1 : undefined, r: res.rank ?? undefined, im: res.improved ? 1 : 0, nm: res.name ? 1 : 0, au: 1 });
+    if (o.onSubmitted) o.onSubmitted(res);
+  }
+  const rankText = (r) => (r.rank ? `Sıran: ${r.rank}${r.improved ? '' : ' (en iyi skorun duruyor)'}` : 'Skorun kaydedildi.');
+  note.textContent = rankText(res); note.className = '';
+  render(res.top ? { entries: res.top } : null, res.rank);
+  trackEvent('lb', { st: 'show', b: o.board, d: day ? 1 : undefined, c: res.top ? res.top.length : 0 });
+  if (res.name) return;
+  // anonymous entry: offer the nickname
+  const form = el('form', null, lb);
+  const input = el('input', null, form);
+  input.type = 'text'; input.maxLength = mod.NAME_MAX || 16; input.placeholder = 'Takma adın (isteğe bağlı)'; input.autocomplete = 'off'; input.enterKeyHint = 'send';
+  input.addEventListener('keydown', (e) => e.stopPropagation());   // typing never flies the aircraft
+  input.addEventListener('keyup', (e) => e.stopPropagation());
+  const send = el('button', 'gkq-btn teal', form, 'Adımı ekle');
+  send.type = 'submit';
+  const hint = el('small', null, lb, 'Listede "İsimsiz pilot" görünüyorsun. Takma ad dışında bir bilgi gönderilmez.');
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    input.blur();
+    const chk = mod.cleanName ? mod.cleanName(input.value.trim()) : { ok: true, name: input.value.trim() };
+    if (!chk.ok || !chk.name) { hint.textContent = 'Bu takma ad kullanılamıyor: harf, rakam, boşluk, _ ve - (en çok 16).'; hint.className = 'bad'; return; }
+    send.disabled = true; send.textContent = 'Kaydediliyor…';
+    const r2 = await mod.submitScore({ mission: o.board, day, score: o.score, stars: o.stars, ac: o.ac, name: chk.name, sec });
+    if (!r2) { send.disabled = false; send.textContent = 'Tekrar dene'; hint.textContent = 'Sıralama şu an ulaşılamıyor.'; hint.className = 'bad'; return; }
+    trackEvent('lb', { st: 'name', b: o.board, d: day ? 1 : undefined, ok: r2.name ? 1 : 0 });
+    submitted.set(key, Promise.resolve(r2));
+    form.remove();
+    hint.className = r2.nameRejected ? 'bad' : '';
+    hint.textContent = r2.nameRejected ? 'Takma ad kabul edilmedi: skorun isimsiz duruyor.' : `Kaydedildi: ${r2.name}`;
+    note.textContent = r2.rank ? `Sıran: ${r2.rank}` : 'Skorun kaydedildi.';
+    render(r2.top ? { entries: r2.top } : null, r2.rank);
+  });
 }
