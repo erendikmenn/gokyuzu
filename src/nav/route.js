@@ -237,7 +237,7 @@ export class Route {
    * Replaces a previous approach; user points stay in front of it. env: { groundAt, obstacleAt, bounds }.
    */
   setApproach(rw, category, env = this.env) {
-    if (!rw) return null;
+    if (!rw || rw.landing === false) return null;     // departure-only runway end: no approach
     if (env) this.env = env;
     this.category = category || this.category;
     this.approach = { rw, category: this.category, name: rw.name, points: [] };

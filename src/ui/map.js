@@ -492,9 +492,11 @@ export function createNavMap({ hud, route }) {
       h4.innerHTML = ICON.rwy;
       h4.append(`${code} · Pist ${e.ident}`);
       el('p', null, pop, `${(AIRPORTS[e.airport] && AIRPORTS[e.airport].name) || e.airport} · ${pad3(e.course / DEG)}° · ${fmtInt(e.length)} m`);
-      el('p', null, pop, heli() ? 'Yaklaşma: 1,5 NM son yaklaşma, pist başında askıda kalma.' : 'Yaklaşma: giriş, IF, ILS ile süzülüş ve otomatik iniş.');
+      const land = e.landing !== false;               // departure-only runway end (e.g. LTFM 09/27): no approach offered
+      el('p', null, pop, !land ? 'Yalnız kalkış pisti: inişe kapalı, yaklaşma yok.'
+        : heli() ? 'Yaklaşma: 1,5 NM son yaklaşma, pist başında askıda kalma.' : 'Yaklaşma: giriş, IF, ILS ile süzülüş ve otomatik iniş.');
       const row = el('div', 'gkn-row', pop);
-      btn(row, 'primary', `${ICON.rwy}Bu piste yaklaş`, () => approach(e));
+      if (land) btn(row, 'primary', `${ICON.rwy}Bu piste yaklaş`, () => approach(e));
       btn(row, 'ghost', `${ICON.go}Direkt git`, () => { ensureDefaultAlt(); route.directToPoint(e.x, e.z); directTo(route.waypoints[0].id); });
     }
     pop.classList.add('on');

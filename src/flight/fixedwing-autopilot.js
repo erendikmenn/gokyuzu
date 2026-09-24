@@ -23,7 +23,15 @@ const AIM_DIST = 300;           // m past the threshold (glide path origin, TCH 
 const NM = 1852;
 const NAV_KHDG_FIGHTER = 3.5;
 
-/** Runway ends of world.runways (airports → runways → ends) as approach candidates (cached per data object). */
+/**
+ * Runway ends of world.runways (airports → runways → ends) as approach candidates (cached per data object).
+ * `landing` is false for an end the data closes to landings (departure-only runways, e.g. LTFM 09/27: `landing: false`
+ * on the end, `departureOnly` on the runway): kept in the list (take-off, a landing score if someone lands there
+ * anyway) but never chosen as an approach / ILS / autoland / route-approach target.
+ * A displaced threshold (`displaced` m on the end, e.g. LTBA 05: 130 m) moves x / z (the landing threshold: glide path,
+ * aim point, approach points, touchdown zone) that far along the runway; px / pz stay on the pavement end (take-off
+ * starts) and `length` is the whole pavement (the landing distance is length − displaced).
+ */
 const _cache = new WeakMap();
 export function runwayEnds(runways) {
   if (!runways || typeof runways !== 'object') return [];
@@ -36,11 +44,15 @@ export function runwayEnds(runways) {
       for (const [e, o] of [[a, b], [b, a]]) {
         const crs = (e.headingTrue ?? 0) * DEG;
         const dx = Math.sin(crs), dz = -Math.cos(crs);
+        const disp = e.displaced > 0 ? e.displaced : 0;
+        const x = disp ? e.x + dx * disp : e.x, z = disp ? e.z + dz * disp : e.z;
         list.push({
           airport: apt.icao, ident: e.ident, name: `${apt.icao} ${e.ident}`,
-          x: e.x, z: e.z, course: crs, dx, dz, elevation: e.elevation ?? r.elevation ?? apt.elevation ?? 0,   // (sloped runways: the threshold's own)
+          x, z, course: crs, dx, dz, elevation: e.elevation ?? r.elevation ?? apt.elevation ?? 0,   // (sloped runways: the threshold's own)
           length: Math.hypot(o.x - e.x, o.z - e.z), width: r.width ?? 45,
-          aimX: e.x + dx * AIM_DIST, aimZ: e.z + dz * AIM_DIST,
+          aimX: x + dx * AIM_DIST, aimZ: z + dz * AIM_DIST,
+          landing: e.landing !== false && !r.departureOnly,
+          px: e.x, pz: e.z, displaced: disp,
         });
       }
     }
@@ -65,6 +77,7 @@ export function findApproach(runways, x, z, headingRad, maxDist = 35000, only = 
   let best = null, bestScore = Infinity;
   const g = {};
   for (const rw of runwayEnds(runways)) {
+    if (!rw.landing) continue;                       // departure-only end: no approach, no ILS
     if (only && rw.name !== only) continue;
     approachGeometry(rw, x, z, g);
     if (g.along < 1500 || g.along > maxDist) continue;

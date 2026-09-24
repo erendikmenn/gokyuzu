@@ -181,6 +181,8 @@ export function createChallengeTracker(o = {}) {
   const hooks = o.hooks || {};         // inject(kind, opts) → bool, clearFailure(kind), suspendRandom(on)
   const emit = o.emit || (() => {});
   const env = (score) => ({ ends, bridges, score, cat: category, spanAt: o.spanAt || null });
+  // runway ends closed to landings (departure-only runways, e.g. LTFM 09/27): no best-landing entry, no pointer target
+  const closedEnds = new Set(ends.filter((x) => x.landing === false).map((x) => x.name));
 
   function base(def) {
     return {
@@ -383,7 +385,7 @@ export function createChallengeTracker(o = {}) {
     const e = base(def);
     const obj = createObjective({ type: 'land', any: true, minStars: 1, label: def.title }, env(def.score));
     e.onLanding = (card, td) => {
-      if (!card || !card.onRunway || card.stars < 1) return;
+      if (!card || !card.onRunway || card.stars < 1 || closedEnds.has(card.runway)) return;
       obj.start();
       obj.onLanding(card, td);
       obj.message = null;
@@ -438,6 +440,7 @@ export function createChallengeTracker(o = {}) {
       if (def.objective.type === 'land') {   // the nearest runway end: pointer / marker target
         let best = Infinity;
         for (const x of ends) {
+          if (x.landing === false) continue;             // (departure-only runway ends are no landing target)
           const d = Math.hypot((x.aimX ?? x.x) - s.x, (x.aimZ ?? x.z) - s.z);
           if (d < best) { best = d; target = x; }
         }

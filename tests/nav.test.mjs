@@ -4,7 +4,8 @@
 import { readFileSync } from 'node:fs';
 import { createFixedWingModel } from '../src/flight/fixedwing.js';
 import { createHelicopterModel } from '../src/flight/helicopter.js';
-import { approachGeometry, findApproach } from '../src/flight/fixedwing-autopilot.js';
+import { approachGeometry, findApproach, runwayEnds } from '../src/flight/fixedwing-autopilot.js';
+import { navData, ilsFor } from '../src/avionics/nav.js';
 import { createRoute, findRunwayEnd, buildApproach, courseTo, NM } from '../src/nav/route.js';
 import { createLnav } from '../src/nav/lnav.js';
 import { legSpeed, clampHeli, clampFixedWing } from '../src/nav/speed.js';
@@ -429,6 +430,68 @@ for (const [id, rwName, spawn] of [['a320neo', 'KSFO 28R', 'GGB'], ['b737', 'KSF
   for (let i = 0; i < 200000; i++) { S.x = (i % 1000); if (lnav.update(route, S, 1 / 60) !== o) same = false; }
   const us = ((performance.now() - t0) / 200000) * 1000;
   check('LNAV update reuses its output object and costs < 5 µs', same && us < 5, `${us.toFixed(3)} µs per update`);
+}
+
+// ======================================================================================================================
+// 9. departure-only runway ends (İstanbul LTFM 09/27: `departureOnly`, both ends `landing: false`): listed for take-off
+// and the landing score, never an approach / ILS / route-approach target; San Francisco has no such flag
+{
+  const IST = JSON.parse(readFileSync(new URL('../data/ist/runways.json', import.meta.url), 'utf8'));
+  const ends = runwayEnds(IST);
+  const e09 = ends.find((e) => e.name === 'LTFM 09'), e27 = ends.find((e) => e.name === 'LTFM 27');
+  const closed = ends.filter((e) => !e.landing).map((e) => e.name).sort();
+  check('Departure-only runway: LTFM 09 / 27 listed with landing = false, every other İstanbul end and every SF end landable',
+    e09 && e27 && closed.join(',') === 'LTFM 09,LTFM 27' && runwayEnds(RUNWAYS).every((e) => e.landing), closed.join(',') || 'none');
+  // 12 km out on the extended centreline of 09 / 27, heading along the runway
+  const onFinal = (e, d) => ({ x: e.x - e.dx * d, z: e.z - e.dz * d, hdg: e.course });
+  const p09 = onFinal(e09, 12000), p27 = onFinal(e27, 12000);
+  const a09 = findApproach(IST, p09.x, p09.z, p09.hdg), a27 = findApproach(IST, p27.x, p27.z, p27.hdg);
+  const only09 = findApproach(IST, p09.x, p09.z, p09.hdg, 35000, 'LTFM 09');
+  const e35 = ends.find((e) => e.name === 'LTFM 35L'), p35 = onFinal(e35, 12000);
+  const a35 = findApproach(IST, p35.x, p35.z, p35.hdg);
+  check('Departure-only runway: no approach / autoland target on its finals (even when named), other LTFM finals unchanged',
+    (!a09 || a09.landing) && (!a27 || a27.landing) && !only09 && a35 && a35.name === 'LTFM 35L',
+    `09 → ${a09 ? a09.name : 'none'}, 27 → ${a27 ? a27.name : 'none'}, 35L → ${a35 ? a35.name : 'none'}`);
+  const r = createRoute();
+  r.env = ENV;
+  const set = r.setApproach(e09, 'airliner');
+  const ok35 = r.setApproach(e35, 'airliner');
+  check('Departure-only runway: "Bu piste yaklaş" refused for 09, accepted for 35L', set === null && ok35 && r.approach && r.approach.name === 'LTFM 35L');
+  const nav = navData({ runways: IST });
+  const S = (p) => ({ x: p.x, z: p.z, track: p.hdg * DEG, gs: 140, alt: 1500 });
+  const i09 = { ...ilsFor(nav, S(p09)) }, i35 = { ...ilsFor(nav, S(p35)) };
+  check('Departure-only runway: no ILS for 09 on its final, the 35L ILS still found on its own',
+    !(i09.valid && i09.airport === 'LTFM' && i09.runway === '09') && i35.valid && i35.runway === '35L', `09 final → ${i09.valid ? i09.runway : 'none'}, 35L final → ${i35.valid ? i35.runway : 'none'}`);
+}
+
+// 10. displaced thresholds (İstanbul LTBA 05: `displaced: 130` m on the end): the landing threshold (glide path origin, aim
+// point, ILS, route approach threshold) is 130 m down the runway from the pavement end; take-off stays on the pavement end
+{
+  const IST = JSON.parse(readFileSync(new URL('../data/ist/runways.json', import.meta.url), 'utf8'));
+  const raw = IST.airports.find((a) => a.icao === 'LTBA').runways.find((r) => r.ends.some((e) => e.ident === '05')).ends.find((e) => e.ident === '05');
+  const e05 = runwayEnds(IST).find((e) => e.name === 'LTBA 05'), e23 = runwayEnds(IST).find((e) => e.name === 'LTBA 23');
+  const thrOff = Math.hypot(e05.x - raw.x, e05.z - raw.z), along = (e05.x - raw.x) * e05.dx + (e05.z - raw.z) * e05.dz;
+  const aimOff = Math.hypot(e05.aimX - e05.x, e05.aimZ - e05.z);
+  const sfSame = runwayEnds(RUNWAYS).every((e) => e.displaced === 0 && e.px === e.x && e.pz === e.z);
+  check('Displaced threshold: LTBA 05 landing threshold 130 m down the runway (aim point 300 m past it), pavement end kept for take-off, 23 and SF unchanged',
+    raw.displaced === 130 && Math.abs(thrOff - 130) < 1e-6 && Math.abs(along - 130) < 1e-6 && Math.abs(aimOff - 300) < 1e-6 && e05.px === raw.x && e05.pz === raw.z
+      && e23.displaced === 0 && Math.abs(e05.length - e23.length) < 1e-6 && sfSame,
+    `threshold ${thrOff.toFixed(1)} m past the pavement end, aim ${aimOff.toFixed(0)} m past it, 23 displaced ${e23.displaced}`);
+  // 8 km out on the 05 final: approach geometry and the ILS count from the displaced threshold
+  const px = e05.x - e05.dx * 8000, pz = e05.z - e05.dz * 8000;
+  const app = findApproach(IST, px, pz, e05.course), g = approachGeometry(app, px, pz, {});
+  const nav = navData({ runways: IST });
+  const ils = { ...ilsFor(nav, { x: px, z: pz, track: e05.course * DEG, gs: 140, alt: 600 }) };
+  const ilsThr = Math.hypot(ils.thx - e05.x, ils.thz - e05.z);
+  check('Displaced threshold: approach / glide path and the ILS of LTBA 05 measured from the displaced threshold',
+    app && app.name === 'LTBA 05' && Math.abs(g.distThreshold - 8000) < 1e-6 && ils.valid && ils.runway === '05' && ilsThr < 0.05 && Math.abs(ils.dme * NM - 8000) < 1e-3,
+    `${app && app.name}, ${g.distThreshold.toFixed(1)} m to the threshold, ILS ${ils.runway} threshold offset ${ilsThr.toFixed(3)} m, DME ${(ils.dme * NM).toFixed(1)} m`);
+  const r = createRoute();
+  r.env = ENV;
+  r.setApproach(e05, 'airliner');
+  const thr = r.waypoints.find((w) => w.kind === 'thr');
+  check('Displaced threshold: the route approach ends on the displaced threshold of LTBA 05',
+    thr && Math.hypot(thr.x - e05.x, thr.z - e05.z) < 1e-6, thr ? `${Math.hypot(thr.x - raw.x, thr.z - raw.z).toFixed(1)} m from the pavement end` : 'no threshold point');
 }
 
 // ======================================================================================================================

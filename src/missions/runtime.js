@@ -15,30 +15,14 @@
 // players' choices on the cards: retry, next (to), menu (ph = brief | result).
 import { loadMissionCatalog, AIRCRAFT_SHORT } from './catalog.js';
 import { createObjective } from './objectives.js';
-import { DEG, KT, FPM, clamp, dirOf } from './util.js';
+import { DEG, KT, FPM, clamp, dirOf, resolveStart } from './util.js';
 import { runwayEnds } from '../flight/fixedwing-autopilot.js';
 import { LANDING_BANDS } from './landing-score.js';
 import { createMarkers } from '../world-sf/markers.js';
 import { createMissionUI } from '../ui/missions-hud.js';
 import { trackEvent } from '../core/telemetry.js';
 
-const GS_TAN = Math.tan(3 * DEG);
-const AIM = 300;
-
-/** Start spec (catalog) → { x, z, heading (rad), altitude?, speed? (m/s), opts }. */
-export function resolveStart(start, ends) {
-  if (start.runway || start.final) {
-    const e = ends.find((r) => r.name === (start.runway || start.final));
-    if (!e) throw new Error(`mission start: runway ${start.runway || start.final} not found`);
-    if (start.runway) return { x: e.x + e.dx * 45, z: e.z + e.dz * 45, heading: e.course, opts: {} };
-    const d = start.dist || 8000;
-    return { x: e.x - e.dx * d, z: e.z - e.dz * d, heading: e.course, altitude: e.elevation + (d + AIM) * GS_TAN, opts: {} };
-  }
-  const opts = {};
-  if (start.gear != null) opts.gearDown = !!start.gear;
-  if (start.flaps != null) opts.flapIndex = start.flaps;
-  return { x: start.x, z: start.z, heading: start.hdg * DEG, altitude: start.alt, speed: start.kt * KT, opts };
-}
+export { resolveStart };   // (src/missions/util.js: Node-testable)
 
 /** Mission request ({ id, daily }) → { mission, spawn (main.js spawn object), aircraft, catalog } or null for an unknown id. */
 export async function planMission(req, runways, map = 'sf') {

@@ -95,3 +95,22 @@ export function fmtDist(m) {
   if (m >= 1000) return `${(m / 1000).toFixed(1).replace('.', ',')} km`;
   return `${Math.round(m / 10) * 10} m`;
 }
+
+/**
+ * Mission start spec (catalog) → { x, z, heading (rad), altitude?, speed? (m/s), opts }. ends = runwayEnds(runways):
+ * a take-off start stands 45 m down the runway from the pavement end (px / pz), a final start `dist` m before the landing
+ * threshold (x / z: displaced thresholds included) on the 3° path aimed 300 m past it.
+ */
+export function resolveStart(start, ends) {
+  if (start.runway || start.final) {
+    const e = ends.find((r) => r.name === (start.runway || start.final));
+    if (!e) throw new Error(`mission start: runway ${start.runway || start.final} not found`);
+    if (start.runway) return { x: (e.px ?? e.x) + e.dx * 45, z: (e.pz ?? e.z) + e.dz * 45, heading: e.course, opts: {} };
+    const d = start.dist || 8000;
+    return { x: e.x - e.dx * d, z: e.z - e.dz * d, heading: e.course, altitude: e.elevation + (d + 300) * Math.tan(3 * DEG), opts: {} };
+  }
+  const opts = {};
+  if (start.gear != null) opts.gearDown = !!start.gear;
+  if (start.flaps != null) opts.flapIndex = start.flaps;
+  return { x: start.x, z: start.z, heading: start.hdg * DEG, altitude: start.alt, speed: start.kt * KT, opts };
+}

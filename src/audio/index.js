@@ -563,7 +563,7 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
     if (g.along < 150 || g.along > 18500) return;
     const theta = Math.atan2(s.alt - rw.elevation, g.along) * 57.2958;
     s.gsDots = (theta - 3) / 0.35;                                   // 1 dot = 0.35° (2 dots full scale)
-    s.locDots = (Math.atan2(g.lateral, g.along + (rw.length || 3000)) * 57.2958) / 1.25;
+    s.locDots = (Math.atan2(g.lateral, g.along + ((rw.length || 3000) - (rw.displaced || 0))) * 57.2958) / 1.25;
   }
 
   // ------------------------------------------------------------------------------------------------ helpers

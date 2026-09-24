@@ -10,7 +10,7 @@ import { createRoute } from '../src/nav/route.js';
 import { MISSIONS, BRIDGES, buildMission, dailyMissionId, dailyMission } from '../src/missions/catalog.js';
 import { createObjective } from '../src/missions/objectives.js';
 import { scoreLanding, sampleTouchdown, scoreDitch, landingFields, findLandingRunway } from '../src/missions/landing-score.js';
-import { istanbulDay, secondsToNextDay, dirOf, bearing, clamp, wrap180, KT, FT, FPM, DEG } from '../src/missions/util.js';
+import { istanbulDay, secondsToNextDay, dirOf, bearing, clamp, wrap180, KT, FT, FPM, DEG, resolveStart } from '../src/missions/util.js';
 import { CHALLENGES, challengesFor, createChallengeTracker, maxChallengeScore, recordChallenge, loadChallengeProgress } from '../src/missions/challenges.js';
 
 const RUNWAYS = JSON.parse(readFileSync(new URL('../data/sf/runways.json', import.meta.url), 'utf8'));
@@ -728,6 +728,42 @@ function ffTracker(aircraft, category, hooks = {}) {
     started && started.ok && f3.ditched && dd && dd.data.ok && dd.data.stars >= 1 && !f3.failures.active.size,
     `${started ? started.reason || 'started' : 'not started'}; ${dd ? `${dd.data.score} pts ${dd.data.stars}★` : 'no done'}; ditched ${f3.ditched}, crashed ${f3.crashed} ${f3.crashReason || ''}; active ${[...f3.failures.active.keys()]}`);
 }
+// =====================================================================================================================
+// İstanbul runway flags: a displaced threshold (LTBA 05, 130 m) moves the touchdown zone and mission finals, not take-off
+// starts; departure-only ends (LTFM 09/27, landing: false) are no best-landing entry and no emergency pointer target
+{
+  const IST = JSON.parse(readFileSync(new URL('../data/ist/runways.json', import.meta.url), 'utf8'));
+  const IE = runwayEnds(IST);
+  const e05 = IE.find((e) => e.name === 'LTBA 05');
+  // touchdown 300 m past the pavement end = 170 m past the displaced threshold
+  const td = { x: e05.px + e05.dx * 300, z: e05.pz + e05.dz * 300, heading: e05.course / DEG, track: e05.course / DEG, vs: -1.2, roll: 0, pitch: 3, gs: 70, onRunway: true };
+  const card = scoreLanding(td, { category: 'airliner', ends: IE });
+  // 60 m past the pavement end: before the threshold but still on the runway
+  const card2 = scoreLanding({ ...td, x: e05.px + e05.dx * 60, z: e05.pz + e05.dz * 60 }, { category: 'airliner', ends: IE });
+  const sTo = resolveStart({ runway: 'LTBA 05' }, IE), sFin = resolveStart({ final: 'LTBA 05', dist: 8000 }, IE);
+  const toOff = (sTo.x - e05.px) * e05.dx + (sTo.z - e05.pz) * e05.dz, finOff = (e05.x - sFin.x) * e05.dx + (e05.z - sFin.z) * e05.dz;
+  check('Displaced threshold (LTBA 05): touchdown zone from the threshold (300 m past the pavement end = 170 m), pavement before it still the runway; take-off start on the pavement end, final from the threshold',
+    card.runway === 'LTBA 05' && card.tdz === 170 && card2.runway === 'LTBA 05' && card2.tdz === -70 && Math.abs(toOff - 45) < 1e-6 && Math.abs(finOff - 8000) < 1e-6,
+    `tdz ${card.tdz} m, before-threshold ${card2.tdz} m on ${card2.runway}, take-off ${toOff.toFixed(1)} m past the pavement end, final ${finOff.toFixed(0)} m before the threshold`);
+  const e09 = IE.find((e) => e.name === 'LTFM 09');
+  const tr = createChallengeTracker({ aircraft: 'a320neo', category: 'airliner', ends: IE });
+  const best = tr.byId.landing;
+  const land09 = scoreLanding({ x: e09.x + e09.dx * 400, z: e09.z + e09.dz * 400, heading: e09.course / DEG, track: e09.course / DEG, vs: -1.2, roll: 0, pitch: 3, gs: 70, onRunway: true }, { category: 'airliner', ends: IE });
+  const runs0 = best ? best.runs : 0;
+  if (best) best.onLanding(land09, {});
+  const eng = tr.byId.eng;
+  let target = null;
+  if (eng) {
+    // nearest runway end to a point 2 km west of the LTFM 09 threshold: never 09 itself
+    const r = eng.start({ x: e09.x - 2000, z: e09.z, y: 900, agl: 800, onGround: false, ias: 120, gs: 120, vs: 0, hdg: 90, t: 0 }, { failures: { active: new Set() } });
+    target = eng.targetEnd;
+    void r;
+  }
+  check('Departure-only ends (LTFM 09/27): a landing there is no best-landing entry; the emergency pointer never picks them',
+    land09.runway === 'LTFM 09' && (!best || best.runs === runs0) && (!eng || (target && target.landing !== false)),
+    `landing card ${land09.runway} ${land09.stars}★, best-landing runs ${best ? best.runs : '-'}, emergency target ${target ? target.name : 'none'}`);
+}
+
 // =====================================================================================================================
 let failed = 0;
 const w = Math.max(...rows.map((r) => r.name.length));

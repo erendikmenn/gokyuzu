@@ -21,7 +21,7 @@ function prepare(json) {
       const dx = e1.x - e0.x, dz = e1.z - e0.z, len = Math.hypot(dx, dz) || 1;
       const ux = dx / len, uz = dz / len, hw = (r.width || 45) / 2;
       const rw = {
-        id: r.id, airport: ap.icao, width: r.width || 45, length: len, elev: +r.elevation || ap.elev,
+        id: r.id, airport: ap.icao, width: r.width || 45, length: len, elev: +r.elevation || ap.elev, departureOnly: !!r.departureOnly,
         ends: [e0, e1], x0: e0.x, z0: e0.z, x1: e1.x, z1: e1.z, ux, uz,
         corners: [e0.x - uz * hw, e0.z + ux * hw, e1.x - uz * hw, e1.z + ux * hw, e1.x + uz * hw, e1.z - ux * hw, e0.x + uz * hw, e0.z - ux * hw],
       };
@@ -373,21 +373,25 @@ export function ilsFor(nav, S) {
     ap.runways.forEach((r, ri) => {
       for (let e = 0; e < 2; e++) {
         const th = r.ends[e], far = r.ends[1 - e];
+        if (th.landing === false || r.departureOnly) continue;   // departure-only end (e.g. LTFM 09/27): no ILS
         const ux = (far.x - th.x) / r.length, uz = (far.z - th.z) / r.length;   // landing direction
-        const dx = S.x - th.x, dz = S.z - th.z;
+        // a displaced threshold (e.g. LTBA 05, 130 m) is the ILS threshold: glide path and DME from it, not the pavement end
+        const disp = th.displaced > 0 ? th.displaced : 0;
+        const tx = disp ? th.x + ux * disp : th.x, tz = disp ? th.z + uz * disp : th.z;
+        const dx = S.x - tx, dz = S.z - tz;
         const along = dx * ux + dz * uz;           // < 0 before the threshold
         if (along > 300 || along < -25 * NM) continue;
         const crs = wrap360(Math.atan2(ux, -uz) / DEG);
         const trkErr = Math.abs(((S.track - crs + 540) % 360) - 180);
         if (trkErr > 35 && S.gs > 30) continue;
         const lat = -dx * uz + dz * ux;            // + = aircraft right of the centreline (looking along the landing direction)
-        const dLoc = r.length - along + 300;       // localizer antenna beyond the far end
+        const dLoc = r.length - disp - along + 300;   // localizer antenna beyond the far end
         const locAng = Math.atan2(lat, dLoc) / DEG;
         if (Math.abs(locAng) > 10) continue;
         const score = -along + Math.abs(locAng) * 800;
         if (score < best) {
           best = score;
-          o.valid = true; o.airport = ap.icao; o.runway = th.ident || ''; o.elev = Number.isFinite(th.elevation) ? th.elevation : r.elev; o.thx = th.x; o.thz = th.z; o.ux = ux; o.uz = uz;   // (sloped runways: the threshold's own elevation)
+          o.valid = true; o.airport = ap.icao; o.runway = th.ident || ''; o.elev = Number.isFinite(th.elevation) ? th.elevation : r.elev; o.thx = tx; o.thz = tz; o.ux = ux; o.uz = uz;   // (sloped runways: the threshold's own elevation)
           o.courseTrue = crs; o.course = wrap360(crs - nav.decl);
           o.loc = clamp(-locAng / 1.0, -2.5, 2.5);
           const dGpi = Math.max(50, 300 - along);

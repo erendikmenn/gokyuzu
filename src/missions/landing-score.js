@@ -58,7 +58,8 @@ export function findLandingRunway(td, ends, out = {}) {
     const along = vx * e.dx + vz * e.dz;
     const lateral = vx * -e.dz + vz * e.dx;
     const half = (e.width || 45) / 2;
-    const on = along >= 0 && along <= e.length && Math.abs(lateral) <= half + 1;
+    const disp = e.displaced || 0;                             // (along is from the landing threshold; the pavement starts disp m before it)
+    const on = along >= -disp && along <= e.length - disp && Math.abs(lateral) <= half + 1;
     if (!on && (along < -900 || along > e.length + 400 || Math.abs(lateral) > 300)) continue;
     const score = (on ? 0 : 1e6) + Math.abs(lateral) + hd * 2;
     if (score < bestScore) { bestScore = score; best = e; out.along = along; out.lateral = lateral; out.on = on; }
