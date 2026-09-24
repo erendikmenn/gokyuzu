@@ -96,10 +96,13 @@ export function createFreeFlightChallenges(ctx) {
     try { Promise.resolve(ctx.compile ? ctx.compile(markers.group) : null).then(done, done); } catch { done(); }
     return markers;
   }
+  let gateX = NaN, gateZ = NaN;   // first gate's position: an orbit's rings move when the circle starts elsewhere
   function syncMarkers(force = false) {
     const e = tracked ? byId[tracked] : null;
     const spec = e ? e.markers() : null;
     const key = spec ? `${e.id}|${spec.type}|${e.status}` : '';
+    const g0 = spec && spec.type === 'gates' ? spec.gates[0] : null;
+    if (g0 && (g0.x !== gateX || g0.z !== gateZ)) { gateX = g0.x; gateZ = g0.z; force = true; }
     if (!force && key === markersKey) {
       if (spec && spec.type === 'gates' && markers) markers.setActiveGate(spec.index);
       return;

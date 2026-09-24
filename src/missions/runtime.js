@@ -137,15 +137,18 @@ export function createMissionRuntime(plan, ctx) {
   }
 
   // ---- markers of the current objective ----
+  let orbitA0;
   function showMarkers() {
     markers.clear();
     const o = objectives[cur];
     if (!o) return;
     const d = o.def;
-    if (d.type === 'gates') {
+    if (d.type === 'gates' || d.type === 'orbit') {   // (orbit: checkpoint rings on its circle + a beacon at the centre)
       if (!o.gates[0].nx && !o.gates[0].nz) o.orient(plan.start.x, plan.start.z);
-      markers.setGates(d.shape, o.gates);
+      markers.setGates(d.shape || 'ring', o.gates);
       markers.setActiveGate(o.index);
+      orbitA0 = o.a0;
+      if (d.type === 'orbit') markers.setBeacon({ x: d.x, y: groundAt(d.x, d.z), z: d.z, h: 250, w: 2.5 });
     } else if (d.type === 'bridge') {
       const b = BRIDGES[d.bridge], ax = dirOf(b.axis);
       markers.setGates('frame', [{ x: b.x, y: 33, z: b.z, hw: b.half - 70, hh: 27, nx: -ax.dz, nz: ax.dx }]);
@@ -167,7 +170,7 @@ export function createMissionRuntime(plan, ctx) {
   // ---- lifecycle ----
   function resetMission() {
     for (const o of objectives) o.start();
-    for (const o of objectives) if (o.def.type === 'gates') o.orient(plan.start.x, plan.start.z);
+    for (const o of objectives) if (o.def.type === 'gates' || o.def.type === 'orbit') o.orient(plan.start.x, plan.start.z);
     cur = 0; s.t = 0; s.first = true; endT = 0; result = null; gearT = 0; gearHinted = false;
     scheduleFailures();
     showMarkers();
@@ -374,7 +377,10 @@ export function createMissionRuntime(plan, ctx) {
           cur++;
           if (cur >= objectives.length) finish(true);
           else { ui.setObjective(objectives[cur], cur, objectives.length); showMarkers(); }
-        } else if (o && o.def.type === 'gates') markers.setActiveGate(o.index);
+        } else if (o && (o.def.type === 'gates' || o.def.type === 'orbit')) {
+          if (o.a0 !== orbitA0) { orbitA0 = o.a0; markers.setGates(o.def.shape || 'ring', o.gates); }   // an orbit started on another side
+          markers.setActiveGate(o.index);
+        }
         if (phase === 'run') {
           if (f.crashed) finish(false, f.crashReason ? `Kaza: ${f.crashReason}` : 'Kaza');
           else if (f.ditched) finish(false, 'Suya indin');
