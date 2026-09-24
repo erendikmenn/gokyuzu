@@ -69,20 +69,29 @@ export const PATHS = {
 
 // ---- runway thresholds (data/ist/runways.json) ----
 /**
- * Runway ends of a runways.json object as { 'LTFM 35L': { x, z, hdg (true heading of the landing direction), elev } },
- * read like the engine (src/flight/fixedwing-autopilot.js runwayEnds): the end's own elevation on sloped runways
- * (ends[i].elevation), else the runway's, else the airport's. x / z = the physical runway end (a displaced threshold is
- * `displaced` m further on, as in the file).
+ * Runway ends of a runways.json object as { 'LTFM 35R': { x, z, hdg (true heading of the landing direction), elev, px,
+ * pz } }, read like the engine (src/flight/fixedwing-autopilot.js runwayEnds): x / z = the landing threshold (a
+ * `displaced` threshold moved that far along the runway, e.g. LTBA 05: 130 m), px / pz = the pavement end; elev = the
+ * end's own elevation on sloped runways (ends[i].elevation), else the runway's, else the airport's.
  */
 export function runwayThresholds(runways) {
   const out = {};
   for (const a of (runways && runways.airports) || []) {
     for (const r of a.runways || []) {
-      for (const e of r.ends || []) out[`${a.icao} ${e.ident}`] = { x: e.x, z: e.z, hdg: e.headingTrue, elev: e.elevation ?? r.elevation ?? a.elevation ?? 0 };
+      for (const e of r.ends || []) {
+        const d = e.displaced > 0 ? e.displaced : 0, { dx, dz } = dirOf(e.headingTrue);
+        out[`${a.icao} ${e.ident}`] = { x: e.x + dx * d, z: e.z + dz * d, hdg: e.headingTrue, elev: e.elevation ?? r.elevation ?? a.elevation ?? 0, px: e.x, pz: e.z };
+      }
     }
   }
   return out;
 }
+/**
+ * İstanbul Havalimanı's backup runways ("yedek pist", DHMİ AIP LTFM AD 2.20): 16L/34R and 17R/35L take no landings
+ * without ATS approval — never a mission's landing target or final (take-offs are not planned from them either). A
+ * runway with `backup: true` in runways.json counts as well.
+ */
+export const BACKUP_RUNWAYS = ['LTFM 16L', 'LTFM 34R', 'LTFM 17R', 'LTFM 35L'];
 /** Runway ends nobody may land on (runways.json `departureOnly` runways / ends with `landing: false`). */
 export function departureOnlyEnds(runways) {
   const out = [];
@@ -96,13 +105,13 @@ export function departureOnlyEnds(runways) {
  * values (DHMİ AIP; tests/missions-ist.test.mjs keeps this table equal to it).
  */
 export const RW_FALLBACK = {
-  'LTFJ 06L': { x: 27211.9, z: 14099.1, hdg: 62.6, elev: 89.0 },
-  'LTFJ 06R': { x: 28024.8, z: 14944.9, hdg: 62.6, elev: 82.3 },
-  'LTBA 05': { x: -13664.5, z: 6949.5, hdg: 57.38, elev: 28.3 },
-  'LTBA 23': { x: -11491.8, z: 5559.1, hdg: 237.38, elev: 27.4 },
-  'LTFM 35L': { x: -21447.2, z: -25794.4, hdg: 358.02, elev: 94.5 },
-  'LTFM 35R': { x: -21237.4, z: -25801.7, hdg: 358.02, elev: 94.5 },
-  'LTFM 09': { x: -17992.7, z: -24953.1, hdg: 87.98, elev: 83.5 },
+  'LTFJ 06L': { x: 27211.9, z: 14099.1, hdg: 62.6, elev: 89.0, px: 27211.9, pz: 14099.1 },
+  'LTFJ 06R': { x: 28024.8, z: 14944.9, hdg: 62.6, elev: 82.3, px: 28024.8, pz: 14944.9 },
+  'LTBA 05': { x: -13555.0, z: 6879.4, hdg: 57.38, elev: 28.3, px: -13664.5, pz: 6949.5 },   // 130 m displaced threshold
+  'LTBA 23': { x: -11491.8, z: 5559.1, hdg: 237.38, elev: 27.4, px: -11491.8, pz: 5559.1 },
+  'LTFM 35R': { x: -21237.4, z: -25801.7, hdg: 358.02, elev: 94.5, px: -21237.4, pz: -25801.7 },
+  'LTFM 34L': { x: -22947.9, z: -26092.7, hdg: 358.02, elev: 99.1, px: -22947.9, pz: -26092.7 },
+  'LTFM 09': { x: -17992.7, z: -24953.1, hdg: 87.98, elev: 83.5, px: -17992.7, pz: -24953.1 },
 };
 const RW_ENDS = { ...RW_FALLBACK };
 /**
@@ -115,6 +124,9 @@ export function useRunways(runways) {
   const t = runwayThresholds(runways);
   for (const k of Object.keys(t)) RW_ENDS[k] = t[k];
   if (runways && runways.airports && runways.airports.length) DEPARTURE_ONLY.splice(0, DEPARTURE_ONLY.length, ...departureOnlyEnds(runways));
+  for (const a of (runways && runways.airports) || []) {
+    for (const r of a.runways || []) if (r.backup) for (const e of r.ends || []) if (!BACKUP_RUNWAYS.includes(`${a.icao} ${e.ident}`)) BACKUP_RUNWAYS.push(`${a.icao} ${e.ident}`);
+  }
   return RW_ENDS;
 }
 export { RW_ENDS };
@@ -210,7 +222,7 @@ export const MISSIONS = [
     id: 'ist-ltfm-inis', title: 'İstanbul Havalimanı\'na iniş', aircraft: 'a320neo', minutes: 2, level: 1, teaches: 'Son yaklaşma ve yumuşak iniş',
     brief: 'İstanbul Havalimanı\'na son yaklaşmadasın: takım ve flaplar açık, hız ayarlı. Merkez hattında ve 3°\'lik süzülüşte kal, eşiği geçince gazı kes ve hafifçe burnu kaldır.',
     goal: '{rw} pistine iniş: temas bölgesine, 200 ft/dk civarında.',
-    params: { rw: '35L', dist: 8000 },
+    params: { rw: '35R', dist: 8000 },
     build: (p) => ({
       start: { final: `LTFM ${p.rw}`, dist: p.dist },
       objectives: [{ type: 'land', runways: [`LTFM ${p.rw}`], minStars: 1, target: `LTFM ${p.rw}`, label: `${p.rw} pistine in` }],
@@ -218,11 +230,11 @@ export const MISSIONS = [
       score: { base: 0, landing: 20 },                     // landing points × 20 (0–2000)
       stars: 'landing',
     }),
-    // all ten ends (sloped runways: each threshold's own elevation, ≈ 33 m lower at the north ends — the southbound
-    // landings run uphill); southbound finals start over the Black Sea coast: the map ends ≈ 7.7 km north of those
-    // thresholds
+    // the six landing ends: 16R/34L, 17L/35R, 18/36 (16L/34R and 17R/35L are backup runways — "yedek pist", AIP AD 2.20;
+    // 09/27 departures only). Sloped runways: each threshold's own elevation, ≈ 33 m lower at the north ends (the
+    // southbound landings run uphill); southbound finals start over the Black Sea coast: the map ends ≈ 7.7 km north
     daily: (r) => {
-      const rw = ['35L', '35R', '34L', '34R', '36', '17L', '17R', '16L', '16R', '18'][Math.floor(r() * 10)];
+      const rw = ['35R', '34L', '36', '17L', '16R', '18'][Math.floor(r() * 6)];
       return { rw, dist: rw < '30' ? 5500 + Math.round(r() * 1500) : 7000 + Math.round(r() * 4000) };
     },
     dailyNote: (p) => `Pist ${p.rw} · ${(p.dist / 1852).toFixed(1).replace('.', ',')} NM`,
@@ -268,7 +280,7 @@ export const MISSIONS = [
       };
     },
     // (09: the departures-only runway opened on 18 Sep 2026, eastbound)
-    daily: (r) => ({ rw: ['35R', '35L', '34L', '17L', '16R', '36', '09'][Math.floor(r() * 7)], altFt: [8000, 10000, 12000][Math.floor(r() * 3)] }),
+    daily: (r) => ({ rw: ['35R', '34L', '17L', '16R', '36', '18', '09'][Math.floor(r() * 7)], altFt: [8000, 10000, 12000][Math.floor(r() * 3)] }),
     dailyNote: (p) => `Pist ${p.rw} · ${fmtFt(p.altFt)} ft`,
   },
   {
@@ -488,7 +500,7 @@ export const MISSIONS = [
         stars: [1000, 2250, 2700],
       };
     },
-    daily: (r) => ({ rw: ['35R', '35L', '09'][Math.floor(r() * 3)], altFt: [4000, 5000][Math.floor(r() * 2)] }),
+    daily: (r) => ({ rw: ['35R', '34L', '09'][Math.floor(r() * 3)], altFt: [4000, 5000][Math.floor(r() * 2)] }),
     dailyNote: (p) => `Pist ${p.rw} · ${fmtFt(p.altFt)} ft`,
   },
   {
@@ -561,8 +573,8 @@ export const MISSIONS = [
     params: { from: 0, altFt: 7000 },
     build: (p) => {
       // straight-in: Sabiha Gökçen 06L / 06R (from the Marmara over Pendik), Atatürk 05 (off Yeşilköy), İstanbul
-      // Havalimanı 35L (from the south, over the Belgrad forest)
-      const plans = [{ final: 'LTFJ 06L', dist: 12000 }, { final: 'LTBA 05', dist: 12000 }, { final: 'LTFJ 06R', dist: 12500 }, { final: 'LTFM 35L', dist: 12000 }];
+      // Havalimanı 35R (from the south, over the Belgrad forest)
+      const plans = [{ final: 'LTFJ 06L', dist: 12000 }, { final: 'LTBA 05', dist: 12000 }, { final: 'LTFJ 06R', dist: 12500 }, { final: 'LTFM 35R', dist: 12000 }];
       const pl = plans[p.from] || plans[0];
       const e = RW_ENDS[pl.final], { dx, dz } = dirOf(e.hdg);
       const apt = { LTFJ: 'Sabiha Gökçen', LTBA: 'Atatürk', LTFM: 'İstanbul Havalimanı' }[pl.final.slice(0, 4)];
@@ -577,7 +589,7 @@ export const MISSIONS = [
       };
     },
     daily: (r) => ({ from: Math.floor(r() * 4), altFt: [6000, 7000, 8000][Math.floor(r() * 3)] }),
-    dailyNote: (p) => `${['Sabiha Gökçen 06L', 'Atatürk 05', 'Sabiha Gökçen 06R', 'İstanbul Havalimanı 35L'][p.from] || ''} · ${fmtFt(p.altFt)} ft`,
+    dailyNote: (p) => `${['Sabiha Gökçen 06L', 'Atatürk 05', 'Sabiha Gökçen 06R', 'İstanbul Havalimanı 35R'][p.from] || ''} · ${fmtFt(p.altFt)} ft`,
   },
   {
     id: 'ist-marmara', fogBank: false, title: 'Marmara\'ya mecburi iniş', aircraft: 'a320neo', minutes: 3, level: 3, unlock: 3, teaches: 'Çift motor arızası, suya iniş',
@@ -589,7 +601,7 @@ export const MISSIONS = [
       // inside the map: 2.4 km from its western edge at worst)
       const e = RW_ENDS['LTBA 05'], { dx, dz } = dirOf(RW_ENDS['LTBA 23'].hdg);
       return {
-        start: { x: Math.round(e.x + dx * 2000), z: Math.round(e.z + dz * 2000), hdg: p.hdg, alt: p.altFt * FT, kt: 210, gear: false, flaps: 0 },
+        start: { x: Math.round((e.px ?? e.x) + dx * 2000), z: Math.round((e.pz ?? e.z) + dz * 2000), hdg: p.hdg, alt: p.altFt * FT, kt: 210, gear: false, flaps: 0 },
         failures: [{ at: { t: 3 }, kind: 'engineAll', opts: { restartable: false }, message: 'Çift motor arızası!' }],
         objectives: [{ type: 'ditch', label: 'Suya kontrollü iniş' }],
         limit: 300,

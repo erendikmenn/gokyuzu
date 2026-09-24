@@ -12,7 +12,7 @@ import { createFixedWingModel } from '../src/flight/fixedwing.js';
 import { createHelicopterModel } from '../src/flight/helicopter.js';
 import { runwayEnds } from '../src/flight/fixedwing-autopilot.js';
 import { createRoute } from '../src/nav/route.js';
-import { MISSIONS, BRIDGES, PLACES, PADS, PATHS, RW_ENDS, RW_FALLBACK, DEPARTURE_ONLY, runwayThresholds, departureOnlyEnds, useRunways, buildMission, dailyMissionId, dailyMission } from '../src/missions/ist/catalog.js';
+import { MISSIONS, BRIDGES, PLACES, PADS, PATHS, RW_ENDS, RW_FALLBACK, DEPARTURE_ONLY, BACKUP_RUNWAYS, runwayThresholds, departureOnlyEnds, useRunways, buildMission, dailyMissionId, dailyMission } from '../src/missions/ist/catalog.js';
 import { MISSIONS as SF_MISSIONS } from '../src/missions/catalog.js';
 import { CHALLENGES as SF_CHALLENGES, createChallengeTracker, loadChallengeSet } from '../src/missions/challenges.js';
 import { CHALLENGES, challengesFor, maxChallengeScore } from '../src/missions/ist/challenges.js';
@@ -253,10 +253,17 @@ const inside = (x, z) => { const b = REGION.local; return x > b.minX && x < b.ma
     const r = file[name];
     if (!r || Math.hypot(r.x - e.x, r.z - e.z) > 1 || Math.abs(wrap180(r.hdg - e.hdg)) > 0.05 || Math.abs(r.elev - e.elev) > 0.2) bad.push(`${name} ${r ? `${r.x.toFixed(1)},${r.z.toFixed(1)} ${r.hdg} ${r.elev}` : 'missing'}`);
   }
+  for (const [name, e] of Object.entries(RW_FALLBACK)) {
+    const r = file[name];
+    if (r && Math.hypot(r.px - e.px, r.pz - e.pz) > 1) bad.push(`${name} pavement end ${r.px.toFixed(1)},${r.pz.toFixed(1)}`);
+  }
+  // the same thresholds as the engine's runwayEnds() (displaced thresholds moved along the runway, e.g. LTBA 05: 130 m)
+  const eng = ENDS.filter((x) => { const t = file[x.name]; return !t || Math.hypot(t.x - x.x, t.z - x.z) > 0.05 || Math.abs(t.elev - x.elevation) > 0.01; }).map((x) => x.name);
   const perEnd = file['LTFM 17L'] && file['LTFM 35R'] && file['LTFM 17L'].elev < file['LTFM 35R'].elev - 20;
-  check('Geometry: runway thresholds read from data/ist/runways.json (per-end elevations: LTFM 17L below 35R), the built-in fallback table = the file (±1 m, ±0.05°, ±0.2 m)',
-    bad.length === 0 && perEnd && JSON.parse(FALLBACK_BEFORE)['LTFM 35L'].elev === RW_FALLBACK['LTFM 35L'].elev && RW_ENDS['LTFM 17L'] && RW_ENDS['LTFM 17L'].elev === file['LTFM 17L'].elev,
-    bad.join('; ') || `LTFM 35R ${file['LTFM 35R'].elev} m, 17L ${file['LTFM 17L'].elev} m`);
+  const b05 = file['LTBA 05'], disp = Math.hypot(b05.x - b05.px, b05.z - b05.pz);
+  check('Geometry: runway thresholds read from data/ist/runways.json = the engine\'s runwayEnds() (per-end elevations, LTBA 05 displaced 130 m), the built-in fallback table = the file (±1 m, ±0.05°, ±0.2 m)',
+    bad.length === 0 && eng.length === 0 && perEnd && Math.abs(disp - 130) < 0.5 && JSON.parse(FALLBACK_BEFORE)['LTFM 35R'].elev === RW_FALLBACK['LTFM 35R'].elev && RW_ENDS['LTFM 17L'] && RW_ENDS['LTFM 17L'].elev === file['LTFM 17L'].elev,
+    [...bad, ...eng].join('; ') || `LTFM 35R ${file['LTFM 35R'].elev} m, 17L ${file['LTFM 17L'].elev} m; LTBA 05 threshold ${disp.toFixed(1)} m past the pavement end`);
   const bb = [];
   if (BRIDGE_DATA) {
     for (const [id, b] of Object.entries(BRIDGES)) {
@@ -272,27 +279,33 @@ const inside = (x, z) => { const b = REGION.local; return x > b.minX && x < b.ma
   check('Geometry: water centrelines and bridges over the sea, landmarks and pads on land (fake world water = DEM coastline)', wet.every((w) => w[1]), wet.filter((w) => !w[1]).map((w) => w[0]).join(', '));
 }
 
-// 2b. the departures-only runway (LTFM 09/27): never a landing target, excluded from "any runway" landings
+// 2b. the departures-only runway (LTFM 09/27) and the backup runways (16L/34R, 17R/35L: "yedek pist"): never a landing
+//     target or final; "any runway" landings exclude 09/27; no take-off planned from a backup runway
 {
   const dep = departureOnlyEnds(RUNWAYS);
   const bad = [];
-  for (const def of MISSIONS) for (const m of [buildMission(def.id), buildMission(def.id, '20261003'), buildMission(def.id, '20261011')]) {
+  const days = [null]; for (let i = 0; i < 90; i++) days.push(new Date(Date.UTC(2026, 9, 1) + i * 86400e3).toISOString().slice(0, 10).replace(/-/g, ''));
+  for (const def of MISSIONS) for (const m of days.map((d) => buildMission(def.id, d))) {
     for (const o of m.objectives) {
       if (o.type !== 'land') continue;
       if ((o.target && dep.includes(o.target)) || (o.runways || []).some((x) => dep.includes(x))) bad.push(`${def.id} targets ${o.target}`);
+      if ((o.target && BACKUP_RUNWAYS.includes(o.target)) || (o.runways || []).some((x) => BACKUP_RUNWAYS.includes(x))) bad.push(`${def.id} backup target ${o.target}`);
       if (o.any && !o.heli && !(o.exclude && dep.every((x) => o.exclude.includes(x)))) bad.push(`${def.id} any without exclude`);
     }
-    if (m.start.final && dep.includes(m.start.final)) bad.push(`${def.id} final ${m.start.final}`);
+    if (m.start.final && (dep.includes(m.start.final) || BACKUP_RUNWAYS.includes(m.start.final))) bad.push(`${def.id} final ${m.start.final}`);
+    if (m.start.runway && BACKUP_RUNWAYS.includes(m.start.runway)) bad.push(`${def.id} take-off ${m.start.runway}`);
   }
+  const ltfm = new Set(days.map((d) => buildMission('ist-ltfm-inis', d).params.rw));
   const alev = buildMission('ist-alev');
   const lo = createObjective(alev.objectives[0], env(alev));
   lo.start();
   const e09 = ENDS.find((x) => x.name === 'LTFM 09');
   lo.onLanding(scoreLanding({ x: e09.x + e09.dx * 400, z: e09.z + e09.dz * 400, heading: e09.course / DEG, track: e09.course / DEG, vs: -1.5, roll: 0, pitch: 4, gs: 70 }, { category: 'fighter', ends: ENDS }));
-  check('Departures-only LTFM 09/27 (runways.json departureOnly / landing false): no landing target or final on it, "any runway" landings exclude it (a landing there fails)',
+  check('Departures-only LTFM 09/27 and backup 16L/34R, 17R/35L: no landing target, final or planned take-off on them (90 days); "any runway" landings exclude 09/27 (a landing there fails); İstanbul Havalimanı landings rotate over the six others',
     dep.length === 2 && dep.includes('LTFM 09') && dep.includes('LTFM 27') && JSON.stringify([...DEPARTURE_ONLY].sort()) === JSON.stringify([...dep].sort()) && bad.length === 0
+    && [...ltfm].sort().join(',') === '16R,17L,18,34L,35R,36' && BACKUP_RUNWAYS.length === 4
     && lo.status === 'fail' && /yalnız kalkışa/.test(lo.failReason) && RW_ENDS['LTFM 09'] && buildMission('ist-tirmanis').def.daily.toString().includes("'09'"),
-    `${dep.join(', ')} | ${bad.join('; ')} | ${lo.status} "${lo.failReason}"`);
+    `${dep.join(', ')} | ${[...new Set(bad)].slice(0, 6).join('; ')} | ${lo.status} "${lo.failReason}" | LTFM landings ${[...ltfm].sort().join(',')}`);
 }
 
 // 3. objectives with scripted samples
@@ -803,14 +816,14 @@ const cbrief = (res) => `${res.m.params.rw || ''} ${res.card ? `${res.card.point
 {
   const out = []; let ok = true;
   const def = MISSIONS.find((x) => x.id === 'ist-ltfm-inis');
-  for (const [rw, dist] of [['35L', 8000], ['35R', 11000], ['34R', 10000], ['34L', 7000], ['36', 9000], ['17L', 6500], ['17R', 7000], ['16L', 5500], ['16R', 6000], ['18', 6500]]) {
+  for (const [rw, dist] of [['35R', 8000], ['34L', 11000], ['36', 9000], ['17L', 6500], ['16R', 5500], ['18', 7000]]) {
     const save = { ...def.params }; Object.assign(def.params, { rw, dist });
     const res = autoland('ist-ltfm-inis', null, 'a320neo');
     Object.assign(def.params, save);
     if (!(res.r.done && res.stars >= 2 && res.card.runway === `LTFM ${rw}`)) ok = false;
     out.push(cbrief(res));
   }
-  check('Mission ist-ltfm-inis (A320): finals to all ten LTFM ends (sloped runways: northbound downhill, southbound uphill), autoland → on the asked runway, ≥ 2★', ok, out.join(' || '));
+  check('Mission ist-ltfm-inis (A320): finals to the six LTFM landing ends (not the backup 16L/34R, 17R/35L; sloped: northbound downhill, southbound uphill), autoland → on the asked runway, ≥ 2★', ok, out.join(' || '));
   const out2 = []; let ok2 = true;
   const d2 = MISSIONS.find((x) => x.id === 'ist-saw-inis');
   for (const rw of ['06L', '06R']) {
@@ -853,7 +866,7 @@ const cbrief = (res) => `${res.m.params.rw || ''} ${res.card ? `${res.card.point
 //     NAV on the mission route over the FSM and Çamlıca rings, slowed on the last legs, flaps / gear before the final
 //     point → APP, autoland on 06L
 const out4n = []; let ok4n = true;
-for (const rw of ['35R', '09']) {
+for (const rw of ['35R', '34L', '09']) {
   const def = MISSIONS.find((x) => x.id === 'ist-aktarma'), save = def.params.rw;
   def.params.rw = rw;
   const m = buildMission('ist-aktarma');
@@ -896,7 +909,7 @@ for (const rw of ['35R', '09']) {
   if (!(r.done && res.stars >= 2 && !f.crashed)) ok4n = false;
   out4n.push(`${rw}: ${brief(res)}; ${cbrief(res)}${!r.done ? ' | ' + trace.join(' | ') : ''}`);
 }
-check('Mission ist-aktarma (A320): take-off from LTFM 35R / 09 (departures only), NAV over the FSM and Çamlıca rings, configured on the final → APP autoland at Sabiha Gökçen → ≥ 2★',
+check('Mission ist-aktarma (A320): take-off from LTFM 35R / 34L / 09 (departures only), NAV over the FSM and Çamlıca rings, configured on the final → APP autoland at Sabiha Gökçen → ≥ 2★',
   ok4n, out4n.join(' || '));
 
 // 4o. "Atatürk'te pas geçme" (737): autopilot ILS to LTBA 05 (and 23); at the decision frame the pilot disconnects,
@@ -1049,7 +1062,7 @@ check('Mission ist-aktarma (A320): take-off from LTFM 35R / 09 (departures only)
     if (!(injected && card && card.onRunway && r.done && res.stars >= 2)) ok = false;
     out.push(`${m.objectives[0].target}: ${card ? `${card.points} pts ${card.stars}★ ${card.label}, ${card.fpm} ft/min, ${card.runway}, ${card.tdz} m` : `no touchdown${f.crashed ? ` CRASH ${f.crashReason}` : ''}`} → ${res.score} (${res.stars}★)`);
   }
-  check('Mission ist-alev (F-16): engine out at 7.000 ft, straight-in glide with gear + speed brake to Sabiha Gökçen 06L / 06R, Atatürk 05 and İstanbul Havalimanı 35L → ≥ 2★', ok, out.join(' || '));
+  check('Mission ist-alev (F-16): engine out at 7.000 ft, straight-in glide with gear + speed brake to Sabiha Gökçen 06L / 06R, Atatürk 05 (displaced threshold) and İstanbul Havalimanı 35R → ≥ 2★', ok, out.join(' || '));
 }
 
 // 4s. "İstanbul Havalimanı'ndan dik tırmanış" (F-22): full afterburner from LTFM 35R and from the departures-only 09,
