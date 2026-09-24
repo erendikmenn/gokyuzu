@@ -13,8 +13,8 @@ Surface per airport (MODES):
   fit     : a plane fitted to the DEM on the paved areas (robust, shrinking outlier threshold 10 -> 2.5 m: terminal /
             hangar roofs in the DSM are rejected; a quadratic overshot at the aerodrome corners), plus the runway
             residuals (spline, exact on the runway rectangles) faded out 800 m from the runways. LTBA (only 05/23 is still a runway; its old 17/35 area rises ~20 m to the north).
-Zone = aerodrome polygon (-30 m) + runways (+60 m) + aprons + taxiways (+7.5 m); paved areas are exact, the zone edge
-blends into the DEM over 150-600 m (wider where the DEM differs more: at most ~20 % slopes on the blend).
+Zone = aerodrome polygon (-30 m) + runways (+60 m) + aprons + taxiways (+7.5 m) + EXTRA_ZONES (landside areas that
+must sit at apron level, + margin); paved areas and EXTRA_ZONES are exact, the zone edge blends into the DEM over 150-600 m (wider where the DEM differs more: at most ~20 % slopes on the blend).
 Approach grading (grade_approaches): the DEM predates LTFM and rises above its south thresholds, so for every runway end
 the ground under the approach is cut (never filled) down to an earthwork surface: strip level at the threshold, rising
 2 % from 60 m out (the ICAO approach surface), and never higher than 20 m below a 3° glide path aimed 300 m past the
@@ -34,6 +34,9 @@ from geo import lonlat_to_local
 
 AIRPORTS = ('LTFM', 'LTFJ', 'LTBA')
 MODES = {'LTFM': 'platform', 'LTFJ': 'platform', 'LTBA': 'fit'}
+# landside areas graded to apron level with the airfield (+ margin, m): LTFM's terminal (landside half), its canopy and
+# the multi-storey car parks stand on a ~40 m hill of the pre-airport DEM (OSM ids; terrain_osm.py extracts them)
+EXTRA_ZONES = {'LTFM': ([('way', 687768729), ('way', 1116947583), ('relation', 19575600), ('relation', 19575601)], 150.0)}
 FT = 0.3048
 OURAIRPORTS = 'https://davidmegginson.github.io/ourairports-data/{}.csv'
 PKL = os.path.join(CACHE, 'airports.pkl')
@@ -233,8 +236,18 @@ def build():
                         'published': [[e0['ident'], round(el0, 2)], [e1['ident'], round(el1, 2)]],
                         'closedInOurAirports': match['closed']})
         rect = lambda rw, extra, wext=None: _rect(rw['line'], rw['width'] / 2 + (extra if wext is None else wext), extra)
-        paved = unary_union([rect(rw, 10.0) for rw in rws] + taxi + aprons)
-        zone = unary_union([ad.buffer(-30)] + [rect(rw, 60.0) for rw in rws] + taxi + aprons)
+        extra = []
+        if icao in EXTRA_ZONES:
+            ids, margin = EXTRA_ZONES[icao]
+            for e in osm:
+                if (e['type'], e['id']) in ids:
+                    p = _poly_of(e)
+                    if p is not None and not p.is_empty:
+                        extra.append(p.buffer(margin))
+            missing = len(ids) - len(extra)
+            print(f'  {icao}: {len(extra)} landside areas graded with the airfield' + (f' ({missing} not in the OSM cache)' if missing else ''))
+        paved = unary_union([rect(rw, 10.0) for rw in rws] + taxi + aprons + extra)
+        zone = unary_union([ad.buffer(-30)] + [rect(rw, 60.0) for rw in rws] + taxi + aprons + extra)
         apts.append({'icao': icao, 'name': (agent_apt or {}).get('name') or names.get(icao, icao), 'aerodrome': ad,
                      'zone': zone, 'paved': paved, 'runways': rws, 'anchors': np.array(anchors, np.float64),
                      'mode': MODES.get(icao, 'dem'), 'source': 'data/ist/runways.json' if agent_apt else 'OSM + OurAirports'})

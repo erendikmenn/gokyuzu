@@ -7,7 +7,7 @@
    "name": "Atatürk Havalimanı",
    "surface": "fit",
    "source": "data/ist/runways.json",
-   "elevationMax": 28.4,
+   "elevationMax": 28.3,
    "elevationMin": 27.4,
    "runways": [
     {
@@ -19,13 +19,13 @@
      "width": 60.0,
      "ends": [
       {
-       "x": -13730.6,
-       "z": 6993.2,
-       "elevation": 28.4
+       "x": -13664.5,
+       "z": 6949.5,
+       "elevation": 28.3
       },
       {
-       "x": -11440.9,
-       "z": 5530.4,
+       "x": -11491.8,
+       "z": 5559.1,
        "elevation": 27.4
       }
      ],
@@ -42,20 +42,20 @@
      "closedInOurAirports": null,
      "approach": {
       "05": {
-       "thresholdElevation": 28.32,
-       "aimElevation": 28.21,
+       "thresholdElevation": 28.25,
+       "aimElevation": 28.15,
        "clearance_0_60m": 15.6,
        "clearance_60_300m": 18.9,
-       "clearance_300m_5km": 32.1,
-       "clearance_300m_5km_beforeGrading": 32.1
+       "clearance_300m_5km": 34.6,
+       "clearance_300m_5km_beforeGrading": 34.6
       },
       "23": {
-       "thresholdElevation": 27.42,
-       "aimElevation": 27.53,
+       "thresholdElevation": 27.4,
+       "aimElevation": 27.5,
        "clearance_0_60m": 15.8,
        "clearance_60_300m": 19.2,
-       "clearance_300m_5km": 35.0,
-       "clearance_300m_5km_beforeGrading": 35.0
+       "clearance_300m_5km": 35.2,
+       "clearance_300m_5km_beforeGrading": 35.2
       }
      }
     }
@@ -66,8 +66,8 @@
    "name": "Sabiha Gökçen Havalimanı",
    "surface": "platform",
    "source": "data/ist/runways.json",
-   "elevationMax": 92.7,
-   "elevationMin": 88.1,
+   "elevationMax": 93.9,
+   "elevationMin": 82.3,
    "runways": [
     {
      "ref": "06L/24R",
@@ -78,13 +78,13 @@
      "width": 45.0,
      "ends": [
       {
-       "x": 27211.2,
-       "z": 14100.5,
-       "elevation": 89.3
+       "x": 27211.9,
+       "z": 14099.1,
+       "elevation": 89.0
       },
       {
        "x": 29875.4,
-       "z": 12719.2,
+       "z": 12718.5,
        "elevation": 92.7
       }
      ],
@@ -101,20 +101,20 @@
      "closedInOurAirports": null,
      "approach": {
       "06L": {
-       "thresholdElevation": 89.3,
-       "aimElevation": 89.64,
+       "thresholdElevation": 89.0,
+       "aimElevation": 89.37,
        "clearance_0_60m": 16.1,
        "clearance_60_300m": 19.4,
-       "clearance_300m_5km": 32.0,
-       "clearance_300m_5km_beforeGrading": 32.0
+       "clearance_300m_5km": 32.2,
+       "clearance_300m_5km_beforeGrading": 32.2
       },
       "24R": {
        "thresholdElevation": 92.7,
-       "aimElevation": 92.36,
+       "aimElevation": 92.33,
        "clearance_0_60m": 15.4,
-       "clearance_60_300m": 18.8,
-       "clearance_300m_5km": 58.1,
-       "clearance_300m_5km_beforeGrading": 58.1
+       "clearance_60_300m": 18.7,
+       "clearance_300m_5km": 58.0,
+       "clearance_300m_5km_beforeGrading": 58.0
       }
      }
     },
@@ -127,14 +127,14 @@
      "width": 60.0,
      "ends": [
       {
-       "x": 28024.6,
-       "z": 14944.5,
-       "elevation": 88.1
+       "x": 28024.8,
+       "z": 14944.9,
+       "elevation": 82.3
       },
       {
-       "x": 31168.4,
-       "z": 13316.5,
-       "elevation": 88.1
+       "x": 31167.7,
+       "z": 13315.7,
+       "elevation": 93.9
       }
      ],
      "published": [
@@ -150,20 +150,20 @@
      "closedInOurAirports": null,
      "approach": {
       "06R": {
-       "thresholdElevation": 88.1,
-       "aimElevation": 88.1,
-       "clearance_0_60m": 15.7,
-       "clearance_60_300m": 19.1,
-       "clearance_300m_5km": 31.6,
-       "clearance_300m_5km_beforeGrading": 31.6
+       "thresholdElevation": 82.3,
+       "aimElevation": 83.28,
+       "clearance_0_60m": 16.7,
+       "clearance_60_300m": 20.1,
+       "clearance_300m_5km": 32.3,
+       "clearance_300m_5km_beforeGrading": 32.3
       },
       "24L": {
-       "thresholdElevation": 88.1,
-       "aimElevation": 88.1,
-       "clearance_0_60m": 15.7,
-       "clearance_60_300m": 19.1,
-       "clearance_300m_5km": 31.0,
-       "clearance_300m_5km_beforeGrading": 31.0
+       "thresholdElevation": 93.9,
+       "aimElevation": 92.92,
+       "clearance_0_60m": 14.7,
+       "clearance_60_300m": 18.1,
+       "clearance_300m_5km": 30.5,
+       "clearance_300m_5km_beforeGrading": 30.5
       }
      }
     }
@@ -186,14 +186,14 @@
      "width": 45.0,
      "ends": [
       {
-       "x": -22740.0,
-       "z": -26099.6,
+       "x": -22738.1,
+       "z": -26100.0,
        "elevation": 99.1
       },
       {
-       "x": -22870.6,
-       "z": -29846.2,
-       "elevation": 66.5
+       "x": -22867.7,
+       "z": -29846.5,
+       "elevation": 66.4
       }
      ],
      "published": [
@@ -210,19 +210,19 @@
      "approach": {
       "34R": {
        "thresholdElevation": 99.1,
-       "aimElevation": 96.49,
+       "aimElevation": 96.48,
        "clearance_0_60m": 13.1,
        "clearance_60_300m": 16.5,
-       "clearance_300m_5km": 28.9,
-       "clearance_300m_5km_beforeGrading": 28.9
+       "clearance_300m_5km": 29.0,
+       "clearance_300m_5km_beforeGrading": 29.0
       },
       "16L": {
-       "thresholdElevation": 66.5,
-       "aimElevation": 69.11,
+       "thresholdElevation": 66.4,
+       "aimElevation": 69.02,
        "clearance_0_60m": 18.3,
        "clearance_60_300m": 21.7,
-       "clearance_300m_5km": 60.3,
-       "clearance_300m_5km_beforeGrading": 60.3
+       "clearance_300m_5km": 60.6,
+       "clearance_300m_5km_beforeGrading": 60.6
       }
      }
     },
@@ -235,14 +235,14 @@
      "width": 60.0,
      "ends": [
       {
-       "x": -22950.4,
-       "z": -26090.5,
+       "x": -22947.9,
+       "z": -26092.7,
        "elevation": 99.1
       },
       {
-       "x": -23078.9,
-       "z": -29837.3,
-       "elevation": 66.5
+       "x": -23077.4,
+       "z": -29839.3,
+       "elevation": 66.8
       }
      ],
      "published": [
@@ -259,19 +259,19 @@
      "approach": {
       "34L": {
        "thresholdElevation": 99.1,
-       "aimElevation": 96.49,
-       "clearance_0_60m": 13.1,
+       "aimElevation": 96.52,
+       "clearance_0_60m": 13.2,
        "clearance_60_300m": 16.5,
-       "clearance_300m_5km": 26.2,
-       "clearance_300m_5km_beforeGrading": 26.2
+       "clearance_300m_5km": 26.7,
+       "clearance_300m_5km_beforeGrading": 26.7
       },
       "16R": {
-       "thresholdElevation": 66.5,
-       "aimElevation": 69.11,
-       "clearance_0_60m": 18.3,
-       "clearance_60_300m": 21.7,
-       "clearance_300m_5km": 62.0,
-       "clearance_300m_5km_beforeGrading": 62.0
+       "thresholdElevation": 66.8,
+       "aimElevation": 69.38,
+       "clearance_0_60m": 18.2,
+       "clearance_60_300m": 21.6,
+       "clearance_300m_5km": 62.7,
+       "clearance_300m_5km_beforeGrading": 62.7
       }
      }
     },
@@ -284,13 +284,13 @@
      "width": 60.0,
      "ends": [
       {
-       "x": -21239.7,
-       "z": -25804.1,
+       "x": -21237.4,
+       "z": -25801.7,
        "elevation": 94.5
       },
       {
-       "x": -21381.3,
-       "z": -29896.9,
+       "x": -21379.0,
+       "z": -29898.2,
        "elevation": 61.6
       }
      ],
@@ -311,16 +311,16 @@
        "aimElevation": 92.09,
        "clearance_0_60m": 13.3,
        "clearance_60_300m": 16.7,
-       "clearance_300m_5km": 28.9,
-       "clearance_300m_5km_beforeGrading": 28.9
+       "clearance_300m_5km": 29.1,
+       "clearance_300m_5km_beforeGrading": 29.1
       },
       "17L": {
        "thresholdElevation": 61.6,
        "aimElevation": 64.01,
        "clearance_0_60m": 18.1,
        "clearance_60_300m": 21.5,
-       "clearance_300m_5km": 42.9,
-       "clearance_300m_5km_beforeGrading": 42.9
+       "clearance_300m_5km": 43.0,
+       "clearance_300m_5km_beforeGrading": 43.0
       }
      }
     },
@@ -333,13 +333,13 @@
      "width": 45.0,
      "ends": [
       {
-       "x": -21450.3,
-       "z": -25794.5,
+       "x": -21447.2,
+       "z": -25794.4,
        "elevation": 94.5
       },
       {
-       "x": -21591.4,
-       "z": -29891.7,
+       "x": -21588.9,
+       "z": -29890.9,
        "elevation": 61.6
       }
      ],
@@ -360,8 +360,8 @@
        "aimElevation": 92.09,
        "clearance_0_60m": 13.3,
        "clearance_60_300m": 16.7,
-       "clearance_300m_5km": 28.7,
-       "clearance_300m_5km_beforeGrading": 28.7
+       "clearance_300m_5km": 28.9,
+       "clearance_300m_5km_beforeGrading": 28.9
       },
       "17R": {
        "thresholdElevation": 61.6,
@@ -382,13 +382,13 @@
      "width": 45.0,
      "ends": [
       {
-       "x": -18815.5,
-       "z": -25896.5,
+       "x": -18813.8,
+       "z": -25886.1,
        "elevation": 94.2
       },
       {
-       "x": -18921.1,
-       "z": -28931.3,
+       "x": -18919.4,
+       "z": -28943.6,
        "elevation": 67.4
       }
      ],
@@ -406,19 +406,68 @@
      "approach": {
       "36": {
        "thresholdElevation": 94.2,
-       "aimElevation": 91.55,
+       "aimElevation": 91.57,
        "clearance_0_60m": 13.1,
        "clearance_60_300m": 16.4,
-       "clearance_300m_5km": 28.4,
-       "clearance_300m_5km_beforeGrading": 28.4
+       "clearance_300m_5km": 29.8,
+       "clearance_300m_5km_beforeGrading": 29.8
       },
       "18": {
        "thresholdElevation": 67.4,
-       "aimElevation": 70.05,
-       "clearance_0_60m": 18.4,
+       "aimElevation": 70.03,
+       "clearance_0_60m": 18.3,
        "clearance_60_300m": 21.8,
-       "clearance_300m_5km": 28.5,
-       "clearance_300m_5km_beforeGrading": 28.5
+       "clearance_300m_5km": 28.0,
+       "clearance_300m_5km_beforeGrading": 28.0
+      }
+     }
+    },
+    {
+     "ref": "09/27",
+     "ids": [
+      "09",
+      "27"
+     ],
+     "width": 45.0,
+     "ends": [
+      {
+       "x": -17992.7,
+       "z": -24953.1,
+       "elevation": 83.5
+      },
+      {
+       "x": -15174.8,
+       "z": -25052.3,
+       "elevation": 83.5
+      }
+     ],
+     "published": [
+      [
+       "09",
+       83.52
+      ],
+      [
+       "27",
+       83.52
+      ]
+     ],
+     "closedInOurAirports": null,
+     "approach": {
+      "09": {
+       "thresholdElevation": 83.5,
+       "aimElevation": 83.5,
+       "clearance_0_60m": 15.7,
+       "clearance_60_300m": 19.0,
+       "clearance_300m_5km": 30.2,
+       "clearance_300m_5km_beforeGrading": 30.2
+      },
+      "27": {
+       "thresholdElevation": 83.5,
+       "aimElevation": 83.5,
+       "clearance_0_60m": 15.7,
+       "clearance_60_300m": 19.0,
+       "clearance_300m_5km": 20.0,
+       "clearance_300m_5km_beforeGrading": 7.1
       }
      }
     }

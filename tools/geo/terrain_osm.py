@@ -86,6 +86,8 @@ LEI = {'park', 'garden', 'golf_course', 'pitch', 'stadium', 'nature_reserve', 't
 AME = {'university', 'school', 'hospital', 'parking', 'grave_yard'}
 AERO_W = {'runway', 'taxiway', 'apron', 'aerodrome', 'helipad', 'stopway', 'blast_pad'}
 AERO_R = {'apron', 'aerodrome', 'runway', 'taxiway'}
+# landside airport areas graded with the airfield (terrain_airports.py EXTRA_ZONES), written into aeroways.json
+EXTRA_IDS = {('way', 687768729), ('way', 1116947583), ('relation', 19575600), ('relation', 19575601)}
 
 
 def _sets(t, is_rel):
@@ -131,7 +133,13 @@ def main_ist():
     import osmium
     d = os.path.join(RAW, 'osm_w1')
     names = ('water', 'aeroways', 'landcover')
-    if all(os.path.exists(os.path.join(d, f'{n}.json')) for n in names):
+    def have_extra():
+        p = os.path.join(d, 'aeroways.json')
+        if not os.path.exists(p):
+            return False
+        got = {(e['type'], e['id']) for e in json.load(open(p))['elements']}
+        return EXTRA_IDS <= got
+    if all(os.path.exists(os.path.join(d, f'{n}.json')) for n in names) and have_extra():
         print('cached', d)
         return
     pbf = geofabrik_pbf()
@@ -150,7 +158,7 @@ def main_ist():
         t = dict(r.tags)
         if t.get('type') != 'multipolygon':
             continue
-        sets = _sets(t, True)
+        sets = _sets(t, True) | ({('aeroways', 'mid')} if ('relation', r.id) in EXTRA_IDS else set())
         if sets:
             ways = [(m.ref, m.role) for m in r.members if m.type == 'w']
             rels[r.id] = (t, ways, sets)
@@ -163,7 +171,7 @@ def main_ist():
         if not w.is_way():
             continue
         t = dict(w.tags)
-        sets = _sets(t, False)
+        sets = _sets(t, False) | ({('aeroways', 'mid')} if ('way', w.id) in EXTRA_IDS else set())
         if not sets and w.id not in need:
             continue
         try:

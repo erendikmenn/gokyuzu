@@ -135,21 +135,24 @@ needs `['assets/ist/terrain', 'h']` in `SKIP_UNDER` like San Francisco's):
   land. Known limit: the DEM (TanDEM-X 2011–2015) predates LTFM and LTFJ's second runway; outside their flattened zones
   the old ground remains (mining pits NE of LTFM, down to −27 m).
 - **Airports** (`tools/geo/terrain_airports.py`): every runway rectangle + 60 m shoulders / overruns follows its
-  `data/ist/runways.json` per-end `ends[k].elevation` (linear between the ends; the runway `elevation` where an end has
-  none): LTFM 99.1 / 94.5 / 94.2 m (south ends) to 66.5 / 61.6 / 67.4 m (north ends), 0.80–0.88 % longitudinal slope;
-  LTFJ 06L 89.3 → 24R 92.7, 06R/24L 88.1; LTBA 05 28.4 → 23 27.4. Checked on the published height files (getHeight
-  triangles, centreline and both edges, 81 stations per runway): every runway end within 0.03 m, worst deviation on any
-  runway 0.036 m; runway pavement gradient ≤ 1.02 % (LTFM, longitudinal + cross), shoulders ≤ 2.7 %. Taxiways / aprons /
-  aerodrome (OSM) on a smooth surface: LTFM, LTFJ a spline platform through the runway profiles; LTBA a plane fitted to
-  its paved DSM (robust against roofs); taxiway / apron slope p99 0.6 % (LTFJ) to 1.8 % (LTBA), max 2.8 %. Blends into
-  the DEM over 150–600 m. **Approach grading**: the DEM predates LTFM and rose up to 50 m above the 3° path before
-  35L / 35R / 36; for every runway end the ground under the approach (ICAO approach-surface width: 150 m each side,
-  +15 %, out to 5 km) is cut to strip level at the threshold, +2 % from 60 m out, never higher than 20 m below a 3°
-  path aimed 300 m past the threshold. Published terrain, ±60 m of the extended centreline, all 16 ends: ≥ 13.1 m in
-  the first 60 m (runway strip level), ≥ 16.4 m at 60–300 m, ≥ 22.6 m from 300 m to 5 km; city buildings ≥ 15.3 m
-  (LTFJ 24L, 704 m out; all others ≥ 43 m), trees ≥ 35.9 m. `data/ist/terrain_airports.json` lists per runway end the
-  terrain elevation, the published (OurAirports / AIP) value and these clearances ("approach"). Rebuild the terrain (terrain_airports.py, terrain_build.py, imagery_build.py,
-  terrain_pinpack.py) whenever runway geometry or elevations in runways.json change.
+  `data/ist/runways.json` per-end `ends[k].elevation` (DHMİ AIP, linear between the ends; `displaced` thresholds
+  honoured): LTFM 99.1 / 94.5 / 94.2 m (south ends) to 66.4–67.4 / 61.6 m (north ends), 0.80–0.88 %, and the new 09/27
+  at 83.5 m; LTFJ 06L 89.0 → 24R 92.7, 06R 82.3 → 24L 93.9; LTBA 05 28.3 → 23 27.4. Checked on the published height files
+  (getHeight triangles, centreline and both edges, 81 stations per runway): every end within 0.03 m, worst point on any
+  runway 0.045 m; slopes within the areas: runways ≤ 1.00 %, taxiways / aprons / landside ≤ 1.6 %. Taxiways / aprons /
+  aerodrome (OSM, incl. LTFM G1/G2) on a smooth surface: LTFM, LTFJ a spline platform through the runway profiles; LTBA
+  a plane fitted to its paved DSM (robust against roofs). LTFM's terminal (OSM way 687768729), its canopy (1116947583)
+  and car parks (relations 19575600 / 19575601) + 150 m sit on a ~35 m hill of the pre-airport DEM: graded exactly to
+  the platform (terminal 89–95 m, canopy / car parks 94 m; the raw DSM there is 116–162 m). Blends into the DEM over
+  150–600 m. **Approach grading**: the DEM predates LTFM (up to 50 m above the 3° path before 35R); for every runway end
+  (incl. departure-only 09/27) the ground under the approach (ICAO approach-surface width: 150 m each side, +15 %, out to
+  5 km) is cut to strip level at the threshold, +2 % from 60 m out, never higher than 20 m below a 3° path aimed 300 m
+  past the threshold. Published terrain, ±60 m of the extended centreline, all 18 ends: ≥ 13.1 m in the first 60 m
+  (runway strip level), ≥ 16.4 m at 60–300 m, ≥ 20.0 m from 300 m to 5 km (27; all others ≥ 22.5 m); city buildings
+  ≥ 31.3 m; trees ≥ 35.8 m except before LTFM 27 (departure-only end, the 09 climb-out): trees 549 m out reach 6.2 m
+  above the path — for the city pipeline to clear. `data/ist/terrain_airports.json` lists per runway end the terrain
+  elevation, the published value and these clearances ("approach"). Rebuild (terrain_airports.py, terrain_build.py,
+  imagery_build.py, terrain_fogmap.py, terrain_pinpack.py) whenever runways.json changes.
 - **Water / coast**: sea = root − OSM land polygons (osmdata.openstreetmap.de land-polygons-split-4326): Karadeniz,
   Boğaz, Haliç, Marmara, Adalar, İzmit Körfezi; lakes / piers / aerodromes from the Geofabrik Turkey extract
   (pyosmium; Overpass was overloaded). `water_depth.png`: R = depth from EMODnet Bathymetry (free WCS; Marmara > 1 km
