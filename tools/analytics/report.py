@@ -4,6 +4,7 @@
     .venv/bin/python tools/analytics/report.py                    # production, last 7 days
     .venv/bin/python tools/analytics/report.py staging --days 30
     .venv/bin/python tools/analytics/report.py --sessions 50      # longer session list
+    .venv/bin/python tools/analytics/report.py --hourly           # hour by hour (Türkiye time) instead of the report
 
 Downloads new log files (profile "gokyuzu-analytics", read-only on the log bucket) into data/analytics/<target>/
 (gitignored; the bucket itself deletes logs after 30 days) and prints players, sessions and minutes played.
@@ -194,39 +195,60 @@ def is_daily(q):
     return q.get('d') == '1' or bool(q.get('daily') or q.get('day'))
 
 
+def people(evs, pred=lambda q: True):
+    """Distinct visitors among events [(at, vid, sid, q)] matching pred(q)."""
+    return {vid for _, vid, _, q in evs if pred(q)}
+
+
+def med(values, fmt='{:.0f}'):
+    v = [x for x in values if x is not None]
+    return fmt.format(statistics.median(v)) if v else '-'
+
+
+def flyers(beacons, visitors):
+    """People who started a flight (the `fly` beacon)."""
+    return people(real_events(beacons, visitors, {'fly'}))
+
+
 def report_missions(beacons, visitors, top):
-    """§12 `mission` beacons: id, st = start|done|fail|quit, stars, score, sec (+ the daily marker)."""
+    """Mission mode (§12, §11): `mission` (brief with via, start, done, fail, quit, retry, next, menu) and `mmenu` (the
+    main menu's missions tab: open, daily, detail). People = the report's anonymous visitors, not events."""
     evs = real_events(beacons, visitors, {'mission'})
+    menu = real_events(beacons, visitors, {'mmenu'})
+    print('\nGörevler (görev modu):')
+    if menu:
+        opened = people(menu, lambda q: q.get('st') == 'open')
+        via = Counter(q.get('via') or '?' for *_, q in menu if q.get('st') == 'open')
+        details = Counter(q.get('id') or '?' for *_, q in menu if q.get('st') == 'detail')
+        print(f"  Menüde Görevler sekmesini açan: {len(opened)} kişi ({sum(via.values())} kez; {top(via, 3)}) · günlük görev kartına bakan "
+              f"{len(people(menu, lambda q: q.get('st') == 'daily'))} kişi · ayrıntısına bakılan görevler: {top(details, 6)}")
+    else:
+        print('  Menüde Görevler sekmesi: henüz sinyal yok.')
     if not evs:
-        print('\nGörevler: henüz görev sinyali yok.')
-        return
-    per = defaultdict(lambda: {'start': 0, 'done': 0, 'fail': 0, 'quit': 0, 'stars': Counter(), 'sec': [], 'score': [], 'players': set()})
-    for _, vid, _, q in evs:
-        m = per[q.get('id') or '?']
-        st = q.get('st', '')
-        if st in ('start', 'done', 'fail', 'quit'):
-            m[st] += 1
-        if st == 'start':
-            m['players'].add(vid)
-        if st == 'done':
-            if q.get('stars', '').isdigit():
-                m['stars'][int(q['stars'])] += 1
-            if num(q.get('sec')) is not None:
-                m['sec'].append(num(q.get('sec')))
-            if num(q.get('score')) is not None:
-                m['score'].append(num(q.get('score')))
-    starts = sum(m['start'] for m in per.values())
-    done = sum(m['done'] for m in per.values())
-    players = set().union(*(m['players'] for m in per.values()))
-    print(f'\nGörevler: {len(players)} oyuncu · {starts} başlangıç · {done} tamamlanan ({pct(done, starts)}) · '
-          f"başarısız {sum(m['fail'] for m in per.values())} · bırakılan {sum(m['quit'] for m in per.values())}")
-    print(f"  {'görev':<22} {'oyuncu':>6} {'başla':>6} {'bitir':>6} {'başarısız':>9} {'bırak':>6} {'yarım':>6}  {'yıldız 0/1/2/3':<15} {'ort. süre':>9}  puan (medyan / en iyi)")
-    for mid, m in sorted(per.items(), key=lambda kv: -kv[1]['start']):
-        open_ = max(0, m['start'] - m['done'] - m['fail'] - m['quit'])   # page closed / menu without an end beacon
-        stars = '/'.join(str(m['stars'][k]) for k in range(4))
-        sec = fmt_sec(statistics.mean(m['sec'])) if m['sec'] else '-'
-        score = f"{statistics.median(m['score']):.0f} / {max(m['score']):.0f}" if m['score'] else '-'
-        print(f"  {mid[:22]:<22} {len(m['players']):>6} {m['start']:>6} {m['done']:>6} {m['fail']:>9} {m['quit']:>6} {open_:>6}  {stars:<15} {sec:>9}  {score}")
+        print('  Görev sinyali yok.')
+        return None
+    st = lambda *names: (lambda q: q.get('st') in names)
+    print(f"  Brifing gören {len(people(evs, st('brief')))} · başlayan {len(people(evs, st('start')))} · bitiren {len(people(evs, st('done')))} · "
+          f"başarısız {len(people(evs, st('fail')))} · bırakan {len(people(evs, st('quit')))} kişi · giriş yolu (kişi): "
+          + (' · '.join(f"{k} {len(people(evs, lambda q, k=k: q.get('st') == 'brief' and (q.get('via') or '?') == k))}"
+                        for k in ('menu', 'daily', 'link', 'ff', 'next') if people(evs, lambda q, k=k: q.get('st') == 'brief' and q.get('via') == k)) or '-'))
+    acts = Counter(q.get('st') for *_, q in evs if q.get('st') in ('retry', 'next', 'menu'))
+    if acts:
+        print(f"  Kart düğmeleri: tekrar dene {acts['retry']} · sonraki görev {acts['next']} · menü {acts['menu']}")
+    ids = sorted({q.get('id') or '?' for *_, q in evs}, key=lambda i: -len(people(evs, lambda q, i=i: q.get('id') == i and q.get('st') == 'start')))
+    print(f"  {'görev':<14} {'brifing':>7} {'başla':>6} {'bitir':>6} {'başarısız':>9} {'bırak':>6} {'bitirme':>7} {'yıldız':>6} {'süre':>6}  {'puan (medyan/en iyi)':<20} {'günlük/normal':<13} giriş (menü/günlük/bağlantı/ff/sonraki)")
+    for i in ids:
+        e = [x for x in evs if (x[3].get('id') or '?') == i]
+        started, done = people(e, st('start')), people(e, st('done'))
+        dn = [q for *_, q in e if q.get('st') == 'done']
+        daily_p = len(people(e, lambda q: q.get('st') == 'start' and is_daily(q)))
+        vias = [len(people(e, lambda q, k=k: q.get('st') == 'brief' and q.get('via') == k)) for k in ('menu', 'daily', 'link', 'ff', 'next')]
+        score = [num(q.get('score')) for q in dn]
+        sc = f"{med(score)} / {max(x for x in score if x is not None):.0f}" if any(x is not None for x in score) else '-'
+        secs = [num(q.get('sec')) for q in dn]
+        print(f"  {i[:14]:<14} {len(people(e, st('brief'))):>7} {len(started):>6} {len(done):>6} {len(people(e, st('fail'))):>9} {len(people(e, st('quit'))):>6} "
+              f"{pct(len(done), len(started)):>7} {med([num(q.get('stars')) for q in dn]):>6} {(fmt_sec(statistics.median([x for x in secs if x is not None])) if any(x is not None for x in secs) else '-'):>6}  "
+              f"{sc:<20} {f'{daily_p}/{len(started) - daily_p}':<13} {'/'.join(map(str, vias))}")
 
     daily = [(at, vid, q) for at, vid, _, q in evs if is_daily(q)]
     if daily:
@@ -246,26 +268,85 @@ FFC_NAMES = {'bridge': 'Golden Gate altı', 'lowpass': 'Alçak geçiş', 'baytou
              'land': 'En iyi iniş', 'eng': 'Motor arızası', 'flameout': 'Alev sönmesi', 'ditch': 'Suya iniş', 'autorot': 'Otorotasyon'}
 
 
-def report_challenges(beacons, visitors):
-    """§12.1 `ffc` beacons (free-flight challenges): id, st = start|done|fail, score, stars, ac, sec — completions per entry."""
+def report_challenges(beacons, visitors, top):
+    """Free-flight challenges (§12.1, §11): `ffp` (panel: open with src, track, untrack, play) and `ffc` (start, done,
+    fail, cancel, drop). The bridge and landing entries are instant (done only); the climb starts at every take-off roll
+    from a standstill on a runway."""
+    panel = real_events(beacons, visitors, {'ffp'})
     evs = real_events(beacons, visitors, {'ffc'})
-    if not evs:
-        print('Serbest uçuş görevleri: henüz sinyal yok.')
+    print('\nSerbest uçuş görevleri:')
+    if not panel and not evs:
+        print('  Henüz sinyal yok.')
         return
-    done, fail, starts, players = Counter(), Counter(), Counter(), set()
-    for _, vid, _, q in evs:
-        i = q.get('id') or '?'
-        st = q.get('st', '')
-        if st == 'done':
-            done[i] += 1
-            players.add(vid)
-        elif st == 'fail':
-            fail[i] += 1
-        elif st == 'start':
-            starts[i] += 1
-    print(f"Serbest uçuş görevleri: {sum(done.values())} tamamlanan ({len(players)} oyuncu) · başarısız {sum(fail.values())} · "
-          + ' · '.join(f"{FFC_NAMES.get(i, i)} {n}" + (f" (başla {starts[i]}, başarısız {fail[i]})" if starts[i] or fail[i] else '')
-                       for i, n in done.most_common() + [(i, 0) for i in sorted(set(starts) | set(fail)) if not done[i]]))
+    flew = flyers(beacons, visitors)
+    opened = people(panel, lambda q: q.get('st') == 'open')
+    src = Counter(q.get('src') or '?' for *_, q in panel if q.get('st') == 'open')
+    plays = [q for *_, q in panel if q.get('st') == 'play']
+    via_ff = people(real_events(beacons, visitors, {'mission'}), lambda q: q.get('st') == 'brief' and q.get('via') == 'ff')
+    print(f"  Paneli açan: {len(opened)} kişi (uçanların {pct(len(opened & flew) if flew else len(opened), len(flew))}; {sum(src.values())} kez: "
+          f"{top(src, 4)}) · takip eden {len(people(panel, lambda q: q.get('st') == 'track'))} kişi · \"Görev olarak oyna\": {len(plays)} tık "
+          f"({len(people(panel, lambda q: q.get('st') == 'play'))} kişi; {top(Counter(FFC_NAMES.get(q.get('id'), q.get('id')) for q in plays), 4)}) → görev brifingine gelen {len(via_ff)} kişi")
+    if not evs:
+        return
+    st = lambda name: (lambda q: q.get('st') == name)
+    ids = sorted({q.get('id') or '?' for *_, q in evs} | {q.get('id') for *_, q in panel if q.get('st') == 'track' and q.get('id')},
+                 key=lambda i: -len(people(evs, lambda q, i=i: q.get('id') == i and q.get('st') in ('start', 'done'))))
+    print(f"  {'görev':<16} {'takip':>5} {'başla':>6} {'bitir':>6} {'başarısız':>9} {'vazgeç':>6} {'yarım':>6}  {'puan (medyan/en iyi)':<20} uçak (bitirenler)")
+    for i in ids:
+        e = [x for x in evs if x[3].get('id') == i]
+        dn = [q for *_, q in e if q.get('st') == 'done']
+        score = [num(q.get('score')) for q in dn]
+        sc = f"{med(score)} / {max(x for x in score if x is not None):.0f}" if any(x is not None for x in score) else '-'
+        tracked = people(panel, lambda q, i=i: q.get('st') == 'track' and q.get('id') == i)
+        start = '-' if i in ('bridge', 'land') else len(people(e, st('start')))
+        print(f"  {FFC_NAMES.get(i, i)[:16]:<16} {len(tracked):>5} {start:>6} {len(people(e, st('done'))):>6} {len(people(e, st('fail'))):>9} "
+              f"{len(people(e, st('cancel'))):>6} {len(people(e, st('drop'))):>6}  {sc:<20} {top(Counter(AIRCRAFT.get(q.get('ac'), q.get('ac') or '?') for q in dn), 5)}")
+    drops = Counter(q.get('why') or '?' for *_, q in evs if q.get('st') == 'drop')
+    if drops:
+        print(f"  Yarım kalma nedeni: {top(drops, 4)} (time: süre sınırı · gap: kapılar arası çok uzun · far: çok uzaklaştı · landed: 10.000 ft'ten önce indi)")
+
+
+def report_lb(beacons, visitors, top):
+    """Leaderboard use in the game (§11 `lb`): tables shown, scores submitted (with or without a nickname; the nickname
+    itself is never sent), failed submissions; per board."""
+    evs = real_events(beacons, visitors, {'lb'})
+    if not evs:
+        print('\nSıralama tablosu: henüz sinyal yok.')
+        return
+    st = lambda name: (lambda q: q.get('st') == name)
+    shown, sub = people(evs, st('show')), people(evs, st('submit'))
+    named = people(evs, lambda q: q.get('st') == 'submit' and q.get('nm') == '1')
+    ranks = [num(q.get('r')) for *_, q in evs if q.get('st') == 'submit']
+    print(f"\nSıralama tablosu: gören {len(shown)} kişi · skor gönderen {len(sub)} kişi (takma adla {len(named)}) · gönderilemeyen "
+          f"{sum(1 for *_, q in evs if q.get('st') == 'fail')} · sıra medyanı {med(ranks)} · rekorunu geliştiren "
+          f"{sum(1 for *_, q in evs if q.get('st') == 'submit' and q.get('im') == '1')} gönderim")
+    boards = Counter(q.get('b') or '?' for *_, q in evs if q.get('st') == 'show')
+    for b, n in boards.most_common(12):
+        e = [x for x in evs if x[3].get('b') == b]
+        print(f"  {b:<14} görüntüleme {n} ({len(people(e, st('show')))} kişi) · gönderim {sum(1 for *_, q in e if q.get('st') == 'submit')} "
+              f"({len(people(e, st('submit')))} kişi) · sıra medyanı {med([num(q.get('r')) for *_, q in e if q.get('st') == 'submit'])}"
+              + (' · günlük' if any(q.get('d') == '1' for *_, q in e) else ''))
+
+
+def tried_or_done(beacons, visitors):
+    """People who tried (mission start, challenge start / done / fail) and who completed (mission / challenge done); the
+    landing entry is left out (every runway landing counts for it)."""
+    ev = real_events(beacons, visitors, {'mission', 'ffc'})
+    tried = people(ev, lambda q: (q.get('t') == 'mission' and q.get('st') == 'start')
+                   or (q.get('t') == 'ffc' and q.get('st') in ('start', 'done', 'fail') and q.get('id') != 'land'))
+    done = people(ev, lambda q: q.get('st') == 'done' and (q.get('t') == 'mission' or q.get('id') != 'land'))
+    return tried, done
+
+
+def report_funnel(beacons, visitors):
+    flew = flyers(beacons, visitors)
+    if not flew:
+        return
+    opened = people(real_events(beacons, visitors, {'ffp', 'mmenu'}), lambda q: q.get('st') == 'open')
+    tried, done = tried_or_done(beacons, visitors)
+    f = lambda group: f'{len(group & flew)} ({pct(len(group & flew), len(flew))})'
+    print(f"\nHuni (kişi, uçanlara göre): uçan {len(flew)} → görev paneli / menü sekmesi açan {f(opened)} → en az bir görev deneyen {f(tried)} "
+          f"→ en az birini bitiren {f(done)}  (görev modu + serbest uçuş; iniş puanı hariç)")
 
 
 def report_daily(by_day, days_seen, visitors):
@@ -404,6 +485,88 @@ def report_retention(days_seen, visitors, beacons, since, target):
           '  Görev oynayanlarla oynamayanların farkı bir ilişkidir, neden-sonuç değil (görev oynayanlar zaten daha ilgili olabilir).')
 
 
+def hour_of(at):
+    """The Türkiye hour of a UTC time (--hourly rows)."""
+    return at.astimezone(IST).replace(minute=0, second=0, microsecond=0)
+
+
+def release_hours():
+    """Git tags release-YYYYMMDD-HHMM (Türkiye time) → {hour: 'HH:MM'} for the --hourly table's last column."""
+    import subprocess
+    try:
+        tags = subprocess.run(['git', '-C', str(ROOT), 'tag', '--list', 'release-*'], capture_output=True, text=True, timeout=10).stdout.split()
+    except Exception:
+        return {}
+    out = {}
+    for t in tags:
+        m = re.fullmatch(r'release-(\d{8})-(\d{4})', t)
+        if m:
+            at = dt.datetime.strptime(m[1] + m[2], '%Y%m%d%H%M').replace(tzinfo=IST)
+            out[at.replace(minute=0)] = (out.get(at.replace(minute=0), '') + ' ' + f'{at:%H:%M} yayın').strip()
+    return out
+
+
+def report_hourly(hours, first_seen, beacons, visitors, requests):
+    """Hour by hour (Türkiye time), players only: visitors, new visitors (first request in the window), players (a flight
+    beacon or an aircraft model download), flights, touch flights, active minutes (heartbeats), take-offs, landings
+    (runway), crashes, finished tutorials, fps, phone / X-Instagram share, errors, GB, and the missions columns: görev
+    (people who started a mission), ffc (people who opened the free-flight panel), tamam (people who completed a mission
+    or a challenge; the landing entry left out)."""
+    c = defaultdict(Counter)
+    fps = defaultdict(list)
+    players, mis, ffc, done = (defaultdict(set) for _ in range(4))
+    for evs in beacons.values():
+        for at, q, vid in evs:
+            if visitors[vid]['who']:
+                continue
+            h, t, st = hour_of(at), q.get('t'), q.get('st')
+            if t == 'fly':
+                c[h]['fly'] += 1
+                c[h]['touch'] += q.get('in') == 'touch'
+                players[h].add(vid)
+            elif t == 'hb':
+                c[h]['hb'] += 1
+                if (q.get('fps') or '').isdigit():
+                    fps[h].append(int(q['fps']))
+            elif t == 'takeoff':
+                c[h]['takeoff'] += 1
+            elif t == 'land':
+                c[h]['land'] += 1
+                c[h]['landrw'] += q.get('rw') == '1'
+            elif t == 'crash':
+                c[h]['crash'] += 1
+            elif t == 'tut' and st == 'done':
+                c[h]['tutdone'] += 1
+            elif t == 'err' and q.get('x') != 'foreign':
+                c[h]['err'] += 1
+            elif t == 'mission' and st == 'start':
+                mis[h].add(vid)
+            elif t == 'ffp' and st == 'open':
+                ffc[h].add(vid)
+            if st == 'done' and (t == 'mission' or (t == 'ffc' and q.get('id') != 'land')):
+                done[h].add(vid)
+    for vid, reqs in requests.items():
+        if visitors[vid]['who']:
+            continue
+        for at, uri in reqs:
+            if uri.startswith('/assets/aircraft/') and uri.endswith('.glb') and not uri.endswith(('_lod.glb', '_cockpit.glb')):
+                players[hour_of(at)].add(vid)
+    new = Counter(hour_of(t) for t in first_seen.values())
+    rel = release_hours()
+    print(f"{'saat (TR)':<11}|{'ziyar.':>6}|{'yeni':>5}|{'oyna.':>5}|{'uçuş':>5}|{'dokun.':>6}|{'aktif dk':>8}|{'kalkış':>6}|{'iniş(pist)':>10}|{'kaza':>5}|"
+          f"{'eğit.bitti':>10}|{'fps':>4}|{'tel%':>4}|{'X/IG%':>5}|{'hata':>4}|{'GB':>5}|{'görev':>5}|{'ffc':>4}|{'tamam':>5}| yayın")
+    for h in sorted(hours):
+        r, k, n = hours[h], c[h], len(hours[h]['vis'])
+        f = statistics.mean(fps[h]) if fps[h] else 0
+        print(f"{h:%d.%m %H}:00|{n:6d}|{new[h]:5d}|{len(players[h]):5d}|{k['fly']:5d}|{k['touch']:6d}|{k['hb']:8d}|{k['takeoff']:6d}|"
+              f"{k['land']:5d}({k['landrw']:2d})  |{k['crash']:5d}|{k['tutdone']:10d}|{f:4.0f}|{100 * len(r['phone']) / n:4.0f}|{100 * len(r['iab']) / n:5.0f}|"
+              f"{k['err']:4d}|{r['bytes'] / 1e9:5.1f}|{len(mis[h]):5d}|{len(ffc[h]):4d}|{len(done[h]):5d}| {rel.get(h, '')}")
+    tot = set().union(*(r['vis'] for r in hours.values())) if hours else set()
+    print(f"Toplam tekil ziyaretçi {len(tot)} · görev başlatan {len(set().union(*mis.values())) if mis else 0} · paneli açan "
+          f"{len(set().union(*ffc.values())) if ffc else 0} · bitiren {len(set().union(*done.values())) if done else 0} kişi "
+          '(saatler Türkiye saati; kişiler anonim ziyaretçi kimliği; sen/test ve botlar hariç)')
+
+
 def fmt_min(m):
     return f'{m:.0f} dk' if m >= 10 else f'{m:.1f} dk'
 
@@ -415,6 +578,7 @@ def main():
     ap.add_argument('--sessions', type=int, default=25, help='how many sessions to list (newest first)')
     ap.add_argument('--no-sync', action='store_true', help='use the already downloaded logs')
     ap.add_argument('--logs', type=Path, help='read the .gz logs from this folder instead (implies --no-sync)')
+    ap.add_argument('--hourly', action='store_true', help='print the hour-by-hour table (Türkiye time) instead of the report')
     a = ap.parse_args()
 
     profile = os.environ.get('AWS_PROFILE_ANALYTICS', 'gokyuzu-analytics')
@@ -435,6 +599,8 @@ def main():
     api_time = defaultdict(list)         # 'POST' / 'GET hit' / 'GET miss' -> CloudFront time-taken (s)
     api_own = Counter()                  # leaderboard requests of "sen" / test browsers (staging checks)
     blocked = Counter()
+    hours = defaultdict(lambda: {'vis': set(), 'phone': set(), 'iab': set(), 'bytes': 0})   # --hourly: Türkiye hour -> requests
+    first_seen = {}                      # visitor -> first request in the window
     for row in read_logs(folder, since):
         ua = unquote(row.get('cs(User-Agent)', '-'))
         if any(w in ua.lower() for w in BOT_WORDS):
@@ -467,6 +633,20 @@ def main():
         if vid not in visitors:
             visitors[vid] = {'browser': browser, 'system': system, 'city': geo.country(ip), 'who': who}
         days_seen[vid].add(row['at'].astimezone(IST).date())
+        if not who:
+            h = hours[hour_of(row['at'])]
+            h['vis'].add(vid)
+            u = ua.lower()
+            if 'iphone' in u or 'ipad' in u or 'android' in u:
+                h['phone'].add(vid)
+            if 'twitter' in u or 'instagram' in u or 'fban' in u or 'fbav' in u:
+                h['iab'].add(vid)
+            try:
+                h['bytes'] += int(row.get('sc-bytes') or 0)
+            except ValueError:
+                pass
+            if vid not in first_seen or row['at'] < first_seen[vid]:
+                first_seen[vid] = row['at']
         if uri == '/_e':
             q = query(row)
             if q.get('t') == 'tut' and re.fullmatch(r'\d+(\.\d+)?', q.get('s', '')):
@@ -538,6 +718,9 @@ def main():
     real = [s for s in sessions if not visitors[s['vid']]['who']]
     label = {'production': 'canlı (fs.erenailab.com)', 'staging': 'staging'}[a.target]
     print(f'\nGökyüzü SF · {label} · son {a.days} gün')
+    if a.hourly:
+        report_hourly(hours, first_seen, beacons, visitors, requests)
+        return
     if not sessions:
         print('Henüz kayıt yok. (Kayıtlar CloudFront\'tan 5–60 dakika gecikmeyle gelir.)')
         return
@@ -607,8 +790,10 @@ def main():
 
     # wave 7 (§12): missions, daily mission, landing score, shares, failures, leaderboard, retention
     by_day = report_missions(beacons, visitors, top)
-    report_challenges(beacons, visitors)
     report_daily(by_day, days_seen, visitors)
+    report_challenges(beacons, visitors, top)
+    report_lb(beacons, visitors, top)
+    report_funnel(beacons, visitors)
     report_landings(beacons, visitors, top)
     report_shares(beacons, visitors, top)
     report_failures(beacons, visitors, top)

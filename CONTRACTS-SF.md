@@ -331,8 +331,23 @@ Players keep files in their browser cache, so every asset URL carries a content 
 - CloudFront: the `/_e` behaviour runs the CloudFront Function `gokyuzu-beacon` (204 at the edge, uncached); standard access
   logs of both distributions go to `s3://gokyuzu-sf-logs-<aws-account-id>-eu-central-1/<target>/` (deleted after 30 days).
   Setup: `tools/analytics/setup.py <target>` (admin profile). The local dev server answers `/_e` with 204 and prints it.
-- Report: `.venv/bin/python tools/analytics/report.py [production|staging] [--days N]` (read-only IAM user
-  `gokyuzu-analytics`); visitors are salted hashes, raw IPs are never printed.
+- Report: `.venv/bin/python tools/analytics/report.py [production|staging] [--days N] [--hourly] [--no-sync | --logs DIR]`
+  (read-only IAM user `gokyuzu-analytics`); visitors are salted hashes, raw IPs are never printed; own IPs and headless
+  test browsers are left out. Mission / challenge / leaderboard numbers are counted in **people** (anonymous visitors):
+  "Görevler (görev modu)", "Serbest uçuş görevleri", "Sıralama tablosu", a funnel (flew → opened the panel or the menu
+  tab → tried ≥ 1 → completed ≥ 1, the landing entry left out); `--hourly` prints the hour-by-hour table (Türkiye time)
+  with the columns görev / ffc / tamam (people who started a mission / opened the panel / completed one).
+- Gameplay events (`trackEvent(type, data)`, ≤ 40 per type and page; data keys never `t s n m v`, values short codes and
+  numbers, nothing personal — never a nickname). Frequent UI clicks have their own type so they cannot use up the cap of
+  the outcomes:
+  | type | st | fields |
+  |---|---|---|
+  | `mission` | brief · start · done · fail · quit · retry · next · menu | `id`; brief: `via` (menu, daily, link, ff = "Görev olarak oyna", next = "Sonraki görev"), `ac`, `d`=1 daily; start: `ac`, `run` (attempt on the page), `d`; done/fail: `stars`, `score`, `sec`, `why`; quit: `sec`, `why`; retry: `ok`; next: `to`; menu: `ph` (brief, result) |
+  | `mmenu` | open · daily · detail | open: `via` (tab, daily); daily: `id` (the day's mission); detail: `id` (once per mission and page) |
+  | `ffp` | open · track · untrack · play | open: `src` (key, tab, card = the compact result card, auto = a result / crash opened it); track, untrack, play: `id` |
+  | `ffc` | start · done · fail · cancel · drop | `id` (bridge, lowpass, baytour, climb, alcatraz, land, eng, flameout, ditch, autorot), `ac`; done: `score`, `stars`, `sec`; cancel/drop: `sec`; drop: `why` (time, gap, far, landed) |
+  | `lb` | show · submit · fail | `b` (board: a mission id or ff-<id>), `d`=1 daily; show: `c` (entries); submit: `r` (rank), `im`=1 improved, `nm`=1 a nickname was given |
+  Existing: `takeoff`, `land` (`fpm`, `cl`, `tdz`, `st`), `crash`, `tut`, `share` (`id`, `via`), `failure`, `gfx`.
 
 ## 12. Missions, landing score, failures, leaderboard (wave 7)
 
@@ -352,7 +367,8 @@ and cheap (instanced, no new heavy assets). Everything must stay optimized: no p
 - **Missions**: `src/missions/**` defines missions as data + small objective functions (reach point, pass gate/ring, land on
   runway X with ≥ N stars, hover over pad, survive failure …) evaluated from the flight state; start via the menu tab
   "Görevler" or `?mission=<id>` (`&daily=YYYYMMDD` for the daily mission). Progress (stars, best scores) in localStorage.
-  Telemetry: `mission` (`id`, `st` = start|done|fail|quit, `stars`, `score`, `sec`), `share` (`id`, `via`).
+  Telemetry (§11): `mission` (brief with `via`, start, done, fail, quit, retry, next, menu), `mmenu` (the menu's
+  missions tab), `lb` (tables shown, scores submitted), `share` (`id`, `via`).
 - **Leaderboard (staging first)**: client `src/net/leaderboard.js` → `submitScore({ mission, day, score, stars, ac, name? })`
   and `topScores({ mission, day })`; both resolve `null` when the service is unavailable (the UI then hides the table).
   The service lives on the game's own origin under `/api/` (no third-party calls from the page). Names are optional,
@@ -385,4 +401,8 @@ aircraft). Mission mode is unchanged and never builds any of this.
 - **Leaderboards**: boards `ff-<id>` (not comparable to missions), all fitting aircraft (entries carry `ac`, shown in the
   table), no daily boards; `infra/leaderboard/build_rules.mjs` derives score / time / star rules from `CHALLENGES`.
 - **Progress**: localStorage `gokyuzu.ffc` `{ v: 1, e: { [id]: { best, stars, runs, done, ac } } }` (`gokyuzu.missions`
-  untouched). **Telemetry**: `ffc` (`id` short code, `st` = start|done|fail, `score`, `stars`, `ac`, `sec`).
+  untouched). **Telemetry** (§11): `ffc` start / done / fail / cancel / drop and `ffp` for the panel. Gate runs, the
+  climb, Alcatraz (after the hover) and emergencies send `start` first; the bridge and the landing entry are instant
+  (`done` only). The climb's `start` is every take-off roll from a standstill on a runway. A flight reset ends a run
+  without an event; a rejected take-off re-arms the climb without an event. "Görev olarak oyna" opens
+  `?mission=<id>&from=ff` (keeping an explicit `telemetry` parameter), so the briefing reports `via=ff`.
