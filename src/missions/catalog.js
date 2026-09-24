@@ -385,16 +385,17 @@ const catalogs = {};
 /**
  * The mission catalog of a map: San Francisco's at once, another map's from src/missions/<id>/catalog.js (its own chunk,
  * bundled only when it exists). Resolves null when the map has no missions (yet): the menu tab and the panel hide.
+ * runways: the map's runways.json, handed to the module's useRunways (its mission geometry from the file's thresholds).
  */
-export function loadMissionCatalog(map = 'sf') {
+export function loadMissionCatalog(map = 'sf', runways = null) {
   if (map === 'sf') return Promise.resolve(SF_CATALOG);
   if (!/^[a-z]{2,8}$/.test(map)) return Promise.resolve(null);
   if (!catalogs[map]) {
     catalogs[map] = import(`./${map}/catalog.js`)
-      .then((m) => (m.MISSIONS && m.MISSIONS.length ? createCatalog({ missions: m.MISSIONS, bridges: m.BRIDGES, store: `gokyuzu.missions.${map}`, seed: `${map}-`, map, build: m.buildMission, dailyId: m.dailyMissionId }) : null))
+      .then((m) => (m.MISSIONS && m.MISSIONS.length ? { ...createCatalog({ missions: m.MISSIONS, bridges: m.BRIDGES, store: `gokyuzu.missions.${map}`, seed: `${map}-`, map, build: m.buildMission, dailyId: m.dailyMissionId }), useRunways: m.useRunways } : null))
       .catch((e) => { catalogs[map] = null; console.info(`[missions] no missions for ${map} yet`, e && e.message); return null; });
   }
-  return catalogs[map];
+  return runways ? catalogs[map].then((c) => { if (c && c.useRunways) c.useRunways(runways); return c; }) : catalogs[map];
 }
 
 export const AIRCRAFT_SHORT = { f16: 'F-16C', f22: 'F-22A', a320neo: 'A320neo', b737: '737-800', uh60: 'UH-60M' };

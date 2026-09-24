@@ -43,7 +43,7 @@ export function resolveStart(start, ends) {
 /** Mission request ({ id, daily }) → { mission, spawn (main.js spawn object), aircraft, catalog } or null for an unknown id. */
 export async function planMission(req, runways, map = 'sf') {
   if (!req || !req.id) return null;
-  const catalog = await loadMissionCatalog(map);
+  const catalog = await loadMissionCatalog(map, runways);   // (another map: its missions from these runways' thresholds)
   const mission = catalog && catalog.buildMission(req.id, req.daily || null);
   if (!mission) return null;
   const s = resolveStart(mission.start, runwayEnds(runways));

@@ -158,9 +158,9 @@ export function recordChallenge(id, { ok, score, stars, ac }, map) {
  * catalog, and the module's own createChallengeTracker when it has one (its own kinds). Boards: `board`, else ff-<id>
  * (ids starting with "<map>-") / ff-<map>-<id>. Progress: per map (recordChallenge). null: no challenges (yet).
  */
-export async function loadChallengeSet(map = 'sf') {
+export async function loadChallengeSet(map = 'sf', runways = null) {
   if (map === 'sf') return { map, challenges: CHALLENGES, catalog: SF_CATALOG };
-  const catalog = await loadMissionCatalog(map);
+  const catalog = await loadMissionCatalog(map, runways);
   const mod = catalog && await import(`./${map}/challenges.js`).catch((e) => { console.info(`[challenges] none for ${map} yet`, e && e.message); return null; });
   if (!mod || !mod.CHALLENGES || !mod.CHALLENGES.length) return null;
   for (const c of mod.CHALLENGES) if (!c.board) c.board = c.id.startsWith(`${map}-`) ? `ff-${c.id}` : `ff-${map}-${c.id}`;

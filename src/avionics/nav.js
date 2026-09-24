@@ -387,11 +387,11 @@ export function ilsFor(nav, S) {
         const score = -along + Math.abs(locAng) * 800;
         if (score < best) {
           best = score;
-          o.valid = true; o.airport = ap.icao; o.runway = th.ident || ''; o.elev = r.elev; o.thx = th.x; o.thz = th.z; o.ux = ux; o.uz = uz;
+          o.valid = true; o.airport = ap.icao; o.runway = th.ident || ''; o.elev = Number.isFinite(th.elevation) ? th.elevation : r.elev; o.thx = th.x; o.thz = th.z; o.ux = ux; o.uz = uz;   // (sloped runways: the threshold's own elevation)
           o.courseTrue = crs; o.course = wrap360(crs - nav.decl);
           o.loc = clamp(-locAng / 1.0, -2.5, 2.5);
           const dGpi = Math.max(50, 300 - along);
-          const gpa = Math.atan2(S.alt / FT - r.elev, dGpi) / DEG;
+          const gpa = Math.atan2(S.alt / FT - o.elev, dGpi) / DEG;
           o.gs = clamp((3 - gpa) / 0.35, -2.5, 2.5);
           o.gsValid = along < 0 && dGpi < 18 * NM;
           o.dme = Math.hypot(dx, dz) / NM;

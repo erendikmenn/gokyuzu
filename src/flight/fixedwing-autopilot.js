@@ -38,7 +38,7 @@ export function runwayEnds(runways) {
         const dx = Math.sin(crs), dz = -Math.cos(crs);
         list.push({
           airport: apt.icao, ident: e.ident, name: `${apt.icao} ${e.ident}`,
-          x: e.x, z: e.z, course: crs, dx, dz, elevation: r.elevation ?? apt.elevation ?? 0,
+          x: e.x, z: e.z, course: crs, dx, dz, elevation: e.elevation ?? r.elevation ?? apt.elevation ?? 0,   // (sloped runways: the threshold's own)
           length: Math.hypot(o.x - e.x, o.z - e.z), width: r.width ?? 45,
           aimX: e.x + dx * AIM_DIST, aimZ: e.z + dz * AIM_DIST,
         });

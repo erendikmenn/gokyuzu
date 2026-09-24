@@ -698,7 +698,7 @@ export function createMenu(container, { aircraft = [], spawns = [], maps = null 
       shared.missionsMenu = null;
       import(new URL('./missions-menu.js', import.meta.url).href)
         .then(async (m) => {
-          const catalog = await m.loadMenuMissions(id);   // (a map without missions yet: no entry)
+          const catalog = await m.loadMenuMissions(id, await mapRunways());   // (a map without missions yet: no entry)
           if (!closed && id === mapId && catalog) shared.missionsMenu = m.mountMissions({ root, brand, foot, container, touch, start: startMission, catalog });
         })
         .catch((e) => console.warn('[menu] missions', e));

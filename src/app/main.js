@@ -130,7 +130,7 @@ function loadChallenges() {
   ffcLoading = true;
   const go = () => import('../missions/ff-runtime.js').then(async (m) => {
     await landingP;
-    const set = await m.loadChallengeSet(mapId);   // maps hook: the map's challenges (none yet: no panel)
+    const set = await m.loadChallengeSet(mapId, state.world && state.world.runways);   // maps hook: the map's challenges (none yet: no panel)
     if (state.mission || ffc || !state.flight || !set) return;
     ffc = m.createFreeFlightChallenges({
       state, scene, camera, hud, landing, touch: touchUI.active, aircraft: state.aircraftId, set,
