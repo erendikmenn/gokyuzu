@@ -155,7 +155,8 @@ export function recordChallenge(id, { ok, score, stars, ac }, map) {
 /**
  * A map's challenge set: San Francisco's at once; another map's from src/missions/<id>/challenges.js (CHALLENGES in
  * this file's format; a bridge entry names its bridge in `bridge`, a pad entry its mission in `mission`) with its mission
- * catalog. Boards: `board`, else ff-<id> (ids starting with "<map>-") / ff-<map>-<id>. null: no challenges (yet).
+ * catalog, and the module's own createChallengeTracker when it has one (its own kinds). Boards: `board`, else ff-<id>
+ * (ids starting with "<map>-") / ff-<map>-<id>. Progress: per map (recordChallenge). null: no challenges (yet).
  */
 export async function loadChallengeSet(map = 'sf') {
   if (map === 'sf') return { map, challenges: CHALLENGES, catalog: SF_CATALOG };
@@ -163,7 +164,7 @@ export async function loadChallengeSet(map = 'sf') {
   const mod = catalog && await import(`./${map}/challenges.js`).catch((e) => { console.info(`[challenges] none for ${map} yet`, e && e.message); return null; });
   if (!mod || !mod.CHALLENGES || !mod.CHALLENGES.length) return null;
   for (const c of mod.CHALLENGES) if (!c.board) c.board = c.id.startsWith(`${map}-`) ? `ff-${c.id}` : `ff-${map}-${c.id}`;
-  return { map, challenges: mod.CHALLENGES, catalog };
+  return { map, challenges: mod.CHALLENGES, catalog, tracker: mod.createChallengeTracker || null };
 }
 
 // -------------------------------------------------------------------------------------------------------- tracker

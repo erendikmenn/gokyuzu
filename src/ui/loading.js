@@ -150,7 +150,7 @@ export function createLoadingScreen(container) {
   el('div', 'gkl-grain', root);
   const main = el('div', 'gkl-main', root);
   const art = el('div', 'gkl-art', main);
-  art.innerHTML = goldenGateLineSVG();
+  art.innerHTML = (activeMap().lineSVG || goldenGateLineSVG)();   // maps hook: another map's line art
   // measure path lengths for the draw-on animation
   for (const p of art.querySelectorAll('path')) {
     try { const L = Math.ceil(p.getTotalLength()) + 2; p.style.setProperty('--len', String(L)); } catch { /* not rendered */ }

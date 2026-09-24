@@ -5,6 +5,7 @@
 // district centres (admin_level 6). The engine's shared tables come in through register() / activate() (src/maps/index.js
 // mapHooks) instead of imports, so the San Francisco entry's modules stay in their chunks.
 import { createUtm } from './utm.js';
+import { sceneSVG, lineSVG } from './ist-art.js';
 
 /** Projection of data/ist/region.json (src/geo.js setGeoRegion). */
 export const utm = createUtm('EPSG:32635');
@@ -113,6 +114,7 @@ function drawPlaces(ctx, X, Y, label, zoom, big = false) {
 // ------------------------------------------------------------------------------------------------ map data
 export const MAP = {
   drawPlaces,
+  sceneSVG, lineSVG,            // menu background / loading-screen art (src/maps/ist-art.js)
   mapImage: 'ist-map',         // src/ui/assets/ist-map.jpg + .json (src/ui/tools/bake_ist_map.py)
   declination: 6.2,            // magnetic declination (° E), when runways.json has none
   defaultSpawns: { f16: 'LTBA-05', f22: 'LTBA-05', a320neo: 'LTFM-35L', b737: 'LTFM-34L', uh60: 'IST-HOVER-GALATA' },

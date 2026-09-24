@@ -387,7 +387,8 @@ export function createMenu(container, { aircraft = [], spawns = [], maps = null 
     const jet = el('div', 'gkm-jet', root);
     jet.innerHTML = planformSVG('a320neo', { rotate: -86 });
     const scene = el('div', 'gkm-scene', root);
-    scene.innerHTML = goldenGateSceneSVG();
+    const sceneArt = () => { scene.innerHTML = mapInfo && mapInfo.sceneSVG ? mapInfo.sceneSVG(SCENE_VB) : goldenGateSceneSVG(); };   // maps hook
+    sceneArt();
     el('div', 'gkm-scrim', root);
     el('div', 'gkm-grain', root);
     const ui = el('div', 'gkm-ui', root);
@@ -650,7 +651,7 @@ export function createMenu(container, { aircraft = [], spawns = [], maps = null 
         rememberMap(id);
         initSpawn(storageGet(storeKey()) || {});
         sub.textContent = mapInfo.title;
-        creditText();
+        creditText(); sceneArt();
         const next = createSpawnMap({ spawns, onSelect: (sid) => selectSpawn(sid, true), map: mapInfo, runways: mapRunways() });
         spawnMap.el.replaceWith(next.el);
         spawnMap = next;

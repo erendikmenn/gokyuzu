@@ -47,7 +47,7 @@ export function createFreeFlightChallenges(ctx) {
   let progress = loadChallengeProgress(set.map);
   const submitted = new Set();
 
-  const tracker = createChallengeTracker({
+  const tracker = (set.tracker || createChallengeTracker)({
     aircraft: ac, category: cat, ends, challenges: set.challenges, catalog: set.catalog,
     spanAt: world.getObstacleSpan ? (x, z, out) => world.getObstacleSpan(x, z, out || spanScratch) : null,
     isOnRunway: (x, z) => (world.isOnRunway ? world.isOnRunway(x, z) : false),
@@ -74,7 +74,7 @@ export function createFreeFlightChallenges(ctx) {
   });
   const views = entries.map((e) => ({
     id: e.id, title: e.def.title, hint: e.def.hint, group: e.def.group || '', emergency: e.def.kind === 'emergency',
-    trackable: e.def.kind === 'bridge' || e.def.kind === 'gates' || e.def.kind === 'alcatraz',
+    trackable: e.def.trackable ?? (e.def.kind === 'bridge' || e.def.kind === 'gates' || e.def.kind === 'alcatraz'),
     status: 'idle', done: false, stars: 0, sub: '', subWarn: false, tracked: false, canStart: null, autoSelect: false,
   }));
   panel.setEntries(views);
