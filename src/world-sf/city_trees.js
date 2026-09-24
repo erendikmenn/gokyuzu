@@ -61,14 +61,14 @@ export async function createCityTrees(ctx) {
     return true;
   }
   const texByName = new Map();   // far-pack textures by name (the near pack binds them: material extras packShared)
-  function addLod(s, l, node, parent = group) {
+  /** InstancedMeshes for the parts of one species' LOD node; registered for drawing now or (staging) by the caller. */
+  function addLod(s, l, node, staging = null) {
     const sp = species[s];
     const parts = [];
     node?.traverse((o) => { if (o.isMesh) parts.push(o); });
-    if (!parts.length) return;
+    if (!parts.length) return null;
     const sh = newInst(INITIAL_CAP);
-    inst[s][l] = sh;
-    models[s][l] = parts.map((p) => {
+    const meshes = parts.map((p) => {
       p.updateWorldMatrix(true, false);
       const geo = p.geometry.clone().applyMatrix4(p.matrixWorld);
       const mat = p.material;
@@ -87,9 +87,12 @@ export async function createCityTrees(ctx) {
       im.castShadow = l === 0 && qual.shadows;
       im.receiveShadow = true;
       im.name = `tree_${sp}_lod${l}`;
-      parent.add(im);
+      (staging || group).add(im);
       return im;
     });
+    const reg = () => { inst[s][l] = sh; models[s][l] = meshes; };
+    if (!staging) reg();
+    return reg;
   }
   const lodNodes = (scene, l) => {
     const out = new Map();
@@ -115,12 +118,14 @@ export async function createCityTrees(ctx) {
     if (nearState !== 'none') return;
     nearState = 'loading';
     const staging = new THREE.Group();
+    const regs = [];
     loadGLB(ctx.assets + pack.lod0).then((g) => {
       const nodes = lodNodes(g.scene, 0);
-      species.forEach((sp, s) => addLod(s, 0, nodes.get(sp), staging));
+      species.forEach((sp, s) => { const r = addLod(s, 0, nodes.get(sp), staging); if (r) regs.push(r); });
       return ctx.precompile ? ctx.precompile(staging) : null;   // shaders compiled before the meshes join the scene
     }).then(() => {
       for (const im of [...staging.children]) group.add(im);
+      for (const r of regs) r();   // (near trees keep drawing with the far LOD until here)
       nearState = 'loaded';
       dirty = true;
     }).catch((e) => {

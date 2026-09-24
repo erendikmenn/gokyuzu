@@ -399,7 +399,7 @@ export async function createCity(ctx, options = {}) {
     // the facade atlas uploads here, behind the loading screen, one array texture per task (at the first draw the
     // three uploads came in one frame: 111 MB of texImage3D, 160 ms on a phone)
     if (ctx.renderer) for (const t of textures) { try { ctx.renderer.initTexture(t); } catch { /* at first use */ } await new Promise((r) => setTimeout(r, 0)); }
-    await Promise.race([treesP, new Promise((r) => setTimeout(r, 20000))]);
+    await Promise.race([treesP, new Promise((r) => setTimeout(r, 10000))]);   // (slow link: start without, compile on arrival)
     // the rest (farther tiles, tree tiles) starts after the first playable frame, so it doesn't compete with the other
     // layers / the aircraft for bandwidth before it
   })();
