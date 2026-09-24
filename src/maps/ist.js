@@ -148,8 +148,9 @@ export const MAP = {
     { name: 'Haliç Köprüsü', a: [-3000, -1521], b: [-2493, -2374] },
   ],
   regionName,
-  // terrain water shader (src/world-sf/terrain-material.js): open-sea colour and surf on the Black Sea side
-  oceanGLSL: 'float ocean = smoothstep(-20800.0, -22800.0, vSfWorld.z);',
+  // terrain water shader (src/world-sf/terrain-material.js): open-sea colour and surf from water_depth.png's blue channel
+  // (the terrain pipeline's open-sea weight: 1 open Marmara / Black Sea, 0 Boğaz, Haliç, bays, lakes)
+  oceanGLSL: 'float ocean = textureGrad(uDepthTex, dUv, sfGx * uDepthXform.xy, sfGy * uDepthXform.xy).b;',
   // horizon ring beyond the terrain (src/world-sf/terrain-horizon.js): Black Sea north, Sea of Marmara south, land elsewhere
   horizonGLSL: 'hzOcean = max(smoothstep(-40000.0, -46000.0, p.y), smoothstep(8000.0, 14000.0, p.y) * smoothstep(70000.0, 62000.0, p.y) * smoothstep(-126000.0, -116000.0, p.x) * smoothstep(60000.0, 50000.0, p.x));',
 };

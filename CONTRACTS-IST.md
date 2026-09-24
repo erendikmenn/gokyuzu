@@ -69,3 +69,103 @@ Shared and fixed: `tools/geo/geo.py`, `data/ist/region.json`, this file's §1–
 - `data/ist/bridges.json` (§3): per bridge `{ id, name, x, z, axis, half, deck: [{ s, bottom, top }], towerTop, clear }`.
   x/z = main-span centre, axis = deck heading in the local map frame (deg, the model +Y, toward the Asian / eastern end),
   s along the axis from x/z. Details, heights and sources: final section below (written when the models are done).
+
+### 6.T Terrain, water, imagery (terrain agent)
+`assets/ist/terrain/` has the same files and formats as `assets/sf/terrain/` (README there; the engine only swaps the base
+path), ~345 MB of which ~140 MB are published (`h/` is the build input, not published: `tools/deploy/build_dist.mjs`
+needs `['assets/ist/terrain', 'h']` in `SKIP_UNDER` like San Francisco's):
+- **Quadtree** 131072 m root, min corner (−63488, −73728) (40.51–41.69 N, 28.22–29.78 E: Thrace coast to the Gulf of
+  İzmit, Black Sea to the Armutlu peninsula). Core = region rectangle aligned to 2048 m: x −30720 … 34816,
+  z −38912 … 22528; mid = core + 8 km: x −38912 … 43008, z −49152 … 32768. Deepest height level core L8 (512 m tiles,
+  8 m vertex spacing), mid L7 (16 m), far L6; deepest imagery core **L6 = 4 m/px**, mid L5 (8 m), far L4 (16 m).
+  Same 64-quad tiles, 512 px WebP imagery, tile record, `hz/` height files (3917 files, 90 MB), `index.bin` (0.1 MB),
+  `pins.bin` (2.4 MB: airports at full depth + landmarks / bridges from data/ist), `water_depth.png` (4096², 32 m),
+  `waves.png` / `waves_lo.png` / `detail.png` (identical to sf), `bank_height.bin/.json` (64 m over the region + 2 km;
+  San Francisco's fog-bank footprint does not apply here), baked sun shadows for the same fixed sun (el 20°, az 255°).
+  `index.json` `imgLevels` = {core 6, mid 5, far 4}: pipelines that sample the imagery (the sf city pipeline reads
+  `img/8/`) must use `imgLevels.core` / the `img` flags instead of a fixed level.
+- **Heights**: Copernicus DEM GLO-30 (tiles N40–41 × E028–029, anonymous HTTPS from `copernicus-dem-30m`), cubic
+  resample to 8 m (core) / 16 m (far), EGM2008 ≈ MSL. It is a DSM: a roughness-limited land-only opening (160 m) removes
+  roof / canopy grain by OSM land-cover class (median 0.5 m, p99 6 m), built-up / forest land gets a light 16 m
+  smoothing, the first 40 m of land at the sea are capped at 1.5 m + 0.5·distance (no roof-height walls at the quays),
+  land within 300 m of the sea ≥ 0.8 m. Sea = 0 m exactly; lakes / reservoirs flat at their DEM median
+  (Küçükçekmece 0.5 m, Büyükçekmece 4.0 m, Terkos, Ömerli, Elmalı, Alibeyköy, Sazlıdere, Darlık…); river polygons stay
+  land. Known limit: the DEM (TanDEM-X 2011–2015) predates LTFM and LTFJ's second runway; outside their flattened zones
+  the old ground remains (mining pits NE of LTFM, down to −27 m).
+- **Airports** (`tools/geo/terrain_airports.py`): every runway rectangle + 60 m shoulders / overruns exactly at its
+  `data/ist/runways.json` `elevation` (LTFM 99.1, LTFJ 92.6 / 95.1, LTBA 26.1; checked: 0.00 m deviation, pavement slope
+  0.00 %); per-end `ends[k].elevation` values, if added there, make sloped runways (supported). Taxiways / aprons /
+  aerodrome (OSM) on a smooth surface: LTFM, LTFJ a spline platform through the runways; LTBA a plane fitted to its
+  paved DSM (robust against roofs) — taxiway / apron slope p99 0.5 % (LTFJ) to 1.6 % (LTBA). Blends into the DEM over 150–600 m.
+  **For the airports pipeline:** OurAirports / AIP runway end elevations at LTFM fall from ~99 m (south) to 62–67 m
+  (north); with one 99.1 m for all runways the north ends stand ~35 m above the real ground (an embankment north of the
+  field). `data/ist/terrain_airports.json` lists, per runway end, the terrain elevation and the published value.
+- **Water / coast**: sea = root − OSM land polygons (osmdata.openstreetmap.de land-polygons-split-4326): Karadeniz,
+  Boğaz, Haliç, Marmara, Adalar, İzmit Körfezi; lakes / piers / aerodromes from the Geofabrik Turkey extract
+  (pyosmium; Overpass was overloaded). `water_depth.png`: R = depth from EMODnet Bathymetry (free WCS; Marmara > 1 km
+  deep, clipped at 60 m like sf), G = distance to shore; **B = open-sea weight** (0 Boğaz / Haliç / bays / lakes,
+  1 open Marmara / Karadeniz), which sf leaves 0: an ocean factor for the water shader could read it instead of an
+  x/z rule.
+- **Imagery**: Sentinel-2 L2A Collection 1 (Element84 Earth Search, `sentinel-2-c1-l2a`), MGRS 35TPE/PF/PG/QE/QF/QG
+  (+ TNE/NF/NG edges), datatakes 2026-07-07 (R007), 2026-07-12 (R107), 2026-07-27 (R107), 2026-08-04 (R007); per pixel
+  the median-brightness clear observation (SCL mask), no gaps. Graded to the sf look (land luminance p5/50/95
+  66/112/177 vs sf 62/116/181), Lanczos to 4 m + unsharp mask in the core, 8 m mid, 16 m area average far.
+- **Class map** `landclass.png/.json` (paletted, 16 m over the core, 0.7 MB, OSM landuse → 14 classes + 255 water):
+  not read by the current engine. A close-range ground detail branch would need, in `terrain-material.js`: a
+  `uClassTex` sampler (nearest, world xz → uv from landclass.json x0/z0/res) and per-class detail textures / tint /
+  grain scale (urban roofs vs forest canopy vs fields) blended with `dfade` where the 4 m photo is magnified.
+- **Rebuild** (downloads cached in `data/ist/_cache/`, gitignored, ~7.5 GB):
+  `export GEO_REGION=ist; P=.venv/bin/python; $P tools/geo/terrain_download.py all; $P tools/geo/terrain_osm.py;
+  $P tools/geo/terrain_water.py; $P tools/geo/imagery_download.py; $P tools/geo/terrain_build.py;
+  $P tools/geo/imagery_build.py; $P tools/geo/terrain_waves.py; $P tools/geo/terrain_fogmap.py;
+  $P tools/geo/terrain_pinpack.py` (the last again whenever runways.json / landmarks.json / bridges.json change).
+  `GEO_REGION` unset = San Francisco with exactly its old paths, constants and requests (`terrain_common.py` prints
+  the resolved configuration).
+
+### 6.E Engine (engine agent)
+- **Map registry** `src/maps/index.js`: `MAPS = { sf, ist }` (`id`, `name`, `title`, `assets: 'assets/<id>/'`,
+  `data: 'data/<id>/'`, `fogBank`, `load()` = the map module). San Francisco keeps its original code paths (spawns
+  `src/app/spawns.js`, UI tables `src/ui/data.js`, art `src/ui/art.js`); every other map is one lazily loaded module
+  (`src/maps/<id>.js`, its own chunk) exporting `buildSpawns(runways)`, `MAP` (merged into the registry entry:
+  `defaultSpawns`, `labels`, `bridges`, `drawPlaces`, `regionName`, `credits` / `creditsLine`, `shareTitle`,
+  `sceneSVG` / `lineSVG`, `mapImage`, `declination`, `oceanGLSL` / `horizonGLSL`), `utm` (src/maps/utm.js), `register(hooks)`
+  (on load: AIRPORTS entries) and `activate(hooks)` (the flight's map: BRIDGES, TIPS, TOWERS, avionics nav tables).
+  **Adding a map**: `data/<id>/region.json` (+ runways / landmarks), an entry in `MAPS`, a `src/maps/<id>.js`, a baked
+  map image `src/ui/assets/<mapImage>.jpg/.json`, and `mapOfId` for its spawn / mission id prefix.
+- **Choice**: `?map=ist` > a deep link's id (`?mission=ist-…`, `?spawn=LT…-…` / `IST-…` → İstanbul, other ids San
+  Francisco) > a resumed flight's map > the menu's last choice (`localStorage gokyuzu.map`, written by the menu toggle).
+  The menu (San Francisco / İstanbul toggle in the start-point panel) shows the chosen map's start points (menu state
+  `gokyuzu-sf.menu` for sf, `gokyuzu-sf.menu.ist`), spawn map, missions, credits and art; the flight's map is fixed per
+  page (`useMap`: geo frame, the module's tables); "Ana menü" reloads.
+- **İstanbul start points** (ids): `LTFM-35L`, `LTFM-34L`, `LTFJ-06L`, `LTBA-05` (first ident found in
+  `data/ist/runways.json`; 45 m past the threshold), `IST-AIR-BOGAZ` (300 m, up the Boğaz toward 15 Temmuz Şehitler
+  Köprüsü), `IST-AIR-KIZKULESI` (200 m), `IST-AIR-HALIC` (350 m), `IST-AIR-LTFM-FINAL` / `IST-AIR-LTFJ-FINAL` (9 km, 3°,
+  from runways.json, OSM fallback; landing tutorial), `IST-HOVER-GALATA` (180 m; UH-60 starts in a hover, speed 0).
+- **What the engine reads** (all from the active map's paths, same formats as San Francisco; a missing file = the layer
+  is skipped with an info log, no error): `data/<id>/region.json` (required), `runways.json` (optional;
+  `magneticDeclination` else `MAP.declination`), `landmarks.json` (optional; a landmark with `"major": true` is labelled
+  on the minimap / navigation map), `assets/<id>/terrain/` (missing → sea at 0 m + a flat neutral pad per airport,
+  `src/world-sf/terrain-placeholder.js`; the water shader's open-sea weight = `water_depth.png` blue channel),
+  `assets/<id>/city/index.json`, `assets/<id>/landmarks/index.json`, `assets/<id>/airports/manifest.json` (another map:
+  `airports?: ['ltfm', …]` (default: every runways.json airport), `tex?` / `props?` = root-relative ground texture
+  directory / props GLB (default the map's own `tex/`, `props.glb`), `buildings`, `lods` as sf) + `<icao>.json/.bin`
+  (`gridRot` honoured). San Francisco-only features: Golden Gate fog bank, the Pacific water / horizon rule.
+- **Missions**: `src/missions/catalog.js` `createCatalog({ missions, bridges, store, seed, map, build?, dailyId? })`,
+  `loadMissionCatalog(map)` → `src/missions/<map>/catalog.js` (`MISSIONS`, `BRIDGES`; its own `buildMission` /
+  `dailyMissionId` are used when exported). Progress per map: `gokyuzu.missions` (sf) / `gokyuzu.missions.<map>`;
+  free-flight `gokyuzu.ffc` / `gokyuzu.ffc.<map>`. `loadChallengeSet(map)` → `src/missions/<map>/challenges.js`
+  (`CHALLENGES`, its own `createChallengeTracker` when exported; `def.trackable` honoured; boards `board` else
+  `ff-<id>` / `ff-<map>-<id>`). No file yet → no menu tab / panel. `maxChallengeScore(c, buildMission)` takes the map's
+  buildMission for gate entries (infra/leaderboard/build_rules.mjs).
+- **Telemetry**: `mp=ist` on `open`, `fly`, `mission`, `ffc` (key `mp`, §5's "map"; San Francisco beacons unchanged).
+  `tools/analytics/report.py`: "Haritalar" line (people, flights, minutes, active minutes per map; a session's map =
+  its flight's `mp`), `--hourly` column `ist`, `--hourly --map ist|sf` filter.
+- **Minimap / map**: `src/ui/assets/ist-map.jpg` (2003 × 1861, 32 m/px, 386 KB) from `src/ui/tools/bake_ist_map.py`
+  (OSM coastline flood fill + water + land cover, Copernicus DEM hillshade; reads `data/ist/_cache/raw/osm_w1` and
+  `copdem` when present, else Overpass / AWS with a generic User-Agent). Rebuild: `.venv/bin/python src/ui/tools/bake_ist_map.py`.
+- **Build / deploy**: `tools/build/bundle.mjs` allows a glob import that matches no file yet (a map module not written);
+  `tools/deploy/build_dist.mjs` ships `data/<id>/*.json` of every map with a region.json and skips `assets/<id>/terrain/h`;
+  the KTX2 check (`tools/assets/lib/policy.mjs` MAP_FAMILIES) covers `assets/ist/{airports,landmarks}` (policy key of the
+  San Francisco GLBs unchanged); `node tools/deploy/check_dist.mjs <url> --ist` adds five İstanbul flights.
+- **Tests**: `tests/maps.test.mjs` (map choice, İstanbul spawns, geo frame vs pyproj, catalogs / challenge sets / progress
+  per map, telemetry tag).
