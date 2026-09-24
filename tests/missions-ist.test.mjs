@@ -780,14 +780,14 @@ const cbrief = (res) => `${res.m.params.rw || ''} ${res.card ? `${res.card.point
 {
   const out = []; let ok = true;
   const def = MISSIONS.find((x) => x.id === 'ist-ltfm-inis');
-  for (const [rw, dist] of [['35L', 8000], ['35R', 11000], ['34R', 10000], ['34L', 7000], ['36', 9000]]) {
+  for (const [rw, dist] of [['35L', 8000], ['35R', 11000], ['34R', 10000], ['34L', 7000], ['36', 9000], ['17L', 6500], ['17R', 7000], ['16L', 5500], ['16R', 6000], ['18', 6500]]) {
     const save = { ...def.params }; Object.assign(def.params, { rw, dist });
     const res = autoland('ist-ltfm-inis', null, 'a320neo');
     Object.assign(def.params, save);
     if (!(res.r.done && res.stars >= 2 && res.card.runway === `LTFM ${rw}`)) ok = false;
     out.push(cbrief(res));
   }
-  check('Mission ist-ltfm-inis (A320): finals to LTFM 35L / 35R / 34R / 34L / 36 (sloped runways), autoland → on the asked runway, ≥ 2★', ok, out.join(' || '));
+  check('Mission ist-ltfm-inis (A320): finals to all ten LTFM ends (sloped runways: northbound downhill, southbound uphill), autoland → on the asked runway, ≥ 2★', ok, out.join(' || '));
   const out2 = []; let ok2 = true;
   const d2 = MISSIONS.find((x) => x.id === 'ist-saw-inis');
   for (const rw of ['06L', '06R']) {

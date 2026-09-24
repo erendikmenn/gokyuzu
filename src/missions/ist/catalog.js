@@ -202,10 +202,13 @@ export const MISSIONS = [
       score: { base: 0, landing: 20 },                     // landing points × 20 (0–2000)
       stars: 'landing',
     }),
-    // northbound finals: the runways fall ≈ 33 m to their north ends (runways.json per-end elevations) and the runtime's
-    // final start / the ILS glide path still use one elevation per runway (the south end's), which is right only for
-    // the 34 / 35 / 36 thresholds; southbound finals would also start over the Black Sea coast, ≤ 7.7 km out
-    daily: (r) => ({ rw: ['35L', '35R', '34L', '34R', '36'][Math.floor(r() * 5)], dist: 7000 + Math.round(r() * 4000) }),
+    // all ten ends (sloped runways: each threshold's own elevation, ≈ 33 m lower at the north ends — the southbound
+    // landings run uphill); southbound finals start over the Black Sea coast: the map ends ≈ 7.7 km north of those
+    // thresholds
+    daily: (r) => {
+      const rw = ['35L', '35R', '34L', '34R', '36', '17L', '17R', '16L', '16R', '18'][Math.floor(r() * 10)];
+      return { rw, dist: rw < '30' ? 5500 + Math.round(r() * 1500) : 7000 + Math.round(r() * 4000) };
+    },
     dailyNote: (p) => `Pist ${p.rw} · ${(p.dist / 1852).toFixed(1).replace('.', ',')} NM`,
   },
   {

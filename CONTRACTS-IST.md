@@ -237,7 +237,7 @@ needs `['assets/ist/terrain', 'h']` in `SKIP_UNDER` like San Francisco's):
   |---|---|---|---|---|
   | ist-15temmuz | F-16 | 1 | under 15 Temmuz (4 Boğaz starts) + 1.500 ft | 1000/1750/2250 |
   | ist-fsm | F-22 | 1 | under FSM through the Rumeli Hisarı bends + 1.500 ft | 1000/1750/2250 |
-  | ist-ltfm-inis | A320 | 1 | landing, LTFM 35L/35R/34L/34R/36 (daily; northbound: see the hooks below) | landing |
+  | ist-ltfm-inis | A320 | 1 | landing on any of the ten LTFM ends (daily; sloped: southbound uphill) | landing |
   | ist-kiz-kulesi | UH-60 | 1 | orbit 120–320 m / 100–500 ft, then 5 s hover beside the tower | 1000/1750/2200 |
   | ist-tirmanis | F-22 | 1 | LTFM take-off → 8–12.000 ft | as SF climb |
   | ist-bogaz-turu | 737 | 1 | 4 rings Kız Kulesi → YSS on a NAV route (both ways) | 1150/1700/2050 |
@@ -272,11 +272,6 @@ needs `['assets/ist/terrain', 'h']` in `SKIP_UNDER` like San Francisco's):
   texts), geometry against `data/ist/runways.json` / `bridges.json`, objectives with scripted samples, 19 missions flown
   by the real flight models in a fake İstanbul world (water = the DEM coastline polyline-encoded in the test, runways,
   pads, bridge decks / towers), all ≥ 2★ for a clean scripted flight, and the challenges through the engine's tracker.
-  `IST_WORLD=<module>` flies the same flights against another world (used with the Copernicus DSM: all pass).
-- **Engine hooks wanted**: (1) call `useRunways(runways)` of this module when the map's runways.json is loaded (until
-  then the built-in table, equal to today's file, is used); (2) sloped runways: `runwayEnds()` (src/flight/
-  fixedwing-autopilot.js) takes one elevation per runway (the higher end), so the ILS glide path and the runtime's final
-  start of a low end are high — LTFM 17L/17R/16R/16L/18 by 28–33 m (autoland on 17L: 808 m long, 438 ft/min, 1★);
-  with `elevation: e.elevation ?? r.elevation ?? apt.elevation` per end (San Francisco has no per-end values) the
-  southbound LTFM finals can return to ist-ltfm-inis' daily rotation. No wind in the flight models, so no crosswind
-  variants.
+  `IST_WORLD=<module>` flies the same flights against another world (used while designing, with the raw Copernicus DSM).
+- **Engine hooks**: none outstanding (orbit markers, `useRunways` hand-over and per-end threshold elevations are in).
+  No wind in the flight models, so no crosswind variants.
