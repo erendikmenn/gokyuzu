@@ -226,6 +226,7 @@ async function start() {
   await prewarm();
   loading.setProgress(1, 'Hazır');
   loading.hide();
+  if (state.world && state.world.setPlayable) state.world.setPlayable();   // deferred world loading starts now (streaming)
   state.readyAt = performance.now();   // dynamic resolution ignores the first seconds (shader compiles, tile bursts)
   console.log(`[app] ready in ${((performance.now() - t0) / 1000).toFixed(1)} s`);
   state.aircraftId = choice.aircraftId;
