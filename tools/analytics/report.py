@@ -24,6 +24,7 @@ import re
 import secrets
 import statistics
 import sys
+from zoneinfo import ZoneInfo
 from collections import Counter, defaultdict
 from pathlib import Path
 from urllib.parse import parse_qs, unquote
@@ -47,6 +48,7 @@ EDGES = {   # CloudFront edge codes start with the nearest airport's IATA code
     'ORD': 'Chicago', 'DFW': 'Dallas', 'ATL': 'Atlanta', 'MIA': 'Miami', 'BOS': 'Boston', 'DEN': 'Denver',
     'PHX': 'Phoenix', 'YTO': 'Toronto', 'YYZ': 'Toronto', 'YUL': 'Montreal', 'YVR': 'Vancouver',
 }
+IST = ZoneInfo('Europe/Istanbul')   # the game's day (daily mission) and the retention days
 BOT_WORDS = ('bot', 'crawl', 'spider', 'slurp', 'curl', 'wget', 'python', 'go-http', 'scan', 'monitor', 'preview')
 
 
@@ -168,6 +170,214 @@ def query(row):
     return {k: v[-1] for k, v in parse_qs(q).items()}
 
 
+def num(v):
+    try:
+        x = float(v)
+        return x if x == x else None
+    except (TypeError, ValueError):
+        return None
+
+
+def pct(a, b):
+    return f'%{100 * a / b:.0f}' if b else '-'
+
+
+def real_events(beacons, visitors, types):
+    """[(at, visitor, session id, event)] of the given beacon types, players only (not "sen"/"test"), oldest first."""
+    out = [(at, vid, sid, q) for sid, evs in beacons.items() for at, q, vid in evs
+           if q.get('t') in types and not visitors[vid]['who']]
+    return sorted(out, key=lambda e: e[0])
+
+
+def is_daily(q):
+    """src/missions/runtime.js sends d=1 on daily runs (the day is the Istanbul day of the beacon)."""
+    return q.get('d') == '1' or bool(q.get('daily') or q.get('day'))
+
+
+def report_missions(beacons, visitors, top):
+    """§12 `mission` beacons: id, st = start|done|fail|quit, stars, score, sec (+ the daily marker)."""
+    evs = real_events(beacons, visitors, {'mission'})
+    if not evs:
+        print('\nGörevler: henüz görev sinyali yok.')
+        return
+    per = defaultdict(lambda: {'start': 0, 'done': 0, 'fail': 0, 'quit': 0, 'stars': Counter(), 'sec': [], 'score': [], 'players': set()})
+    for _, vid, _, q in evs:
+        m = per[q.get('id') or '?']
+        st = q.get('st', '')
+        if st in ('start', 'done', 'fail', 'quit'):
+            m[st] += 1
+        if st == 'start':
+            m['players'].add(vid)
+        if st == 'done':
+            if q.get('stars', '').isdigit():
+                m['stars'][int(q['stars'])] += 1
+            if num(q.get('sec')) is not None:
+                m['sec'].append(num(q.get('sec')))
+            if num(q.get('score')) is not None:
+                m['score'].append(num(q.get('score')))
+    starts = sum(m['start'] for m in per.values())
+    done = sum(m['done'] for m in per.values())
+    players = set().union(*(m['players'] for m in per.values()))
+    print(f'\nGörevler: {len(players)} oyuncu · {starts} başlangıç · {done} tamamlanan ({pct(done, starts)}) · '
+          f"başarısız {sum(m['fail'] for m in per.values())} · bırakılan {sum(m['quit'] for m in per.values())}")
+    print(f"  {'görev':<22} {'oyuncu':>6} {'başla':>6} {'bitir':>6} {'başarısız':>9} {'bırak':>6} {'yarım':>6}  {'yıldız 0/1/2/3':<15} {'ort. süre':>9}  puan (medyan / en iyi)")
+    for mid, m in sorted(per.items(), key=lambda kv: -kv[1]['start']):
+        open_ = max(0, m['start'] - m['done'] - m['fail'] - m['quit'])   # page closed / menu without an end beacon
+        stars = '/'.join(str(m['stars'][k]) for k in range(4))
+        sec = fmt_sec(statistics.mean(m['sec'])) if m['sec'] else '-'
+        score = f"{statistics.median(m['score']):.0f} / {max(m['score']):.0f}" if m['score'] else '-'
+        print(f"  {mid[:22]:<22} {len(m['players']):>6} {m['start']:>6} {m['done']:>6} {m['fail']:>9} {m['quit']:>6} {open_:>6}  {stars:<15} {sec:>9}  {score}")
+
+    daily = [(at, vid, q) for at, vid, _, q in evs if is_daily(q)]
+    if daily:
+        by_day = defaultdict(lambda: {'players': set(), 'done': set()})
+        for at, vid, q in daily:
+            d = next((x for x in (q.get('day'), q.get('daily')) if x and re.fullmatch(r'\d{8}', x)), at.astimezone(IST).strftime('%Y%m%d'))
+            if q.get('st') == 'start':
+                by_day[d]['players'].add(vid)
+            if q.get('st') == 'done':
+                by_day[d]['done'].add(vid)
+        return by_day
+    print('  Günlük görev: henüz sinyal yok.')
+    return None
+
+
+def report_daily(by_day, days_seen, visitors):
+    """Daily-mission participation: players of each day's mission / all players seen that day."""
+    if not by_day:
+        return
+    active = defaultdict(set)
+    for vid, days in days_seen.items():
+        if not visitors[vid]['who']:
+            for d in days:
+                active[d.strftime('%Y%m%d')].add(vid)
+    print('Günlük görev katılımı (gün: oynayan / o gün gelen tekil ziyaretçi · bitiren):')
+    print('  ' + ' · '.join(f"{d[6:]}.{d[4:6]}: {len(v['players'])}/{len(active.get(d, ()))} ({pct(len(v['players']), len(active.get(d, ())))})"
+                            f" · {len(v['done'])} bitti" for d, v in sorted(by_day.items())[-14:]))
+
+
+def fmt_sec(s):
+    return f'{int(s // 60)}:{int(s % 60):02d}'
+
+
+def report_landings(beacons, visitors, top):
+    """`land` beacons: stars (st) and sink rate (fpm; older builds only send vs in m/s)."""
+    lands = [q for *_, q in real_events(beacons, visitors, {'land'})]
+    if not lands:
+        return
+    fpm = []
+    for q in lands:
+        f = num(q.get('fpm'))
+        if f is None and num(q.get('vs')) is not None:
+            f = abs(num(q.get('vs'))) * 196.85
+        if f is not None:
+            fpm.append(abs(f))
+    stars = Counter(int(q['st']) for q in lands if q.get('st', '').isdigit())
+    edges = [(0, 120, '<120'), (120, 240, '120-240'), (240, 360, '240-360'), (360, 600, '360-600'), (600, 1e9, '600+')]
+    dist = ' · '.join(f'{label} {sum(1 for f in fpm if lo <= f < hi)}' for lo, hi, label in edges)
+    runway = sum(1 for q in lands if q.get('rw') == '1')
+    print(f'\nİnişler: {len(lands)} (pistte {runway}, {pct(runway, len(lands))})')
+    if stars:
+        print(f"  Yıldız (puanlanan {sum(stars.values())}): " + ' · '.join(f'{k}★ {stars[k]}' for k in (3, 2, 1, 0)))
+    if fpm:
+        print(f'  Dikey hız ft/dk (medyan {statistics.median(fpm):.0f}): {dist}')
+    cl = [abs(num(q['cl'])) for q in lands if num(q.get('cl')) is not None]
+    tdz = [num(q['tdz']) for q in lands if num(q.get('tdz')) is not None]
+    parts = ([f'merkez hattından sapma medyan {statistics.median(cl):.1f} m'] if cl else []) + \
+        ([f'eşikten temas noktası medyan {statistics.median(tdz):.0f} m'] if tdz else [])
+    if parts:
+        print('  ' + ' · '.join(parts).capitalize())
+
+
+def report_shares(beacons, visitors, top):
+    shares = real_events(beacons, visitors, {'share'})
+    if shares:
+        sessions = {sid for _, _, sid, _ in shares}
+        print(f"\nPaylaşım: {len(shares)} ({len(sessions)} oturum) · kanal: {top(Counter(q.get('via') or '?' for *_, q in shares), 6)}"
+              f" · görev: {top(Counter(q.get('id') or '?' for *_, q in shares), 6)}")
+
+
+def report_failures(beacons, visitors, top):
+    """Failure beacons from the flight models' failure system (kind, on, random), and crashes that followed one."""
+    evs = real_events(beacons, visitors, {'failure', 'fl', 'flr'})
+    starts = [(at, sid, q) for at, _, sid, q in evs if q.get('on', '1') in ('1', 'true')]
+    if not starts:
+        return
+    kind = Counter(q.get('kind') or q.get('k') or '?' for *_, q in starts)
+    rnd = sum(1 for *_, q in starts if q.get('random') in ('1', 'true') or q.get('rnd') == '1')
+    crashes = defaultdict(list)
+    for at, _, sid, _ in real_events(beacons, visitors, {'crash'}):
+        crashes[sid].append(at)
+    after = sum(1 for at, sid, _ in starts if any(c >= at for c in crashes.get(sid, [])))
+    print(f'\nArızalar: {len(starts)} ({rnd} rastgele) · türler: {top(kind, 8)} · ardından kaza: {after} ({pct(after, len(starts))})')
+
+
+def report_leaderboard(api, api_time, api_own, top):
+    if not api and not api_own:
+        return
+    post = Counter({s: c for (m, p, s), c in api.items() if m == 'POST' and p == '/api/score'})
+    gets = sum(c for (m, p, s), c in api.items() if m == 'GET' and p == '/api/top')
+    hits = len(api_time.get('GET hit', []))
+    print(f"\nLider tablosu: gönderilen skor {post.get('200', 0)} kabul · geçersiz {post.get('400', 0)} · "
+          f"sınır (429) {post.get('429', 0)} · diğer {sum(c for s, c in post.items() if s not in ('200', '400', '429'))} · "
+          f'tablo görüntüleme {gets} (önbellekten {pct(hits, gets)})'
+          + (f" · sen/test: {api_own['/api/score']} gönderim, {api_own['/api/top']} görüntüleme (sayılmadı)" if api_own else ''))
+    t = ' · '.join(f'{k} {statistics.median(v) * 1000:.0f} ms' for k, v in sorted(api_time.items()) if v)
+    if t:
+        print(f'  CloudFront yanıt süresi (medyan): {t}')
+
+
+def report_retention(days_seen, visitors, beacons, since, target):
+    """D1 / D7 return rates of first-time visitors (salted IP + browser hash), overall and for mission players."""
+    real = {v: d for v, d in days_seen.items() if not visitors[v]['who']}
+    if not real:
+        return
+    today = dt.datetime.now(IST).date()
+    last = today - dt.timedelta(days=1)                       # last complete day
+    first_log = since.astimezone(IST).date() + dt.timedelta(days=1)   # the window's first day is partial: no cohort
+    first = {v: min(d) for v, d in real.items()}
+    played = defaultdict(set)                                 # visitor -> days with a mission start
+    daily_played = defaultdict(set)
+    for at, vid, _, q in real_events(beacons, visitors, {'mission'}):
+        if q.get('st') == 'start':
+            played[vid].add(at.astimezone(IST).date())
+            if is_daily(q):
+                daily_played[vid].add(at.astimezone(IST).date())
+
+    def rate(k, group=None):
+        cohort = [v for v, d0 in first.items() if first_log <= d0 and d0 + dt.timedelta(days=k) <= last and (group is None or group(v, d0))]
+        back = [v for v in cohort if first[v] + dt.timedelta(days=k) in real[v]]
+        return len(back), len(cohort)
+
+    def rolling(k):
+        cohort = [v for v, d0 in first.items() if first_log <= d0 and d0 + dt.timedelta(days=k) <= last]
+        back = [v for v in cohort if any(first[v] + dt.timedelta(days=i) in real[v] for i in range(1, k + 1))]
+        return len(back), len(cohort)
+
+    fmt = lambda r: f'{pct(*r)} ({r[0]}/{r[1]})' if r[1] else 'yeterli kayıt yok'
+    print('\nGeri dönüş (ilk kez görülen ziyaretçilerin ertesi gün / 7. gün yeniden gelmesi, İstanbul günleri):')
+    print(f'  D1 {fmt(rate(1))} · D7 {fmt(rate(7))} · 7 gün içinde herhangi bir gün {fmt(rolling(7))}')
+    y = [v for v, d0 in first.items() if d0 == last and first_log <= d0]
+    if y:   # yesterday's newcomers seen again today so far (today is not over: a lower bound of D1)
+        print(f'  Dün ilk kez gelenlerden bugün şu ana kadar dönen: {pct(sum(1 for v in y if today in real[v]), len(y))} '
+              f'({sum(1 for v in y if today in real[v])}/{len(y)})')
+    if played:
+        mission_day1 = lambda v, d0: d0 in played.get(v, ())
+        print(f'  İlk gün görev oynayan: D1 {fmt(rate(1, mission_day1))} · D7 {fmt(rate(7, mission_day1))}  |  '
+              f'oynamayan: D1 {fmt(rate(1, lambda v, d0: not mission_day1(v, d0)))} · D7 {fmt(rate(7, lambda v, d0: not mission_day1(v, d0)))}')
+    if daily_played:
+        daily_day1 = lambda v, d0: d0 in daily_played.get(v, ())
+        print(f'  İlk gün günlük görevi oynayan: D1 {fmt(rate(1, daily_day1))} · D7 {fmt(rate(7, daily_day1))}')
+    per_day = Counter(d for days in real.values() for d in days)
+    new_day = Counter(first.values())
+    print('  Gün (tekil / yeni):', ' · '.join(f'{d:%d.%m} {per_day[d]}/{new_day[d]}' for d in sorted(per_day)[-14:]))
+    print('  Sınırlar: ziyaretçi = IP + tarayıcının tuzlu özeti. IP değişince (mobil ağ, modem yeniden bağlanınca) veya tarayıcı\n'
+          '  güncellenince aynı kişi yeni sayılır (geri dönüş düşük çıkar); aynı IP ve tarayıcıyı paylaşanlar (ev, okul, operatör\n'
+          '  NAT\'ı) tek kişi sayılır (yüksek çıkar). Kayıtlar 30 gün tutulur: pencereden önce gelmiş biri "yeni" görünebilir;\n'
+          f'  D7 için en az 9 günlük kayıt gerekir (--days 30).{" Canlıda tarayıcı / Cloudflare önbelleği yalnızca dosya isteği atan (sinyali kapalı) ziyaretçileri gizleyebilir." if target == "production" else ""}\n'
+          '  Görev oynayanlarla oynamayanların farkı bir ilişkidir, neden-sonuç değil (görev oynayanlar zaten daha ilgili olabilir).')
+
+
 def fmt_min(m):
     return f'{m:.0f} dk' if m >= 10 else f'{m:.1f} dk'
 
@@ -178,11 +388,12 @@ def main():
     ap.add_argument('--days', type=int, default=7)
     ap.add_argument('--sessions', type=int, default=25, help='how many sessions to list (newest first)')
     ap.add_argument('--no-sync', action='store_true', help='use the already downloaded logs')
+    ap.add_argument('--logs', type=Path, help='read the .gz logs from this folder instead (implies --no-sync)')
     a = ap.parse_args()
 
     profile = os.environ.get('AWS_PROFILE_ANALYTICS', 'gokyuzu-analytics')
-    folder = ROOT / 'data' / 'analytics' / a.target
-    if not a.no_sync:
+    folder = a.logs or ROOT / 'data' / 'analytics' / a.target
+    if not a.no_sync and not a.logs:
         folder, new = sync(a.target, profile)
         print(f'{new} yeni kayıt dosyası indirildi.', file=sys.stderr)
     since = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=a.days)
@@ -193,26 +404,43 @@ def main():
     orphans = []                         # tutorial beacons of old builds whose session id was overwritten
     requests = defaultdict(list)         # visitor -> [(at, uri)]
     visitors = {}                        # visitor -> {browser, system, city, who}
+    days_seen = defaultdict(set)         # visitor -> Istanbul days with any request (retention)
+    api = Counter()                      # leaderboard API (players only): (method, path, status) -> requests
+    api_time = defaultdict(list)         # 'POST' / 'GET hit' / 'GET miss' -> CloudFront time-taken (s)
+    api_own = Counter()                  # leaderboard requests of "sen" / test browsers (staging checks)
     blocked = Counter()
     for row in read_logs(folder, since):
         ua = unquote(row.get('cs(User-Agent)', '-'))
         if any(w in ua.lower() for w in BOT_WORDS):
             continue
         status = row.get('sc-status', '0')
-        if status == '403':   # staging: IP lock; production: a missing file (S3 answers 403 for unknown keys)
-            blocked[row.get('cs-uri-stem', '?') if a.target == 'production' else edge_city(row.get('x-edge-location', ''))] += 1
-            continue
-        if not status.startswith(('2', '3')):
-            continue
+        uri = row.get('cs-uri-stem', '')
         # behind the Cloudflare proxy c-ip is a Cloudflare address; the player is the first X-Forwarded-For entry
         xff = unquote(row.get('x-forwarded-for', '-'))
         ip = xff.split(',')[0].strip() if xff not in ('-', '') else row.get('c-ip', '')
+        if uri.startswith('/api/'):     # leaderboard: every status counts (400 invalid, 429 rate-limited, …)
+            if uri in ('/api/score', '/api/top') and (ip in mine or 'headless' in ua.lower()):
+                api_own[uri] += 1
+            elif uri in ('/api/score', '/api/top'):
+                method = 'POST' if row.get('cs-method') == 'POST' else 'GET'
+                api[(method, uri, status)] += 1
+                hit = row.get('x-edge-result-type') in ('Hit', 'RefreshHit')
+                try:
+                    api_time['POST' if method == 'POST' else 'GET hit' if hit else 'GET miss'].append(float(row.get('time-taken') or 0))
+                except ValueError:
+                    pass
+            continue
+        if status == '403':   # staging: IP lock; production: a missing file (S3 answers 403 for unknown keys)
+            blocked[(uri or '?') if a.target == 'production' else edge_city(row.get('x-edge-location', ''))] += 1
+            continue
+        if not status.startswith(('2', '3')):
+            continue
         vid = hashlib.sha256(f'{key_salt}|{ip}|{ua}'.encode()).hexdigest()[:6]
         browser, system = client(ua)
         who = 'sen' if ip in mine else 'test' if browser == 'test' else ''
         if vid not in visitors:
             visitors[vid] = {'browser': browser, 'system': system, 'city': geo.country(ip), 'who': who}
-        uri = row.get('cs-uri-stem', '')
+        days_seen[vid].add(row['at'].astimezone(IST).date())
         if uri == '/_e':
             q = query(row)
             if q.get('t') == 'tut' and re.fullmatch(r'\d+(\.\d+)?', q.get('s', '')):
@@ -350,6 +578,15 @@ def main():
         print('Yükleme hataları:', top(fails, 5))
     if blocked:
         print('Eksik dosya (403):' if a.target == 'production' else 'IP kilidine takılan istek:', top(blocked, 5))
+
+    # wave 7 (§12): missions, daily mission, landing score, shares, failures, leaderboard, retention
+    by_day = report_missions(beacons, visitors, top)
+    report_daily(by_day, days_seen, visitors)
+    report_landings(beacons, visitors, top)
+    report_shares(beacons, visitors, top)
+    report_failures(beacons, visitors, top)
+    report_leaderboard(api, api_time, api_own, top)
+    report_retention(days_seen, visitors, beacons, since, a.target)
 
     print(f'\nSon {min(a.sessions, len(sessions))} oturum (anonim ziyaretçi kimliği · başlangıç · ülke · tarayıcı · uçak · süre):')
     for s in sorted(sessions, key=lambda s: s['start'], reverse=True)[:a.sessions]:

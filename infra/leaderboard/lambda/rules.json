@@ -1,0 +1,172 @@
+{
+ "source": "src/missions/catalog.js (10 missions) via infra/leaderboard/build_rules.mjs",
+ "strict": true,
+ "aircraft": [
+  "f16",
+  "f22",
+  "a320neo",
+  "b737",
+  "uh60"
+ ],
+ "default": {
+  "scoreMin": 0,
+  "scoreMax": 100000,
+  "secMin": 1,
+  "secMax": 7200
+ },
+ "missions": {
+  "climb": {
+   "aircraft": [
+    "f22"
+   ],
+   "scoreMin": 0,
+   "scoreMax": 4400,
+   "secMin": 3,
+   "secMax": 180,
+   "starsMin": 1,
+   "stars": [
+    1000,
+    2125,
+    2625
+   ],
+   "daily": true
+  },
+  "gg-under": {
+   "aircraft": [
+    "f16"
+   ],
+   "scoreMin": 0,
+   "scoreMax": 2971,
+   "secMin": 3,
+   "secMax": 210,
+   "starsMin": 1,
+   "stars": [
+    1000,
+    1700,
+    2100
+   ],
+   "daily": true
+  },
+  "sfo-28r": {
+   "aircraft": [
+    "a320neo"
+   ],
+   "scoreMin": 0,
+   "scoreMax": 2200,
+   "secMin": 3,
+   "secMax": 300,
+   "starsMin": 1,
+   "daily": true
+  },
+  "alcatraz": {
+   "aircraft": [
+    "uh60"
+   ],
+   "scoreMin": 0,
+   "scoreMax": 3576,
+   "secMin": 3,
+   "secMax": 300,
+   "starsMin": 1,
+   "stars": [
+    1000,
+    1700,
+    2150
+   ],
+   "daily": true
+  },
+  "low-pass": {
+   "aircraft": [
+    "f22"
+   ],
+   "scoreMin": 0,
+   "scoreMax": 3631,
+   "secMin": 3,
+   "secMax": 210,
+   "starsMin": 1,
+   "stars": [
+    1000,
+    1500,
+    1800
+   ],
+   "daily": true
+  },
+  "bay-tour": {
+   "aircraft": [
+    "b737"
+   ],
+   "scoreMin": 0,
+   "scoreMax": 2475,
+   "secMin": 3,
+   "secMax": 360,
+   "starsMin": 1,
+   "stars": [
+    900,
+    1250,
+    1500
+   ],
+   "daily": true
+  },
+  "eng-takeoff": {
+   "aircraft": [
+    "b737"
+   ],
+   "scoreMin": 0,
+   "scoreMax": 3411,
+   "secMin": 3,
+   "secMax": 450,
+   "starsMin": 1,
+   "stars": [
+    1000,
+    1750,
+    2150
+   ],
+   "daily": true
+  },
+  "flameout": {
+   "aircraft": [
+    "f16"
+   ],
+   "scoreMin": 0,
+   "scoreMax": 2200,
+   "secMin": 3,
+   "secMax": 360,
+   "starsMin": 1,
+   "stars": [
+    1000,
+    1650,
+    1900
+   ],
+   "daily": true
+  },
+  "ditch": {
+   "aircraft": [
+    "a320neo"
+   ],
+   "scoreMin": 0,
+   "scoreMax": 2200,
+   "secMin": 3,
+   "secMax": 360,
+   "starsMin": 1,
+   "daily": true
+  },
+  "autorotation": {
+   "aircraft": [
+    "uh60"
+   ],
+   "scoreMin": 0,
+   "scoreMax": 2420,
+   "secMin": 3,
+   "secMax": 210,
+   "starsMin": 1,
+   "stars": [
+    1000,
+    1650,
+    1950
+   ],
+   "daily": true
+  }
+ },
+ "test": [
+  "selftest"
+ ]
+}
