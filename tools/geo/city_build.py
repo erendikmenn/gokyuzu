@@ -12,7 +12,7 @@ import glob, json, os, subprocess, sys, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from city_paths import ROOT, CACHE, OUT, REGION_ID  # noqa: E402
 
-BLENDER = '/Applications/Blender.app/Contents/MacOS/Blender'
+BLENDER = os.environ.get('BLENDER', '/Applications/Blender.app/Contents/MacOS/Blender')   # Blender 5.2 binary
 TILES = os.path.join(CACHE, 'tiles')
 
 

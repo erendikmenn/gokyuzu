@@ -3,8 +3,11 @@
 // that flies with the same keys a person would press.
 import { chromium, webkit } from 'playwright';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
-export const OUT = '<scratch>/51ed110b-e91a-4455-a1ac-30e1072065cb/scratchpad/qa';
+// screenshots and JSON logs: $QA_OUT, default <tmpdir>/gokyuzu-qa
+export const OUT = process.env.QA_OUT || path.join(os.tmpdir(), 'gokyuzu-qa');
 fs.mkdirSync(OUT, { recursive: true });
 export const BASE = 'http://localhost:5173/';
 

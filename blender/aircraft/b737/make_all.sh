@@ -5,7 +5,8 @@ set -e
 cd "$(dirname "$0")/../../.."
 PY=.venv/bin/python
 # every Blender run under a hard time limit (shared GPU, CONTRACTS-SF.md 10)
-BL=(perl -e 'alarm 2400; exec @ARGV' /Applications/Blender.app/Contents/MacOS/Blender)
+# Blender 5.2: $BLENDER, default the macOS app
+BL=(perl -e 'alarm 2400; exec @ARGV' "${BLENDER:-/Applications/Blender.app/Contents/MacOS/Blender}")
 $PY blender/aircraft/b737/textures.py
 $PY blender/aircraft/b737/textures_fd.py          # flight-deck panel atlas + structure swatches
 # optional: $PY blender/aircraft/b737/capture_displays.py   (live avionics pages for the renders; dev server needed)

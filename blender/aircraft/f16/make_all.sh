@@ -7,7 +7,8 @@
 #        -> assets/aircraft/f16/f16.glb (exterior + interior_lite), f16_cockpit.glb (detailed cockpit), f16_lod.glb
 #   5. Cycles renders + menu thumbnail              -> renders/aircraft/f16/
 set -e
-B="perl -e 'alarm 1800; exec @ARGV' /Applications/Blender.app/Contents/MacOS/Blender"
+BLENDER="${BLENDER:-/Applications/Blender.app/Contents/MacOS/Blender}"   # Blender 5.2; override with the BLENDER env var
+B="perl -e 'alarm 1800; exec @ARGV' \"\$BLENDER\""
 PY=.venv/bin/python
 $PY blender/aircraft/f16/f16_ck_art.py
 $PY blender/aircraft/f16/textures.py --nozzle

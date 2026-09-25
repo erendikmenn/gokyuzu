@@ -299,7 +299,7 @@ def cam(loc, target, lens, name='cam', dof=None):
 
 def _cams():
     import sys, importlib
-    p = '/Users/<user>/flight-sim/blender/aircraft/f16'
+    p = os.path.dirname(os.path.abspath(__file__))
     if p not in sys.path:
         sys.path.append(p)
     import f16_cams
