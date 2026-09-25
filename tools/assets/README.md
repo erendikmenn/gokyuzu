@@ -94,3 +94,28 @@ tiles) or new airport ground textures.
 | `terrain.pins` | `terrain/packs/pins/index.json` + `<cell>.bin` | every class | `pins.bin` split per 2 km cell (each cell file carries its ancestor tiles): the start loads the spawn's cells (SFO 1.4 instead of 4.1 MB, LTFM 0.6 instead of 2.8 MB), the rest near the camera (phones / tablets within 8 km, others all in the background); city tiles wait for their cell |
 | `prewarm` | `packs/prewarm.glb` | every class | one hidden 1-triangle stand-in per shader variant of the materials that only appear after the start (near tree LODs, airport buildings, parked-aircraft LODs, landmark LODs; placeholder 4×4 textures, 20–35 KB): the loading screen's pre-warm links their programs, so none links in flight (WebKit links synchronously: iPad freezes) |
 | `city.tiles` | `city/packs/meshopt/l0…l3/` | every class (San Francisco) | `city_meshopt.mjs`: the Draco tiles in İstanbul's tile format (EXT_meshopt_compression + KHR_mesh_quantization, exponential filter, vertex cache / fetch order): decode 10–30× cheaper (Draco was 70 ms per tile on an M4 Max, 0.5 s with the CPU at 4×), −8–15 % on the wire under the edge's Brotli / gzip; every tile verified against its Draco source (`--verify`: positions ≤ 0.8 / 3 / 12.5 cm at L0 / L1 / L2+, same triangles) |
+
+# Public asset pack: `pack_public.mjs`, `fetch_pack.mjs`
+
+The built game assets are not in git. They are published separately, as a trademark-free asset pack (CC BY-NC 4.0,
+`ASSETS-LICENSE.md`) in versioned ZIP parts on a GitHub release (`assets-v<version>`).
+
+```sh
+node tools/assets/fetch_pack.mjs                 # download, check every SHA-256 against the manifest, unpack into assets/
+node tools/assets/fetch_pack.mjs --from <dir>    # the same from a local folder (or a mirror URL) holding the parts
+node tools/assets/pack_public.mjs [--version YYYY.MM.DD]   # maintainers: build the pack into build/public-assets/<version>/
+```
+
+`fetch_pack.mjs` never writes into a non-empty `assets/` without `--force` (it may hold your own build). It puts the
+GPL-2.0 FlightGear-derived sounds of the pack's `assets-gpl/` into `assets/audio/` and the licence texts into
+`assets/_pack/`. The repository name and the expected pack version are constants at the top of the script.
+
+`pack_public.mjs` builds from a machine that has built the assets (it reads `assets/` and a few build caches, never
+writes them). It re-runs the texture scripts with every local brand opt-in off (`GOKYUZU_BRAND=off`,
+`blender/common/brand.py`: fictional liveries, neutral hangar lettering, generic military markings), swaps the changed
+images into the exported GLBs (`_orig/`, no Blender run; `pack_public_tex.py` plans which ones), converts them with
+`textures.mjs --root build/public-assets/work/root`, cuts company names out of the airport building labels, moves the
+GPL sounds to `assets-gpl/` and checks every text and metadata chunk for company names before zipping. Output: the
+parts (each below 1.9 GB, the GitHub limit is 2 GiB per file), `gokyuzu-assets-<version>.manifest.json` (every file
+with size, SHA-256 and part) and `SHA256SUMS`. Attach all of them to the release, then set `PACK_VERSION` in
+`fetch_pack.mjs`.

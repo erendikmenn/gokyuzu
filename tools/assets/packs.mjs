@@ -40,10 +40,12 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const ROOT = path.resolve(HERE, '..', '..');
 const require = createRequire(path.join(HERE, 'package.json'));
 const argv = process.argv.slice(2);
 const opt = (n, d) => { const i = argv.indexOf(n); return i >= 0 ? argv[i + 1] : d; };
+// --root <dir>: work on another tree holding assets/ (tools/assets/pack_public.mjs rebuilds the pre-warm pack of the
+// public asset pack that way); default: this repository
+const ROOT = path.resolve(opt('--root', path.join(HERE, '..', '..')));
 const MAPS = (opt('--maps', 'sf,ist')).split(',');
 const ONLY = new Set((opt('--only', 'water,atlas,trees,treeslow,airtex,pins,prewarm')).split(','));
 const FORCE = argv.includes('--force');
