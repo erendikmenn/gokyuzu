@@ -4,9 +4,11 @@ Gökyüzü is a free flight simulator for the browser, created by Mehmet Eren Di
 (https://github.com/erendikmenn) and developed with the Gökyüzü contributors.
 Source: https://github.com/erendikmenn/REPO_NAME
 
+Code: Apache-2.0 · Asset pack (visuals and sounds): CC BY-NC 4.0, trademark-free.
+
 The code in this repository is licensed under the Apache License, Version 2.0 (see LICENSE). The files listed in
-section 3 below are under other terms. The game assets (3D models, textures, audio and map tiles) are not in this
-repository and are not covered by the Apache License: all rights reserved (see ASSETS.md).
+section 3 below are under other licences. The game assets (3D models, textures, sounds, map tiles) are published
+separately, as a trademark-free asset pack on GitHub Releases, under CC BY-NC 4.0 (see ASSETS-LICENSE.md).
 
 
 1. Attribution
@@ -60,8 +62,8 @@ sharp (its prebuilt libvips binaries are LGPL-3.0-or-later), draco3dgltf, meshop
 Python packages the asset pipeline uses.
 
 
-3. Files in this repository under other terms
----------------------------------------------
+3. Files in this repository under other licences
+------------------------------------------------
 
 - data/** and blender/landmarks/layout.json, blender/landmarks_ist/layout.json: Open Database License (ODbL) 1.0.
   See data/README.md.
@@ -70,8 +72,7 @@ Python packages the asset pipeline uses.
 - src/avionics/fonts/*.ttf: SIL Open Font License 1.1.
 - The Gökyüzü names and logo: not licensed (section 1).
 - Images committed to this repository (src/ui/assets/*.jpg minimaps, docs/perf/ref-2026-09/*.webp screenshots): game
-  renders, all rights reserved, except that they may be copied as part of this repository and its forks for
-  developing and testing Gökyüzü (ASSETS.md). They carry the data attributions of section 4.
+  renders under CC BY-NC 4.0, like the asset pack (ASSETS-LICENSE.md), with the data attributions of section 4.
 
 
 4. Map, elevation and imagery data
@@ -83,8 +84,8 @@ OpenStreetMap (both maps)
   The committed files in data/ and blender/landmarks*/layout.json are extracts of OpenStreetMap or Derivative
   Databases of it, and are licensed under ODbL 1.0 (data/README.md). The OSM-derived runtime assets (city tiles,
   airports, landmark placement, the water, shore and land-class layers of the terrain) are Derivative Databases under
-  ODbL 1.0 as well, whatever the terms of the other game assets (ASSETS.md). The rendered world and the minimaps are
-  Produced Works. The scripts that make these databases from OpenStreetMap are in tools/geo/ and blender/.
+  ODbL 1.0 as well. The rendered world and the minimaps are Produced Works. The scripts that make these databases from
+  OpenStreetMap are in tools/geo/ and blender/.
 
 Overture Maps Foundation (İstanbul buildings)
   Contains data from Overture Maps Foundation (https://overturemaps.org), release 2026-09-23.0, buildings theme,
@@ -134,12 +135,13 @@ FlightGear-derived sounds (GNU General Public License v2.0)
     https://github.com/legoboyvdlp/A320-family
   - Boeing 737-800YV for FlightGear: YV3399 and contributors, https://github.com/YV3399/737-800YV
   They and the game sounds derived from them are licensed under the GNU General Public License v2.0, not under the
-  Apache License, and are not reserved like the other game assets. The unmodified originals, the licence text and their provenance are in
-  tools/audio/third_party/flightgear/ (LICENSE-GPL-2.0.txt, NOTICE.md) and tools/audio/third_party/CREDITS.txt.
+  Apache License or CC BY-NC; the asset pack keeps them in their own folder with the GPL-2.0 text. The unmodified
+  originals, the licence text and their provenance are in tools/audio/third_party/flightgear/ (LICENSE-GPL-2.0.txt,
+  NOTICE.md) and tools/audio/third_party/CREDITS.txt.
 
 ElevenLabs
   Some voices and sound effects were generated with ElevenLabs (paid plan). No real person's voice was cloned. They
-  are part of the game assets (ASSETS.md).
+  are included in the asset pack under its licence, CC BY-NC 4.0 (ASSETS-LICENSE.md).
 
 Synthesised sounds
   The other sounds (engines, rotor, wind, systems, chimes, warning tones) are synthesised by the project's own scripts
@@ -168,8 +170,10 @@ project belong to their owners, including Airbus, A320neo, Boeing, 737, Lockheed
 Raptor, General Dynamics, Sikorsky, Black Hawk, Turkish Airlines / Türk Hava Yolları, Turkish Technic, Turkish Cargo,
 Star Alliance, the U.S. Air Force, the U.S. Army, X, and the names of buildings, bridges and companies in the world.
 They are used only to identify what is depicted. Gökyüzü is an unofficial fan project: none of these organisations
-is affiliated with it, sponsors it or endorses it. The licences in this repository grant no right to use any of these
-names, trademarks, logos, liveries or insignia.
+is affiliated with it, sponsors it or endorses it. The licences in this repository and in the asset pack grant no
+right to use any of these names, trademarks, logos, liveries or insignia. The asset pack contains no real airline,
+manufacturer or military marks; aircraft type names are used only to describe what is depicted. The live game at
+https://fs.erenailab.com may show brand liveries that are not part of this repository or of the asset pack.
 
 U.S. Air Force and U.S. Army markings are depicted for realism. The appearance of U.S. Department of Defense (DoD)
 visual information does not imply or constitute DoD endorsement.
