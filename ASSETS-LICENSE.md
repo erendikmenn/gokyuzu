@@ -28,7 +28,7 @@ node tools/assets/fetch_pack.mjs     # downloads the pack from GitHub Releases a
 ```
 
 The few asset files that are committed are also under this licence: `src/ui/assets/*.jpg` (minimaps) and
-`docs/perf/ref-2026-09/*.webp` (reference screenshots).
+`docs/screenshots/*.webp` (README screenshots, rendered from the trademark-free pack).
 
 **Files from the live site.** For a fast start, `node tools/serve.mjs --assets-from https://fs.erenailab.com` fetches
 the files the game asks for from the live site. Those files are not the asset pack and are not licensed by this file:

@@ -157,8 +157,9 @@ with integrated graphics. A change that is fine on a desktop GPU can make the ga
   node tools/perf/refshots.mjs gate --base http://localhost:5173/    # needs Python 3 with numpy and Pillow
   ```
 
-  It captures fixed poses on each device class and map and compares them with the reference set in
-  `docs/perf/ref-2026-09/` (SSIM against the measured noise floor; exit code 1 on a failure). Changes that should not
+  It captures fixed poses on each device class and map and compares them with a reference set you capture yourself
+  before the change (`node tools/perf/refshots.mjs capture --out .cache/perf-ref`, or `$PERF_REF`; SSIM against the
+  measured noise floor; exit code 1 on a failure). Changes that should not
   change the image must pass. Changes that intentionally change it (texture sizes, LOD, draw distance, lighting)
   attach the heat maps for review.
 - Test on a **real phone** when you can: Safari on iOS and Chrome on Android behave differently from desktop emulation.

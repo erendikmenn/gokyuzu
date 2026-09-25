@@ -73,9 +73,9 @@ airports 4–7 %, city + trees 2.5–7.6 %, landmarks / terrain / flight model /
 the **geometry count creeps +37/min** (203 → 834) at flat bytes → STREAMING: check that unloaded city/tree tiles dispose geometries.
 
 ## 4. Quality gate
-`docs/perf/ref-2026-09/`: 33 reference shots (desktop high, tablet, phone × SF aircraft-close / cockpit / sfo-ground /
+33 reference shots (kept locally, not in git; see tools/perf/refshots.mjs) (desktop high, tablet, phone × SF aircraft-close / cockpit / sfo-ground /
 free-sfo / free-ggb / free-downtown and İstanbul ltfm-ground / free-ltfm / free-15temmuz / free-sultanahmet / bogaz),
 captured before any change with time frozen, HUD hidden, streaming settled. `noise.json` = noise floor.
-`PERF_BASE=http://localhost:5173/ node tools/perf/refshots.mjs gate` (exit 1 on FAIL, heat maps); `--classes phone --maps ist` for a subset.
+`PERF_BASE=http://localhost:5173/ node tools/perf/refshots.mjs gate` (references in `$PERF_REF` or `.cache/perf-ref`) (exit 1 on FAIL, heat maps); `--classes phone --maps ist` for a subset.
 Pass: SSIM ≥ min(0.995, noise − 0.002) and worst tile ≥ noise tile − 0.02. Exact changes (frame pacing, pre-warm, drape
 stop, sort flag, shadow colour buffer) must pass; approximate ones (texture sizes, atlas, draw distance, lights) need a maintainer's review of the heat maps.

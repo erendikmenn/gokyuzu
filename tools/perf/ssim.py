@@ -8,7 +8,7 @@ Per image pair: SSIM (Gaussian 11x11, sigma 1.5, on luma, Wang et al. 2004), the
 a local break that a global mean hides), PSNR, and the share of pixels whose colour differs by more than 8/255 (any
 channel). With --dirs every file present in both folders is compared; --noise gives a second baseline capture of the
 same poses (run-to-run noise: streaming order, animation) so a candidate is judged against the noise floor
-(--noise-json: the --json output of a baseline-vs-noise run, e.g. docs/perf/ref-2026-09/noise.json):
+(--noise-json: the --json output of a baseline-vs-noise run, e.g. .cache/perf-ref/noise.json):
     PASS  when SSIM >= min(0.995, noise SSIM - 0.002) and tile-min SSIM >= noise tile-min - 0.02
 """
 import argparse
@@ -82,7 +82,7 @@ def main():
     noise_json = json.loads(Path(a.noise_json).read_text()) if a.noise_json else {}
     if a.heatmaps:
         Path(a.heatmaps).mkdir(parents=True, exist_ok=True)
-    # references may be lossless WebP (docs/perf/ref-2026-09: same pixels, 40 % smaller) and candidates PNG: match by stem
+    # references may be lossless WebP (same pixels, 40 % smaller) and candidates PNG: match by stem
     def find(d, stem):
         for ext in ('.png', '.webp'):
             if (d / (stem + ext)).exists():

@@ -71,7 +71,7 @@ Python packages the asset pipeline uses.
   See section 5.
 - src/avionics/fonts/*.ttf: SIL Open Font License 1.1.
 - The Gökyüzü names and logo: not licensed (section 1).
-- Images committed to this repository (src/ui/assets/*.jpg minimaps, docs/perf/ref-2026-09/*.webp screenshots): game
+- Images committed to this repository (src/ui/assets/*.jpg minimaps, docs/screenshots/*.webp screenshots): game
   renders under CC BY-NC 4.0, like the asset pack (ASSETS-LICENSE.md), with the data attributions of section 4.
 
 

@@ -1,18 +1,18 @@
 #!/usr/bin/env node
 // Quality gate for the device-class optimisations (docs/perf/findings-2026-09.md): frozen-time screenshots of fixed
-// poses per device class and map, compared against the committed reference set docs/perf/ref-2026-09/ with
-// tools/perf/ssim.py. The reference set was captured on dev 1d480f7 (before the 2026-09 optimisation round); its
-// run-to-run noise floor (a second capture of the same tree) is stored as noise.json next to the images, so a
-// candidate is judged against it without shipping the noise images.
+// poses per device class and map, compared against a LOCAL reference set with tools/perf/ssim.py. References are not
+// in git (the game's assets are not part of the code licence): capture your own before a change,
+//   node tools/perf/refshots.mjs capture --out .cache/perf-ref   (or set $PERF_REF to another directory)
+// and a second capture for the run-to-run noise floor (noise.json next to the images).
 //
 //   capture:  node tools/perf/refshots.mjs capture --out <dir> [--classes desktop,tablet,phone] [--maps sf,ist]
 //                [--poses a,b] [--base http://localhost:5173/] [--webkit]
-//   compare:  node tools/perf/refshots.mjs compare --cand <dir> [--ref docs/perf/ref-2026-09] [--heatmaps <dir>]
+//   compare:  node tools/perf/refshots.mjs compare --cand <dir> [--ref $PERF_REF | .cache/perf-ref] [--heatmaps <dir>]
 //   gate:     node tools/perf/refshots.mjs gate [--base URL]   (= capture into $PERF_OUT/refgate-<time> + compare; exit 1 on FAIL)
 //   noise:    node tools/perf/refshots.mjs noise --ref <dir> --noise <dir>   (writes <ref>/noise.json)
 //
 // Classes (the game's own device overrides; HUD hidden with CSS only, see docs/perf/plan.md 4.7 item 4):
-//   desktop  1280×720 @1, ?quality=high                         (1280×720 keeps the committed PNGs small)
+//   desktop  1280×720 @1, ?quality=high                         (1280×720 keeps the reference PNGs small)
 //   tablet   1024×768 @2 (iPad), ?device=tablet&touch=1, the class default preset (medium), screenshot in CSS pixels
 //   phone    844×390 @3 (iPhone in landscape), ?device=phone&touch=1, the class default preset (low), screenshot in CSS pixels
 // Poses: tools/perf/lib.mjs POSES (aircraft close-up, cockpit, SFO / LTFM ground, Golden Gate, 15 Temmuz, Sultanahmet …).
@@ -24,7 +24,7 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, '../..');
-export const REF_DIR = path.join(REPO, 'docs/perf/ref-2026-09');
+export const REF_DIR = process.env.PERF_REF ? path.resolve(process.env.PERF_REF) : path.join(REPO, '.cache/perf-ref');
 export const CLASSES = {
   desktop: { width: 1280, height: 720, dpr: 1, quality: 'high', extra: '', touch: false },
   tablet: { width: 1024, height: 768, dpr: 2, quality: 'auto', extra: '&device=tablet&touch=1', touch: true },

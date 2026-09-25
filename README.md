@@ -7,10 +7,7 @@ and phones.
 
 ▶ **Play:** <https://fs.erenailab.com> · [Türkçe](#türkçe)
 
-| | |
-|---|---|
-| ![Downtown San Francisco and the Bay Bridge](docs/perf/ref-2026-09/desktop-free-downtown.webp) | ![15 Temmuz Şehitler Köprüsü over the Bosphorus](docs/perf/ref-2026-09/desktop-ist-free-15temmuz.webp) |
-| ![F-16 cockpit on the runway at SFO](docs/perf/ref-2026-09/desktop-cockpit.webp) | ![An F-16 low over the Bosphorus](docs/perf/ref-2026-09/desktop-ist-bogaz.webp) |
+<!-- SCREENSHOTS: filled from docs/screenshots/ (rendered with the trademark-free asset pack) -->
 
 ## Features
 
@@ -174,7 +171,7 @@ They cover the flight models, missions (flown by the real flight models against 
 autoland, frame pacing, graphics fallbacks, maps, the leaderboard service and client, and asset URLs. The `packs`,
 `terrain` and parts of the `assets` tests check the built assets and skip what is missing. Browser checks live in
 `tools/qa/` (menu, take-off, approach, helicopter) and `tools/perf/` (device matrix, soak, A/B runs, the screenshot
-quality gate against `docs/perf/ref-2026-09/`).
+quality gate against a reference set you capture locally, see CONTRIBUTING.md).
 
 **CI:** [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs every `tests/*.test.mjs` on each push and pull
 request, on Ubuntu with Node 22 and 24, without the built assets (those checks print `SKIP` and pass). A pull request
