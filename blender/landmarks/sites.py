@@ -82,7 +82,7 @@ def std_mats(prefix, lod, facade=None, extra=None):
 
 
 ALIASES = {'stone': 'granite', 'glass': 'dark', 'hall': 'stone', 'roofw': 'roof', 'side': 'wood', 'trim': 'wood',
-           'green': 'dark', 'coke': 'brick', 'lamp': 'white', 'rust': 'steel', 'solar': 'roof', 'pile': 'dark',
+           'green': 'dark', 'bottle': 'brick', 'lamp': 'white', 'rust': 'steel', 'solar': 'roof', 'pile': 'dark',
            'granite': 'concrete', 'iron': 'dark', 'white': 'concrete', 'steel': 'concrete'}
 
 
@@ -872,7 +872,7 @@ def oracle_materials(lod):
                                   'field': material(f'orp{lod}_field', albedo=fa, rough=0.95),
                                   'white': material(f'orp{lod}_white', color=(0.85, 0.85, 0.83), rough=0.5),
                                   'green': material(f'orp{lod}_green', color=(0.10, 0.20, 0.14), rough=0.6, double_sided=True),
-                                  'coke': material(f'orp{lod}_coke', color=(0.55, 0.05, 0.04), rough=0.3),
+                                  'bottle': material(f'orp{lod}_bottle', color=(0.55, 0.05, 0.04), rough=0.3),
                                   'lamp': material(f'orp{lod}_lamp_emit', color=(0.95, 0.95, 0.9), emissive=(1.0, 1.0, 0.95), emissive_strength=3.0)})
 
 
@@ -957,13 +957,13 @@ def build_oracle(lod):
     b.mb['dark'].box((sb[0] - 16, sb[1] - 1.5, g + 14.0), (sb[0] + 16, sb[1] + 1.5, g + 30.0), faces='xXyYzZ')
     b.mb['concrete'].box((sb[0] - 14, sb[1] - 1.0, g), (sb[0] - 12, sb[1] + 1.0, g + 14.0), faces='xXyY')
     b.mb['concrete'].box((sb[0] + 12, sb[1] - 1.0, g), (sb[0] + 14, sb[1] + 1.0, g + 14.0), faces='xXyY')
-    # Coca-Cola bottle and the giant glove behind the left-field bleachers
+    # the giant bottle (a plain red bottle shape, no lettering) and the giant glove behind the left-field bleachers
     cb = dL * 118.0 + V(0, 1, 0) * 18.0
     if lod < 2:
         prof = [(3.2, 0), (3.6, 4), (3.6, 13), (2.6, 17), (1.5, 21), (1.4, 24.5)]
         ns = 16 if lod == 0 else 8
         circ = lambda r: [(cb[0] + r * math.cos(2 * math.pi * k / ns), cb[1] + r * math.sin(2 * math.pi * k / ns)) for k in range(ns)]
-        loft(b.mb['coke'], [circ(r) for r, _ in prof], [g + z for _, z in prof], smooth=True)
+        loft(b.mb['bottle'], [circ(r) for r, _ in prof], [g + z for _, z in prof], smooth=True)
         gl = cb + V(14.0, 6.0, 0)
         b.mb['brick'].cylinder((gl[0], gl[1], g), 4.0, 8.0, sides=12, r_top=3.2)
     # light towers
