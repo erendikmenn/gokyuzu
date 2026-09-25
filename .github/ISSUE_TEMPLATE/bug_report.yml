@@ -1,0 +1,139 @@
+name: Bug report / Hata bildirimi
+description: Something in the game is broken or wrong. / Oyunda bir şey bozuk ya da yanlış.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report! English or Turkish is fine. / Teşekkürler! İngilizce ya da Türkçe yazabilirsin.
+        **Security problems:** do not open an issue, use the Security tab → "Report a vulnerability" (see SECURITY.md).
+        **Privacy:** leave out personal data: e-mail addresses, IP addresses, other players' nicknames.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened? / Ne oldu?
+      description: What you saw, and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce / Nasıl tekrarlanır?
+      placeholder: |
+        1. Open https://fs.erenailab.com/?map=ist&aircraft=a320neo
+        2. Choose …
+        3. …
+    validations:
+      required: true
+  - type: dropdown
+    id: map
+    attributes:
+      label: Map / Harita
+      options:
+        - San Francisco
+        - İstanbul
+        - Both / İkisi de
+        - Menu or loading screen / Menü ya da yükleme ekranı
+    validations:
+      required: true
+  - type: dropdown
+    id: aircraft
+    attributes:
+      label: Aircraft / Uçak
+      options:
+        - F-16C
+        - F-22A
+        - A320neo
+        - 737-800
+        - UH-60M
+        - Several / any / Birkaç tanesi
+        - Not in flight / Uçuşta değil
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Mode / Mod
+      options:
+        - Free flight / Serbest uçuş
+        - Mission / Görev
+        - Free-flight challenge / Serbest uçuş görevi
+        - Tutorial / Eğitim
+        - Menu / Menü
+  - type: input
+    id: mission
+    attributes:
+      label: Mission, start point or link / Görev, kalkış noktası ya da bağlantı
+      placeholder: "e.g. ist-bogaz-alcak or ?aircraft=f16&spawn=AIR-GGB"
+  - type: input
+    id: device
+    attributes:
+      label: Device / Cihaz
+      placeholder: "e.g. iPhone 13, Galaxy A54, MacBook Air M2, Windows laptop with Intel Iris Xe"
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system and version / İşletim sistemi ve sürümü
+      placeholder: "e.g. iOS 19.1, Android 16, macOS 26, Windows 11"
+    validations:
+      required: true
+  - type: input
+    id: browser
+    attributes:
+      label: Browser and version / Tarayıcı ve sürümü
+      placeholder: "e.g. Safari 26, Chrome 141, Firefox 143, in-app browser of …"
+    validations:
+      required: true
+  - type: dropdown
+    id: quality
+    attributes:
+      label: Graphics quality (Ayarlar) / Grafik kalitesi
+      options:
+        - Don't know / Bilmiyorum
+        - Düşük
+        - Orta
+        - Yüksek
+        - Ultra
+  - type: checkboxes
+    id: input
+    attributes:
+      label: Controls used / Kullanılan kumanda
+      options:
+        - label: Keyboard / Klavye
+        - label: Mouse / Fare
+        - label: Touch / Dokunmatik
+        - label: Tilt steering / Eğimle kumanda
+        - label: Gamepad / Oyun kolu (model in the notes below)
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where / Nerede
+      options:
+        - Live site (fs.erenailab.com)
+        - Local dev server / Yerel geliştirme sunucusu
+        - A fork / Bir çatal
+  - type: input
+    id: commit
+    attributes:
+      label: Commit (local runs) / Commit (yerel çalıştırmada)
+      placeholder: "git rev-parse --short HEAD"
+  - type: textarea
+    id: console
+    attributes:
+      label: Console errors / Konsol hataları
+      description: From the browser's developer tools, if you can.
+      render: text
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots, video, notes / Ekran görüntüsü, video, notlar
+      description: Drag files here. Please check that they show no personal information.
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy / Gizlilik
+      options:
+        - label: I removed personal data (e-mail and IP addresses, other players' nicknames) from this report. / Kişisel verileri çıkardım.
+          required: true

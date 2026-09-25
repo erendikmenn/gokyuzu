@@ -1,0 +1,99 @@
+name: Performance report / Performans bildirimi
+description: The game is slow, stutters, overheats the device, uses too much memory or loads slowly. / Oyun yavaş, takılıyor, cihazı ısıtıyor ya da geç yükleniyor.
+labels: ["performance"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Phones and low-end laptops come first in this project, so these reports help a lot.
+        Telefonlar ve zayıf dizüstüler bu projede önceliklidir; bu bildirimler çok işe yarar.
+        **Privacy:** leave out personal data (e-mail and IP addresses).
+  - type: textarea
+    id: what
+    attributes:
+      label: What did you notice? / Ne fark ettin?
+      description: Low frame rate, stutter at a moment, a freeze, the page reloading or crashing, heat, battery drain, slow loading…
+    validations:
+      required: true
+  - type: dropdown
+    id: when
+    attributes:
+      label: When / Ne zaman
+      multiple: true
+      options:
+        - Loading / Yüklenirken
+        - First seconds of a flight / Uçuşun ilk saniyeleri
+        - Over the city / Şehrin üstünde
+        - On an airport's ground / Havalimanında yerde
+        - Cockpit view / Kokpit görünümü
+        - Low and fast / Alçak ve hızlı
+        - The whole time / Her zaman
+        - After a long flight / Uzun bir uçuştan sonra
+    validations:
+      required: true
+  - type: dropdown
+    id: map
+    attributes:
+      label: Map / Harita
+      options:
+        - San Francisco
+        - İstanbul
+        - Both / İkisi de
+    validations:
+      required: true
+  - type: input
+    id: aircraft
+    attributes:
+      label: Aircraft and view / Uçak ve görünüm
+      placeholder: "e.g. A320neo, cockpit"
+  - type: input
+    id: device
+    attributes:
+      label: Device, CPU and GPU / Cihaz, işlemci ve ekran kartı
+      placeholder: "e.g. iPhone 12; Pixel 7a; ThinkPad with Intel UHD 620; desktop with RTX 3060"
+    validations:
+      required: true
+  - type: input
+    id: os-browser
+    attributes:
+      label: Operating system and browser, with versions / İşletim sistemi ve tarayıcı (sürümleriyle)
+      placeholder: "e.g. Windows 11, Chrome 141"
+    validations:
+      required: true
+  - type: dropdown
+    id: quality
+    attributes:
+      label: Graphics quality (Ayarlar) / Grafik kalitesi
+      options:
+        - Don't know / Bilmiyorum
+        - Düşük
+        - Orta
+        - Yüksek
+        - Ultra
+  - type: dropdown
+    id: fps-setting
+    attributes:
+      label: Frame-rate setting (Ayarlar → Kare hızı) / Kare hızı ayarı
+      options:
+        - Otomatik
+        - "30"
+        - "60"
+        - Sınırsız
+  - type: input
+    id: numbers
+    attributes:
+      label: Frame rate or load time, if measured / Ölçtüysen kare hızı ya da yükleme süresi
+      placeholder: "e.g. ~25 fps over downtown; 40 s to the first frame on 4G"
+  - type: textarea
+    id: method
+    attributes:
+      label: How you measured / Nasıl ölçtün
+      description: |
+        By eye is fine. Better: the browser's performance panel, or the project's tools
+        (node tools/perf/matrix.mjs, scenes.mjs, soak.mjs; see CONTRIBUTING.md). Paste their summary here.
+      render: text
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else / Diğer notlar
+      description: Battery saver on, other tabs open, external monitor, network (Wi-Fi, 4G)…

@@ -1,0 +1,53 @@
+name: Feature request or mission idea / Özellik isteği ya da görev fikri
+description: Suggest a feature, a mission, a map area or an improvement. / Bir özellik, görev, harita bölgesi ya da iyileştirme öner.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        English or Turkish is fine. / İngilizce ya da Türkçe yazabilirsin.
+        For missions and maps, see "Proposing missions and maps" in CONTRIBUTING.md first.
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind / Tür
+      options:
+        - Gameplay or feature / Oynanış ya da özellik
+        - Mission / Görev
+        - Free-flight challenge / Serbest uçuş görevi
+        - Aircraft or cockpit / Uçak ya da kokpit
+        - Map or scenery / Harita ya da manzara
+        - Controls (keyboard, touch, gamepad) / Kumandalar
+        - Accessibility or translation / Erişilebilirlik ya da çeviri
+        - Developer tools / Geliştirici araçları
+        - Other / Diğer
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What would you like, and why? / Ne istiyorsun, neden?
+      description: The problem it solves or the experience it adds.
+    validations:
+      required: true
+  - type: textarea
+    id: mission
+    attributes:
+      label: Mission details (missions only) / Görev ayrıntıları (yalnızca görevler)
+      description: Map, aircraft, start, objectives in order, what counts as success or failure, difficulty (level 1–3).
+      placeholder: |
+        Map: İstanbul · Aircraft: UH-60M · Start: hover over Galata
+        1. Fly along the Haliç below 150 m
+        2. Land on the pad at …
+        Success: … · Failure: … · Level: 2
+  - type: textarea
+    id: ideas
+    attributes:
+      label: Ideas for how to build it / Nasıl yapılabilir?
+      description: Optional. Files or systems involved, data sources (free and openly licensed only), phone performance.
+  - type: checkboxes
+    id: help
+    attributes:
+      label: Contributing / Katkı
+      options:
+        - label: I'd like to work on this myself. / Bunun üzerinde kendim çalışmak isterim.
