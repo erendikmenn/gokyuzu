@@ -434,7 +434,7 @@ function keyboardLanding(id, high) {
   const atDet = inp.state.throttle;
   key('keyup', 'ShiftLeft'); key('keydown', 'ShiftLeft'); for (let i = 0; i < 30; i++) inp.update(1 / 60); key('keyup', 'ShiftLeft');
   const inAB = inp.state.throttle;
-  key('keydown', 'ControlLeft'); for (let i = 0; i < 60; i++) inp.update(1 / 60); key('keyup', 'ControlLeft');
+  key('keydown', 'KeyZ'); for (let i = 0; i < 60; i++) inp.update(1 / 60); key('keyup', 'KeyZ');   // Z: throttle down on every platform (Ctrl only on macOS)
   const backDet = inp.state.throttle;
   check('common', 'Input: fighter AB detent (stops at MIL, fresh press enters AB, stops again coming back)', atDet === SPECS.f16.abDetent && inAB > atDet + 0.05 && backDet === SPECS.f16.abDetent,
     `MIL ${atDet}, AB ${inAB.toFixed(3)}, back ${backDet}`);
