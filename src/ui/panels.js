@@ -336,7 +336,7 @@ export function openCredits(container, map = null) {
     ['Sesli uyarılar', 'Sesli uyarılar ve bazı ses efektleri ElevenLabs ile üretildi; gerçek bir kişinin sesi klonlanmadı'],
     ['Otopilot ayırma sesleri', 'FlightGear A320-family (legoboyvdlp, Octal450 ve katkıda bulunanlar) ve Boeing 737-800YV (YV3399 ve katkıda bulunanlar) projelerinden türetilmiştir · GNU GPL-2.0 · A320 "cavalry charge" bir kayıt değil, Airbus dalga şemasından yeniden sentezlenmiştir'],
     ['Ses referans kayıtları', 'Yalnız ölçüm için: Sygoletto (Air France A319, CC BY-SA 3.0) ve jan tisler (Adria Airways A319, CC BY 3.0), Wikimedia Commons; ABD Donanması (P-8A, DVIDS) ve ABD Hava Kuvvetleri (F-16), kamu malı'],
-    ['Lisans', 'Kod: Apache-2.0 · Özgün varlıklar: CC BY-NC 4.0 (ayrı varlık paketi) · Harita verisi: ODbL · FlightGear sesleri: GPL-2.0'],
+    ['Lisans', 'Kod: Apache-2.0; görseller, sesler ve harita dosyaları lisans kapsamı dışında (tüm hakları saklıdır). İçlerindeki OpenStreetMap kaynaklı veriler ODbL, FlightGear kaynaklı sesler GPL-2.0 kapsamındadır.'],
     ['Açık kaynak', SOURCE_REPO, repo],
     ['Katkıda bulunanlar', 'Mehmet Eren Dikmen ve GitHub’daki tüm katkıda bulunanlar', `${repo}/graphs/contributors`],
   ];

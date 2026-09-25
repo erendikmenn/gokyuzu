@@ -5,8 +5,8 @@ Gökyüzü is a free flight simulator for the browser, created by Mehmet Eren Di
 Source: https://github.com/erendikmenn/REPO_NAME
 
 The code in this repository is licensed under the Apache License, Version 2.0 (see LICENSE). The files listed in
-section 3 below are under other licences. The original game assets (models, textures, sounds, images) are distributed
-separately under CC BY-NC 4.0 (see ASSETS-LICENSE.md).
+section 3 below are under other terms. The game assets (3D models, textures, audio and map tiles) are not in this
+repository and are not covered by the Apache License: all rights reserved (see ASSETS.md).
 
 
 1. Attribution
@@ -60,8 +60,8 @@ sharp (its prebuilt libvips binaries are LGPL-3.0-or-later), draco3dgltf, meshop
 Python packages the asset pipeline uses.
 
 
-3. Files in this repository under other licences
-------------------------------------------------
+3. Files in this repository under other terms
+---------------------------------------------
 
 - data/** and blender/landmarks/layout.json, blender/landmarks_ist/layout.json: Open Database License (ODbL) 1.0.
   See data/README.md.
@@ -70,8 +70,8 @@ Python packages the asset pipeline uses.
 - src/avionics/fonts/*.ttf: SIL Open Font License 1.1.
 - The Gökyüzü names and logo: not licensed (section 1).
 - Images committed to this repository (src/ui/assets/*.jpg minimaps, docs/perf/ref-2026-09/*.webp screenshots): game
-  renders under CC BY-NC 4.0, as the other original assets (ASSETS-LICENSE.md), with the data attributions of
-  section 4.
+  renders, all rights reserved, except that they may be copied as part of this repository and its forks for
+  developing and testing Gökyüzü (ASSETS.md). They carry the data attributions of section 4.
 
 
 4. Map, elevation and imagery data
@@ -83,8 +83,8 @@ OpenStreetMap (both maps)
   The committed files in data/ and blender/landmarks*/layout.json are extracts of OpenStreetMap or Derivative
   Databases of it, and are licensed under ODbL 1.0 (data/README.md). The OSM-derived runtime assets (city tiles,
   airports, landmark placement, the water, shore and land-class layers of the terrain) are Derivative Databases under
-  ODbL 1.0 as well. The rendered world and the minimaps are Produced Works. The scripts that make these databases from
-  OpenStreetMap are in tools/geo/ and blender/.
+  ODbL 1.0 as well, whatever the terms of the other game assets (ASSETS.md). The rendered world and the minimaps are
+  Produced Works. The scripts that make these databases from OpenStreetMap are in tools/geo/ and blender/.
 
 Overture Maps Foundation (İstanbul buildings)
   Contains data from Overture Maps Foundation (https://overturemaps.org), release 2026-09-23.0, buildings theme,
@@ -134,12 +134,12 @@ FlightGear-derived sounds (GNU General Public License v2.0)
     https://github.com/legoboyvdlp/A320-family
   - Boeing 737-800YV for FlightGear: YV3399 and contributors, https://github.com/YV3399/737-800YV
   They and the game sounds derived from them are licensed under the GNU General Public License v2.0, not under the
-  Apache License or CC BY-NC. The unmodified originals, the licence text and their provenance are in
+  Apache License, and are not reserved like the other game assets. The unmodified originals, the licence text and their provenance are in
   tools/audio/third_party/flightgear/ (LICENSE-GPL-2.0.txt, NOTICE.md) and tools/audio/third_party/CREDITS.txt.
 
 ElevenLabs
   Some voices and sound effects were generated with ElevenLabs (paid plan). No real person's voice was cloned. They
-  are original assets of the game (ASSETS-LICENSE.md).
+  are part of the game assets (ASSETS.md).
 
 Synthesised sounds
   The other sounds (engines, rotor, wind, systems, chimes, warning tones) are synthesised by the project's own scripts
