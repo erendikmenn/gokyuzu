@@ -18,7 +18,7 @@ export { isTouchOnly };
 // until the repository name is decided.
 export const SOURCE_REPO = 'github.com/erendikmenn/REPO_NAME';
 export const CREDITS_LINE = 'Harita verisi © OpenStreetMap katkıcıları (ODbL) · Arazi ve hava fotoğrafları: USGS 3DEP, USDA NAIP · Batimetri: NOAA · Bina ve ağaç verisi: DataSF · Three.js (MIT) · B612 font (OFL)';
-export const DISCLAIMER = 'Bu ücretsiz ve resmî olmayan bir hayran projesidir. Airbus, Boeing, Lockheed Martin, General Dynamics, Sikorsky, Turkish Airlines, Turkish Technic, Star Alliance ile oyunda görünen bina ve şirket adları sahiplerinin ticari markalarıdır; yalnızca neyin gösterildiğini belirtmek için kullanılmıştır. Bu kuruluşların hiçbiri projeyle bağlantılı değildir ve projeyi desteklemez. ABD Hava Kuvvetleri ve ABD Kara Kuvvetleri işaretleri gerçekçilik için gösterilmiştir; ABD Savunma Bakanlığı (DoD) görsellerinin yer alması DoD onayı anlamına gelmez.';
+export const DISCLAIMER = 'Bu ücretsiz ve resmî olmayan bir hayran projesidir. Airbus, Boeing, Lockheed Martin, General Dynamics, Sikorsky, Turkish Airlines, Turkish Technic, Star Alliance ile oyunda görünen bina ve şirket adları sahiplerinin ticari markalarıdır; yalnızca neyin gösterildiğini belirtmek için kullanılmıştır. Bu kuruluşların hiçbiri projeyle bağlantılı değildir ve projeyi desteklemez. ABD Hava Kuvvetleri ve ABD Kara Kuvvetleri işaretleri, gösterildikleri yerde yalnızca gerçekçilik içindir; ABD Savunma Bakanlığı (DoD) görsellerinin yer alması DoD onayı anlamına gelmez.';
 
 // antialias is fixed when the renderer is created: remember the preset the page started with
 const STARTUP_QUALITY = safe(() => loadSettings().quality, 'high');
