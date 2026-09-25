@@ -27,7 +27,7 @@ const SKIP_DIRS = new Set(['_bake', 'bake', 'build', 'render', 'cache', 'raw', '
 // Maps (src/maps/index.js): every data/<id>/ with a region.json — San Francisco and İstanbul — ships its data/<id>/*.json
 // and assets/<id>/ (build caches in _* directories and raw/ never do).
 const MAPS = fs.readdirSync(path.join(root, 'data')).filter((m) => fs.existsSync(path.join(root, 'data', m, 'region.json')));
-const SKIP_UNDER = [['assets/aircraft', 'tex'], ...MAPS.map((m) => [`assets/${m}/terrain`, 'h'])];
+const SKIP_UNDER = [['assets/aircraft', 'tex'], ['assets/aircraft', 'src'], ...MAPS.map((m) => [`assets/${m}/terrain`, 'h'])];
 const SKIP_FILE = /(\.(blend\d?|exr|tif|tiff|py|pyc|psd|kra|log)$)|(^\.)|(^compare)|(^cmp)/i;
 
 let files = 0, bytes = 0;

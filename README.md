@@ -7,7 +7,14 @@ and phones.
 
 ▶ **Play:** <https://fs.erenailab.com> · [Türkçe](#türkçe)
 
-<!-- SCREENSHOTS: filled from docs/screenshots/ (rendered with the trademark-free asset pack) -->
+| | |
+|---|---|
+| ![15 Temmuz Şehitler Köprüsü over the Bosphorus](docs/screenshots/istanbul-bogaz-15-temmuz.webp) | ![Sultanahmet and the historic peninsula](docs/screenshots/istanbul-sultanahmet.webp) |
+| ![İstanbul Airport apron](docs/screenshots/istanbul-airport-apron.webp) | ![Golden Gate Bridge, San Francisco](docs/screenshots/san-francisco-golden-gate.webp) |
+| ![UH-60 over Galata](docs/screenshots/istanbul-uh60-galata.webp) | ![A320neo cockpit](docs/screenshots/cockpit-a320neo.webp) |
+| ![A320neo over the historic peninsula](docs/screenshots/istanbul-a320neo-historic-peninsula.webp) | ![Free-flight missions panel](docs/screenshots/missions.webp) |
+
+*Screenshots use the trademark-free asset pack (fictional liveries).*
 
 ## Features
 

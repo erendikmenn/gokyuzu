@@ -292,12 +292,12 @@ export class ReliefImage {
 // ---------------------------------------------------------------- synthetic traffic (TCAS / radar / TSD)
 // Circular tracks over the bay: { cx, cz, r (m), v (m/s), alt (m), ph (rad), dir (+1 cw / -1 ccw), kind, id }
 const TRAFFIC = [
-  { id: 'UAL123', cx: 6500, cz: -2500, r: 7000, v: 120, alt: 1500, ph: 0.3, dir: 1, kind: 'airliner' },
-  { id: 'SWA456', cx: 12000, cz: -15000, r: 5000, v: 110, alt: 900, ph: 2.1, dir: -1, kind: 'airliner' },
+  { id: 'GKY123', cx: 6500, cz: -2500, r: 7000, v: 120, alt: 1500, ph: 0.3, dir: 1, kind: 'airliner' },
+  { id: 'SKB456', cx: 12000, cz: -15000, r: 5000, v: 110, alt: 900, ph: 2.1, dir: -1, kind: 'airliner' },
   { id: 'N172SP', cx: -4300, cz: -23000, r: 1600, v: 50, alt: 450, ph: 4.0, dir: 1, kind: 'ga' },
   { id: 'CHP12', cx: -9200, cz: -22000, r: 900, v: 35, alt: 250, ph: 1.0, dir: -1, kind: 'heli' },
   { id: 'VIPER2', cx: 2000, cz: -14000, r: 9000, v: 190, alt: 4600, ph: 5.2, dir: 1, kind: 'fighter' },
-  { id: 'ASA88', cx: -1000, cz: -9000, r: 12000, v: 150, alt: 3300, ph: 3.3, dir: -1, kind: 'airliner' },
+  { id: 'MRM88', cx: -1000, cz: -9000, r: 12000, v: 150, alt: 3300, ph: 3.3, dir: -1, kind: 'airliner' },
   { id: 'BANDIT', cx: -9000, cz: -36000, r: 8000, v: 230, alt: 8500, ph: 0.8, dir: -1, kind: 'hostile' },
 ];
 let trafficOut = TRAFFIC.map((t) => ({ id: t.id, kind: t.kind, x: 0, z: 0, alt: 0, hdg: 0, gs: 0, vs: 0 }));
