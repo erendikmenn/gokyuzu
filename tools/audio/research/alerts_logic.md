@@ -191,7 +191,7 @@ SPD BRK STILL OUT, GND SPLR NOT ARMED, BRAKES PARK BRK ON, GEAR NOT UPLOCKED, RA
 
 ## B. Boeing 737-800 (NG)
 
-Full quotes and line numbers: `notes_737_egpws.md` (Boeing FCOM D6-27370-TBC Rev 26, Honeywell MK V/VII & MK VI/VIII
+Paraphrased notes with section, page and line references: `notes_737_egpws.md` (Boeing FCOM D6-27370-TBC Rev 26, Honeywell MK V/VII & MK VI/VIII
 pilot guides, FlightGear mk_viii.cxx). Key points:
 
 ### B1. Boeing aural warning system (H: FCOM 15.20)
