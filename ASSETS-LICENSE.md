@@ -85,7 +85,7 @@ terms:
    [data/README.md](data/README.md).
 4. **FlightGear-derived sounds (GPL-2.0).** The autopilot-disconnect sounds of the A320neo and the 737 are derived from
    GPL-2.0 FlightGear aircraft and stay under the GNU General Public License v2.0. The pack keeps them in their own
-   folder with the GPL-2.0 licence text. Their originals and provenance are in `tools/audio/third_party/` of this
+   folder, `assets-gpl/`, with the GPL-2.0 licence text (`fetch_pack.mjs` installs them next to the others). Their originals and provenance are in `tools/audio/third_party/` of this
    repository.
 5. **Third-party data inside the terrain.** Elevation, imagery and bathymetry come from Copernicus DEM, Copernicus
    Sentinel-2, EMODnet Bathymetry (CC BY 4.0), USGS 3DEP, USDA NAIP and NOAA NCEI. This licence covers only the

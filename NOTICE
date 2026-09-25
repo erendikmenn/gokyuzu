@@ -135,7 +135,7 @@ FlightGear-derived sounds (GNU General Public License v2.0)
     https://github.com/legoboyvdlp/A320-family
   - Boeing 737-800YV for FlightGear: YV3399 and contributors, https://github.com/YV3399/737-800YV
   They and the game sounds derived from them are licensed under the GNU General Public License v2.0, not under the
-  Apache License or CC BY-NC; the asset pack keeps them in their own folder with the GPL-2.0 text. The unmodified
+  Apache License or CC BY-NC; the asset pack keeps them in its assets-gpl/ folder with the GPL-2.0 text. The unmodified
   originals, the licence text and their provenance are in tools/audio/third_party/flightgear/ (LICENSE-GPL-2.0.txt,
   NOTICE.md) and tools/audio/third_party/CREDITS.txt.
 

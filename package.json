@@ -12,8 +12,9 @@
   },
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "python3 -m http.server 5173"
+    "start": "node tools/serve.mjs",
+    "dev": "node tools/serve.mjs --assets-from",
+    "test": "for f in tests/*.test.mjs; do node \"$f\" || exit 1; done"
   },
   "keywords": [],
   "author": "Mehmet Eren Dikmen (https://github.com/erendikmenn)",

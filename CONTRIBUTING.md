@@ -20,7 +20,7 @@ For anything bigger than a small fix, open an issue first so we can agree on the
 
 ## Setting up
 
-You need Node.js 20 or newer and git. The game code is plain ES modules served as they are: there is no build step for
+You need Node.js 22 or newer and git. The game code is plain ES modules served as they are: there is no build step for
 development.
 
 ```sh
@@ -39,7 +39,7 @@ The game assets (about 2.8 GB of models, textures, map tiles and sounds) are not
   may include brand liveries that are not part of the pack or its licence.
 
 Then open http://localhost:5173/. The README explains [how assets work](README.md#how-assets-work) and how to
-[rebuild them from source](README.md#rebuilding-the-assets).
+[rebuild them from source](README.md#rebuilding-the-assets); [tools/README.md](tools/README.md) has every step.
 
 Useful URL parameters: `?map=ist`, `?aircraft=f16&spawn=AIR-GGB`, `?mission=ist-halic`, `?quality=low`,
 `?device=phone&touch=1` (phone profile on a desktop browser), `?fps=30`. Usage beacons are off on `localhost`; add
@@ -120,7 +120,8 @@ for f in tests/*.test.mjs; do node "$f" || exit 1; done
   browser, against fake worlds.
 - `packs`, `terrain` and parts of `assets` check the built assets and skip what is not present.
 - Browser-level checks use Playwright scripts in `tools/qa/` (menu, take-off, approach, helicopter) and `tools/perf/`.
-- Continuous integration runs the test suites on every pull request. See the README's "Tests and CI" section.
+- CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs every test file on each push and pull request
+  (Ubuntu, Node 22 and 24, without the built assets). It must be green before a merge.
 
 Add tests with your change when the behaviour can be checked in Node.
 
@@ -216,7 +217,7 @@ The [pull request template](.github/PULL_REQUEST_TEMPLATE.md) repeats this:
 
 Katkın için teşekkürler! Kısaca:
 
-- **Kurulum:** Node.js 20+, sonra `npm install`. Oyun dosyaları git'te değildir: `node tools/assets/fetch_pack.mjs`
+- **Kurulum:** Node.js 22+, sonra `npm install`. Oyun dosyaları git'te değildir: `node tools/assets/fetch_pack.mjs`
   markasız varlık paketini GitHub Releases'tan indirip doğrular, ardından `node tools/serve.mjs` çalıştır. Hızlı
   başlangıç için `node tools/serve.mjs --assets-from https://fs.erenailab.com` yalnızca oyunun istediği dosyaları
   canlı siteden bir kez indirir; toplu indirme yapma lütfen. Adres: http://localhost:5173/.
