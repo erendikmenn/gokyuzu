@@ -2,7 +2,7 @@
 
 /Applications/Blender.app/Contents/MacOS/Blender -b assets/aircraft/a320neo/a320neo.blend -P blender/aircraft/a320neo/render.py -- \
     [hero] [front34] [takeoff] [planform] [flightdeck] [--samples N] [--scale 0.5]
-Writes renders/aircraft/a320neo/*.png and thumb.jpg (from the hero).
+Writes renders/aircraft/a320neo/*.png and thumb.jpg (from the hero); GOKYUZU_RENDER_OUT=<dir>: elsewhere.
 """
 import math
 import os
@@ -17,7 +17,7 @@ import util
 import layout as LY
 
 ARGS = sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else []
-OUT = os.path.join(util.REPO, 'renders', 'aircraft', 'a320neo')
+OUT = os.environ.get('GOKYUZU_RENDER_OUT') or os.path.join(util.REPO, 'renders', 'aircraft', 'a320neo')
 DISP = os.path.join(HERE, 'build', 'displays')
 ZG = -LY.Z_GROUND
 
@@ -542,7 +542,7 @@ def pose_landing():
 
 
 def shot_ams():
-    """Same view as the reference photo a321neo_TC-LSB_AMS.jpg: camera solved from 10 known points on the A321neo
+    """Same view as an A321neo reference photo (landing at Amsterdam): camera solved from 10 known points on the A321neo
     (8.9 deg below, ~540 mm lens, roll -3.2 deg), yaw then matched visually (55 deg off the nose, the point fit's 43
     deg looked too frontal); distance/framing adapted to the shorter A320."""
     for o in list(bpy.data.objects):

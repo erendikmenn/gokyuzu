@@ -2,6 +2,7 @@
 
 .venv/bin/python blender/aircraft/a320neo/cockpit_tex.py
   -> build/tex/ck_atlasA.png, ck_atlasB.png (colour, 4096^2), ck_emitA.png, ck_emitB.png (2048^2), ck_fabric.jpg, ...
+     (GOKYUZU_TEX_OUT=<dir>: elsewhere). The registration plate follows the livery (cockpit_layout.REG_PLATE).
 
 Panels: Airbus blue-grey plates with Dzus fasteners and dark seams, white Futura-like legends, section titles between
 white rules, Korry pushbuttons (black glass caps with dim or lit legends / green 'bars'), knob scales, toggle position
@@ -20,7 +21,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import cockpit_layout as CL  # noqa: E402
 
-OUT = os.path.join(HERE, 'build', 'tex')
+OUT = os.environ.get('GOKYUZU_TEX_OUT') or os.path.join(HERE, 'build', 'tex')
 os.makedirs(OUT, exist_ok=True)
 F_LEG = ('/System/Library/Fonts/Avenir Next Condensed.ttc', 2)      # Demi Bold (Airbus legends are Futura-like)
 F_SMALL = ('/System/Library/Fonts/Avenir Next Condensed.ttc', 5)    # Medium

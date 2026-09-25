@@ -794,7 +794,7 @@ def cb_backing(md, L):
 
 
 def seat(md, yc):
-    """737NG pilot seat (Turkish Airlines: grey leather with woven inserts)."""
+    """737NG pilot seat (grey leather with woven inserts)."""
     X, Y, Z = np.array([1.0, 0, 0]), np.array([0, 1.0, 0]), np.array([0, 0, 1.0])
     s = np.sign(yc)
     cx = FL.SEAT_X

@@ -1,4 +1,4 @@
-// Airbus A320neo (CFM LEAP-1A) — Turkish Airlines livery, TC-LUA "Kapadokya" (personal build). Geometry/textures: blender/aircraft/a320neo/build.py.
+// Airbus A320neo (CFM LEAP-1A) — fictional "Gökyüzü" livery TC-GKA by default. Geometry/textures: blender/aircraft/a320neo/build.py.
 // Rig: control surfaces, Fowler flaps + slats, spoilers (speedbrake / ground spoilers / roll), gear sequence with
 // doors + folding side stays, strut compression, wheel spin + nose-wheel steering, fan spin + blur disc,
 // translating-sleeve reversers, lights (nav, double-flash strobes, beacons, landing spot), cockpit view.

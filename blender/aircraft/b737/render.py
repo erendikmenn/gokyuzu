@@ -23,7 +23,7 @@ def arg(name, default=None):
     return argv[argv.index(name) + 1] if name in argv else default
 
 
-OUT = os.path.join(REPO, 'renders', 'aircraft', 'b737')
+OUT = os.environ.get('GOKYUZU_RENDER_OUT') or os.path.join(REPO, 'renders', 'aircraft', 'b737')
 TEX = os.path.join(HERE, 'tex')
 D = math.pi / 180
 GROUND_Z = -S.Z_CG          # blender z of the ground (gear down, static)
@@ -568,7 +568,7 @@ def shot(name, samples):
         bpy.context.scene.view_settings.exposure = float(arg('--exposure', 0.3))
         return finish('cabin', int(1920 * scale), int(1080 * scale), samples)
     if name == 'jfe':
-        # same viewpoint as the reference photo b738_TC-JFE_MUC.jpg: climbing out, seen from below-right
+        # same viewpoint as a 737-800 reference photo (climbing out of Munich), seen from below-right
         pose(flaps=float(arg('--flaps', 0.0)), gear=0.0)
         piston_extend(1.0)
         place_aircraft(pitch_deg=float(arg('--pitch', 13.0)), lift=0.0, pivot_y=0.0)
