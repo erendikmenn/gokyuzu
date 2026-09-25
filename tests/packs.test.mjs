@@ -57,7 +57,7 @@ function runtimeSubset(buf, size, density, fileD = 1) {
 for (const map of ['sf', 'ist']) {
   const dir = path.join(ROOT, 'assets', map);
   const pj = path.join(dir, 'packs.json');
-  if (!fs.existsSync(pj)) { console.log(`(${map}: no packs.json, skipped)`); continue; }
+  if (!fs.existsSync(pj)) { console.log(`SKIP  ${map}: runtime pack checks (assets/${map}/packs.json not present: the built assets are not in git)`); continue; }
   const packs = JSON.parse(fs.readFileSync(pj, 'utf8'));
   const at = (rel) => path.join(dir, rel);
   // 1. freshness + files

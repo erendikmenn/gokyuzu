@@ -41,7 +41,9 @@ check('ip: CF-Connecting-IP ignored from others (spoofing)', viewerIp({ 'cloudfr
 check('ip: garbage CF-Connecting-IP ignored', viewerIp({ 'cloudfront-viewer-address': '172.70.1.2:443', 'cf-connecting-ip': 'x' }) === '172.70.1.2');
 check('ip: Cloudflare ranges', isCloudflare('104.16.0.1') && isCloudflare('162.159.255.255') && !isCloudflare('104.32.0.1') && !isCloudflare('8.8.8.8')
   && isCloudflare('2606:4700::1') && !isCloudflare('2607:4700::1'));
-check('ip: v6 bucket is the /64', ipBucket('2001:db8:e0:2::7') === '2a02:e0:1:2::/64' && ipBucket('2a02:e0:1:2:ffff::1') === '2a02:e0:1:2::/64');
+// a home connection usually gets a whole IPv6 /64 (common with consumer ISPs): one bucket per /64, not per address
+check('ip: v6 bucket is the /64', ipBucket('2001:db8:e0:2::7') === '2001:db8:e0:2::/64' && ipBucket('2001:db8:e0:2:ffff::1') === '2001:db8:e0:2::/64'
+  && ipBucket('2001:db8:e0:3::7') === '2001:db8:e0:3::/64');
 check('ip: v4 bucket is the address, missing → unknown', ipBucket('203.0.113.9') === '203.0.113.9' && ipBucket('') === 'unknown');
 
 // ---- validation ---------------------------------------------------------------------------------------------------
@@ -187,12 +189,12 @@ check('shipped rules: selftest refused in production, unknown ids refused', chec
 const SALT = 'x'.repeat(48);
 let clock = NOW;
 const db = createMemoryDb();
-const app = createApp({ db, salt: SALT, rules: RULES, stage: 'staging', origins: ['https://staging.fs.erenailab.com'], now: () => clock, limits: { post: 5, get: 8 } });
+const app = createApp({ db, salt: SALT, rules: RULES, stage: 'staging', origins: ['https://staging.example'], now: () => clock, limits: { post: 5, get: 8 } });
 const IP = '203.0.113.77';
 function post(body, { ip = IP, headers = {}, raw } = {}) {
   return app({
     requestContext: { http: { method: 'POST' } }, rawPath: '/api/score',
-    headers: { 'content-type': 'application/json', 'cloudfront-viewer-address': `${ip}:4444`, origin: 'https://staging.fs.erenailab.com', 'sec-fetch-site': 'same-origin', ...headers },
+    headers: { 'content-type': 'application/json', 'cloudfront-viewer-address': `${ip}:4444`, origin: 'https://staging.example', 'sec-fetch-site': 'same-origin', ...headers },
     body: raw !== undefined ? raw : JSON.stringify(body), isBase64Encoded: false,
   });
 }
@@ -292,7 +294,7 @@ globalThis.fetch = async (url, init = {}) => {
 const client = await import('../src/net/leaderboard.js');
 // route the fake fetch into the real handler: the whole POST → store → response path
 respond = async (url, init) => {
-  const u = new URL(url, 'https://staging.fs.erenailab.com');
+  const u = new URL(url, 'https://staging.example');
   const ev = {
     requestContext: { http: { method: init.method || 'GET' } }, rawPath: u.pathname,
     headers: { ...Object.fromEntries(Object.entries(init.headers || {}).map(([k, x]) => [k.toLowerCase(), x])), 'cloudfront-viewer-address': '203.0.113.200:1' },
