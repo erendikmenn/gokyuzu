@@ -1,15 +1,23 @@
 {
   "name": "ucus-simulatoru",
   "version": "1.0.0",
-  "description": "",
+  "description": "Gökyüzü: a free flight simulator for the browser over San Francisco and İstanbul (three.js)",
+  "homepage": "https://fs.erenailab.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/erendikmenn/REPO_NAME.git"
+  },
+  "bugs": {
+    "url": "https://github.com/erendikmenn/REPO_NAME/issues"
+  },
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "python3 -m http.server 5173"
   },
   "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "author": "Mehmet Eren Dikmen (https://github.com/erendikmenn)",
+  "license": "Apache-2.0",
   "type": "module",
   "private": "true",
   "dependencies": {

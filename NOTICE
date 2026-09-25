@@ -1,0 +1,175 @@
+Gökyüzü — Copyright 2026 Mehmet Eren Dikmen
+
+Gökyüzü is a free flight simulator for the browser, created by Mehmet Eren Dikmen
+(https://github.com/erendikmenn) and developed with the Gökyüzü contributors.
+Source: https://github.com/erendikmenn/REPO_NAME
+
+The code in this repository is licensed under the Apache License, Version 2.0 (see LICENSE). The files listed in
+section 3 below are under other licences. The original game assets (models, textures, sounds, images) are distributed
+separately under CC BY-NC 4.0 (see ASSETS-LICENSE.md).
+
+
+1. Attribution
+--------------
+
+This product includes software and content created by Mehmet Eren Dikmen for Gökyüzü
+(https://github.com/erendikmenn/REPO_NAME).
+
+Section 4(d) of the Apache License 2.0 requires anyone who redistributes Gökyüzü, or a work derived from it, to
+include a readable copy of the attribution notices in this NOTICE file (in a NOTICE file, in the documentation, or in
+a screen the software shows where such notices normally appear).
+
+The author also asks that derivative works credit Gökyüzü visibly: in the credits, "About" screen or start menu of a
+game, app or website built on this code, for example:
+
+    Based on Gökyüzü by Mehmet Eren Dikmen — https://github.com/erendikmenn/REPO_NAME
+    (Türkçe: "Mehmet Eren Dikmen'in Gökyüzü projesine dayanır.")
+
+This visible credit is a request from the author. It does not modify the Apache License 2.0.
+
+Names and logo: the names "Gökyüzü" and "Gökyüzü SF" and the Gökyüzü logo (favicon.svg, favicon.ico, favicon-180.png,
+apple-touch-icon*.png) are not licensed. Apache License 2.0 section 6 grants no trademark rights. Please give a
+modified public version its own name and logo. You may still say that it is "based on Gökyüzü".
+
+
+2. Third-party software shipped with the game
+---------------------------------------------
+
+three.js 0.186 (https://threejs.org), installed from npm and bundled into the production build.
+  MIT License. Copyright © 2010-2026 three.js authors.
+  The build includes these three.js add-on libraries:
+  - meshoptimizer decoder: MIT License. Copyright (C) 2016-2026, Arseny Kapoulkine.
+  - fflate 0.8.2: MIT License. Copyright (c) Arjun Barrett.
+  - ktx-parse and zstddec: MIT License. Copyright (c) Don McCurdy.
+  - Draco 3D decoder (https://github.com/google/draco): Apache License 2.0. Copyright The Draco Authors (Google LLC).
+  - Basis Universal transcoder (https://github.com/BinomialLLC/basis_universal): Apache License 2.0.
+    Copyright Binomial LLC.
+
+B612 and B612 Mono fonts (src/avionics/fonts/).
+  SIL Open Font License 1.1. Copyright 2012 The B612 Project Authors (https://github.com/polarsys/b612).
+  The licence text is in src/avionics/fonts/OFL.txt.
+
+"flight" glyph from Material Icons (favicon.svg and the aircraft icons in src/ui/).
+  Apache License 2.0. Copyright Google LLC.
+
+"settings" icon from Feather Icons (src/ui/menu.js).
+  MIT License. Copyright (c) 2013-2017 Cole Bemis.
+
+The development tools are not part of the game and keep their own licences: esbuild, Playwright, glTF-Transform,
+sharp (its prebuilt libvips binaries are LGPL-3.0-or-later), draco3dgltf, meshoptimizer, KTX-Software, Blender, and the
+Python packages the asset pipeline uses.
+
+
+3. Files in this repository under other licences
+------------------------------------------------
+
+- data/** and blender/landmarks/layout.json, blender/landmarks_ist/layout.json: Open Database License (ODbL) 1.0.
+  See data/README.md.
+- tools/audio/third_party/flightgear/** and the sounds derived from them: GNU General Public License v2.0.
+  See section 5.
+- src/avionics/fonts/*.ttf: SIL Open Font License 1.1.
+- The Gökyüzü names and logo: not licensed (section 1).
+- Images committed to this repository (src/ui/assets/*.jpg minimaps, docs/perf/ref-2026-09/*.webp screenshots): game
+  renders under CC BY-NC 4.0, as the other original assets (ASSETS-LICENSE.md), with the data attributions of
+  section 4.
+
+
+4. Map, elevation and imagery data
+----------------------------------
+
+OpenStreetMap (both maps)
+  Map data © OpenStreetMap contributors, available under the Open Database License (ODbL) 1.0.
+  https://www.openstreetmap.org/copyright
+  The committed files in data/ and blender/landmarks*/layout.json are extracts of OpenStreetMap or Derivative
+  Databases of it, and are licensed under ODbL 1.0 (data/README.md). The OSM-derived runtime assets (city tiles,
+  airports, landmark placement, the water, shore and land-class layers of the terrain) are Derivative Databases under
+  ODbL 1.0 as well. The rendered world and the minimaps are Produced Works. The scripts that make these databases from
+  OpenStreetMap are in tools/geo/ and blender/.
+
+Overture Maps Foundation (İstanbul buildings)
+  Contains data from Overture Maps Foundation (https://overturemaps.org), release 2026-09-23.0, buildings theme,
+  licensed under ODbL 1.0: © OpenStreetMap contributors, Overture Maps Foundation, Microsoft (ML building footprints).
+
+Copernicus DEM GLO-30 (İstanbul terrain, runway profiles, minimap relief)
+  produced using Copernicus WorldDEM-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided
+  under COPERNICUS by the European Union and ESA; all rights reserved
+  The data were resampled, the airports were flattened and buildings and tree canopy were removed from the surface
+  model.
+
+Copernicus Sentinel-2 (İstanbul imagery)
+  Contains modified Copernicus Sentinel data 2026.
+  Level-2A scenes of July and August 2026, accessed through Earth Search (Element 84) on the Registry of Open Data on
+  AWS. Legal notice: https://sentinels.copernicus.eu/documents/247904/690755/Sentinel_Data_Legal_Notice
+
+EMODnet Bathymetry (İstanbul water depth)
+  EMODnet Bathymetry Consortium (2024): EMODnet Digital Bathymetry (DTM 2024).
+  https://doi.org/10.12770/cf51df64-56f9-4a99-b1aa-36b8d7b743a1
+  Licensed under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Changes: resampled to the game's grid,
+  filled along the shore and in narrow waters, and converted into a water-depth texture.
+
+San Francisco (US public domain and open data)
+  - USGS 3D Elevation Program (3DEP): terrain. Public domain. Courtesy of the U.S. Geological Survey.
+  - USDA National Agriculture Imagery Program (NAIP): aerial imagery, roof colours, minimap. Public domain.
+    USDA Farm Production and Conservation Business Center.
+  - NOAA NCEI DEM Global Mosaic: bay bathymetry. Public domain. NOAA National Centers for Environmental Information.
+  - DataSF Building Footprints and Street Tree Inventory: buildings and trees. Open Data Commons Public Domain
+    Dedication and License (PDDL). City and County of San Francisco / San Francisco Public Works, via DataSF.
+
+Airports
+  - OurAirports (https://ourairports.com/data/): runway and airport data. Public domain.
+  - DHMİ AIP Türkiye, AD 2: runway threshold coordinates and elevations of LTFM, LTFJ and LTBA, transcribed from the
+    published AIP. © DHMİ.
+
+Not for navigation: the terrain, depths, runways, charts and procedures in this game must not be used for real-world
+navigation.
+
+
+5. Sounds
+---------
+
+FlightGear-derived sounds (GNU General Public License v2.0)
+  The autopilot-disconnect sounds (the A320 autopilot button and "cavalry charge", the 737 autopilot-disconnect
+  wailer) are derived from two FlightGear aircraft:
+  - A320-family for FlightGear: Josh Davidson (Octal450), Jonathan Redpath (legoboyvdlp) and contributors,
+    https://github.com/legoboyvdlp/A320-family
+  - Boeing 737-800YV for FlightGear: YV3399 and contributors, https://github.com/YV3399/737-800YV
+  They and the game sounds derived from them are licensed under the GNU General Public License v2.0, not under the
+  Apache License or CC BY-NC. The unmodified originals, the licence text and their provenance are in
+  tools/audio/third_party/flightgear/ (LICENSE-GPL-2.0.txt, NOTICE.md) and tools/audio/third_party/CREDITS.txt.
+
+ElevenLabs
+  Some voices and sound effects were generated with ElevenLabs (paid plan). No real person's voice was cloned. They
+  are original assets of the game (ASSETS-LICENSE.md).
+
+Synthesised sounds
+  The other sounds (engines, rotor, wind, systems, chimes, warning tones) are synthesised by the project's own scripts
+  in tools/audio/.
+
+Reference recordings (not distributed)
+  Some recordings were used only to measure levels and spectra; none of their audio is in the game. They are listed
+  in tools/audio/third_party/CREDITS.txt (Wikimedia Commons, CC BY-SA 3.0 / CC BY 3.0; U.S. Navy and U.S. Air Force
+  footage, public domain).
+
+
+6. Aircraft drawings
+--------------------
+
+All aircraft, airport, landmark and city models are generated by the project's own Blender Python scripts. They were
+drawn from public drawings and dimensions: Airbus A320 airport-planning documentation; an F-16 three-view by Marek Cel
+(CC0); a U.S. Air Force F-22 three-view (public domain). Photos listed in blender/**/ref/SOURCES* were used as visual
+reference only and are not distributed.
+
+
+7. Trademarks and no endorsement
+--------------------------------
+
+Airline, aircraft manufacturer, military and company names, logos, liveries and insignia shown or named in this
+project belong to their owners, including Airbus, A320neo, Boeing, 737, Lockheed Martin, F-16 Fighting Falcon, F-22
+Raptor, General Dynamics, Sikorsky, Black Hawk, Turkish Airlines / Türk Hava Yolları, Turkish Technic, Turkish Cargo,
+Star Alliance, the U.S. Air Force, the U.S. Army, X, and the names of buildings, bridges and companies in the world.
+They are used only to identify what is depicted. Gökyüzü is an unofficial fan project: none of these organisations
+is affiliated with it, sponsors it or endorses it. The licences in this repository grant no right to use any of these
+names, trademarks, logos, liveries or insignia.
+
+U.S. Air Force and U.S. Army markings are depicted for realism. The appearance of U.S. Department of Defense (DoD)
+visual information does not imply or constitute DoD endorsement.
