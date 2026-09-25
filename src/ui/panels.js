@@ -14,8 +14,11 @@ import { requestTiltSetting } from './touch.js';
 
 export { isTouchOnly };
 
-export const CREDITS_LINE = 'Harita verisi © OpenStreetMap katkıcıları (ODbL) · Arazi ve hava fotoğrafları: USGS 3DEP, USDA NAIP · Batimetri: NOAA · Bina verisi: DataSF · Three.js (MIT) · B612 font (OFL)';
-export const DISCLAIMER = 'Bu ücretsiz, ticari olmayan bir hayran projesidir. Turkish Airlines, Airbus, Boeing, Lockheed Martin, General Dynamics ve Sikorsky ile hiçbir bağlantısı yoktur; isimler ve boyalar yalnızca tanımlayıcı amaçla kullanılmıştır.';
+// The public source repository (NOTICE, README.md): the only place the game names it. REPO_NAME is a placeholder
+// until the repository name is decided.
+export const SOURCE_REPO = 'github.com/erendikmenn/REPO_NAME';
+export const CREDITS_LINE = 'Harita verisi © OpenStreetMap katkıcıları (ODbL) · Arazi ve hava fotoğrafları: USGS 3DEP, USDA NAIP · Batimetri: NOAA · Bina ve ağaç verisi: DataSF · Three.js (MIT) · B612 font (OFL)';
+export const DISCLAIMER = 'Bu ücretsiz ve resmî olmayan bir hayran projesidir. Airbus, Boeing, Lockheed Martin, General Dynamics, Sikorsky, Turkish Airlines, Turkish Technic, Star Alliance ile oyunda görünen bina ve şirket adları sahiplerinin ticari markalarıdır; yalnızca neyin gösterildiğini belirtmek için kullanılmıştır. Bu kuruluşların hiçbiri projeyle bağlantılı değildir ve projeyi desteklemez. ABD Hava Kuvvetleri ve ABD Kara Kuvvetleri işaretleri gerçekçilik için gösterilmiştir; ABD Savunma Bakanlığı (DoD) görsellerinin yer alması DoD onayı anlamına gelmez.';
 
 // antialias is fixed when the renderer is created: remember the preset the page started with
 const STARTUP_QUALITY = safe(() => loadSettings().quality, 'high');
@@ -95,6 +98,9 @@ const CSS = `
 .gkp-credits ul { margin: 10px 0 0; padding: 0; list-style: none; display: grid; gap: 7px; }
 .gkp-credits li { display: grid; grid-template-columns: 150px 1fr; gap: 12px; font-size: 13.5px; line-height: 1.4; }
 .gkp-credits li b { color: var(--gk-dim); font-weight: 650; }
+.gkp-credits li a { color: inherit; overflow-wrap: anywhere; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: rgba(208, 222, 240, .35); }
+.gkp-credits li a:hover { color: #fff; text-decoration-color: rgba(208, 222, 240, .7); }
+.gkp-credits li a:focus-visible { outline: 2px solid #fff; outline-offset: 2px; border-radius: 3px; }
 .gkp-disc { margin-top: 16px !important; padding: 12px 14px; border-radius: 12px; background: rgba(255, 176, 32, .08); border: 1px solid rgba(255, 176, 32, .22); font-size: 13px !important; color: rgba(255, 232, 200, .92) !important; }
 /* touch devices (phones: small screens, finger-sized targets) */
 @media (max-height: 520px), (max-width: 560px) {
@@ -312,20 +318,35 @@ export function openCredits(container, map = null) {
   const m = modal(container, 'Künye', own ? `Gökyüzü · ${map.title} uçuş simülatörü` : 'Gökyüzü SF · San Francisco Körfezi uçuş simülatörü');
   const box = el('div', 'gkp-credits', m.card);
   const ul = el('ul', null, box);
+  const repo = `https://${SOURCE_REPO}`;
+  // [label, text, link (optional: opens in a new tab)]
   const rows = [
     ...(own || [
       ['Harita verisi', '© OpenStreetMap katkıcıları (ODbL)'],
-      ['Arazi ve hava fotoğrafları', 'USGS 3DEP, USDA NAIP'],
-      ['Batimetri', 'NOAA'],
-      ['Bina verisi', 'DataSF'],
+      ['Arazi ve hava fotoğrafları', 'USGS 3DEP, USDA NAIP (kamu malı)'],
+      ['Batimetri', 'NOAA NCEI (kamu malı)'],
+      ['Bina ve ağaç verisi', 'DataSF (ODC PDDL)'],
     ]),
-    ['Yazılım', 'Three.js (MIT)'],
+    ['Havalimanı verisi', 'OurAirports (kamu malı); DHMİ AIP Türkiye. Gerçek uçuşlarda seyrüsefer amacıyla kullanılamaz.'],
+    ['Uçak çizimleri', 'Airbus havalimanı planlama belgeleri; F-16 üç görünüş: Marek Cel (CC0); F-22: ABD Hava Kuvvetleri (kamu malı)'],
+    ['Yazılım', 'Three.js (MIT) · Draco ve Basis Universal (Apache-2.0) · meshoptimizer, fflate, ktx-parse, zstddec (MIT)'],
     ['Yazı tipi', 'B612 font (OFL)'],
-    ['Sesli uyarılar', 'ElevenLabs ile üretildi; gerçek kişi sesi klonlanmadı'],
+    ['Simgeler', 'Material Icons (Apache-2.0), Feather Icons (MIT)'],
+    ['Sesler', 'Motor, rotor, rüzgâr, sistem ve uyarı sesleri projenin kendi ses sentezi betikleriyle üretildi'],
+    ['Sesli uyarılar', 'Sesli uyarılar ve bazı ses efektleri ElevenLabs ile üretildi; gerçek bir kişinin sesi klonlanmadı'],
     ['Otopilot ayırma sesleri', 'FlightGear A320-family (legoboyvdlp, Octal450 ve katkıda bulunanlar) ve Boeing 737-800YV (YV3399 ve katkıda bulunanlar) projelerinden türetilmiştir · GNU GPL-2.0 · A320 "cavalry charge" bir kayıt değil, Airbus dalga şemasından yeniden sentezlenmiştir'],
     ['Ses referans kayıtları', 'Yalnız ölçüm için: Sygoletto (Air France A319, CC BY-SA 3.0) ve jan tisler (Adria Airways A319, CC BY 3.0), Wikimedia Commons; ABD Donanması (P-8A, DVIDS) ve ABD Hava Kuvvetleri (F-16), kamu malı'],
+    ['Lisans', 'Kod: Apache-2.0 · Özgün varlıklar: CC BY-NC 4.0 (ayrı varlık paketi) · Harita verisi: ODbL · FlightGear sesleri: GPL-2.0'],
+    ['Açık kaynak', SOURCE_REPO, repo],
+    ['Katkıda bulunanlar', 'Mehmet Eren Dikmen ve GitHub’daki tüm katkıda bulunanlar', `${repo}/graphs/contributors`],
   ];
-  for (const [k, v] of rows) { const li = el('li', null, ul); el('b', null, li, k); el('span', null, li, v); }
+  for (const [k, v, href] of rows) {
+    const li = el('li', null, ul);
+    el('b', null, li, k);
+    if (!href) { el('span', null, li, v); continue; }
+    const a = el('a', null, el('span', null, li), v);
+    a.href = href; a.target = '_blank'; a.rel = 'noopener noreferrer';
+  }
   el('p', 'gkp-disc', box, DISCLAIMER);
   // CONTRACTS-SF.md §11 (src/core/telemetry.js)
   el('p', 'gkp-disc', box, 'Gizlilik: Oyunu geliştirmek için anonim kullanım istatistikleri toplanır (seçilen uçak, oynama süresi, kare hızı, hatalar, kalkış / iniş / kaza sayıları ve eğitim adımlarının süresi). Çerez kullanılmaz, kişisel bilgi toplanmaz, sunucu kayıtları 30 gün sonra silinir. Tarayıcında “Do Not Track” veya “Global Privacy Control” açıksa istatistik gönderilmez.');

@@ -119,12 +119,14 @@ export const MAP = {
   declination: 6.2,            // magnetic declination (° E), when runways.json has none
   defaultSpawns: { f16: 'LTBA-05', f22: 'LTBA-05', a320neo: 'LTFM-35L', b737: 'LTFM-34L', uh60: 'IST-HOVER-GALATA' },
   shareTitle: 'İstanbul uçuş simülatörü',
-  creditsLine: 'Harita verisi © OpenStreetMap katkıcıları (ODbL) · Overture Maps Foundation · Copernicus Sentinel verisi / Copernicus DEM (ESA) · Three.js (MIT) · B612 font (OFL)',
+  // Künye rows (src/ui/panels.js openCredits); the Copernicus DEM and Sentinel notices are the licences' own wording
+  creditsLine: 'Harita verisi © OpenStreetMap katkıcıları (ODbL) · Overture Maps Foundation · Copernicus Sentinel verisi (2026) · Copernicus DEM © DLR e.V. / Airbus DS · EMODnet Batimetri (CC BY 4.0) · Three.js (MIT) · B612 font (OFL)',
   credits: [
     ['Harita verisi', '© OpenStreetMap katkıcıları (ODbL)'],
-    ['Bina verisi', 'OpenStreetMap, Overture Maps Foundation'],
-    ['Uydu görüntüsü', 'Değiştirilmiş Copernicus Sentinel verisi (ESA)'],
-    ['Yükseklik verisi', 'Copernicus DEM GLO-30 (ESA)'],
+    ['Bina verisi', 'OpenStreetMap, Overture Maps Foundation (Microsoft bina ayak izleri dahil; ODbL)'],
+    ['Uydu görüntüsü', 'Sentinel-2, Temmuz–Ağustos 2026: “Contains modified Copernicus Sentinel data 2026”'],
+    ['Yükseklik verisi', 'Copernicus DEM GLO-30: “produced using Copernicus WorldDEM-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved”'],
+    ['Batimetri', 'EMODnet Bathymetry Consortium (2024): EMODnet Digital Bathymetry (DTM 2024), CC BY 4.0; yeniden örneklendi ve su derinliği dokusuna dönüştürüldü'],
   ],
   // labels on the menu map / minimap / navigation map (water bodies, districts); menu: shown on the menu's small map
   labels: [
