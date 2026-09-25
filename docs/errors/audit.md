@@ -6,7 +6,7 @@ cause, a proposed fix with effort, and its status on the live build `5d6612f`.
 
 **Data window.** Production logs 13:30–18:31 UTC (16:30–21:31 local). Beacons exist from `3833a08` (19:34 local) onward;
 v1.0 sent none. Real player sessions with beacons: 242 (134 on `3833a08`, 72 on `94a7a5a`, 36 on `5d6612f`), from 167
-anonymous visitors. The owner's own and headless sessions are excluded unless stated. `5d6612f` had only about 20
+anonymous visitors. The developers' own test sessions and headless browsers are excluded unless stated. `5d6612f` had only about 20
 minutes of traffic when this was written, so its numbers are early. Visitors are salted hashes; no IPs appear here.
 
 **Build ↔ time (UTC):** v1.0 < 16:34 ≤ `3833a08` < 17:24 ≤ `94a7a5a` < 18:10 ≤ `5d6612f`.
@@ -22,7 +22,7 @@ minutes of traffic when this was written, so its numbers are early. Visitors are
 | 1 | iOS pages die the moment the flight starts (memory) | Critical | 47 of 48 iOS flights on 3833a08/94a7a5a; iOS = 40 % of sessions | Much better (phone → `low`), not proven yet | S (telemetry) + M |
 | 2 | X/Twitter in-app browser (iPhone) loses the WebGL context within seconds | High | 79 of 98 iOS sessions are this browser | Still happens; guard reloads once, then gives up | S–M |
 | 3 | Tutorial beacons lose their session id (`s` collision): "0 of 17 finished" is wrong | High (data) | 488 beacons, every tutorial session | Still broken | XS |
-| 4 | `null is not an object (evaluating 'array.byteLength')`, three.module.js:70 | High | 4 sessions (1 player, 3 owner iPad) | **Fixed** (reproduced before/after) | done |
+| 4 | `null is not an object (evaluating 'array.byteLength')`, three.module.js:70 | High | 4 sessions (1 player, 3 on a staging test iPad) | **Fixed** (reproduced before/after) | done |
 | 5 | Load failures and early errors never reach telemetry | Medium | 9 stalled loads without a cause; 18/104 page loads without `open` | Still open | S |
 | 6 | A second tab "crash-resumes" the first tab's flight and lowers quality permanently | Medium | 1 production session (Mac Safari) | New in 559df15+, still open | S |
 | 7 | `shaderSource must be an instance of WebGLShader`, three.module.js:6162 | Medium | 1 session (iPhone, X in-app) | **Handled** (guard); one silent-loss gap remains | XS |
@@ -32,7 +32,7 @@ minutes of traffic when this was written, so its numbers are early. Visitors are
 | 11 | `Cannot read properties of undefined (reading 'M_ID')` | Low | 1 session, harmless | Not our code | XS (filter) |
 | 12 | `Script error.` | Low | 1 session (iPhone Safari) | New on 5d6612f, not our code | XS (filter) |
 | 13 | Crashes that look like bugs | Info | none found; 109 crashes reviewed | — | XS (add position) |
-| 14 | GPU budget monitor steps twice in 40 s on iPad | Low | 1 session (owner) | Open | S |
+| 14 | GPU budget monitor steps twice in 40 s on iPad | Low | 1 session (staging test device) | Open | S |
 
 Distinct `t=err` messages in all logs: **4** (29 beacons; the client caps them at 5 per page, so counts understate
 frequency). All four are listed (#4, #7, #11, #12).
@@ -144,7 +144,7 @@ visitor's running session (the logic in `docs/errors/repro/sessions.py`).
 | where | build | device | when |
 |---|---|---|---|
 | production | 3833a08 | iPhone, X in-app, `high`, F-16 AIR-GGB | 12 s after `fly`; page never sent `end` |
-| staging (owner) | 343ecf8 ×2, e620b2d | iPad Pro 13" (reports as Safari/macOS 1376×946 @2), `high` | 0.8–2.8 min into flight; heartbeats continued |
+| staging (test device) | 343ecf8 ×2, e620b2d | iPad Pro 13" (reports as Safari/macOS 1376×946 @2), `high` | 0.8–2.8 min into flight; heartbeats continued |
 
 **Root cause.** `three.module.js:70` is `WebGLAttributes.createBuffer`, at `const size = array.byteLength`. City tiles free
 their CPU arrays after upload (`src/world-sf/city.js:13` `freeArray`, attached at `:164-165`). When iOS kills the GPU
@@ -307,7 +307,7 @@ be located.
 
 ## 14. GPU budget monitor steps twice in 40 s on iPad (Low)
 
-Owner's iPad Pro, staging 92cea3b: `high → medium` at 3.9 min (1,387 MB, 44 MB over), `medium → low` 40 s later
+Staging test on an iPad Pro, 92cea3b: `high → medium` at 3.9 min (1,387 MB, 44 MB over), `medium → low` 40 s later
 (1,317 MB, 28 MB over). Stepping down releases loaded content slowly, so the second step came before the first had
 taken effect. **Fix (S):** after a step, wait until the meter stops falling (or 60 s) before judging again.
 `gfx` events otherwise: production had no `gfx` telemetry before 5d6612f. On 5d6612f the only `lost` events are the two

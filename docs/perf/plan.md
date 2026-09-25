@@ -1,8 +1,8 @@
 # Gökyüzü SF: performance plan (research, measured)
 
 Research only: no game code was changed. Every number below was produced by the scripts in `tools/perf/` (section 9);
-raw JSON, screenshots and image pairs of this study are in the session scratchpad (`…/scratchpad/perf/out`; the tools
-write to `$PERF_OUT`, default `<tmpdir>/gokyuzu-perf`).
+raw JSON, screenshots and image pairs of this study are kept outside the repository (the tools write to `$PERF_OUT`,
+default `<tmpdir>/gokyuzu-perf`).
 
 **What was measured.** Baseline = commit **`5d6612f`** (live, "Remove time of day…", robustness kept), as a clean
 `git worktree` with the current assets, and its publish build (`dist/`) served over HTTP/2 + Brotli with the
@@ -10,7 +10,7 @@ write to `$PERF_OUT`, default `<tmpdir>/gokyuzu-perf`).
 rendering code is identical; an interleaved A/B (section 8) showed `5d6612f` = `94a7a5a` on load time, frame time,
 GPU memory and pixels. The shared working tree was never measured (at the start of the study `dev` was `3833a08`
 with 60 uncommitted files from other agents; at the end `0c34068`, with touch controls in progress).
-Machine: Apple M4 Max, 128 GB, Chromium (Playwright headless shell, ANGLE on Metal) and Playwright WebKit;
+Reference machine: Apple M4 Max, Chromium (Playwright headless shell, ANGLE on Metal) and Playwright WebKit;
 2560×1440 at pixel ratio 1 unless stated.
 
 **Shared-GPU caveat.** Other agents ran 3–5 headless game instances most of the day (GPU 50–100 % busy from other
@@ -391,7 +391,7 @@ the gain.
 | change | cost today | gain | effort / risk | quality / verify | owner |
 |---|---|---|---|---|---|
 | Pre-warm programs + textures before `loading.hide()` (top #4) | 0.4–0.8 s frame, 52–64 links in 5 s | smooth first seconds | S / low | `load.mjs` hitch | lead |
-| KTX2 + 2048 cap (top #3) | 90–124 ms uploads, GPU 0.3–0.4 GB for aircraft+airports | −600–900 MB GPU, uploads < 1 ms | M / medium | captures + owner review | owners |
+| KTX2 + 2048 cap (top #3) | 90–124 ms uploads, GPU 0.3–0.4 GB for aircraft+airports | −600–900 MB GPU, uploads < 1 ms | M / medium | captures + maintainer review | owners |
 | Cockpit displays (top #8): 10–15 Hz for slow pages, 512² where small, static layers once, fewer canvases | ~5.2 ms of an 11 ms cockpit GPU frame (A/B); mipmaps measured irrelevant, round-robin ×0.97 | 10 Hz measured −2.2 ms; up to −5 ms | S–M / low | `cockpit` per aircraft, motion review | AV |
 
 **GPU**
@@ -473,7 +473,7 @@ PERF_BASE=http://localhost:5196/ node tools/perf/capture.mjs --out cand --preset
 - Pass rule (`ssim.py`): SSIM ≥ min(0.995, noise SSIM − 0.002) and the worst 64 px tile ≥ noise tile-min − 0.02; the
   heat map (red = structural difference) is attached to the review. "Exact" changes (e.g. the terrain land branch)
   must stay at the noise floor; "approximate" changes (texture compression, resolution, LOD, shadow caching) need the
-  owner's visual sign-off on the heat maps in addition to the numbers.
+  a maintainer's visual sign-off on the heat maps in addition to the numbers.
 - Asset changes (KTX2, meshopt, texture caps) are also checked in isolation: `tools/perf/decode-bench.mjs` (decode,
   upload, GPU bytes) and a capture pair of a root with only the converted files swapped (as done for the F-16, KSFO and
   Golden Gate files in this study, `wt2` on :5196).
@@ -484,7 +484,7 @@ PERF_BASE=http://localhost:5196/ node tools/perf/capture.mjs --out cand --preset
 
 ## 8. Release check 5d6612f vs production 94a7a5a
 
-Owner asked before staging; answered first, summarised here. Clean worktrees of both commits with the same assets,
+Checked before staging; summarised here. Clean worktrees of both commits with the same assets,
 interleaved A/B (`ab.mjs`, variants on two servers), captures with a second production capture as the noise floor.
 
 - **Frame time** (medians of 5 interleaved rounds, downtown / SFO / Golden Gate / cockpit): high GPU ×0.96–0.99,

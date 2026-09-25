@@ -30,3 +30,17 @@ blender/**/ref/**/*.tif
 blender/**/ref/**/*.tiff
 blender/**/refimg/
 data/analytics/
+# local caches (tools/serve.mjs --assets-from downloads go to .cache/assets/), tool caches, partial downloads
+.cache/
+.ruff_cache/
+data/*/_cache/
+data/*/cache/
+assets/**/_cache/
+*.part
+*.log
+# local secrets and deploy config: they live in ~/.config (tools/deploy/deploy.env.example is the committed template)
+.env
+*.env
+# internal open-source preparation notes: never committed (only the drafts that become LICENSE / NOTICE / README etc.)
+/docs/opensource/*
+!/docs/opensource/*.draft.md

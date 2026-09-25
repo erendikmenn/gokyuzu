@@ -1,7 +1,7 @@
 # Device matrix baseline and findings (2026-09-24)
 
 Measured by the perf lead on dev `1d480f7` (frozen worktree served on :5195), M4 Max, Playwright Chromium (ANGLE/Metal) and WebKit.
-Tools: `tools/perf/{matrix,overkill,allocs,webkit-memory,soak,refshots}.mjs`. Raw data: scratchpad `perf-lead/out/`.
+Tools: `tools/perf/{matrix,overkill,allocs,webkit-memory,soak,refshots}.mjs`. Raw data: kept outside the repository (the tools write to `$PERF_OUT`).
 
 **Contention caveat.** Other agents kept the GPU 56–99 % busy during these runs, so fps, frame times and the CPU time
 of `renderer.render` are upper bounds (WebGL calls block on a saturated GPU). The ranking rests on numbers contention
@@ -78,4 +78,4 @@ free-sfo / free-ggb / free-downtown and İstanbul ltfm-ground / free-ltfm / free
 captured before any change with time frozen, HUD hidden, streaming settled. `noise.json` = noise floor.
 `PERF_BASE=http://localhost:5173/ node tools/perf/refshots.mjs gate` (exit 1 on FAIL, heat maps); `--classes phone --maps ist` for a subset.
 Pass: SSIM ≥ min(0.995, noise − 0.002) and worst tile ≥ noise tile − 0.02. Exact changes (frame pacing, pre-warm, drape
-stop, sort flag, shadow colour buffer) must pass; approximate ones (texture sizes, atlas, draw distance, lights) need the owner's review of the heat maps.
+stop, sort flag, shadow colour buffer) must pass; approximate ones (texture sizes, atlas, draw distance, lights) need a maintainer's review of the heat maps.
