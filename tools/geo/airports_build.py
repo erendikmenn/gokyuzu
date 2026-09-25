@@ -3,7 +3,7 @@
 Usage: .venv/bin/python tools/geo/airports_build.py [ksfo] [koak] [kngz]   (default: all)
        GEO_REGION=ist .venv/bin/python tools/geo/airports_build.py [ltfm] [ltfj] [ltba]
        (İstanbul: data/ist/runways.json from tools/geo/airports_runways.py, OSM from airports_fetch.py; the İstanbul
-       models -- LTFM terminal / piers / tulip tower, SAW terminals and tower, LTBA towers, Turkish Technic hangar
+       models -- LTFM terminal / piers / tulip tower, SAW terminals and tower, LTBA towers, maintenance-hangar
        lettering -- go to assets/ist/airports/_cache/models_<icao>.json (tools/geo/airports_ist_models.py) and are
        built by tools/geo/airports_ist_blender.py, which runs blender/airports/build_buildings.py unchanged:
          .venv/bin/python tools/geo/airports_ist_atlas.py
@@ -1312,21 +1312,21 @@ def ist_tower_models(ap, design=None):
     return out
 
 
-# Turkish Technic hangars (OSM names; locations: LTFM way 849830032 base-maintenance hangars opened Oct 2020 and way
-# 639777798 the THY line-maintenance hangar ("THY HANGAR" on the AIP aerodrome chart); LTFJ HABOM ways 403537679 /
-# 403537677 (turkishtechnic.com Sabiha Gökçen facilities, AIP ADC Apron 5 / MRO apron); LTBA ways 120681429,
-# 120681440, 315036879 (AIP ADC "THY TECHNIC HANGAR", Aircraft Maintenance Aprons 1 and 2)). Their apron faces get the
-# TURKISH TECHNIC lettering over the doors in the company's hangar style (wordmark on the door header, as on its
-# Esenboğa hangar, Wikimedia Commons "Turkish Technic Esenboğa Hangar.jpg"; the letter colour of the 2023 logo).
-TT_NAME = ('Turkish Technic', 'Türk Hava Yolları Teknik', 'THY Teknik')
+# The airline maintenance (MRO) hangars, by OSM way: LTFM 849830032 (base-maintenance hangars opened Oct 2020) and
+# 639777798 (line-maintenance hangar on the AIP aerodrome chart); LTFJ 403537679 / 403537677 (AIP ADC Apron 5 / MRO
+# apron); LTBA 120681429, 120681440, 315036879 (AIP ADC maintenance hangars, Aircraft Maintenance Aprons 1 and 2).
+# Their apron faces get lettering over the doors (a wordmark on the door header, as painted on such hangars): the
+# atlas strip 'mro_dark' of tools/geo/airports_ist_atlas.py, neutral text unless the local brand file
+# airport_lettering.json replaces it (blender/common/brand.py). The same seven hangars as the earlier OSM-name match.
+MRO_HANGARS = {'w849830032', 'w639777798', 'w403537679', 'w403537677', 'w120681429', 'w120681440', 'w315036879'}
 
 
-def tt_signs(ap):
+def mro_signs(ap):
     out = []
     for b in ap.buildings:
-        if b['kind'] == 'hangar' and any(n in (b.get('name') or '') for n in TT_NAME):
-            out.append(IM.hangar_signs(b, ap.origin, 'tt_dark'))
-    print(f'{ap.icao}: Turkish Technic lettering on {len(out)} hangars')
+        if b['kind'] == 'hangar' and b['id'] in MRO_HANGARS:
+            out.append(IM.hangar_signs(b, ap.origin, 'mro_dark'))
+    print(f'{ap.icao}: maintenance-hangar lettering on {len(out)} hangars')
     return out
 
 
@@ -1429,7 +1429,7 @@ def build_ltfm():
         ap.exclude_ids.append('w596215849')
         ap.light(c2.x, c2.y, 49.5, L_OBS_FL)
         ap.light(c2.x + 1.0, c2.y, 47.5, L_BEACON)
-    models += tt_signs(ap)
+    models += mro_signs(ap)
     models += ist_tower_models(ap, {
         'İstanbul Havalimanı kulesi': lambda n, c, top: IM.tulip_tower(n, c, top, plan=(L2, W2), rot=rot, podium=pod),
         'İstanbul Havalimanı kulesi 2': lambda n, c, top: IM.generic_tower(n, c, top, r_cab=5.0),
@@ -1470,7 +1470,7 @@ def build_ltfj():
         models.append(fm)
         remove.append(f'{b["kind"]}_{b["id"]}')
         b['h'] = eave + rise
-    models += tt_signs(ap)
+    models += mro_signs(ap)
     models += ist_tower_models(ap, {'Sabiha Gökçen kulesi': lambda n, c, top: IM.steel_frame_tower(n, c, top, r_cab=9.0)})
     IM.write('LTFJ', models, ap.origin, remove=remove, remove_prefix=('tower_generic',))
     return ap
@@ -1501,7 +1501,7 @@ def build_ltba():
                           'name': 'Atatürk kulesi'})
     ap.light(tx, tz, 66.0, L_OBS_FL)
     ap.light(tx + 1.0, tz, 64.0, L_BEACON)
-    models = tt_signs(ap)
+    models = mro_signs(ap)
     # the small apron tower (OSM way 508352324 "Kule": cab 15-18.5 m)
     k = next((b for b in ap.buildings if b['id'] == 'w508352324'), None)
     if k is not None:

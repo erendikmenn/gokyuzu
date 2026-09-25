@@ -9,7 +9,7 @@ before the builder imports it) and, just before the export,
      (assets/ist/airports/_cache/models_<icao>.json `remove`: object names as build_buildings.py makes them),
   2. the models of that file are added (face lists in Blender coordinates relative to each object's anchor, written by
      tools/geo/airports_ist_models.py through airports_build.py): İstanbul Havalimanı terminal + piers, Sabiha
-     Gökçen's terminals, the control towers, the Turkish Technic hangar lettering,
+     Gökçen's terminals, the control towers, the maintenance-hangar lettering,
   3. every constant-colour material (metal / paint / concrete swatches) is moved onto ONE atlas material `ist_atlas`
      (assets/ist/airports/_cache/atlas/ist_atlas.png + _mr.png, tools/geo/airports_ist_atlas.py; the GLBs embed them,
      tools/assets/textures.mjs turns them into shared KTX2): each polygon's UVs point at its colour swatch, roughness / metalness come from the swatch's texel of the metallic-roughness map.
