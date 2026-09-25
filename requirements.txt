@@ -1,0 +1,32 @@
+# Python 3.12 packages for the asset pipelines (tools/geo, tools/audio, the PIL/numpy texture scripts in blender/,
+# src/ui/tools) and the ops scripts (tools/deploy, tools/analytics, infra/leaderboard). Only what the repo imports,
+# pinned to the versions the published assets were built with; pip resolves the rest. See tools/README.md.
+#
+#   python3.12 -m venv .venv && .venv/bin/pip install -r requirements.txt
+#
+# The Blender scripts (bpy, bmesh, mathutils) run inside Blender's own Python and need nothing from here.
+
+# geodata: terrain, imagery, water, city, airports, landmarks
+numpy==2.5.3
+scipy==1.18.1
+pillow==12.3.0
+requests==2.34.2
+pyproj==3.8.0
+shapely==2.1.2
+rasterio==1.5.1          # bundles GDAL
+affine==3.0.1
+osmium==4.3.1            # pyosmium: OSM .pbf extracts
+pyarrow==25.0.1          # Overture Maps GeoParquet
+mapbox_earcut==2.1.0
+meshoptimizer==0.2.30a0  # city tiles (tools/geo/city_glb.py)
+
+# audio (tools/audio): WAV I/O; the research scripts also plot and denoise
+soundfile==0.14.0
+matplotlib==3.11.2
+noisereduce==3.0.3
+
+# ops: deploy rollback, analytics, leaderboard setup (AWS)
+boto3==1.43.100
+
+# optional, not installed by default: demucs (pulls in torch, ~2 GB) for the voice-stem method of
+# tools/audio/real_clips.py (run it with --no-demucs without it)
