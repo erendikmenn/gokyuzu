@@ -1,0 +1,44 @@
+# Unit tests on every push and pull request. The built game files (assets/, renders/) are not in git: the checks that
+# need them print SKIP lines and pass (tools/README.md, section 2).
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: tests (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
+    env:
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'   # the tests need no browser
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Install (npm ci when a lockfile exists)
+        run: |
+          if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi
+      - name: tests/*.test.mjs
+        run: |
+          failed=""
+          for t in tests/*.test.mjs; do
+            echo "::group::$t"
+            node "$t" || failed="$failed $t"
+            echo "::endgroup::"
+          done
+          if [ -n "$failed" ]; then echo "::error::failed:$failed"; exit 1; fi
+          echo "all test files passed"
