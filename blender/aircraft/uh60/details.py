@@ -188,7 +188,7 @@ def build_details(M, root):
             xw = hull.fuse_halfwidth_at(y, z)
             v, f = prim_box((0.012, 0.13, 0.05), center=(s_ * (xw + 0.003), y, z))
             objs_black.append(new_mesh_obj('_kstep', v, f, M['black'], smooth=False))
-        # tail-boom handhold rails (as on the M, above 'UNITED STATES ARMY')
+        # tail-boom handhold rails (as on the M, above the boom title)
         pts = []
         for y in np.linspace(-3.6, -4.3, 6):
             xw = hull.fuse_halfwidth_at(y, 1.62)
