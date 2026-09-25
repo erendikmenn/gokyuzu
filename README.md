@@ -58,8 +58,8 @@ and phones.
 You need [Node.js](https://nodejs.org) 22 or newer and git.
 
 ```sh
-git clone https://github.com/erendikmenn/REPO_NAME.git
-cd REPO_NAME
+git clone https://github.com/erendikmenn/gokyuzu.git
+cd gokyuzu
 npm install
 ```
 
@@ -240,7 +240,7 @@ Please give a modified public version its own name and logo.
 ## Credits
 
 Gökyüzü is made by **Mehmet Eren Dikmen** ([@erendikmenn](https://github.com/erendikmenn)) and
-[contributors](https://github.com/erendikmenn/REPO_NAME/graphs/contributors). Much of the code, the Blender scripts
+[contributors](https://github.com/erendikmenn/gokyuzu/graphs/contributors). Much of the code, the Blender scripts
 and the pipelines were written with AI coding assistants; the commits say so.
 
 - **Map data** © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors (ODbL);
@@ -311,8 +311,8 @@ arazisi, uydu ve hava fotoğrafları üzerinde uçulur. Kurulum gerektirmez; bil
 Node.js 22 veya üstü gerekir:
 
 ```sh
-git clone https://github.com/erendikmenn/REPO_NAME.git
-cd REPO_NAME
+git clone https://github.com/erendikmenn/gokyuzu.git
+cd gokyuzu
 npm install
 ```
 

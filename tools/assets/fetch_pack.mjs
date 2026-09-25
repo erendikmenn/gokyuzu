@@ -18,7 +18,7 @@ import { listZip, readEntry } from './lib/zip.mjs';
 
 // The public repository whose releases hold the pack (placeholder until the repository name is decided), the pack
 // version this code expects, and optionally the manifest's SHA-256 from the release notes (pins the whole download).
-const GITHUB_REPO = 'erendikmenn/REPO_NAME';
+const GITHUB_REPO = 'erendikmenn/gokyuzu';
 const PACK_VERSION = '2026.09.25';
 const MANIFEST_SHA256 = '';
 const USER_AGENT = 'gokyuzu-sf-pipeline/1.0';

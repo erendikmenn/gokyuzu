@@ -2,7 +2,7 @@ Gökyüzü — Copyright 2026 Mehmet Eren Dikmen
 
 Gökyüzü is a free flight simulator for the browser, created by Mehmet Eren Dikmen
 (https://github.com/erendikmenn) and developed with the Gökyüzü contributors.
-Source: https://github.com/erendikmenn/REPO_NAME
+Source: https://github.com/erendikmenn/gokyuzu
 
 Code: Apache-2.0 · Asset pack (visuals and sounds): CC BY-NC 4.0, trademark-free.
 
@@ -15,7 +15,7 @@ separately, as a trademark-free asset pack on GitHub Releases, under CC BY-NC 4.
 --------------
 
 This product includes software and content created by Mehmet Eren Dikmen for Gökyüzü
-(https://github.com/erendikmenn/REPO_NAME).
+(https://github.com/erendikmenn/gokyuzu).
 
 Section 4(d) of the Apache License 2.0 requires anyone who redistributes Gökyüzü, or a work derived from it, to
 include a readable copy of the attribution notices in this NOTICE file (in a NOTICE file, in the documentation, or in
@@ -24,7 +24,7 @@ a screen the software shows where such notices normally appear).
 The author also asks that derivative works credit Gökyüzü visibly: in the credits, "About" screen or start menu of a
 game, app or website built on this code, for example:
 
-    Based on Gökyüzü by Mehmet Eren Dikmen — https://github.com/erendikmenn/REPO_NAME
+    Based on Gökyüzü by Mehmet Eren Dikmen — https://github.com/erendikmenn/gokyuzu
     (Türkçe: "Mehmet Eren Dikmen'in Gökyüzü projesine dayanır.")
 
 This visible credit is a request from the author. It does not modify the Apache License 2.0.

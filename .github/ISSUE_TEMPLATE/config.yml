@@ -1,7 +1,7 @@
 blank_issues_enabled: true
 contact_links:
   - name: Report a security vulnerability / Güvenlik açığı bildir
-    url: https://github.com/erendikmenn/REPO_NAME/security/advisories/new
+    url: https://github.com/erendikmenn/gokyuzu/security/advisories/new
     about: Please report security problems privately, not in a public issue (see SECURITY.md).
   - name: Play the game / Oyna
     url: https://fs.erenailab.com

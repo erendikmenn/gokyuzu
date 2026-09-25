@@ -24,8 +24,8 @@ You need Node.js 22 or newer and git. The game code is plain ES modules served a
 development.
 
 ```sh
-git clone https://github.com/erendikmenn/REPO_NAME.git
-cd REPO_NAME
+git clone https://github.com/erendikmenn/gokyuzu.git
+cd gokyuzu
 npm install
 ```
 

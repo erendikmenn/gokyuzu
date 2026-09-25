@@ -6,7 +6,7 @@ Please report security problems **privately through GitHub**, not in a public is
 
 1. Open the repository's **Security** tab.
 2. Choose **Report a vulnerability**. You can also go there directly:
-   <https://github.com/erendikmenn/REPO_NAME/security/advisories/new>
+   <https://github.com/erendikmenn/gokyuzu/security/advisories/new>
 3. Describe the problem, how to reproduce it, and what an attacker could do with it.
 
 The report (a draft security advisory) is visible only to you and the maintainer. We discuss the fix there and

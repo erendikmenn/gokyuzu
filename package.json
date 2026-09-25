@@ -5,10 +5,10 @@
   "homepage": "https://fs.erenailab.com",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/erendikmenn/REPO_NAME.git"
+    "url": "git+https://github.com/erendikmenn/gokyuzu.git"
   },
   "bugs": {
-    "url": "https://github.com/erendikmenn/REPO_NAME/issues"
+    "url": "https://github.com/erendikmenn/gokyuzu/issues"
   },
   "main": "index.js",
   "scripts": {

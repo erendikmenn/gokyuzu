@@ -47,7 +47,7 @@ On these conditions:
 - **Attribution:** credit the author, link the licence, and say if you changed the assets. For example:
 
   > Gökyüzü assets © 2026 Mehmet Eren Dikmen, CC BY-NC 4.0 (https://creativecommons.org/licenses/by-nc/4.0/),
-  > from https://github.com/erendikmenn/REPO_NAME. Modified.
+  > from https://github.com/erendikmenn/gokyuzu. Modified.
 
   Keep the data attributions of [NOTICE](NOTICE) (OpenStreetMap, Copernicus, EMODnet and the others) with any asset
   that contains that data.
