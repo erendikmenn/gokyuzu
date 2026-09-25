@@ -5,7 +5,9 @@
     .venv/bin/python tools/deploy/rollback.py production --to 2026-09-23T14:05 --apply  # does it + invalidates CloudFront
     .venv/bin/python tools/deploy/rollback.py staging --list                            # recent deploy times (for --to)
 
-Times are local (Europe/Istanbul) unless they end with Z. Uses the least-privilege profile "gokyuzu-deploy".
+Times are local (Europe/Istanbul) unless they end with Z. Uses the least-privilege profile AWS_PROFILE_DEPLOY (default
+"gokyuzu-deploy"). Buckets, distribution ids and site URLs come from the local deploy config ~/.config/gokyuzu/deploy.env
+(template: tools/deploy/deploy.env.example).
 For every key: the newest version that existed at --to becomes current again (a copy of that version);
 keys that did not exist then are deleted (a delete marker, itself reversible). Old versions expire after 30 days.
 """
@@ -18,10 +20,16 @@ from collections import defaultdict
 
 import boto3
 
-TARGETS = {
-    'production': ('gokyuzu-sf-<aws-account-id>-eu-central-1', '<cf-dist-production>', 'https://fs.erenailab.com'),
-    'staging': ('gokyuzu-sf-staging-<aws-account-id>-eu-central-1', '<cf-dist-staging>', 'https://staging.fs.erenailab.com'),
-}
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import deploy_config  # noqa: E402
+
+TARGETS = ('production', 'staging')
+
+
+def target_config(target):
+    """(bucket, CloudFront distribution id, site URL) of a target, from the deploy config."""
+    t = target.upper()
+    return deploy_config.get(f'S3_BUCKET_{t}'), deploy_config.get(f'CF_DIST_{t}'), deploy_config.get(f'SITE_{t}')
 
 
 def parse_time(s):
@@ -48,8 +56,8 @@ def main():
     ap.add_argument('--apply', action='store_true', help='actually change the bucket (default: dry run)')
     ap.add_argument('--list', action='store_true', help='show recent deploy moments')
     a = ap.parse_args()
-    bucket, dist_id, url = TARGETS[a.target]
-    session = boto3.Session(profile_name=os.environ.get('AWS_PROFILE_DEPLOY', 'gokyuzu-deploy'))
+    bucket, dist_id, url = target_config(a.target)
+    session = boto3.Session(profile_name=deploy_config.profile('AWS_PROFILE_DEPLOY'))
     s3, cf = session.client('s3'), session.client('cloudfront')
     versions = all_versions(s3, bucket)
 

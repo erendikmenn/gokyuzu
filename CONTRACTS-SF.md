@@ -57,14 +57,14 @@ root). Do not `brew install`. `.venv/bin/pip install <pkg>` into the shared venv
 
 ## 4. Tools
 
-- Python: `~/flight-sim/.venv/bin/python` (numpy, pillow, requests, pyproj, shapely, rasterio, scipy, mapbox_earcut).
-- Blender: `/Applications/Blender.app/Contents/MacOS/Blender -b -P <script.py> -- <args>` (headless). Helpers in
+- Python: `.venv/bin/python` in the repo (`requirements.txt`: numpy, pillow, requests, pyproj, shapely, rasterio, scipy, mapbox_earcut, …).
+- Blender: `"${BLENDER:-/Applications/Blender.app/Contents/MacOS/Blender}" -b -P <script.py> -- <args>` (headless). Helpers in
   `blender/common/util.py` (`reset_scene`, `setup_cycles`, `export_glb`, `studio_lighting`, `render_still`). Cycles on the
   Metal GPU is fast (first render compiles kernels, ~1 min, then seconds).
 - Screenshots: `node tools/shot.mjs <page> <out.png> [--click] [--wait ms] [--hold Code:ms,...] [--eval "expr"] [--size WxH]`
   renders in headless Chromium **on the real GPU** (ANGLE/Metal), prints console errors and `window.__fps`. Always look at
-  your screenshots (image reading) and iterate on what you see. Put screenshots in the scratchpad
-  `<scratch>/51ed110b-e91a-4455-a1ac-30e1072065cb/scratchpad/<your-agent-name>/`, never in the repo.
+  your screenshots (image reading) and iterate on what you see. Put screenshots in your scratchpad directory
+  (`<scratchpad>/<your-agent-name>/`), never in the repo.
 - Preview pages live in `dev/`. `dev/aircraft.html?id=<id>` (lead) shows any registered aircraft with its rig animating.
 
 ## 5. Blender asset conventions (all Blender users)
@@ -316,7 +316,7 @@ Players keep files in their browser cache, so every asset URL carries a content 
   with a reference photo **from the same camera angle** before calling a part done.
 - Save the current look before changing it: `renders/aircraft/<id>/before/` (same cameras as the new renders) for the
   before/after comparison.
-- Every Blender run is wrapped in a hard time limit, e.g. `perl -e 'alarm 1800; exec @ARGV' /Applications/Blender.app/Contents/MacOS/Blender -b ...`.
+- Every Blender run is wrapped in a hard time limit, e.g. `perl -e 'alarm 1800; exec @ARGV' "${BLENDER:-/Applications/Blender.app/Contents/MacOS/Blender}" -b ...`.
   Several agents share one GPU: iterate with small renders (≤ 1280×720, ≤ 64 samples + denoise), keep the final 1920×1080 /
   2560×1440 renders for the end, and never leave Blender processes running.
 - Keep §5.1 node names, pivots and contact points; keep real dimensions. The game must still load with 0 console errors
@@ -329,7 +329,8 @@ Players keep files in their browser cache, so every asset URL carries a content 
   minute: fps, pixel ratio, view), `err` (≤ 5 per page), `end`. No cookies, no stored id, nothing personal. Off on localhost
   (unless `?telemetry=1`), with `?telemetry=0` and under Do Not Track / Global Privacy Control.
 - CloudFront: the `/_e` behaviour runs the CloudFront Function `gokyuzu-beacon` (204 at the edge, uncached); standard access
-  logs of both distributions go to `s3://gokyuzu-sf-logs-<aws-account-id>-eu-central-1/<target>/` (deleted after 30 days).
+  logs of both distributions go to `s3://<S3_BUCKET_LOGS>/<target>/` (deleted after 30 days; bucket and distribution ids
+  come from the local deploy config, `tools/deploy/deploy.env.example`).
   Setup: `tools/analytics/setup.py <target>` (admin profile). The local dev server answers `/_e` with 204 and prints it.
 - Report: `.venv/bin/python tools/analytics/report.py [production|staging] [--days N] [--hourly] [--no-sync | --logs DIR]`
   (read-only IAM user `gokyuzu-analytics`); visitors are salted hashes, raw IPs are never printed; own IPs and headless

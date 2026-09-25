@@ -2,32 +2,37 @@
 """Idempotent AWS setup for anonymous usage statistics (run once per target with the admin profile).
 
     .venv/bin/python tools/analytics/setup.py staging      # then production
-    Uses the admin profile "gokyuzu-admin" (distribution changes need more than the deploy user may do); override with
-    AWS_PROFILE_ADMIN. The shell's AWS_PROFILE is deliberately ignored: it may point at another account.
+    Uses the admin profile AWS_PROFILE_ADMIN (distribution changes need more than the deploy user may do). The shell's
+    AWS_PROFILE is deliberately ignored: it may point at another account. Account, distribution ids and the log bucket
+    come from the local deploy config ~/.config/gokyuzu/deploy.env (template: tools/deploy/deploy.env.example).
 
 For the target's CloudFront distribution it
-  * turns on standard access logs → s3://gokyuzu-sf-logs-…/<target>/ (the bucket deletes them after 30 days),
+  * turns on standard access logs → s3://<S3_BUCKET_LOGS>/<target>/ (the bucket deletes them after 30 days),
   * adds the /_e behaviour: the CloudFront Function gokyuzu-beacon answers the game's beacons with 204 at the edge,
     uncached, so every beacon (its query string = the event) becomes one access-log line.
 Nothing else in the distribution changes. Reports: tools/analytics/report.py.
 """
-import os
 import sys
+from pathlib import Path
 
 import boto3
 
-LOG_BUCKET = 'gokyuzu-sf-logs-<aws-account-id>-eu-central-1'
-DISTRIBUTIONS = {'production': '<cf-dist-production>', 'staging': '<cf-dist-staging>'}
-BEACON_FN = 'arn:aws:cloudfront::<aws-account-id>:function/gokyuzu-beacon'
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'deploy'))
+import deploy_config  # noqa: E402
+
+TARGETS = ('production', 'staging')
+BEACON_FN_NAME = 'gokyuzu-beacon'
 CACHING_DISABLED = '4135ea2d-6df8-44a3-9df3-4b5a84be39ad'   # AWS managed cache policy
 
 
 def main():
     target = sys.argv[1] if len(sys.argv) > 1 else ''
-    if target not in DISTRIBUTIONS:
-        sys.exit(f'usage: setup.py {"|".join(DISTRIBUTIONS)}')
-    cf = boto3.Session(profile_name=os.environ.get('AWS_PROFILE_ADMIN', 'gokyuzu-admin')).client('cloudfront')
-    dist_id = DISTRIBUTIONS[target]
+    if target not in TARGETS:
+        sys.exit(f'usage: setup.py {"|".join(TARGETS)}')
+    LOG_BUCKET = deploy_config.get('S3_BUCKET_LOGS')
+    BEACON_FN = f'arn:aws:cloudfront::{deploy_config.get("AWS_ACCOUNT_ID")}:function/{BEACON_FN_NAME}'
+    dist_id = deploy_config.get(f'CF_DIST_{target.upper()}')
+    cf = boto3.Session(profile_name=deploy_config.profile('AWS_PROFILE_ADMIN')).client('cloudfront')
     res = cf.get_distribution_config(Id=dist_id)
     cfg, etag = res['DistributionConfig'], res['ETag']
 

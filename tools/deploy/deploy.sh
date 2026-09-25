@@ -1,21 +1,30 @@
 #!/bin/bash
-# Publish the game (AWS S3 + CloudFront, account "gokyuzu-admin"; production behind the Cloudflare proxy, staging DNS only).
-#   tools/deploy/deploy.sh staging            → https://staging.fs.erenailab.com (IP allow-list, any branch)
-#   tools/deploy/deploy.sh production [--yes] → https://fs.erenailab.com (only from a clean `main`, asks for confirmation, tags the release)
-# Needs: the ~/.aws/credentials profile "gokyuzu-deploy" (IAM user gokyuzu-deployer, least privilege)
+# Publish the game (AWS S3 + CloudFront; production behind the Cloudflare proxy, staging DNS only).
+#   tools/deploy/deploy.sh staging            → SITE_STAGING (IP allow-list, any branch)
+#   tools/deploy/deploy.sh production [--yes] → SITE_PRODUCTION (only from a clean `main`, asks for confirmation, tags the release)
+#   tools/deploy/deploy.sh --check-config     → checks the deploy config and exits (key names only, no values, no AWS calls)
+# Buckets, distribution ids, the Cloudflare zone and the site URLs come from the local, never-committed deploy config
+# ~/.config/gokyuzu/deploy.env (or $GOKYUZU_DEPLOY_ENV; template and rules: tools/deploy/deploy.env.example).
+# Needs: the ~/.aws/credentials profile AWS_PROFILE_DEPLOY (default "gokyuzu-deploy": IAM user gokyuzu-deployer, least privilege)
 set -euo pipefail
 cd "$(dirname "$0")/../.."
-export AWS_PROFILE="${AWS_PROFILE_DEPLOY:-gokyuzu-deploy}"   # least-privilege IAM user (not root)
+. tools/deploy/config.sh
+if [ "${1:-}" = "--check-config" ]; then
+  cfg_check S3_BUCKET_STAGING CF_DIST_STAGING SITE_STAGING S3_BUCKET_PRODUCTION CF_DIST_PRODUCTION SITE_PRODUCTION CLOUDFLARE_ZONE_ID
+  exit 0
+fi
+cfg_profile AWS_PROFILE AWS_PROFILE_DEPLOY gokyuzu-deploy; export AWS_PROFILE   # least-privilege IAM user (not root)
 TARGET="${1:-}"; YES="${2:-}"
 case "$TARGET" in
   staging)
-    BUCKET=s3://gokyuzu-sf-staging-<aws-account-id>-eu-central-1; DIST_ID=<cf-dist-staging>; URL=https://staging.fs.erenailab.com ;;
+    cfg_set S3 S3_BUCKET_STAGING; cfg_set DIST_ID CF_DIST_STAGING; cfg_set URL SITE_STAGING; BUCKET="s3://$S3" ;;
   production)
-    BUCKET=s3://gokyuzu-sf-<aws-account-id>-eu-central-1; DIST_ID=<cf-dist-production>; URL=https://fs.erenailab.com
+    cfg_set S3 S3_BUCKET_PRODUCTION; cfg_set DIST_ID CF_DIST_PRODUCTION; cfg_set URL SITE_PRODUCTION; BUCKET="s3://$S3"
+    cfg_set CF_ZONE CLOUDFLARE_ZONE_ID; HOST="${URL#https://}"
     [ "$(git branch --show-current)" = "main" ] || { echo "Canlıya yalnızca 'main' dalından çıkılır (şu an: $(git branch --show-current))."; exit 1; }
     [ -z "$(git status --porcelain)" ] || { echo "Commit edilmemiş değişiklikler var; canlıya çıkılmadı."; exit 1; }
-    if [ "$YES" != "--yes" ]; then read -r -p "fs.erenailab.com CANLI yayına çıkılsın mı? Onaylamak için 'evet' yaz: " a; [ "$a" = "evet" ] || { echo "İptal."; exit 1; }; fi ;;
-  *) echo "Kullanım: tools/deploy/deploy.sh staging | production [--yes]"; exit 2 ;;
+    if [ "$YES" != "--yes" ]; then read -r -p "$HOST CANLI yayına çıkılsın mı? Onaylamak için 'evet' yaz: " a; [ "$a" = "evet" ] || { echo "İptal."; exit 1; }; fi ;;
+  *) echo "Kullanım: tools/deploy/deploy.sh staging | production [--yes] | --check-config"; exit 2 ;;
 esac
 node tools/make_gallery.mjs >/dev/null
 # KTX2 textures (tools/assets): a GLB re-exported from Blender must be converted before it ships (phones would get a stale
@@ -57,15 +66,15 @@ aws s3 cp dist $BUCKET --recursive --exclude "*" --include "*.html" --only-show-
 node tools/build/prune_js.mjs $BUCKET
 INV_ID=$(aws cloudfront create-invalidation --distribution-id $DIST_ID --paths "/*" --query "Invalidation.Id" --output text)
 if [ "$TARGET" = "production" ]; then
-  # fs.erenailab.com sits behind the Cloudflare proxy: once CloudFront serves the new files, drop Cloudflare's copies
+  # the production host sits behind the Cloudflare proxy: once CloudFront serves the new files, drop Cloudflare's copies
   # too (purging earlier would let Cloudflare re-fetch old files from CloudFront edges that are still invalidating)
   echo "CloudFront tazeleniyor, ardından Cloudflare önbelleği temizlenecek…"
   aws cloudfront wait invalidation-completed --distribution-id $DIST_ID --id "$INV_ID"
   if [ -f "$HOME/.config/cloudflare.env" ]; then
     set -a; source "$HOME/.config/cloudflare.env"; set +a
-    curl -sf -X POST "https://api.cloudflare.com/client/v4/zones/<cloudflare-zone-id>/purge_cache" \
+    curl -sf -X POST "https://api.cloudflare.com/client/v4/zones/$CF_ZONE/purge_cache" \
       -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H "Content-Type: application/json" \
-      --data '{"hosts":["fs.erenailab.com"]}' >/dev/null && echo "Cloudflare önbelleği temizlendi." \
+      --data "{\"hosts\":[\"$HOST\"]}" >/dev/null && echo "Cloudflare önbelleği temizlendi." \
       || echo "UYARI: Cloudflare önbelleği temizlenemedi (dosyalar en geç 5 dk–1 gün içinde kendiliğinden yenilenir)."
   else
     echo "UYARI: ~/.config/cloudflare.env yok, Cloudflare önbelleği temizlenmedi."

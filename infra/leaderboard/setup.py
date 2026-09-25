@@ -24,17 +24,17 @@ then adds to the target's distribution: origin `leaderboard-<t>` and behaviour /
 function on it). Nothing else in the distribution changes.
 The deploy user gokyuzu-deployer gets one inline policy: update the code of gokyuzu-sf-leaderboard-* (for --code).
 
-Profiles are passed explicitly: admin "gokyuzu-admin" (override AWS_PROFILE_ADMIN), deploy "gokyuzu-deploy"
-(AWS_PROFILE_DEPLOY). The shell's AWS_PROFILE is ignored on purpose: it points at another account. The script also
-refuses to run against any account other than <aws-account-id>. The salt (hash secret) is generated once, lives only in
-the function's environment and is never printed.
+Profiles are passed explicitly: admin AWS_PROFILE_ADMIN, deploy AWS_PROFILE_DEPLOY (default "gokyuzu-deploy"). The
+shell's AWS_PROFILE is ignored on purpose: it may point at another account. Account id, region, distribution ids and
+site URLs come from the local deploy config ~/.config/gokyuzu/deploy.env (template: tools/deploy/deploy.env.example),
+read before any AWS call; the script refuses to run against any account other than its AWS_ACCOUNT_ID. The salt (hash
+secret) is generated once, lives only in the function's environment and is never printed.
 """
 import argparse
 import hashlib
 import base64
 import io
 import json
-import os
 import secrets
 import subprocess
 import sys
@@ -46,10 +46,13 @@ import boto3
 from botocore.exceptions import ClientError, ParamValidationError
 
 ROOT = Path(__file__).resolve().parents[2]
-ACCOUNT = '<aws-account-id>'
-REGION = 'eu-central-1'
-DISTRIBUTIONS = {'staging': '<cf-dist-staging>', 'production': '<cf-dist-production>'}
-SITES = {'staging': 'https://staging.fs.erenailab.com', 'production': 'https://fs.erenailab.com'}
+sys.path.insert(0, str(ROOT / 'tools' / 'deploy'))
+import deploy_config  # noqa: E402
+
+TARGETS = ('staging', 'production')
+# from the local deploy config (configure(), called before any AWS call)
+ACCOUNT = REGION = None
+DISTRIBUTIONS, SITES = {}, {}
 TAGS = {'project': 'gokyuzu-sf'}
 OAC_NAME = 'gokyuzu-sf-leaderboard'
 POLICY_NAME = 'gokyuzu-sf-api'
@@ -63,6 +66,14 @@ RESERVED_CONCURRENCY = 10
 LOG_DAYS = 14
 
 
+def configure():
+    global ACCOUNT, REGION
+    ACCOUNT, REGION = deploy_config.get('AWS_ACCOUNT_ID'), deploy_config.get('AWS_REGION')
+    for t in TARGETS:
+        DISTRIBUTIONS[t] = deploy_config.get(f'CF_DIST_{t.upper()}')
+        SITES[t] = deploy_config.get(f'SITE_{t.upper()}')
+
+
 def names(target):
     base = f'gokyuzu-sf-leaderboard-{target}'
     return {'table': base, 'role': base, 'function': base, 'log': f'/aws/lambda/{base}', 'origin': f'leaderboard-{target}'}
@@ -72,7 +83,7 @@ def session(profile):
     s = boto3.Session(profile_name=profile, region_name=REGION)
     acct = s.client('sts').get_caller_identity()['Account']
     if acct != ACCOUNT:
-        sys.exit(f'profile "{profile}" is account {acct}, not {ACCOUNT}: stopping')
+        sys.exit(f'profile "{profile}" is not in the account AWS_ACCOUNT_ID of the deploy config: stopping')
     return s
 
 
@@ -349,11 +360,12 @@ Run with --owner-approved to apply.""")
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('target', choices=list(DISTRIBUTIONS))
+    ap.add_argument('target', choices=list(TARGETS))
     ap.add_argument('--code', action='store_true', help='only upload new Lambda code (deploy user)')
     ap.add_argument('--owner-approved', action='store_true', help='required for production')
     ap.add_argument('--wait', action='store_true', help='wait until CloudFront has deployed the change')
     a = ap.parse_args()
+    configure()
     n = names(a.target)
     if a.target == 'production' and not a.owner_approved:
         plan(a.target)
@@ -361,7 +373,7 @@ def main():
 
     code, sha = package()
     if a.code:
-        s = session(os.environ.get('AWS_PROFILE_DEPLOY', 'gokyuzu-deploy'))
+        s = session(deploy_config.profile('AWS_PROFILE_DEPLOY'))
         lam = s.client('lambda')
         if lam.get_function_configuration(FunctionName=n['function']).get('CodeSha256') == sha:
             print(f"{n['function']}: code unchanged")
@@ -371,7 +383,7 @@ def main():
         print(f"{n['function']}: code updated ({len(code)} bytes)")
         return
 
-    s = session(os.environ.get('AWS_PROFILE_ADMIN', 'gokyuzu-admin'))
+    s = session(deploy_config.profile('AWS_PROFILE_ADMIN'))
     cf = s.client('cloudfront')
     dist_id = DISTRIBUTIONS[a.target]
     domain = cf.get_distribution(Id=dist_id)['Distribution']['DomainName']

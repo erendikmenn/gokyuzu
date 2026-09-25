@@ -1,23 +1,38 @@
 // End-to-end check of the leaderboard service through the real CloudFront origin, plus latency from this machine.
 //
 //   node infra/leaderboard/verify.mjs staging [--cold 3] [--samples 12]   # full check (writes to the `selftest` board)
-//   node infra/leaderboard/verify.mjs production [--host d123.cloudfront.net]   # read-only: never writes a score
+//   node infra/leaderboard/verify.mjs production [--host d123.cloudfront.net | --cf]   # read-only: never writes a score
 //
+// Host: --host, else with --cf the distribution's own host CF_HOST_<TARGET> (bypasses the Cloudflare proxy), else the
+// host of SITE_<TARGET>; all from the local deploy config ~/.config/gokyuzu/deploy.env (tools/deploy/deploy.env.example).
 // Staging: submit → top, best-score logic, nickname filter, bad payloads (400/405/413/415), the POST rate limit (429),
 // direct calls to the Lambda function URL refused (403), edge caching of /api/top. --cold N forces N cold starts (a
-// configuration touch through the admin profile "gokyuzu-admin", passed explicitly) and times the first request after each.
+// configuration touch through the admin profile AWS_PROFILE_ADMIN, passed explicitly) and times the first request after
+// each. --no-aws skips everything that needs the AWS CLI (the direct function URL lookup and --cold): HTTP checks only.
 // Prints PASS/FAIL lines and a latency table (edge PoP, connection + TLS, time to first byte on an open connection).
 import { createHash, randomBytes } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
+import { need, optional, profile } from '../../tools/deploy/config.mjs';
 
 const args = process.argv.slice(2);
 const target = args.find((a) => !a.startsWith('--')) || 'staging';
 const opt = (name, def) => { const i = args.indexOf(`--${name}`); return i >= 0 ? args[i + 1] : def; };
-const HOST = opt('host', target === 'production' ? 'fs.erenailab.com' : 'staging.fs.erenailab.com');
+const T = target.toUpperCase();
+function defaultHost() {
+  if (args.includes('--cf')) {
+    const h = optional(`CF_HOST_${T}`);
+    if (!h) { console.error(`--cf: CF_HOST_${T} is not set in the deploy config (tools/deploy/deploy.env.example)`); process.exit(2); }
+    return h;
+  }
+  try { return new URL(need(`SITE_${T}`)).host; } catch (e) { console.error(e.message); process.exit(2); }
+}
+const HOST = opt('host', null) || defaultHost();
 const BASE = `https://${HOST}`;
 const FUNCTION = `gokyuzu-sf-leaderboard-${target}`;
-const AWS = ['--profile', process.env.AWS_PROFILE_ADMIN || 'gokyuzu-admin', '--region', 'eu-central-1'];
-const COLD = Number(opt('cold', 0));
+const NO_AWS = args.includes('--no-aws');
+// admin profile and region for the AWS CLI calls (resolved when first needed, so --host/--no-aws runs need no config)
+const awsArgs = () => ['--profile', profile('AWS_PROFILE_ADMIN'), '--region', need('AWS_REGION')];
+const COLD = NO_AWS ? 0 : Number(opt('cold', 0));
 const SAMPLES = Number(opt('samples', 10));
 const WRITE = target !== 'production';
 
@@ -46,8 +61,9 @@ async function get(query, { method = 'GET', path = '/api/top', base = BASE } = {
 
 function functionUrl() {
   if (opt('direct')) return opt('direct').replace(/\/$/, '');
+  if (NO_AWS) return null;
   try {
-    return execFileSync('aws', [...AWS, 'lambda', 'get-function-url-config', '--function-name', FUNCTION, '--query', 'FunctionUrl', '--output', 'text'],
+    return execFileSync('aws', [...awsArgs(), 'lambda', 'get-function-url-config', '--function-name', FUNCTION, '--query', 'FunctionUrl', '--output', 'text'],
       { encoding: 'utf8', env: { ...process.env, AWS_PROFILE: '' } }).trim().replace(/\/$/, '');
   } catch { return null; }
 }
@@ -94,7 +110,7 @@ if (direct) {
   const d2 = await fetch(`${direct}/api/score`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
   check('direct function URL POST refused (403)', d2.status === 403, `${d2.status}`);
 } else {
-  console.log('SKIP  direct function URL (no --direct and no admin session)');
+  console.log(`SKIP  direct function URL (${NO_AWS ? '--no-aws' : 'no --direct and no admin session'})`);
 }
 
 // ---- writes (staging) -----------------------------------------------------------------------------------------------
@@ -164,10 +180,10 @@ if (WRITE) {
 }
 for (let i = 0; i < COLD; i++) {
   try {
-    execFileSync('aws', [...AWS, 'lambda', 'update-function-configuration', '--function-name', FUNCTION, '--description',
+    execFileSync('aws', [...awsArgs(), 'lambda', 'update-function-configuration', '--function-name', FUNCTION, '--description',
       `Gokyuzu SF leaderboard /api/* (${target}); managed by infra/leaderboard/setup.py`, '--memory-size', String(i % 2 ? 256 : 257)],
     { env: { ...process.env, AWS_PROFILE: '' }, stdio: 'ignore' });
-    execFileSync('aws', [...AWS, 'lambda', 'wait', 'function-updated-v2', '--function-name', FUNCTION], { env: { ...process.env, AWS_PROFILE: '' } });
+    execFileSync('aws', [...awsArgs(), 'lambda', 'wait', 'function-updated-v2', '--function-name', FUNCTION], { env: { ...process.env, AWS_PROFILE: '' } });
     await sleep(2000);
     record('GET origin (cold start)', curl(`${BASE}/api/top?mission=${M}&day=${past(i + 1)}&n=50&cold=${Date.now()}`));
   } catch (e) {
@@ -176,7 +192,7 @@ for (let i = 0; i < COLD; i++) {
 }
 if (COLD) {
   try {
-    execFileSync('aws', [...AWS, 'lambda', 'update-function-configuration', '--function-name', FUNCTION, '--memory-size', '256'], { env: { ...process.env, AWS_PROFILE: '' }, stdio: 'ignore' });
+    execFileSync('aws', [...awsArgs(), 'lambda', 'update-function-configuration', '--function-name', FUNCTION, '--memory-size', '256'], { env: { ...process.env, AWS_PROFILE: '' }, stdio: 'ignore' });
   } catch { /* already 256 */ }
 }
 const pops = new Set(Object.values(lat).flat().map((m) => m.pop).filter(Boolean));

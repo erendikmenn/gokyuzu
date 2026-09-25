@@ -7,7 +7,8 @@
     .venv/bin/python tools/analytics/report.py --hourly           # hour by hour (Türkiye time) instead of the report
     .venv/bin/python tools/analytics/report.py --hourly --map ist # … only İstanbul flights (beacon columns)
 
-Downloads new log files (profile "gokyuzu-analytics", read-only on the log bucket) into data/analytics/<target>/
+Downloads new log files (profile AWS_PROFILE_ANALYTICS, default "gokyuzu-analytics", read-only on the log bucket
+S3_BUCKET_LOGS of the local deploy config ~/.config/gokyuzu/deploy.env, tools/deploy/deploy.env.example) into data/analytics/<target>/
 (gitignored; the bucket itself deletes logs after 30 days) and prints players, sessions and minutes played.
 Two sources: the game's beacons (/_e, exact: flight start, one heartbeat per active minute, errors) and, for clients
 without beacons (versions before telemetry, blocked requests), sessions rebuilt from asset requests (approximate).
@@ -23,7 +24,6 @@ import ipaddress
 import datetime as dt
 import gzip
 import hashlib
-import os
 import re
 import secrets
 import statistics
@@ -36,7 +36,8 @@ from urllib.parse import parse_qs, unquote
 import boto3
 
 ROOT = Path(__file__).resolve().parents[2]
-BUCKET = 'gokyuzu-sf-logs-<aws-account-id>-eu-central-1'
+sys.path.insert(0, str(ROOT / 'tools' / 'deploy'))
+import deploy_config  # noqa: E402   (the log bucket is read only when syncing)
 CONFIG = Path.home() / '.config' / 'gokyuzu'
 SESSION_GAP = dt.timedelta(minutes=15)   # asset requests further apart than this start a new (approximate) session
 AIRCRAFT = {'f16': 'F-16', 'f22': 'F-22', 'a320neo': 'A320neo', 'b737': '737-800', 'uh60': 'UH-60M'}
@@ -68,14 +69,15 @@ BOT_WORDS = ('bot', 'crawl', 'spider', 'slurp', 'curl', 'wget', 'python', 'go-ht
 def sync(target, profile):
     local = ROOT / 'data' / 'analytics' / target
     local.mkdir(parents=True, exist_ok=True)
+    bucket = deploy_config.get('S3_BUCKET_LOGS')
     s3 = boto3.Session(profile_name=profile).client('s3')
     have = {p.name for p in local.iterdir()}
     new = 0
-    for page in s3.get_paginator('list_objects_v2').paginate(Bucket=BUCKET, Prefix=f'{target}/'):
+    for page in s3.get_paginator('list_objects_v2').paginate(Bucket=bucket, Prefix=f'{target}/'):
         for obj in page.get('Contents', []):
             name = obj['Key'].split('/')[-1]
             if name not in have:
-                s3.download_file(BUCKET, obj['Key'], str(local / name))
+                s3.download_file(bucket, obj['Key'], str(local / name))
                 new += 1
     return local, new
 
@@ -629,7 +631,7 @@ def main():
     ap.add_argument('--map', choices=list(MAPS), help='--hourly: count only this map\'s flights in the beacon columns')
     a = ap.parse_args()
 
-    profile = os.environ.get('AWS_PROFILE_ANALYTICS', 'gokyuzu-analytics')
+    profile = deploy_config.profile('AWS_PROFILE_ANALYTICS')
     folder = a.logs or ROOT / 'data' / 'analytics' / a.target
     if not a.no_sync and not a.logs:
         folder, new = sync(a.target, profile)

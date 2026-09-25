@@ -1,10 +1,11 @@
 #!/bin/bash
-# Staging (staging.fs.erenailab.com) is only reachable from allow-listed IPv4 addresses.
+# Staging (SITE_STAGING in the deploy config, tools/deploy/deploy.env.example) is only reachable from allow-listed IPv4 addresses.
 # The list lives outside the repo: ~/.config/gokyuzu/staging_ips (one IP per line).
 # Usage: tools/deploy/staging_access.sh            → adds your current public IP and republishes the CloudFront Function
 #        tools/deploy/staging_access.sh --list     → shows the allow list
 set -euo pipefail
-export AWS_PROFILE="${AWS_PROFILE_DEPLOY:-gokyuzu-deploy}"   # least-privilege IAM user (not root)
+. "$(dirname "$0")/config.sh"
+cfg_profile AWS_PROFILE AWS_PROFILE_DEPLOY gokyuzu-deploy; export AWS_PROFILE   # least-privilege IAM user (not root)
 LIST=~/.config/gokyuzu/staging_ips
 FN=gokyuzu-staging-ip-allow
 mkdir -p "$(dirname "$LIST")"; touch "$LIST"; chmod 600 "$LIST"
