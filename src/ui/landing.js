@@ -136,6 +136,7 @@ export function createLandingCard({ hud, getWorld = () => null, prepareShare = n
     pending = null;
     if (!p || !flightRef || flightRef.crashed) return;
     const c = score(p.td, p.bounces);
+    c.assisted = p.assisted;   // assisted flight at the touchdown (listeners: e.g. keep assisted landings off a leaderboard)
     show(c, p.assisted);
     for (const cb of listeners) { try { cb(c, p.td); } catch (e) { console.error(e); } }
   }

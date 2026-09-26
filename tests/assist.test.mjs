@@ -286,8 +286,8 @@ const summary = {};
       const start = { dist: 5000 + r() * 5000, lat: (r() - 0.5) * 2000, hdgOff: (r() - 0.5) * 50, altOff: (r() - 0.5) * 300 };
       const rw = endOf(map, rwName), world = makeWorld(map, rw.elevation);
       const pa = noviceLanding(s * 13 + ai, { assist: true, world }), pb = noviceLanding(s * 13 + ai, { assist: false, world });
-      const ra = landRun({ id, map, rwName, ...start, assist: true, request: false, pilot: pa });
-      const rb = landRun({ id, map, rwName, ...start, assist: false, request: false, pilot: pb });
+      const ra = landRun({ id, map, rwName, ...start, assist: true, request: false, pilot: pa, maxT: 420 });
+      const rb = landRun({ id, map, rwName, ...start, assist: false, request: false, pilot: pb, maxT: 420 });
       a += ra.ok; b += rb.ok; ca += ra.crashed; m++;
     }
     check(`Novice landing ${id}: assisted ${a}/${m} vs without ${b}/${m}`, a >= Math.max(Math.ceil(0.7 * m), 2 * b) && ca <= 1, `crashes with the assist: ${ca}`);

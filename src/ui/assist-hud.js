@@ -109,8 +109,7 @@ const MESSAGES = {
   overspeed: () => 'Aşırı hız: destek gazı azalttı',
   pullUp: () => 'Yere ya da bir engele yaklaşıyorsun: destek tırmanıyor',
   gear: (e) => (e.down ? 'Destek: iniş takımı indirildi' : 'Destek: iniş takımı toplandı'),
-  flaps: (e) => `Destek: flap ${e.label}`,
-  speedbrake: () => 'Destek: hava freni açıldı, yavaşlanıyor',
+  // (flap and speedbrake steps: the HUD's own readouts show them; a toast for each would crowd the approach)
   atOff: () => 'Otomatik gaz kapandı: gaz sende',
   noRunway: (e) => (e.why === 'ground' ? 'Önce kalk: İNİŞE GEÇ havada çalışır' : 'Yakında inilebilecek bir pist yok'),
   goAround: () => 'Yaklaşma düzgün değil: pas geçiliyor, yeniden yaklaşılacak',
@@ -169,7 +168,7 @@ export function createAssistHud({ hud = null, input = null } = {}) {
   void tipTxt;
 
   let flightRef = null, def = null, wanted = true, settings = null, heli = false;
-  let lastCue = null, lastProt = null, lastDot = null, lastRot = null, lastTurn = null, lastAt = null, appCueT = 0;
+  let lastCue = null, lastProt = null, lastDot = null, lastRot = null, lastTurn = null, lastAt = null, appCueT = 0, pathT = 0;
   let appOn = false, btnOn = false, btnPulse = false, tipOn = false, tipT = 0, hideOn = false, pathOn = false;
   let tdAt = -1, tdOk = false, now = 0, device = 'kb', k = keySet('kb');
   const stats = Object.assign({ landed: 0, tip: 0 }, storageGet(STATS_KEY) || {});
@@ -324,8 +323,8 @@ export function createAssistHud({ hud = null, input = null } = {}) {
     const pr = a.prot && PROT[a.prot] ? PROT[a.prot] : '';
     if (pr !== lastProt) { lastProt = pr; prot.textContent = pr; toggle(prot, 'on', !!pr); }
     // ---- "İNİŞE GEÇ" button: airborne, no approach, not the autopilot
-    const airborne = !f.onGround && f.agl > 15;
-    const showBtn = !ap && airborne && !(f.autopilot && f.autopilot.on) && !f.crashed;
+    // (helicopter: also over the hover hold, which the assisted landing uses itself)
+    const showBtn = !ap && !f.crashed && (heli ? !f.onGround && f.agl > 3 : !f.onGround && f.agl > 15 && !(f.autopilot && f.autopilot.on));
     if (showBtn !== btnOn) { btnOn = showBtn; toggle(btn, 'on', showBtn); }
     const pulse = showBtn && (info.tutorialStep === 'app' || lastCue === 'approach');
     if (pulse !== btnPulse) { btnPulse = pulse; toggle(btn, 'pulse', pulse); }
@@ -361,7 +360,8 @@ export function createAssistHud({ hud = null, input = null } = {}) {
       const atOn = !!(a.at && a.at.on);
       if (atOn !== lastAt) { lastAt = atOn; atTag.style.display = atOn ? '' : 'none'; }
     }
-    if (!heli) drawPath(showApp ? ap : null, f);
+    // (phones: at most 20 times a second; elsewhere every frame, the gates stay glued to the scene)
+    if (!heli && ((pathT -= dt) <= 0 || !showApp)) { pathT = device === 'touch' ? 0.05 : 0; drawPath(showApp ? ap : null, f); }
   }
 
   return {

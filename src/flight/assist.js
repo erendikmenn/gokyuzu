@@ -48,7 +48,7 @@ export const BACKUP_RUNWAYS = new Set(['LTFM 16L', 'LTFM 34R', 'LTFM 17R', 'LTFM
 const FW = {
   airliner: {
     bank: 35, bankApp: 25, pitchUp: 18, pitchDown: -10, gMax: 12, gMin: -8, gdot: 4, pRate: 12, climb: 6, climbPitch: 12,
-    nMax: 1.8, nMin: 0.3, safeAgl: 450, gate: 7000, pull: 6, sinkMin: 0.9, sinkMax: 6, retard: 6, minRunway: 1600,
+    nMax: 1.8, nMin: 0.3, safeAgl: 450, gate: 7000, pull: 6, sinkMin: 0.75, sinkMax: 6, retard: 6, minRunway: 1600,
     appKt: 210, kth: 0.10, kq: 0.10,
   },
   fighter: {
@@ -143,6 +143,9 @@ class FixedWingAssist {
     if (on === this.on) return;
     this.on = on;
     if (!on) { this.cancelApproach(true); this.at.on = false; this.cue = ''; this.prot = ''; }
+    else if (!(this.m.wow || this.m.onGround)) {   // switched on in the air (settings): from the present flight, no climb-out
+      this.phase = this.m.fcs.st.blend > 0.95 ? 'flight' : 'initial'; this.climbout = false; this.theta0 = this.m.ad.theta;
+    }
     this.lawT = -1;
   }
 
@@ -430,10 +433,13 @@ class FixedWingAssist {
       }
     }
     // ---- gear down near the ground: sink rate limited, down to the touchdown (assisted flare) + thrust retard
-    if (sys.gearHandleDown && agl < 60) {
-      const vsMin = -Math.min(C.sinkMin + agl * 0.25, C.sinkMax);
+    // (on the assisted approach's short final the height is taken above the runway, not above the terrain or the water
+    // before it: no early flare over a rise, no dip at the threshold)
+    const hFlare = this.app && this.app.stage === 'final' && this.app.along < 2500 ? Math.max(0, m._pos.y - m.gearHeight - this.app.rw.elevation) : agl;
+    if (sys.gearHandleDown && hFlare < 60) {
+      const vsMin = -Math.min(C.sinkMin + hFlare * 0.18, Math.max(C.sinkMin, hFlare / 3.5), C.sinkMax);
       gFloor = Math.max(gFloor, Math.asin(clamp(vsMin / V, -0.5, 0)));
-      if (agl < C.retard && vs < 0 && (this.app || this._overRunwayArea(world))) { this.retard = true; this.power = 0; }
+      if (hFlare < C.retard && vs < 0 && (this.app || this._overRunwayArea(world))) { this.retard = true; this.power = 0; }
       if (vs < vsMin - 0.5) prot = prot || 'sink';
     }
     // ---- AoA protection: the load factor the wing gives below the stall (all types; the F-22 law allows post-stall)
@@ -488,7 +494,8 @@ class FixedWingAssist {
       if (g.along > gateMin + R && (Math.abs(g.lateral) > 1.2 * R || Math.cos(trkRel) > 0)) a.stage = 'in';
     } else if (a.stage === 'final') {
       // not stabilised low on the final (far off the centreline / crossing it), or past the threshold in the air: go around
-      const unstable = m.agl < 90 && g.along > 300 && (Math.abs(g.lateral) > 90 || Math.abs(trkRel) > 25 * DEG);
+      const unstable = (m.agl < 90 && g.along > 300 && (Math.abs(g.lateral) > 90 || Math.abs(trkRel) > 25 * DEG))
+        || (m.agl < 45 && m.agl > 8 && Math.abs(g.lateral) > rw.width / 2 + 15);   // would touch down beside the runway
       if (unstable || (g.along < -300 && m.agl > 30)) { a.stage = 'out'; a.goAround = true; this._emit('goAround'); }
     }
     let trackCmd;
@@ -579,7 +586,8 @@ class FixedWingAssist {
     if (this.lawT < 0 || m._time - this.lawT > 0.1) { this.gRef = ad.gamma; this.phiRef = HOLD; this.at.prev = -1; }
     this.lawT = m._time;
     // ---- pitch: flight-path rate command, released = hold → target
-    const sp = Math.abs(inp.pitch) > 0.04 ? clamp(inp.pitch, -1, 1) : 0;
+    let sp = Math.abs(inp.pitch) > 0.04 ? clamp(inp.pitch, -1, 1) : 0;
+    if (sp < 0 && m.sys.gearHandleDown && m.agl < 30) sp *= 0.3;   // a push close to the ground counts little
     let gdot = 0;
     if (this.app) {
       // approach: the player's input adds to the path's pull (a partial deflection leaves part of it; full = theirs)
@@ -597,13 +605,17 @@ class FixedWingAssist {
     const gLo = Math.max(C.gMin * DEG, C.pitchDown * DEG - ad.alpha, this.gFloor);
     if (gHi < gLo) gHi = gLo;
     this.gRef = clamp(this.gRef, gLo, gHi);
-    let n = m.fcs.nLevel(ad.gamma, ad.phi, true) + (V * this.Kg * (this.gRef - ad.gamma)) / G0;
+    // (a firmer flight-path loop close to the ground with the gear down: the flare follows the sink floor without lag)
+    const kg = this.Kg * (m.sys.gearHandleDown && m.agl < 20 ? 1.8 : 1);
+    let n = m.fcs.nLevel(ad.gamma, ad.phi, true) + (V * kg * (this.gRef - ad.gamma)) / G0;
     if (sp && this.gRef > gLo && this.gRef < gHi) n += (V * gdot) / G0;
     n = Math.min(n, this.nAlpha);
     n = clamp(n, C.nMin, C.nMax);
     // ---- roll: rate command, released = hold the bank → level (or the approach's bank)
-    const sr = Math.abs(inp.roll) > 0.04 ? clamp(inp.roll, -1, 1) : 0;
+    let sr = Math.abs(inp.roll) > 0.04 ? clamp(inp.roll, -1, 1) : 0;
     this.lastRoll = sr;
+    // short final: the player's roll input counts half (a late jab near the ground puts the wheels beside the runway)
+    if (this.app && this.app.stage === 'final' && m.agl < 60) sr *= 0.5;
     const bmax = this.bankMax, pMax = C.pRate * DEG;
     let p;
     if (this.app) {
@@ -661,7 +673,8 @@ class HeliAssist {
     on = !!on;
     if (on === this.on) return;
     this.on = on;
-    if (!on) { this.app = null; this.cue = ''; this.prot = ''; this.phase = this.m.onGround ? 'ground' : 'flight'; }
+    if (!on) { this.app = null; this.cue = ''; this.prot = ''; }
+    this.phase = this.m.onGround ? 'ground' : 'flight';
   }
 
   reset() {
@@ -776,6 +789,9 @@ class HeliAssist {
       if (th < -pLim) o.pitch = clamp(0.06 * (-pLim - th), 0, 0.5);
       if (Math.abs(ph) > rLim - 3 && Math.sign(o.roll) === Math.sign(ph)) { o.roll = 0; prot = prot || 'bank'; }
       if (Math.abs(ph) > rLim) o.roll = -Math.sign(ph) * clamp(0.05 * (Math.abs(ph) - rLim), 0, 0.5);
+      // stick released for a moment: wings level (the AFCS would hold the bank it was left at)
+      this.relR = Math.abs(Number(raw.roll) || 0) > 0.04 ? 0 : (this.relR || 0) + dt;
+      if (this.relR > 1.5 && Math.abs(ph) > 3 && Math.abs(ph) <= rLim) o.roll = clamp(-0.02 * ph, -0.35, 0.35);
       if (agl2 < 40 && m.verticalSpeed < -3 && th < 0) { o.pitch = Math.max(o.pitch, clamp(0.05 * -th, 0, 0.6)); prot = prot || 'terrain'; }
       if (agl2 < 25 && th < -3 && Math.hypot(m.velocity.x, m.velocity.z) > 12) { o.pitch = Math.max(o.pitch, clamp(0.05 * (-3 - th), 0, 0.5)); prot = prot || 'terrain'; }
       res = o;
