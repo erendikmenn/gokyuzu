@@ -1,16 +1,39 @@
 // Modal panels shared by the menu and the pause overlay: Ayarlar (settings), Künye (credits / disclaimer) and the
 // one-time "quality can be changed" hint. (Phones and tablets: the start gate src/ui/touch-gate.js replaced the old
 // touch-only notice; Ayarlar shows the tilt-steering switch in touch mode.)
-// Settings are read / written through src/core/settings.js (saveSettings broadcasts 'gokyuzu:settings';
-// main.js applies quality + volumes live, the HUD picks up hudMode).
+// Settings are read / written through src/core/settings.js (saveSettings broadcasts 'gokyuzu:settings'; main.js applies
+// quality + volumes + fps live, the audio muted + alerts, the HUD hudMode, src/ui/settings-live.js the warning display
+// classes and the `set` telemetry).
+//
+// Ayarlar sections: Grafik kalitesi · Kare hızı · Ses (Sesi kapat, Genel ses, Motor, Uyarılar, Telsiz, Ortam) · Uyarılar
+// (Sesli uyarılar Hepsi / Sadece kritik / Kapalı, Uyarı sesleri (çan), Ekrandaki uyarı yazıları, Yanıp sönme efektlerini
+// azalt) · Kontroller (Destekli uçuş, …) · Göstergeler · sections added by other modules. A speaker button next to × mutes
+// everything (= M key).
+//
+// Hook for other modules: add a section without editing this file
+//   const off = registerSettingsSection(id, render, { order = 100 } = {})
+//     render(sec, ui) runs each time Ayarlar opens; `sec` is an empty section box (after the built-in sections, sorted
+//     by order, then by registration). ui = {
+//       settings        the panel's current settings object (read it; change it only through update)
+//       update(patch)   merge { key: value } (nested volumes / alerts key by key), save, broadcast; returns the settings
+//       heading(text)   section title · note(text, hot?) grey explanation line · label(text) small row title
+//       toggle(label, hint, value, onChange(v)) → { set(v) }   switch row
+//       segmented(items [[id, label, badge?]…], value, onPick(id), ariaLabel) → { set(id) }
+//       choice(label, hint, items, value, onPick(id)) → { set(id) }   title + hint left, segmented control right
+//       touch           the on-screen controls are in use (phone / tablet wording)
+//     }
+//     It may return a function (called when the panel closes) or { refresh(settings), close() }: refresh runs after
+//     "Varsayılanlara dön" (which never resets keys of registered sections) and after a change made elsewhere.
+//     Same id again replaces the section; off() removes it. A throwing render is logged and skipped.
 import { injectCSS, BASE_CSS } from './styles.js';
 import { el, clamp } from './util.js';
 import { shared } from './shared.js';
 import { loadSettings, saveSettings, DEFAULT_SETTINGS } from '../core/settings.js';
 import { QUALITY, QUALITY_ORDER, detectQuality } from '../core/quality.js';
 import { resetTutorials } from './tutorial.js';
-import { isTouchOnly, touchMode, inAppBrowser } from './touch-env.js';
+import { isTouchOnly, touchMode, inAppBrowser, mobileOS } from './touch-env.js';
 import { requestTiltSetting } from './touch.js';
+import { createMuteButton } from './settings-live.js';   // (also: warning display classes, settings telemetry)
 
 export { isTouchOnly };
 
@@ -25,13 +48,36 @@ let detected = null;
 function detected_() { if (!detected) detected = safe(() => detectQuality(), 'medium'); return detected; }
 function safe(fn, d) { try { return fn(); } catch { return d; } }
 
+// volume sliders (settings.volumes, src/audio/index.js categories): master · engines and rotors · spoken alerts and
+// alert tones · ATC radio · wind, gear, wheels, switches
 const VOLUMES = [
-  ['master', 'Genel'],
+  ['master', 'Genel ses'],
   ['engine', 'Motor'],
-  ['voice', 'Sesli uyarılar'],
+  ['voice', 'Uyarılar'],
   ['atc', 'Telsiz (ATC)'],
   ['ambient', 'Ortam'],
 ];
+// spoken alerts (settings.alerts.voice, src/audio/alert-prefs.js)
+const VOICE_MODES = [['all', 'Hepsi'], ['critical', 'Sadece kritik'], ['off', 'Kapalı']];
+const VOICE_NOTES = {
+  all: 'İrtifa anonsları, MINIMUMS, RETARD, BANK ANGLE, SINK RATE, PULL UP, STALL: hepsi duyulur.',
+  critical: 'Yalnız hayati uyarılar: PULL UP / TERRAIN, SINK RATE, STALL, SPEED, motor ve yangın. İrtifa anonsları, MINIMUMS, RETARD ve BANK ANGLE susar.',
+  off: 'Hiçbir sesli uyarı duyulmaz. Uyarı çanları ve ekrandaki yazılar ayrı ayarlanır.',
+};
+const ON_OFF = [['on', 'Açık'], ['off', 'Kapalı']];
+
+// sections added by other modules (registerSettingsSection)
+const extraSections = new Map();
+let extraSeq = 0;
+/** Add a section to Ayarlar (see the header of this file). Returns a function that removes it. */
+export function registerSettingsSection(id, render, { order = 100 } = {}) {
+  if (!id || typeof render !== 'function') return () => {};
+  const key = String(id);
+  const prev = extraSections.get(key);
+  const entry = { render, order: Number.isFinite(order) ? order : 100, seq: prev ? prev.seq : extraSeq++ };
+  extraSections.set(key, entry);
+  return () => { if (extraSections.get(key) === entry) extraSections.delete(key); };
+}
 const HUD_MODES = [['full', 'Tam'], ['compact', 'Sade'], ['off', 'Kapalı']];
 // frame rate cap in flight (settings.fps, src/app/frame-pacing.js): null = auto | 30 | 60 | 0 = no limit
 const FPS_MODES = [['auto', 'Otomatik'], ['30', '30', 'Pil dostu'], ['60', '60'], ['0', 'Sınırsız']];
@@ -100,6 +146,18 @@ const CSS = `
 .gkp-credits li a { color: inherit; overflow-wrap: anywhere; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: rgba(208, 222, 240, .35); }
 .gkp-credits li a:hover { color: #fff; text-decoration-color: rgba(208, 222, 240, .7); }
 .gkp-credits li a:focus-visible { outline: 2px solid #fff; outline-offset: 2px; border-radius: 3px; }
+.gkp-card.gkp-snd-card h2, .gkp-card.gkp-snd-card .gkp-sub { padding-right: 90px; }
+.gkp-snd { position: absolute; top: 16px; right: 58px; width: 34px; height: 34px; border-radius: 10px; border: 1px solid rgba(255, 255, 255, .14);
+  background: rgba(255, 255, 255, .06); color: var(--gk-fg); padding: 0; }
+.gkp-snd:hover { background: rgba(255, 255, 255, .12); }
+.gkp-snd[aria-pressed="true"] { border-color: rgba(255, 194, 143, .5); background: rgba(255, 122, 69, .14); }
+.gkp-snd:focus-visible, .gkp-x:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.gkp-vols { transition: opacity .15s; }
+.gkp-vols.muted { opacity: .45; }
+.gkp-row.gkp-main label { font-weight: 700; }
+.gkp-lab { padding: 9px 0 7px; font-size: 14px; }
+.gkp-choice { display: grid; grid-template-columns: 1fr minmax(150px, 200px); align-items: center; gap: 14px; padding: 8px 0; font-size: 14px; }
+.gkp-choice small { display: block; margin-top: 2px; font-size: 12px; color: var(--gk-dim); }
 .gkp-disc { margin-top: 16px !important; padding: 12px 14px; border-radius: 12px; background: rgba(255, 176, 32, .08); border: 1px solid rgba(255, 176, 32, .22); font-size: 13px !important; color: rgba(255, 232, 200, .92) !important; }
 /* touch devices (phones: small screens, finger-sized targets) */
 @media (max-height: 520px), (max-width: 560px) {
@@ -114,6 +172,9 @@ html.gk-touch .gkp-row input[type="range"] { height: 32px; }
 html.gk-touch .gkp-row { grid-template-columns: 110px 1fr 44px; }
 html.gk-touch .gkp-tog { min-height: 48px; }
 html.gk-touch .gkp-btn { min-height: 44px; padding: 10px 16px; }
+html.gk-touch .gkp-snd { width: 42px; height: 42px; top: 10px; right: 60px; }
+html.gk-touch .gkp-snd svg { width: 22px; height: 22px; }
+@media (max-width: 420px) { .gkp-choice { grid-template-columns: 1fr; gap: 8px; } }
 /* one-time hint */
 .gkp-hint { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); z-index: 55; display: flex; align-items: center; gap: 14px;
   max-width: min(92vw, 640px); padding: 12px 14px 12px 18px; border-radius: 14px; font-family: var(--gk-sans); color: var(--gk-fg); font-size: 14px; line-height: 1.4;
@@ -203,11 +264,31 @@ function toggle(parent, label, hint, value, onChange) {
   return { set };
 }
 
+/** Title + hint on the left, a small segmented control on the right (stacked on narrow phones). */
+function choice(parent, label, hint, items, value, onPick) {
+  const row = el('div', 'gkp-choice', parent);
+  const t = el('span', null, row, label);
+  if (hint) el('small', null, t, hint);
+  return segmented(row, items, value, onPick, label);
+}
+
 /** Ayarlar panel. Resolves when closed. */
 export function openSettings(container) {
   const m = modal(container, 'Ayarlar', 'Değişiklikler hemen uygulanır ve bu tarayıcıda saklanır.');
   let s = loadSettings();
-  const commit = () => { s = saveSettings({ ...s, volumes: { ...s.volumes } }); };
+  let saving = false;
+  const commit = () => {
+    saving = true;
+    try { s = saveSettings({ ...s, volumes: { ...s.volumes }, alerts: { ...s.alerts } }); } finally { saving = false; }
+  };
+  const refreshers = [];            // re-read `s` into the controls ("Varsayılanlara dön", a change made elsewhere)
+  const refreshAll = () => { for (const fn of refreshers) { try { fn(s); } catch (e) { console.error(e); } } };
+  const touch = touchMode();
+
+  // header: speaker button next to × (the same switch as "Sesi kapat" and the M key)
+  m.card.classList.add('gkp-snd-card');
+  const snd = createMuteButton({ className: 'gkp-snd', key: touch ? '' : 'M' });
+  m.card.insertBefore(snd, m.card.querySelector('.gkp-x'));
 
   // graphics
   const g = el('div', 'gkp-sec', m.card);
@@ -218,51 +299,83 @@ export function openSettings(container) {
   const updateNote = () => {
     const now = QUALITY[s.quality], start = QUALITY[STARTUP_QUALITY];
     const aaChange = now && start && !!now.antialias !== !!start.antialias;
-    note.textContent = `Bu ${touchMode() ? 'cihaz' : 'bilgisayar'} için önerilen: ${QUALITY[auto] ? QUALITY[auto].label : auto}. Kenar yumuşatma değişikliği yeniden başlatınca geçerli.`;
+    note.textContent = `Bu ${touch ? 'cihaz' : 'bilgisayar'} için önerilen: ${QUALITY[auto] ? QUALITY[auto].label : auto}. Kenar yumuşatma değişikliği yeniden başlatınca geçerli.`;
     note.classList.toggle('hot', aaChange);
   };
   const qs = segmented(g, items, s.quality, (id) => { s.quality = id; commit(); updateNote(); }, 'Grafik kalitesi');
   note = el('div', 'gkp-note', g, '');
   updateNote();
+  refreshers.push(() => { qs.set(s.quality); updateNote(); });
 
   // frame rate (applies live: main.js hands it to the frame pacer)
   const fr = el('div', 'gkp-sec', m.card);
   el('div', 'gkp-h', fr, 'Kare hızı');
   const fps = segmented(fr, FPS_MODES, fpsId(s.fps), (id) => { s.fps = fpsValue(id); commit(); }, 'Kare hızı');
-  el('div', 'gkp-note', fr, touchMode()
+  el('div', 'gkp-note', fr, touch
     ? 'Otomatik: telefonda 30 FPS, tablette 60 (tutturamazsa 30). 30 FPS cihazı daha az ısıtır ve pili daha uzun götürür.'
     : 'Otomatik: ekranın yenileme hızı. 30 ya da 60 seçmek dizüstünde pili uzatır.');
+  refreshers.push(() => fps.set(fpsId(s.fps)));
 
-  // audio
+  // sound: "Sesi kapat" keeps the levels (the audio suspends its context); moving a slider while muted turns sound on
   const a = el('div', 'gkp-sec', m.card);
   el('div', 'gkp-h', a, 'Ses');
+  const muteHint = touch ? 'Bütün sesler susar, seviyeler korunur. Hızlı erişim: sağ üstteki hoparlör.' : 'Bütün sesler susar, seviyeler korunur. Oyunda M tuşu.';
+  const vols = el('div', 'gkp-vols');
+  const muteSw = toggle(a, 'Sesi kapat', muteHint, s.muted, (v) => { s.muted = v; commit(); vols.classList.toggle('muted', v); });
+  a.appendChild(vols);
+  vols.classList.toggle('muted', !!s.muted);
   const sliders = {};
   for (const [key, label] of VOLUMES) {
     if (!(key in (DEFAULT_SETTINGS.volumes || {})) && !(key in s.volumes)) continue;
-    const row = el('div', 'gkp-row', a);
+    const row = el('div', key === 'master' ? 'gkp-row gkp-main' : 'gkp-row', vols);
     const id = `gkp-vol-${key}`;
     const lab = el('label', null, row, label);
     lab.htmlFor = id;
     const r = el('input', null, row);
     r.type = 'range'; r.min = '0'; r.max = '100'; r.step = '1'; r.id = id;
     const out = el('output', null, row, '');
-    const show = () => { out.textContent = `${r.value}%`; };
-    r.value = String(Math.round(clamp(Number(s.volumes[key] ?? 1), 0, 1) * 100));
-    show();
-    r.addEventListener('input', () => { s.volumes[key] = Number(r.value) / 100; show(); commit(); });
-    sliders[key] = { r, show };
+    out.htmlFor = id;
+    const show = () => { out.textContent = `%${r.value}`; r.setAttribute('aria-valuetext', `%${r.value}`); };   // (Turkish: %50)
+    const read = () => { r.value = String(Math.round(clamp(Number(s.volumes[key] ?? 1), 0, 1) * 100)); show(); };
+    read();
+    r.addEventListener('input', () => {
+      s.volumes[key] = Number(r.value) / 100; show();
+      if (s.muted) { s.muted = false; muteSw.set(false); vols.classList.remove('muted'); }
+      commit();
+    });
+    sliders[key] = { read };
   }
+  if (mobileOS() === 'ios') el('div', 'gkp-note', a, 'iPhone ve iPad’de sessiz mod açıkken (yan tuş ya da Denetim Merkezi) oyunun sesi duyulmaz.');
+  refreshers.push(() => { muteSw.set(!!s.muted); vols.classList.toggle('muted', !!s.muted); for (const k in sliders) sliders[k].read(); });
+
+  // warnings: spoken alerts, alert tones, on-screen texts, flashing (src/audio/alert-prefs.js, src/ui/settings-live.js)
+  const w = el('div', 'gkp-sec', m.card);
+  el('div', 'gkp-h', w, 'Uyarılar');
+  el('div', 'gkp-lab', w, 'Sesli uyarılar');
+  let voiceNote = null;
+  const voice = segmented(w, VOICE_MODES, s.alerts.voice, (id) => { s.alerts.voice = id; commit(); voiceNote.textContent = VOICE_NOTES[id]; }, 'Sesli uyarılar');
+  voiceNote = el('div', 'gkp-note', w, VOICE_NOTES[s.alerts.voice] || VOICE_NOTES.all);
+  const chimes = toggle(w, 'Uyarı sesleri (çan)', 'Uyarı çanları ve kornalar: master caution / warning, iniş takımı kornası, stall titreşimi, hız aşımı, otopilot ayrılma', s.alerts.chimes, (v) => { s.alerts.chimes = v; commit(); });
+  const texts = toggle(w, 'Ekrandaki uyarı yazıları', 'PULL UP, STALL, OVERSPEED gibi yazılar (kokpit ekranları değişmez)', s.alerts.hud, (v) => { s.alerts.hud = v; commit(); });
+  const calm = toggle(w, 'Yanıp sönme efektlerini azalt', 'Uyarılar ve vurgular yanıp sönmez, sabit yanar', s.alerts.reduceFlash, (v) => { s.alerts.reduceFlash = v; commit(); });
+  refreshers.push(() => {
+    voice.set(s.alerts.voice); voiceNote.textContent = VOICE_NOTES[s.alerts.voice] || VOICE_NOTES.all;
+    chimes.set(s.alerts.chimes); texts.set(s.alerts.hud); calm.set(s.alerts.reduceFlash);
+  });
 
   // controls
   const c = el('div', 'gkp-sec', m.card);
   el('div', 'gkp-h', c, 'Kontroller');
-  const inv = toggle(c, 'Burun kontrolünü ters çevir', touchMode() ? 'Çubuğu ileri itmek burnu kaldırır' : 'Yukarı ok / W burnu kaldırır', s.invertPitch, (v) => { s.invertPitch = v; commit(); });
+  // assisted flight (src/flight assist module reads settings.assist): stays off once the player turns it off
+  const assist = choice(c, 'Destekli uçuş', 'Yeni başlayanlar için kalkış, uçuş ve inişte yardım (varsayılan: açık)', ON_OFF, s.assist === false ? 'off' : 'on',
+    (id) => { s.assist = id === 'on'; commit(); });
+  const inv = toggle(c, 'Burun kontrolünü ters çevir', touch ? 'Çubuğu ileri itmek burnu kaldırır' : 'Yukarı ok / W burnu kaldırır', s.invertPitch, (v) => { s.invertPitch = v; commit(); });
   const atc = 'atc' in s ? toggle(c, 'Otomatik ATC telsizi', 'Kule ve yaklaşma anonsları', s.atc, (v) => { s.atc = v; commit(); }) : null;
   // onboarding (src/ui/tutorial.js): first-flight tutorial per aircraft category, opening key card, contextual hints
   const tut = toggle(c, 'Eğitim ve ipuçları', 'İlk uçuşta adım adım eğitim, tuş kartı ve durumsal ipuçları', s.tutorial !== false, (v) => { s.tutorial = v; commit(); });
   // touch hook (src/ui/touch.js, touch-tilt.js): tilt steering; iOS asks for the motion-sensor permission inside this tap
   let tiltSw = null;
-  if (touchMode()) {
+  if (touch) {
     const tiltNote = el('div', 'gkp-note', null, '');
     tiltSw = toggle(c, 'Eğimle kumanda', 'Telefonu direksiyon gibi çevir: yatış; üst kenarı öne / arkaya eğ: burun. Çubuk da çalışmaya devam eder.', !!s.tilt, (v) => {
       if (!v) { s.tilt = false; commit(); requestTiltSetting(false); tiltNote.textContent = ''; return; }
@@ -279,19 +392,65 @@ export function openSettings(container) {
     c.appendChild(tiltNote);
   }
   // failures hook: random failures in free flight (never during the tutorial or the first 60 s; missions have their own)
-  el('div', null, c, 'Rastgele arızalar').style.cssText = 'padding: 9px 0 7px; font-size: 14px';
+  el('div', 'gkp-lab', c, 'Rastgele arızalar');
   const fails = segmented(c, FAILURE_MODES, s.failures || 'off', (id) => { s.failures = id; commit(); }, 'Rastgele arızalar');
   el('div', 'gkp-note', c, 'Serbest uçuşta motor, yangın, hidrolik ve iniş takımı arızaları. Nadir: ortalama 30 dakikada bir. Gerçekçi: daha seyrek, çoğu kalkışta ve yaklaşmada. Acil durum tuşu: I (dokunmatik: ACİL).');
   const tutNote = el('div', 'gkp-note', c);
   const tutReset = el('button', 'gkp-link', tutNote, 'Tamamlanan eğitimleri sıfırla');
   tutReset.type = 'button';
   tutReset.addEventListener('click', () => { resetTutorials(); tutReset.textContent = 'Sıfırlandı: her uçak türünün eğitimi bir sonraki uçuşta yeniden başlar.'; tutReset.disabled = true; });
+  refreshers.push(() => {
+    assist.set(s.assist === false ? 'off' : 'on'); inv.set(s.invertPitch); if (atc) atc.set(s.atc); tut.set(s.tutorial !== false);
+    fails.set(s.failures || 'off'); if (tiltSw) tiltSw.set(!!s.tilt);
+  });
 
   // HUD
   const h = el('div', 'gkp-sec', m.card);
   el('div', 'gkp-h', h, 'Göstergeler');
   const hud = segmented(h, HUD_MODES, s.hudMode || 'compact', (id) => { s.hudMode = id; commit(); }, 'Göstergeler');
-  el('div', 'gkp-note', h, touchMode() ? 'Telefonda «Sade» önerilir: göstergeler kumandaların arasına sığar.' : 'Oyunda H tuşu Tam → Sade → Kapalı arasında geçiş yapar.');
+  el('div', 'gkp-note', h, touch ? 'Telefonda «Sade» önerilir: göstergeler kumandaların arasına sığar.' : 'Oyunda H tuşu Tam → Sade → Kapalı arasında geçiş yapar.');
+  refreshers.push(() => hud.set(s.hudMode || 'compact'));
+
+  // sections of other modules (registerSettingsSection)
+  const cleanups = [];
+  const ui = {
+    get settings() { return s; },
+    update(patch) {
+      if (!patch || typeof patch !== 'object') return s;
+      const next = { ...s, ...patch };
+      for (const k of ['volumes', 'alerts']) if (patch[k] && typeof patch[k] === 'object') next[k] = { ...s[k], ...patch[k] };
+      s = next;
+      commit();
+      return s;
+    },
+    touch,
+  };
+  const extras = [...extraSections.entries()].sort((x, y) => x[1].order - y[1].order || x[1].seq - y[1].seq);
+  for (const [id, { render }] of extras) {
+    const sec = el('div', 'gkp-sec', m.card);
+    sec.dataset.section = id;
+    const api = {
+      ...ui,
+      get settings() { return s; },
+      heading: (text) => el('div', 'gkp-h', sec, text),
+      note: (text, hot) => el('div', hot ? 'gkp-note hot' : 'gkp-note', sec, text),
+      label: (text) => el('div', 'gkp-lab', sec, text),
+      toggle: (label, hint, value, onChange) => toggle(sec, label, hint, value, onChange),
+      segmented: (list, value, onPick, ariaLabel) => segmented(sec, list, value, onPick, ariaLabel),
+      choice: (label, hint, list, value, onPick) => choice(sec, label, hint, list, value, onPick),
+    };
+    try {
+      const ret = render(sec, api);
+      if (typeof ret === 'function') cleanups.push(ret);
+      else if (ret && typeof ret === 'object') {
+        if (typeof ret.close === 'function') cleanups.push(() => ret.close());
+        if (typeof ret.refresh === 'function') refreshers.push((st) => ret.refresh(st));
+      }
+    } catch (e) {
+      console.error(`[settings] section ${id}`, e);
+      sec.remove();
+    }
+  }
 
   // footer
   const f = el('div', 'gkp-foot', m.card);
@@ -301,12 +460,26 @@ export function openSettings(container) {
   okb.type = 'button';
   okb.addEventListener('click', m.close);
   reset.addEventListener('click', () => {
-    s = { ...s, quality: auto, volumes: { ...DEFAULT_SETTINGS.volumes }, invertPitch: DEFAULT_SETTINGS.invertPitch, atc: DEFAULT_SETTINGS.atc, tutorial: DEFAULT_SETTINGS.tutorial, hudMode: null, failures: DEFAULT_SETTINGS.failures, fps: DEFAULT_SETTINGS.fps };
+    // (assist is not reset: once turned off it comes back only through its own switch; registered sections keep theirs)
+    const D = DEFAULT_SETTINGS;
+    s = { ...s, quality: auto, volumes: { ...D.volumes }, muted: D.muted, alerts: { ...D.alerts }, invertPitch: D.invertPitch, atc: D.atc,
+      tutorial: D.tutorial, hudMode: null, failures: D.failures, fps: D.fps };
+    if (tiltSw && s.tilt) { s.tilt = false; requestTiltSetting(false); }
     commit();
-    qs.set(s.quality); updateNote(); fps.set(fpsId(s.fps));
-    for (const [key, { r, show }] of Object.entries(sliders)) { r.value = String(Math.round((s.volumes[key] ?? 1) * 100)); show(); }
-    inv.set(s.invertPitch); if (atc) atc.set(s.atc); tut.set(s.tutorial !== false); hud.set('compact'); fails.set(s.failures);
-    if (tiltSw && s.tilt) { s.tilt = false; commit(); tiltSw.set(false); }
+    refreshAll();
+  });
+
+  // a change made elsewhere while the panel is open (the speaker button, another module): show it
+  const onOutside = (e) => {
+    if (saving || !e.detail || typeof e.detail !== 'object') return;
+    const d = e.detail;
+    s = { ...s, ...d, volumes: { ...s.volumes, ...(d.volumes || {}) }, alerts: { ...s.alerts, ...(d.alerts || {}) } };
+    refreshAll();
+  };
+  window.addEventListener('gokyuzu:settings', onOutside);
+  m.done.then(() => {
+    window.removeEventListener('gokyuzu:settings', onOutside);
+    for (const fn of cleanups) { try { fn(); } catch (e) { console.error(e); } }
   });
   return m.done;
 }
@@ -348,7 +521,7 @@ export function openCredits(container, map = null) {
   }
   el('p', 'gkp-disc', box, DISCLAIMER);
   // CONTRACTS-SF.md §11 (src/core/telemetry.js)
-  el('p', 'gkp-disc', box, 'Gizlilik: Oyunu geliştirmek için anonim kullanım istatistikleri toplanır (seçilen uçak, oynama süresi, kare hızı, hatalar, kalkış / iniş / kaza sayıları ve eğitim adımlarının süresi). Çerez kullanılmaz, kişisel bilgi toplanmaz, sunucu kayıtları 30 gün sonra silinir. Tarayıcında “Do Not Track” veya “Global Privacy Control” açıksa istatistik gönderilmez.');
+  el('p', 'gkp-disc', box, 'Gizlilik: Oyunu geliştirmek için anonim kullanım istatistikleri toplanır (seçilen uçak, oynama süresi, kare hızı, ses ve uyarı gibi ayar tercihleri, hatalar, kalkış / iniş / kaza sayıları ve eğitim adımlarının süresi). Çerez kullanılmaz, kişisel bilgi toplanmaz, sunucu kayıtları 30 gün sonra silinir. Tarayıcında “Do Not Track” veya “Global Privacy Control” açıksa istatistik gönderilmez.');
   const f = el('div', 'gkp-foot', m.card);
   el('span', null, f, 'Ücretsiz · ticari olmayan hayran projesi');
   const okb = el('button', 'gkp-btn primary', f, 'Kapat');
