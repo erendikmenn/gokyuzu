@@ -1,8 +1,8 @@
 // Frame pacing tests (src/app/frame-pacing.js): flight caps per device class and setting, the rates behind the menu /
-// loading screen / overlays / parked, a regular cadence at 60, 90, 120 and 144 Hz, jittery timestamps, a device that
+// loading screen / overlays / parked / in cruise, a regular cadence at 60, 90, 120 and 144 Hz, jittery timestamps, a device that
 // cannot reach the cap, and the tablet 60 → 30 fallback. Run: node tests/pacing.test.mjs
 // No framework: prints a PASS/FAIL table, exits 1 on failure.
-import { createFramePacer, flightCap, parseFpsSetting, PACE } from '../src/app/frame-pacing.js';
+import { createFramePacer, flightCap, parseFpsSetting, PACE, FALLBACK_30 } from '../src/app/frame-pacing.js';
 
 const rows = [];
 const check = (name, ok, detail = '') => rows.push({ name, ok: !!ok, detail });
@@ -37,7 +37,7 @@ const near = (a, b, tol) => Math.abs(a - b) <= tol;
 // ---- settings and caps ----
 check('parse: auto / null / garbage → null', parseFpsSetting('auto') === null && parseFpsSetting(null) === null && parseFpsSetting('45') === null);
 check('parse: 30 / 60 / 0 (string or number)', parseFpsSetting('30') === 30 && parseFpsSetting(60) === 60 && parseFpsSetting('0') === 0);
-check('cap: phone auto 30, tablet auto 60, desktop auto 0', flightCap('phone', null) === 30 && flightCap('tablet', null) === 60 && flightCap('desktop', null) === 0 && flightCap('integrated', null) === 0);
+check('cap: phone auto 30, tablet auto 60, desktop auto 0', flightCap('phone', null) === 30 && flightCap('tablet', null) === 60 && flightCap('desktop', null) === 0);
 check('cap: the setting wins (phone 60, desktop 30, tablet 0)', flightCap('phone', 60) === 60 && flightCap('desktop', 30) === 30 && flightCap('tablet', 0) === 0);
 
 // ---- cadence per display rate ----
@@ -95,6 +95,28 @@ for (const hz of [60, 90, 120, 144]) {
   const r2 = run(createFramePacer({ deviceClass: 'desktop', setting: 30 }), { mode: 'parked', secs: 5 });
   check('parked never above the flight cap (desktop at a 30 cap: 30)', near(r2.fps, 30, 0.5), `${r2.fps.toFixed(1)} fps`);
 }
+// ---- cruise: little moving on screen, no input (phones 20, tablets 30; only on the 'auto' setting) ----
+for (const hz of [60, 120]) {
+  const r = run(createFramePacer({ deviceClass: 'phone' }), { hz, mode: 'cruise', secs: 5 });
+  check(`cruise, phone at ${hz} Hz: ${PACE.cruise.phone} fps, regular`, near(r.fps, PACE.cruise.phone, 0.5) && r.p95 - r.p50 < 1 && near(r.simFps, PACE.cruise.phone, 0.5), `${r.fps.toFixed(1)} fps (${r.simFps.toFixed(1)} sims), gaps p50 ${r.p50.toFixed(1)} p95 ${r.p95.toFixed(1)} ms`);
+}
+{
+  const t = run(createFramePacer({ deviceClass: 'tablet' }), { mode: 'cruise', secs: 5 });
+  check(`cruise, tablet: ${PACE.cruise.tablet} fps`, near(t.fps, PACE.cruise.tablet, 0.5), `${t.fps.toFixed(1)} fps`);
+  const d = run(createFramePacer({ deviceClass: 'desktop' }), { hz: 120, mode: 'cruise', secs: 3 });
+  check('cruise, desktop: no lower rate (every refresh at 120 Hz)', near(d.fps, 120, 1) && !createFramePacer({ deviceClass: 'desktop' }).cruiseFps, `${d.fps.toFixed(1)} fps`);
+  const s30 = run(createFramePacer({ deviceClass: 'phone', setting: 30 }), { mode: 'cruise', secs: 3 });
+  const s60 = run(createFramePacer({ deviceClass: 'phone', setting: 60 }), { mode: 'cruise', secs: 3 });
+  check('cruise with a chosen rate (phone 30 / 60 setting): the chosen rate, no cruise', near(s30.fps, 30, 0.6) && near(s60.fps, 60, 1) && !createFramePacer({ deviceClass: 'phone', setting: 30 }).cruiseFps, `${s30.fps.toFixed(1)} / ${s60.fps.toFixed(1)} fps`);
+  check('cruiseFps: phone 20, tablet 30, ?pace=0 none', createFramePacer({ deviceClass: 'phone' }).cruiseFps === 20 && createFramePacer({ deviceClass: 'tablet' }).cruiseFps === 30 && createFramePacer({ deviceClass: 'phone', enabled: false }).cruiseFps === 0);
+  // a touch ends the cruise: the next flight frame follows within one flight interval of the last cruise frame
+  const p = createFramePacer({ deviceClass: 'phone' });
+  run(p, { mode: 'cruise', secs: 2 });
+  let ts = 2000, first = null;
+  for (let i = 0; i < 6 && first === null; i++, ts += 1000 / 60) { p.raf(ts); if (p.decide(ts, 'flight', {}).draw) first = ts; }
+  check('cruise → flight (a touch): drawn within 2 refreshes', first !== null && first - 2000 <= 2 * 1000 / 60 + 0.1, first === null ? 'no draw' : `${(first - 2000).toFixed(1)} ms`);
+}
+
 {   // leaving an overlay: the first flight frame comes on the next refresh
   const p = createFramePacer({ deviceClass: 'desktop' });
   run(p, { mode: 'overlay', secs: 2 });
@@ -126,6 +148,17 @@ for (const hz of [60, 90, 120, 144]) {
   run(q, { secs: 10, cost: 22 });
   check('tablet with the 60 setting: never locked to 30', !q.stats.locked30 && q.cap(10000) === 60);
 }
+
+// ---- weak desktop GPUs (integrated / entry / software): the tablet rule on 'auto' ----
+for (const cls of ['integrated', 'entry', 'software']) {
+  check(`cap: ${cls} auto 60, its 30 / 0 settings kept`, flightCap(cls, null) === 60 && flightCap(cls, 30) === 30 && flightCap(cls, 0) === 0 && FALLBACK_30.has(cls));
+  const p = createFramePacer({ deviceClass: cls });
+  const fast = run(p, { hz: 144, secs: 10 });
+  check(`${cls} at 144 Hz holding 60: ~60 fps, never above`, fast.fps <= 60.5 && fast.fps > 57 && !p.stats.locked30, `${fast.fps.toFixed(1)} fps`);
+  run(p, { hz: 60, secs: 10, cost: 22, t0: 10000 });
+  check(`${cls} that cannot hold 60: locks to a steady 30`, p.stats.locked30 && p.cap(20000) === 30, `cap ${p.cap(20000)}`);
+}
+check('midrange / unknown / desktop: display rate (no cap)', flightCap('midrange', null) === 0 && flightCap('unknown', null) === 0 && flightCap('desktop', null) === 0);
 
 let failed = 0;
 console.log('\n=== frame pacing (caps, idle / overlay / parked rates, cadence, tablet fallback) ' + '='.repeat(26));

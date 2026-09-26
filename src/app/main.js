@@ -682,14 +682,33 @@ function paceMode(now) {
   if (state.paused || (state.mission && state.mission.hold)) return 'overlay';
   if (navMap.isOpen) return 'map';
   const f = state.flight;
-  return f && f.onGround && !f.crashed && now - lastMoveAt >= PACE.parkedAfterMs ? 'parked' : 'flight';
+  if (f && f.onGround && !f.crashed && now - lastMoveAt >= PACE.parkedAfterMs) return 'parked';
+  if (slowFor >= PACE.cruiseSecs && now - lastInteraction >= PACE.cruiseAfterMs && f && !f.onGround && !f.crashed && !state.crashTimer) return 'cruise';
+  return 'flight';
 }
 // what moves between simulation steps: the aircraft, the camera, a turning rotor, the controls and the animated surfaces
 const VIS_KEYS = ['flaps', 'slats', 'spoilers', 'speedbrake', 'gear', 'canopy', 'aileron', 'elevator', 'rudder', 'stabilator'];
 const lastVis = {};
+// cruise (frame-pacing.js): seconds the picture has moved less than PACE.cruiseStepPx per cruise frame; screen motion = camera rotation +
+// the ground's apparent motion (speed over height above it, the fastest part of the ground in view), in CSS px / s;
+// never with a turning rotor (its blades would strobe at 20 fps)
+let slowFor = 0, lastNoteAt = 0;
+function noteCruise(now, flight, inp, vis) {
+  const dts = (now - lastNoteAt) / 1000;
+  lastNoteAt = now;
+  const cruiseFps = pacer.cruiseFps;
+  if (!cruiseFps || !(dts > 0 && dts < 0.5)) { slowFor = 0; return; }
+  const rot = 2 * Math.acos(Math.min(1, Math.abs(lastCamQ.dot(camera.quaternion)))) / dts;
+  const v = flight.velocity ? flight.velocity.length() : Math.abs(flight.airspeed || 0);
+  const pxPerRad = window.innerHeight / (2 * Math.tan(camera.fov * Math.PI / 360));
+  const px = (rot + v / Math.max(Number.isFinite(flight.agl) ? flight.agl : 0, 30)) * pxPerRad;
+  const still = px < PACE.cruiseStepPx * cruiseFps && Math.abs(inp.pitch) + Math.abs(inp.roll) + Math.abs(inp.yaw) < 0.02 && !state.paused && !(vis.rotor && vis.rotor.rpm > 0.05);
+  slowFor = still ? slowFor + dts : 0;
+}
 /** After a simulation step: anything moving restarts the parked timer and lets the shadow map update. */
 function noteMotion(now, flight, vis) {
   const inp = input.state;
+  noteCruise(now, flight, inp, vis);
   let moving = state.crashTimer > 0 || lastAcPos.distanceToSquared(flight.position) > 4e-4 || lastCamPose.distanceToSquared(camera.position) > 1e-4
     || 1 - Math.abs(lastCamQ.dot(camera.quaternion)) > 1e-8
     || (vis.rotor && vis.rotor.rpm > 0.05) || inp.pitch || inp.roll || inp.yaw || inp.brake;
