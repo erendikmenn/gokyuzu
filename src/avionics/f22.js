@@ -3,6 +3,7 @@
 import { font, text, line, poly, circle, clamp, wrap360, wrap180, pad, DEG, NM, FT, smoothK, clockUTC } from './core.js';
 import { MapView, drawRunways, terrainGrid, reliefFor, traffic, clockSeconds, STEERPOINTS, steerpoint, bearingTo, distTo, LANDMARKS } from './nav.js';
 import { createHud } from './hud.js';
+import { reducedFlash } from '../ui/display-prefs.js';   // settings.alerts.reduceFlash: warnings steady
 
 export const RC = { green: '#3dff6a', cyan: '#3fdcff', white: '#f2f6fa', grey: '#8f9aa6', dgrey: '#4a525c', amber: '#ffb000', yellow: '#ffe24a', red: '#ff3a30', magenta: '#ff5cff' };
 
@@ -204,7 +205,7 @@ function f22UfdIcaws(env) {
     if (S.ap.on) msgs.push(['AUTOPILOT', RC.green]);
     if (!msgs.length) msgs.push(['NO ALERTS', RC.grey]);
     msgs.slice(0, 6).forEach(([m, c], i) => {
-      const flash = c === RC.red && Math.floor(S.t * 2) % 2 === 0;
+      const flash = c === RC.red && (reducedFlash() || Math.floor(S.t * 2) % 2 === 0);   // (reduced: steady inverse bar)
       if (flash) { g.fillStyle = c; g.fillRect(30, 140 + i * 96, 940, 80); }
       text(g, m, 60, 200 + i * 96, flash ? '#000' : c, 'left', font(56, true, true));
     });

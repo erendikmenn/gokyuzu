@@ -363,7 +363,9 @@ Players keep files in their browser cache, so every asset URL carries a content 
   heartbeat fps against the cap, pixel ratio p50, dead pages, graphics events, own errors, and the visitors whose browser
   sends no beacon. "Geri dönen oyuncular": D1 / D7 / within-7-days per cohort day and device from the visit fields, and
   the daily share of returning browsers. "Destekli uçuş": outcomes per `as` value on `fly` and the `assist` events.
-  `--field KEY` lists any beacon field's values per event type (e.g. `as`).
+  `--field KEY` lists any beacon field's values per event type (e.g. `as`). "Ayarlar" (from `set`): people who mute, lower a
+  volume (below its default bucket), zero the master volume, turn off assisted flight, reduce or turn off the spoken
+  alerts, the alert chimes or the HUD warning texts, reduce flashing, and the settings changed most.
 - Gameplay events (`trackEvent(type, data)`, ≤ 40 per type and page; data keys never `t s n m v`, values short codes and
   numbers, nothing personal — never a nickname). Frequent UI clicks have their own type so they cannot use up the cap of
   the outcomes:
@@ -374,6 +376,7 @@ Players keep files in their browser cache, so every asset URL carries a content 
   | `ffp` | open · track · untrack · play | open: `src` (key, tab, card = the compact result card, auto = a result / crash opened it); track, untrack, play: `id` |
   | `ffc` | start · done · fail · cancel · drop | `id` (bridge, lowpass, baytour, climb, alcatraz, land, eng, flameout, ditch, autorot), `ac`; done: `score`, `stars`, `sec`; cancel/drop: `sec`; drop: `why` (time, gap, far, landed) |
   | `lb` | show · submit · fail | `b` (board: a mission id or ff-<id>), `d`=1 daily; show: `c` (entries); submit: `r` (rank), `im`=1 improved, `nm`=1 a nickname was given |
+  | `set` | — | a setting changed (src/ui/settings-live.js; one beacon per changed setting, sent when the values have settled 1.5 s after the last change, so a slider drag is one beacon): `k` = `master` · `engine` · `voice` · `atc` · `ambient` with `v2` 0 · 25 · 50 · 75 · 100 (volume bucket); `mute` · `assist` · `chime` · `hudwarn` · `calm` (reduced flashing) · `tut` · `inv` · `tilt` · `radio` with `v2` 1 · 0; `valert` (spoken alerts) with `v2` 2 all · 1 critical · 0 off; `quality` · `fps` · `fail` · `hud` with the choice. (`v2`, not `v`: `v` is the envelope's version.) |
   Existing: `takeoff`, `land` (`fpm`, `cl`, `tdz`, `st`), `crash`, `tut`, `share` (`id`, `via`), `failure`, `gfx`.
 
 ## 12. Missions, landing score, failures, leaderboard (wave 7)

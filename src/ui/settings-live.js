@@ -5,7 +5,7 @@
 //       html.gk-no-warntext  alerts.hud === false: no warning texts on the HUD (src/ui/hud.js .gkh-warn) or the map strip
 //                            (src/ui/map.js .gkn-wn); the aural alerts and the cockpit instruments are not affected
 //       html.gk-calm         alerts.reduceFlash: warnings, the mission timer and the touch highlights stay steady
-//     Canvas-drawn instruments (src/avionics) can ask reducedFlash() / warningTextsOn() before blinking.
+//     Canvas-drawn instruments (src/avionics) ask reducedFlash() / warningTextsOn() (src/ui/display-prefs.js) before blinking.
 //  2. Telemetry: one small `set` beacon per changed setting (src/core/telemetry.js trackEvent), e.g. { k: 'master', v2: 50 },
 //     { k: 'mute', v2: 1 }, { k: 'assist', v2: 0 }. Values are buckets / short codes (volumes 0 | 25 | 50 | 75 | 100),
 //     nothing personal; a slider drag or a burst of changes sends only the settled values (1.5 s after the last change).
@@ -16,6 +16,7 @@ import { el } from './util.js';
 import { storedSettings, patchSettings } from '../core/settings.js';
 import { detectQuality } from '../core/quality.js';
 import { trackEvent } from '../core/telemetry.js';
+export { reducedFlash, warningTextsOn } from './display-prefs.js';
 
 const CSS = `
 html.gk-no-warntext .gkh-warn, html.gk-no-warntext .gkn-strip .gkn-wn { display: none !important; }
@@ -38,10 +39,6 @@ function applyDisplay(st) {
   r.classList.toggle('gk-calm', a.reduceFlash === true);
 }
 
-/** Warnings blink (false while the player asked for reduced flashing). */
-export const reducedFlash = () => { const r = root(); return !!(r && r.classList.contains('gk-calm')); };
-/** Warning texts are wanted on screen. */
-export const warningTextsOn = () => { const r = root(); return !(r && r.classList.contains('gk-no-warntext')); };
 
 // ---------- telemetry ----------
 const bucket = (v) => Math.round(Math.min(1, Math.max(0, Number(v) || 0)) * 4) * 25;

@@ -30,6 +30,7 @@ import { el, clamp } from './util.js';
 import { shared } from './shared.js';
 import { loadSettings, saveSettings, DEFAULT_SETTINGS } from '../core/settings.js';
 import { QUALITY, QUALITY_ORDER, detectQuality } from '../core/quality.js';
+import { detectDevice, integratedGpuAdvice, softwareRenderAdvice } from '../core/gpu-device.js';
 import { resetTutorials } from './tutorial.js';
 import { isTouchOnly, touchMode, inAppBrowser, mobileOS } from './touch-env.js';
 import { requestTiltSetting } from './touch.js';
@@ -158,6 +159,9 @@ const CSS = `
 .gkp-lab { padding: 9px 0 7px; font-size: 14px; }
 .gkp-choice { display: grid; grid-template-columns: 1fr minmax(150px, 200px); align-items: center; gap: 14px; padding: 8px 0; font-size: 14px; }
 .gkp-choice small { display: block; margin-top: 2px; font-size: 12px; color: var(--gk-dim); }
+.gkp-more summary { margin-top: 6px; cursor: pointer; font: 650 12px var(--gk-sans); color: var(--gk-teal); }
+.gkp-steps { margin: 6px 0 0; padding-left: 18px; font-size: 12px; line-height: 1.45; color: var(--gk-dim); }
+.gkp-steps li + li { margin-top: 4px; }
 .gkp-disc { margin-top: 16px !important; padding: 12px 14px; border-radius: 12px; background: rgba(255, 176, 32, .08); border: 1px solid rgba(255, 176, 32, .22); font-size: 13px !important; color: rgba(255, 232, 200, .92) !important; }
 /* touch devices (phones: small screens, finger-sized targets) */
 @media (max-height: 520px), (max-width: 560px) {
@@ -174,6 +178,7 @@ html.gk-touch .gkp-tog { min-height: 48px; }
 html.gk-touch .gkp-btn { min-height: 44px; padding: 10px 16px; }
 html.gk-touch .gkp-snd { width: 42px; height: 42px; top: 10px; right: 60px; }
 html.gk-touch .gkp-snd svg { width: 22px; height: 22px; }
+html.gk-touch .gkp-more summary { padding: 10px 0; }
 @media (max-width: 420px) { .gkp-choice { grid-template-columns: 1fr; gap: 8px; } }
 /* one-time hint */
 .gkp-hint { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); z-index: 55; display: flex; align-items: center; gap: 14px;
@@ -306,6 +311,22 @@ export function openSettings(container) {
   note = el('div', 'gkp-note', g, '');
   updateNote();
   refreshers.push(() => { qs.set(s.quality); updateNote(); });
+  // graphics-card advice (src/core/gpu-device.js; desktops only, the helpers return null elsewhere): a software renderer
+  // (what is wrong + the steps, folded) or a Windows laptop drawing with its integrated GPU
+  const dev = safe(() => detectDevice(), null);
+  const sw = dev ? safe(() => softwareRenderAdvice(dev), null) : null;
+  const igpu = dev && !sw ? safe(() => integratedGpuAdvice(dev), null) : null;
+  if (sw) {
+    const n = el('div', 'gkp-note hot', g);
+    el('b', null, n, `${sw.title}. `);
+    n.append(sw.text);
+    if (sw.steps && sw.steps.length) {
+      const more = el('details', 'gkp-more', g);
+      el('summary', null, more, 'Ekran kartını açmak için');
+      const ol = el('ol', 'gkp-steps', more);
+      for (const st of sw.steps) el('li', null, ol, st);
+    }
+  } else if (igpu) el('div', 'gkp-note', g, igpu);
 
   // frame rate (applies live: main.js hands it to the frame pacer)
   const fr = el('div', 'gkp-sec', m.card);
@@ -521,7 +542,7 @@ export function openCredits(container, map = null) {
   }
   el('p', 'gkp-disc', box, DISCLAIMER);
   // CONTRACTS-SF.md §11 (src/core/telemetry.js)
-  el('p', 'gkp-disc', box, 'Gizlilik: Oyunu geliştirmek için anonim kullanım istatistikleri toplanır (seçilen uçak, oynama süresi, kare hızı, ses ve uyarı gibi ayar tercihleri, hatalar, kalkış / iniş / kaza sayıları ve eğitim adımlarının süresi). Çerez kullanılmaz, kişisel bilgi toplanmaz, sunucu kayıtları 30 gün sonra silinir. Tarayıcında “Do Not Track” veya “Global Privacy Control” açıksa istatistik gönderilmez.');
+  el('p', 'gkp-disc', box, 'Gizlilik: Oyunu geliştirmek için anonim kullanım istatistikleri toplanır (seçilen uçak, oynama süresi, kare hızı, ses ve uyarı gibi ayar tercihleri, hatalar, kalkış / iniş / kaza sayıları ve eğitim adımlarının süresi). Çerez kullanılmaz, kişisel bilgi toplanmaz, sunucu kayıtları 30 gün sonra silinir. Kaç kişinin geri döndüğünü saymak için tarayıcında yalnızca ilk ve son ziyaret günü ile kaç gün oynandığı tutulur (kimlik yok); istatistiğe bunların kaba aralıkları gider. Tarayıcında “Do Not Track” veya “Global Privacy Control” açıksa istatistik gönderilmez.');
   const f = el('div', 'gkp-foot', m.card);
   el('span', null, f, 'Ücretsiz · ticari olmayan hayran projesi');
   const okb = el('button', 'gkp-btn primary', f, 'Kapat');
