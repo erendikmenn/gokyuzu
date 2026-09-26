@@ -40,7 +40,9 @@
 
   // ------------------------------------------------------------------ per-frame accumulators
   const cur = () => P.cur || (P.cur = newFrame());
-  function newFrame() { return { cpu: 0, sub: {}, up: {}, upBytes: 0, upCount: 0, compileMs: 0, linkCount: 0, draws: 0, instDraws: 0, mips: 0, gpu: null, gpuShadow: null, gpuParts: 0 }; }
+  // drawn: the game's main render() ran in this rAF callback (frame pacing skips most callbacks on capped devices: per-refresh
+  // averages understate the cost of a drawn frame, per-second sums are the energy proxies); tris: triangles drawn
+  function newFrame() { return { cpu: 0, sub: {}, up: {}, upBytes: 0, upCount: 0, compileMs: 0, linkCount: 0, draws: 0, instDraws: 0, mips: 0, gpu: null, gpuShadow: null, gpuParts: 0, drawn: false, tris: 0 }; }
   P.addSub = (name, ms) => { const f = cur(); f.sub[name] = (f.sub[name] || 0) + ms; };
 
   // ------------------------------------------------------------------ rAF wrapper
@@ -361,6 +363,13 @@
       w.__perfWrapped = true; w.__orig = f;
       obj[name] = w;
     };
+    {   // drawn frames + triangles (independent of subs / gpu)
+      const render0 = r.render;
+      r.render = function (scene, camera) {
+        const main = !r.getRenderTarget();
+        try { return render0.call(this, scene, camera); } finally { if (main) { const f = cur(); f.drawn = true; f.tris += r.info.render.triangles; } }
+      };
+    }
     if (subs) {
       const w = g.world;
       timed(w.environment, 'update', 'world.env');
@@ -436,6 +445,19 @@
       compileMs: r2(fr.reduce((a, f) => a + f.compileMs, 0)), links: fr.reduce((a, f) => a + f.linkCount, 0),
       mipmapsPerSec: r2(fr.reduce((a, f) => a + f.mips, 0) / Math.max(secs, 1e-3)),
       glDraws: r2(mean(fr.map((f) => f.draws))), glInstancedDraws: r2(mean(fr.map((f) => f.instDraws))),
+      // energy proxies per second of wall time, and costs per drawn frame (frame pacing: phones draw 30 of 60 refreshes)
+      perSec: (() => {
+        const S = Math.max(secs, 1e-3), dr = fr.filter((f) => f.drawn);
+        const subSec = {};
+        for (const f of fr) for (const [k, v] of Object.entries(f.sub)) subSec[k] = (subSec[k] || 0) + v;
+        for (const k of Object.keys(subSec)) subSec[k] = r2(subSec[k] / S);
+        return {
+          drawnFps: r2(dr.length / S), cpuMs: r2(fr.reduce((a, f) => a + f.cpu, 0) / S), gpuMs: gpuF.length ? r2(gpuF.reduce((a, f) => a + f.gpu, 0) / S) : null,
+          draws: Math.round(fr.reduce((a, f) => a + f.draws, 0) / S), mtris: r2(fr.reduce((a, f) => a + f.tris, 0) / 1e6 / S),
+          uploadMB: r2(fr.reduce((a, f) => a + f.upBytes, 0) / 1048576 / S), sub: subSec,
+          perDrawn: dr.length ? { cpuMs: r2(mean(dr.map((f) => f.cpu))), draws: r2(mean(dr.map((f) => f.draws))), ktris: r2(mean(dr.map((f) => f.tris)) / 1000), gpuMs: r2(mean(dr.filter((f) => f.gpu != null && !f.gpuDisjoint).map((f) => f.gpu))) } : null,
+        };
+      })(),
       longTasks: { count: lts.length, totalMs: Math.round(lts.reduce((a, l) => a + l.ms, 0)), max: Math.round(Math.max(0, ...lts.map((l) => l.ms))) },
       info: r ? { calls: r.info.render.calls, triangles: r.info.render.triangles, points: r.info.render.points, lines: r.info.render.lines, programs: r.info.programs ? r.info.programs.length : null, textures: r.info.memory.textures, geometries: r.info.memory.geometries, pixelRatio: r.getPixelRatio(), size: [r.domElement.width, r.domElement.height] } : null,
       heapMB: performance.memory ? r2(performance.memory.usedJSHeapSize / 1048576) : null,
