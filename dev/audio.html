@@ -86,7 +86,7 @@ const $ = (id) => document.getElementById(id);
 const camera = new THREE.PerspectiveCamera(60, 16 / 9, 0.3, 80000);
 const scene = new THREE.Scene();
 const plane = new THREE.Object3D(); scene.add(plane); scene.add(camera);
-const audio = createAudioSystem({ camera });
+const audio = createAudioSystem({ camera, settings: false });   // (the game's stored mute / alert choices do not apply here)
 window.__audio = audio;
 
 // ---- fake flight model (FlightModel readable state) ----
