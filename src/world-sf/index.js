@@ -186,13 +186,15 @@ export async function createSFWorld({ scene, renderer, camera, loader, quality =
       for (const l of layers) { const hit = l.hitTest(x, y, z, r); if (hit) return hit; }
       return null;
     },
-    /** The first playable frame is on screen (main.js, after the loading screen): post-start streaming may begin. */
-    setPlayable() { ctx.playable = true; },
+    /** The first playable frame is on screen (main.js, after the loading screen): post-start streaming may begin, at once
+     *  or `delayS` seconds later (main.js: WebKit phones / tablets, see there). */
+    setPlayable(delayS = 0) { if (delayS > 0) ctx.playableAt = performance.now() + delayS * 1000; else ctx.playable = true; },
     get playable() { return ctx.playable; },
     update(dt, cam) {
       if (!ctx.playable) {
         updateTime += dt;
-        if ((typeof window !== 'undefined' && window.__game && window.__game.readyAt) || updateTime > 4) ctx.playable = true;
+        if (ctx.playableAt) { if (performance.now() >= ctx.playableAt) ctx.playable = true; }
+        else if ((typeof window !== 'undefined' && window.__game && window.__game.readyAt) || updateTime > 4) ctx.playable = true;
       }
       if (ctx.playable && prewarmGroup && prewarmGroup.visible) prewarmGroup.visible = false;
       // remaining stand-ins: one at a time when the camera gets within 20 km of a landmark they stand in for

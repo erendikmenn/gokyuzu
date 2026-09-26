@@ -226,7 +226,8 @@ async function start() {
   await prewarm();
   loading.setProgress(1, 'Hazır');
   loading.hide();
-  if (state.world && state.world.setPlayable) state.world.setPlayable();   // deferred world loading starts now (streaming)
+  // deferred world loading (streaming) starts now; on WebKit phones / tablets a moment later (?playdelay=<s> for A/B)
+  if (state.world && state.world.setPlayable) state.world.setPlayable(playDelay());
   state.readyAt = performance.now();   // dynamic resolution ignores the first seconds (shader compiles, tile bursts)
   console.log(`[app] ready in ${((performance.now() - t0) / 1000).toFixed(1)} s`);
   state.aircraftId = choice.aircraftId;
@@ -252,6 +253,19 @@ async function start() {
   onboarding.begin({ flight: state.flight, def: state.def, spawn });
   loadChallenges();   // free-flight challenges hook
 }
+
+/**
+ * Seconds between the first playable frame and the start of the deferred world loading. WebKit's GPU process holds a
+ * transient copy of every texture / buffer upload for a few seconds (+280 MB for 256 MB uploaded, released 2–3 s later,
+ * tools/perf/webkit-memory.mjs --timeline): the start-up uploads peak right at the first frame, and the post-start
+ * streaming used to add its own on top of them (phone SF: 1,463 MB at the first frame → 1,716 MB half a second later →
+ * 1,226 MB after 5 s). iOS kills a page on its footprint, so there the streaming waits until the start-up copies are gone.
+ */
+function playDelay() {
+  if (params.has('playdelay')) return Math.max(0, Number(params.get('playdelay')) || 0);
+  return (quality.deviceClass === 'phone' || quality.deviceClass === 'tablet') && detectDevice().engine === 'webkit' ? PLAY_DELAY_WEBKIT : 0;
+}
+const PLAY_DELAY_WEBKIT = 3;
 
 /**
  * Definition + rig of the chosen aircraft, built while the world loads, and added to the scene with its shadow flags and
