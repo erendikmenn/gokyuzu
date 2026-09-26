@@ -65,7 +65,8 @@ const renderer = new THREE.WebGLRenderer({ antialias: quality.antialias, logarit
 let maxPixelRatio, minPixelRatio;
 function pixelRatioLimits() {
   maxPixelRatio = params.has('pr') ? Number(params.get('pr')) : Math.min(window.devicePixelRatio, quality.pixelRatioMax);
-  minPixelRatio = params.has('pr') ? maxPixelRatio : Math.max(0.6, maxPixelRatio * 0.6);
+  // floor: 60 % of the start, at least 0.6, or the preset's own floor (quality.js pixelRatioMin: software rasterizers 0.5)
+  minPixelRatio = params.has('pr') ? maxPixelRatio : Math.min(maxPixelRatio, Math.max(quality.pixelRatioMin ?? 0.6, maxPixelRatio * 0.6));
 }
 pixelRatioLimits();
 let pixelRatio = maxPixelRatio;
@@ -687,7 +688,8 @@ input.on('lookBack', () => cameraRig.lookBack(true));
 input.on('reset', () => { if (state.flight) { resetFlight(); hud.showMessage('Yeniden başlatıldı', 1000); } });
 input.on('pause', () => { state.paused = !state.paused; hud.setPaused(state.paused); audio.setPaused(state.paused); });
 input.on('hud', () => { if (hud.cycleMode) hud.cycleMode(); else { state.hudVisible = !state.hudVisible; hud.setVisible(state.hudVisible); } });   // full → compact → off
-input.on('mute', () => { state.userMuted = !state.userMuted; audio.setMuted(state.userMuted); hud.showMessage(state.userMuted ? 'Ses kapalı' : 'Ses açık', 900); });
+// M and Ayarlar → "Sesi kapat" are one persisted switch (src/audio/index.js toggleMute; state.userMuted mirrors it)
+input.on('mute', () => { const m = audio.toggleMute ? audio.toggleMute() : audio.setMuted((state.userMuted = !state.userMuted)); hud.showMessage(m ? 'Ses kapalı' : 'Ses açık', 900); });
 input.on('help', () => { state.helpVisible = !state.helpVisible; hud.showHelp(input.bindings, state.helpVisible); });
 input.on('menu', goToMenu);
 input.on('map', () => navMap.toggle('key'));   // navigation hook: J opens / closes the map (Esc closes it too)
@@ -906,13 +908,33 @@ if (audio.setVolumes) audio.setVolumes(settings.volumes);
 // (GPU / compositor bound: WebGL calls are queued, so a GPU-bound frame shows as late frames, not as main-thread time),
 // more again after a sustained smooth period. Never for a CPU-bound device (the frame's main-thread work takes half the
 // budget: fewer pixels would only blur the picture) or a window with a streaming / shader-compile hitch (> 50 ms).
-let smoothFor = 0, sinceDrop = 99;
+// A drop that buys nothing is undone: the fps of the window that started the first drop from full resolution is kept;
+// after DROP_JUDGE_S at the floor, frames still slower than DROP_GAIN × that fps mean the device is not limited by its pixels
+// (30 % of the Intel iGPU sessions on low sat at 0.6 at 45 fps, full resolution gives 60): back to full resolution and no
+// further drops in this page.
+const DROP_JUDGE_S = 20, DROP_GAIN = 1.15;
+let smoothFor = 0, sinceDrop = 99, fpsBeforeDrop = 0, floorSecs = 0, floorFrames = 0, dropsOff = false;
 function adaptResolution(fps, span, cpuMs, target, hitch) {
   if (!state.flight || maxPixelRatio === minPixelRatio) return;
   if (!state.readyAt || performance.now() - state.readyAt < 6000 || hitch || !(target > 0)) { smoothFor = 0; return; }
   sinceDrop += span;
   const budget = 1000 / target;
-  if (fps < target * 0.83 && cpuMs < budget * 0.5 && pixelRatio > minPixelRatio) {
+  if (fpsBeforeDrop && !dropsOff && pixelRatio <= minPixelRatio + 1e-6) {
+    floorSecs += span; floorFrames += fps * span;
+    if (floorSecs >= DROP_JUDGE_S) {
+      if (floorFrames / floorSecs < fpsBeforeDrop * DROP_GAIN) {
+        dropsOff = true;
+        pixelRatio = maxPixelRatio;
+        renderer.setPixelRatio(pixelRatio);
+        smoothFor = 0;
+        state.pixelRatio = pixelRatio;
+        return;
+      }
+      fpsBeforeDrop = 0;   // it helped: keep adapting as before
+    }
+  } else { floorSecs = 0; floorFrames = 0; }
+  if (!dropsOff && fps < target * 0.83 && cpuMs < budget * 0.5 && pixelRatio > minPixelRatio) {
+    if (pixelRatio >= maxPixelRatio - 1e-6 && !fpsBeforeDrop) fpsBeforeDrop = fps;
     pixelRatio = Math.max(minPixelRatio, pixelRatio - 0.15);
     renderer.setPixelRatio(pixelRatio);
     smoothFor = 0; sinceDrop = 0;
@@ -921,6 +943,7 @@ function adaptResolution(fps, span, cpuMs, target, hitch) {
     if (smoothFor > 8 && sinceDrop > 20) { pixelRatio = Math.min(maxPixelRatio, pixelRatio + 0.1); renderer.setPixelRatio(pixelRatio); smoothFor = 0; }
   } else smoothFor = 0;
   state.pixelRatio = pixelRatio;
+  state.resolution = { fpsBeforeDrop, floorSecs, dropsOff };   // test hook
 }
 
 // Build stamp (dist/build.json, written by the publish build): a clear ribbon on staging so it is never mistaken for live.

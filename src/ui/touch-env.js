@@ -5,7 +5,7 @@
 //                        (?touch=0 forces them off)
 //   inAppBrowser()       { id, name, os } for social-app webviews, else null
 //   gateCheck()          { ok, reason, soft, … }: can this device run the 3D world? (see RULES below)
-import { detectDevice } from '../core/gpu-device.js';
+import { detectDevice, probeGpu } from '../core/gpu-device.js';
 
 const params = typeof location === 'undefined' ? new URLSearchParams() : new URLSearchParams(location.search);
 const mm = (q) => { try { return !!(window.matchMedia && window.matchMedia(q).matches); } catch { return false; } };
@@ -51,20 +51,12 @@ export function inAppBrowser(ua = typeof navigator === 'undefined' ? '' : naviga
   return null;
 }
 
-/** WebGL 2 capability probe (throwaway context, released right away). */
+/** WebGL 2 capability: the page's one shared probe context (src/core/gpu-device.js probeGpu; detectDevice reads it too). */
 export function probeWebGL2() {
-  let gl = null;
   try {
-    const c = document.createElement('canvas');
-    c.width = c.height = 1;
-    gl = c.getContext('webgl2');
-    if (!gl) return { ok: false, gpu: '', maxTex: 0 };
-    const ext = gl.getExtension('WEBGL_debug_renderer_info');
-    const gpu = String((ext && gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)) || gl.getParameter(gl.RENDERER) || '');
-    return { ok: true, gpu, maxTex: gl.getParameter(gl.MAX_TEXTURE_SIZE) || 0 };
-  } catch { return { ok: false, gpu: '', maxTex: 0 }; } finally {
-    try { const lose = gl && gl.getExtension('WEBGL_lose_context'); if (lose) lose.loseContext(); } catch { /* ignore */ }
-  }
+    const p = probeGpu();
+    return p.webgl2 ? { ok: true, gpu: p.gpu, maxTex: p.maxTex } : { ok: false, gpu: p.gpu || '', maxTex: 0 };
+  } catch { return { ok: false, gpu: '', maxTex: 0 }; }
 }
 
 /** Social-app webviews that lose the WebGL context on iOS (live telemetry, 23 Sep 2026: 79 of 98 iOS sessions were X). */

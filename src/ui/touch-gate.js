@@ -10,6 +10,7 @@ import { injectCSS, BASE_CSS } from './styles.js';
 import { el } from './util.js';
 import { gateCheck, inAppBrowser, mobileOS, inBadInAppBrowser } from './touch-env.js';
 import { trackEvent } from '../core/telemetry.js';
+import { detectDevice, gpuAccelSteps } from '../core/gpu-device.js';
 
 const OK_KEY = 'gokyuzu.gateOk';
 const BANNER_KEY = 'gokyuzu.iabHint';
@@ -39,6 +40,8 @@ const CSS = `
 .gkg-btn:active { transform: scale(.98); }
 .gkg-how { font-size: 14px !important; padding: 10px 14px; border-radius: 12px; background: rgba(92, 242, 200, .07); border: 1px solid rgba(92, 242, 200, .25); }
 .gkg-how b { color: var(--gk-teal); }
+.gkg-steps { margin: 2px 0 0; padding: 10px 14px 10px 32px; border-radius: 12px; background: rgba(255, 255, 255, .05); text-align: left; font-size: 13.5px; line-height: 1.45; }
+.gkg-steps li + li { margin-top: 6px; }
 .gkg-ok { min-height: 18px; font-size: 13px; font-weight: 650; color: var(--gk-teal); }
 .gkg-try { margin-top: 2px; padding: 10px 14px; border: 0; background: none; cursor: pointer; font: 600 14px var(--gk-sans); color: var(--gk-dim);
   text-decoration: underline; text-underline-offset: 3px; text-decoration-color: rgba(208, 222, 240, .3); touch-action: manipulation; }
@@ -148,6 +151,13 @@ function showGateScreen(container, reason, { tryLabel = null, onTry = null, keep
   el('h2', null, card, title);
   el('p', null, card, text.replace('{app}', iab ? iab.name : 'Bu'));
   if (iab && reason === 'webgl2') el('p', null, card, `${iab.name} içindeki tarayıcıdasın: menüden «Tarayıcıda aç» seçip ${iab.os === 'ios' ? 'Safari' : 'Chrome'} ile de deneyebilirsin.`);
+  // a desktop without WebGL 2 usually has graphics acceleration off or no working driver: how to turn it on
+  if (reason === 'webgl2' && !iab) {
+    let dev = null;
+    try { dev = detectDevice(); } catch { /* keep the text only */ }
+    const steps = dev && dev.kind === 'desktop' ? gpuAccelSteps({ os: dev.os, ua: navigator.userAgent || '' }) : [];
+    if (steps.length) { const ol = el('ol', 'gkg-steps', card); for (const t of steps) el('li', null, ol, t); }
+  }
   const url = gameLink();
   const okLine = el('div', 'gkg-ok', null, '');
   okLine.setAttribute('role', 'status');
