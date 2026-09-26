@@ -5,7 +5,8 @@
 //
 // Host: --host, else with --cf the distribution's own host CF_HOST_<TARGET> (bypasses the Cloudflare proxy), else the
 // host of SITE_<TARGET>; all from the local deploy config ~/.config/gokyuzu/deploy.env (tools/deploy/deploy.env.example).
-// Staging: submit → top, best-score logic, nickname filter, bad payloads (400/405/413/415), the POST rate limit (429),
+// Staging: submit → top, best-score logic, nickname filter, weekly boards (w-<yyyyww>-selftest: this week's accepted,
+// last week's refused, readable), bad payloads (400/405/413/415), the POST rate limit (429),
 // direct calls to the Lambda function URL refused (403), edge caching of /api/top. --cold N forces N cold starts (a
 // configuration touch through the admin profile AWS_PROFILE_ADMIN, passed explicitly) and times the first request after
 // each. --no-aws skips everything that needs the AWS CLI (the direct function URL lookup and --cold): HTTP checks only.
@@ -13,6 +14,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { need, optional, profile } from '../../tools/deploy/config.mjs';
+import { istWeek, weekStartMs } from './lambda/validate.mjs';
 
 const args = process.argv.slice(2);
 const target = args.find((a) => !a.startsWith('--')) || 'staging';
@@ -135,6 +137,15 @@ if (WRITE) {
   check('POST daily board (today)', r.status === 200 && r.json.rank >= 1, JSON.stringify(r.json));
   const t = await get({ mission: M, day: today, n: '10' });
   check('GET daily board', t.status === 200 && t.json.day === today && t.json.entries.length >= 1, JSON.stringify(t.json));
+  // weekly boards (src/retention/weekly.js): this Istanbul week's board takes scores, last week's does not
+  const wk = istWeek(Date.now()), prev = istWeek(weekStartMs(wk) - 2 * 86400000);
+  r = await post({ ...base, mission: `w-${wk}-${M}`, sid: key(), score: 7, name: 'Hafta Test' });
+  check(`POST weekly board w-${wk}-${M}`, r.status === 200 && r.json.rank >= 1 && r.json.name === 'Hafta Test', `${r.status} ${JSON.stringify(r.json)}`);
+  const tw = await get({ mission: `w-${wk}-${M}`, n: '10' });
+  check('GET weekly board', tw.status === 200 && tw.json.mission === `w-${wk}-${M}` && tw.json.entries.some((e) => e.name === 'Hafta Test'), JSON.stringify(tw.json));
+  r = await post({ ...base, mission: `w-${prev}-${M}`, sid: key(), score: 7 });
+  check(`POST last week's board w-${prev}-${M} → 400 week`, r.status === 400 && r.json && r.json.error === 'week', `${r.status} ${JSON.stringify(r.json)}`);
+  check('GET last week\'s board (champion) → 200', (await get({ mission: `w-${prev}-${M}`, n: '10' })).status === 200);
 
   await nextMinute();
   const bad = async (label, body, expect, o) => { const x = await post(body, o); check(`${label} → ${expect}`, x.status === expect, `${x.status} ${JSON.stringify(x.json)}`); };
@@ -159,6 +170,8 @@ if (WRITE) {
 } else {
   const x = await post({ ...base, sid: key(), score: 1, stars: 9 });
   check('POST invalid payload → 400 (nothing stored)', x.status === 400, `${x.status}`);
+  const w = await get({ mission: `w-${istWeek(Date.now())}-${M}`, n: '10' });
+  check('GET this week\'s weekly board → 200 (weekly boards deployed)', w.status === 200 && w.json && Array.isArray(w.json.entries), `${w.status} ${JSON.stringify(w.json)}`);
 }
 
 // ---- latency --------------------------------------------------------------------------------------------------------

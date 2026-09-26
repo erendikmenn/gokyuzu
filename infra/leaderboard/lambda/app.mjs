@@ -3,6 +3,7 @@
 //
 //   POST /api/score  {mission, day?, score, stars, ac, name?, sid, v, sec?}  → keeps each player's best per board
 //   GET  /api/top?mission=&day=&n=10|20|50                                    → top N, cacheable 30 s at the edge
+// Weekly boards (mission = w-<yyyyww>-<base>, validate.mjs) are ordinary boards with an expiry after their week.
 //
 // Privacy: players are a random key made by the browser (`sid`), stored only as a salted hash; the optional nickname is
 // filtered (src/net/names.js). No IP address is stored or logged: the rate limit counts per 20-bit salted hash of the
@@ -87,7 +88,8 @@ export function createApp({ db, salt, rules, stage = 'staging', origins = [], no
       pk, sk: `p#${hash(`player|${s.sid}`, 22)}`, rk: rankKey(s.score, tSec, s.lower),
       sc: s.score, st: s.stars, ac: s.ac, t: tSec, v: s.v,
       ...(s.name ? { n: s.name } : {}), ...(s.sec !== null ? { sec: s.sec } : {}),
-      ...(s.test ? { exp: tSec + TEST_TTL } : s.day ? { exp: Math.floor((s.dayMs + DAILY_TTL * DAY_MS) / 1000) } : {}),
+      ...(s.test ? { exp: tSec + TEST_TTL } : s.day ? { exp: Math.floor((s.dayMs + DAILY_TTL * DAY_MS) / 1000) }
+        : s.weekEndMs ? { exp: Math.floor((s.weekEndMs + s.weeklyTtlDays * DAY_MS) / 1000) } : {}),   // weekly boards: ttlDays after the week
     };
     const put = await db.putBest(item);
     let best = put.written || !put.old ? item : put.old;

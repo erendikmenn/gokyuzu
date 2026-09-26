@@ -4,7 +4,7 @@
 import { createHash } from 'node:crypto';
 import { cleanName, NAME_MAX } from '../src/net/names.js';
 import { viewerIp, ipBucket, isCloudflare } from '../infra/leaderboard/lambda/net.mjs';
-import { checkScore, checkTop, dayMs, utcDay, rankKey, boardKey, missionRule } from '../infra/leaderboard/lambda/validate.mjs';
+import { checkScore, checkTop, dayMs, utcDay, rankKey, boardKey, missionRule, istWeek, weekStartMs, parseWeekly } from '../infra/leaderboard/lambda/validate.mjs';
 import { createApp } from '../infra/leaderboard/lambda/app.mjs';
 import { createMemoryDb } from '../infra/leaderboard/lambda/memdb.mjs';
 
@@ -108,6 +108,39 @@ check('rank key: lower-is-better inverted', rankKey(40, 1000, true) > rankKey(41
 check('rule: defaults merged', missionRule(RULES, 'ggb-ring', 'staging').secMax === 3600 && missionRule(RULES, 'ggb-ring', 'staging').scoreMax === 5000);
 check('board keys', boardKey('m', null) === 'b#m' && boardKey('m', '20260924') === 'b#m#20260924');
 
+// ---- weekly boards (w-<yyyyww>-<base>, src/retention/weekly.js) ---------------------------------------------------------
+{
+  const W = { ...RULES, weekly: { back: 8, ttlDays: 35 } };
+  const wctx = { rules: W, stage: 'staging', now: NOW };   // 2026-09-24 (Thursday) 10:30 UTC = ISO week 39
+  const wk = { ...good, mission: 'w-202639-ggb-ring' };
+  check('weekly: Istanbul ISO week (UTC+3), Monday starts', istWeek(NOW) === '202639' && istWeek(Date.UTC(2026, 8, 27, 20, 59)) === '202639'
+    && istWeek(Date.UTC(2026, 8, 27, 21, 0)) === '202640' && istWeek(Date.UTC(2026, 0, 1, 12)) === '202601' && istWeek(Date.UTC(2027, 0, 3, 12)) === '202653'
+    && weekStartMs('202640') === Date.UTC(2026, 8, 28) && Number.isNaN(weekStartMs('202753')) && Number.isNaN(weekStartMs('202600')));
+  check('weekly: board id parsed (base = mission or free-flight board)', JSON.stringify(parseWeekly('w-202640-ff-bridge')) === '{"week":"202640","base":"ff-bridge"}'
+    && parseWeekly('ggb-ring') === null && parseWeekly('w-2026-ggb-ring') === null);
+  const v = checkScore(wk, wctx);
+  check('weekly: current week accepted with the base rule, expiry 35 days after the week (Monday 00:00 Istanbul)', v.ok && v.value.weekEndMs === Date.UTC(2026, 8, 27, 21) && v.value.weeklyTtlDays === 35
+    && missionRule(W, 'w-202639-ggb-ring', 'staging').scoreMax === 5000 && missionRule(W, 'w-202639-ggb-ring', 'staging').daily === false, JSON.stringify(v));
+  check('weekly: base plausibility applies (score, stars, aircraft)', checkScore({ ...wk, score: 5001 }, wctx).error === 'score' && checkScore({ ...wk, ac: 'b737' }, wctx).error === 'ac'
+    && checkScore({ ...wk, stars: 3, score: 3000 }, wctx).error === 'stars');
+  check('weekly: no day on a weekly board; unknown base, nested weekly, fake week refused', checkScore({ ...wk, day: '20260924' }, wctx).error === 'day'
+    && checkScore({ ...wk, mission: 'w-202639-nope' }, wctx).error === 'mission' && checkScore({ ...wk, mission: 'w-202639-w-202639-ggb-ring' }, wctx).error === 'mission'
+    && checkScore({ ...wk, mission: 'w-202699-ggb-ring' }, wctx).error === 'mission');
+  check('weekly: scores only in the current week (last / next week refused)', checkScore({ ...wk, mission: 'w-202638-ggb-ring' }, wctx).error === 'week'
+    && checkScore({ ...wk, mission: 'w-202640-ggb-ring' }, wctx).error === 'week');
+  const mon = { ...wctx, now: Date.UTC(2026, 8, 27, 21, 30) };   // Monday 00:30 Istanbul: last week's run is still taken (1 day of skew)
+  check('weekly: ± 1 day around the week change', checkScore({ ...wk, mission: 'w-202639-ggb-ring' }, mon).ok && checkScore({ ...wk, mission: 'w-202640-ggb-ring' }, mon).ok
+    && checkScore({ ...wk, mission: 'w-202640-ggb-ring' }, { ...wctx, now: Date.UTC(2026, 8, 26, 21, 30) }).ok);   // (Sunday 00:30 Istanbul: next week's board a day early)
+  check('weekly: top readable 8 weeks back and next week, not older / later', checkTop({ mission: 'w-202631-ggb-ring' }, wctx).ok && checkTop({ mission: 'w-202638-ggb-ring' }, wctx).ok
+    && checkTop({ mission: 'w-202640-ggb-ring' }, wctx).ok && checkTop({ mission: 'w-202630-ggb-ring' }, wctx).error === 'week'
+    && checkTop({ mission: 'w-202641-ggb-ring' }, wctx).error === 'week' && checkTop({ mission: 'w-202639-ggb-ring', day: '20260924' }, wctx).error === 'day');
+  check('weekly: off without rules.weekly (older rules files)', checkScore(wk, ctx).error === 'mission' && checkTop({ mission: 'w-202639-ggb-ring' }, ctx).error === 'mission');
+  check('weekly: a test base stays a test board (staging only)', checkScore({ ...wk, mission: 'w-202639-selftest', stars: 0, score: 1 }, wctx).value.test === true
+    && checkScore({ ...wk, mission: 'w-202639-selftest', stars: 0, score: 1 }, { ...wctx, stage: 'production' }).error === 'mission');
+  check('weekly: board ids fit the 40-character limit (longest base)', checkScore({ ...wk, mission: `w-202639-${'a'.repeat(31)}` }, { ...wctx, rules: { ...W, strict: false } }).ok
+    && checkScore({ ...wk, mission: `w-202639-${'a'.repeat(32)}` }, { ...wctx, rules: { ...W, strict: false } }).error === 'mission');
+}
+
 // ---- the shipped rules (infra/leaderboard/lambda/rules.json, built from src/missions/catalog.js) --------------------
 const { readFileSync } = await import('node:fs');
 const SHIPPED = JSON.parse(readFileSync(new URL('../infra/leaderboard/lambda/rules.json', import.meta.url), 'utf8'));
@@ -176,14 +209,42 @@ check('shipped rules: every catalog mission present with its aircraft (rerun bui
 for (const id of ids) {
   const r = SHIPPED.missions[id];
   const three = Array.isArray(r.stars) ? r.stars[2] : Math.min(r.scoreMax, 1500);
-  const p = { mission: id, score: three, stars: 3, ac: r.aircraft[0], sid: SID, sec: Math.max(r.secMin, 30) };
-  check(`shipped rules ${id}: a 3-star run accepted${r.daily === false ? '' : ' (also as daily)'}`, checkScore(p, sctx).ok && (r.daily === false || checkScore({ ...p, day: '20260924' }, sctx).ok), JSON.stringify(checkScore(p, sctx)));
+  const p = { mission: id, score: three, stars: 3, ac: r.aircraft[0], sid: SID, sec: Math.max(r.secMin, 30), ...(r.dailyOnly ? { day: '20260924' } : {}) };
+  check(`shipped rules ${id}: a 3-star run accepted${r.daily === false ? '' : r.dailyOnly ? ' (daily only)' : ' (also as daily)'}`, checkScore(p, sctx).ok && (r.daily === false || checkScore({ ...p, day: '20260924' }, sctx).ok)
+    && (!r.dailyOnly || checkScore({ ...p, day: undefined }, sctx).error === 'day'), JSON.stringify(checkScore(p, sctx)));
   check(`shipped rules ${id}: impossible score / aircraft / 0 stars refused`, checkScore({ ...p, score: r.scoreMax + 1 }, sctx).error === 'score'
     && (r.aircraft.length === SHIPPED.aircraft.length || checkScore({ ...p, ac: SHIPPED.aircraft.find((a) => !r.aircraft.includes(a)) }, sctx).error === 'ac')
     && checkScore({ ...p, stars: 0 }, sctx).error === 'stars');
 }
 check('shipped rules: selftest refused in production, unknown ids refused', checkScore({ ...good, mission: 'selftest' }, sctx).error === 'mission'
   && checkScore({ ...good, mission: 'made-up' }, sctx).error === 'mission');
+// landing challenges (src/missions/landing-challenges.js) on both maps and the weekly boards over the shipped rules
+{
+  let ok = true, detail = '';
+  try {
+    const { landingChallenges, maxLandingChallengeScore } = await import('../src/missions/landing-challenges.js');
+    for (const map of ['sf', 'ist']) {
+      for (const c of landingChallenges(map)) {
+        const r = SHIPPED.missions[c.board];
+        if (!r || r.aircraft.length !== 5 || r.scoreMax < maxLandingChallengeScore(c) || r.daily !== !!c.daily || !!r.dailyOnly !== !!c.daily) { ok = false; detail += `${c.board} `; }
+      }
+    }
+  } catch (e) { ok = false; detail = e.message; }
+  check('shipped rules: landing challenges ff-(ist-)land-series (all-time) and ff-(ist-)daily-land (daily boards only) on both maps', ok, detail);
+  const series = { mission: 'ff-land-series', score: 2700, stars: 2, ac: 'a320neo', sid: SID };
+  check('shipped rules ff-land-series / ff-daily-land: 3 × 100 × 10 max, any aircraft; the daily landing only with a day',
+    checkScore(series, sctx).ok && checkScore({ ...series, score: 3400 }, sctx).error === 'score' && checkScore({ ...series, ac: 'uh60' }, sctx).ok
+    && checkScore({ mission: 'ff-daily-land', score: 1800, stars: 3, ac: 'b737', sid: SID, day: '20260924' }, sctx).ok
+    && checkScore({ mission: 'ff-daily-land', score: 1800, stars: 3, ac: 'b737', sid: SID }, sctx).error === 'day'
+    && checkTop({ mission: 'ff-daily-land', day: '20260924' }, sctx).ok);
+  const { WEEKLY_POOL, weeklyPick } = await import('../src/retention/weekly.js');
+  const bad = WEEKLY_POOL.filter((p) => !SHIPPED.missions[p.ff ? p.board : p.mission] || (p.ff && !p.spawn)).map((p) => p.ff || p.mission);
+  const wp = weeklyPick('202639');
+  const shippedWeekly = SHIPPED.weekly && SHIPPED.weekly.back >= 1 && SHIPPED.weekly.ttlDays >= 7;
+  check('shipped rules: weekly boards on (read-back, TTL); every weekly pool entry is a known board and fits the id limit',
+    shippedWeekly && bad.length === 0 && WEEKLY_POOL.every((p) => `w-202653-${p.ff ? p.board : p.mission}`.length <= 40)
+    && checkTop({ mission: wp.board }, { ...sctx, now: NOW }).ok, bad.join(' '));
+}
 
 // ---- handler on the in-memory store ------------------------------------------------------------------------------
 const SALT = 'x'.repeat(48);
@@ -230,6 +291,19 @@ r = await post({ mission: 'selftest', score: 5, stars: 0, ac: 'uh60', sid: 'Self
 check('POST selftest: expires after a day', r.statusCode === 200 && [...db.items.values()].find((it) => it.pk === 'b#selftest').exp === Math.floor(clock / 1000) + 86400);
 r = await get({ mission: 'ggb-ring', day: '20260924' });
 check('GET top daily', J(r).entries.length === 1 && J(r).day === '20260924');
+{   // weekly boards through the handler: stored as their own board, expiring 35 days after the week
+  const wApp = createApp({ db, salt: SALT, rules: { ...RULES, weekly: { back: 8, ttlDays: 35 } }, stage: 'staging', now: () => clock, limits: { post: 5, get: 8 } });
+  const wev = (body) => ({ requestContext: { http: { method: 'POST' } }, rawPath: '/api/score', body: JSON.stringify(body), isBase64Encoded: false,
+    headers: { 'content-type': 'application/json', 'cloudfront-viewer-address': '198.51.100.9:1', 'sec-fetch-site': 'same-origin' } });
+  const week = istWeek(clock);
+  let w = await wApp(wev({ ...good, mission: `w-${week}-ggb-ring`, sid: 'WeeklyPlayerKey_00001', score: 2600, stars: 2 }));
+  const it = [...db.items.values()].find((x) => x.pk === `b#w-${week}-ggb-ring`);
+  check('POST weekly: own board, expires 35 days after the week', w.statusCode === 200 && J(w).rank === 1 && it && it.exp === (weekStartMs(week) + 7 * 86400000 - 3 * 3600000) / 1000 + 35 * 86400, w.body);
+  w = await wApp({ requestContext: { http: { method: 'GET' } }, rawPath: '/api/top', headers: { 'cloudfront-viewer-address': '198.51.100.9:1' }, queryStringParameters: { mission: `w-${week}-ggb-ring` } });
+  check('GET top weekly', w.statusCode === 200 && J(w).entries.length === 1 && J(w).entries[0].score === 2600 && J(w).mission === `w-${week}-ggb-ring`, w.body);
+  w = await wApp(wev({ ...good, mission: 'w-202601-ggb-ring', sid: 'WeeklyPlayerKey_00002', score: 2600, stars: 2 }));
+  check('POST weekly: a past week → 400 week', w.statusCode === 400 && J(w).error === 'week', w.body);
+}
 
 // bad requests
 const status = async (p, expect, label) => { const x = await p; check(label, x.statusCode === expect, `${x.statusCode} ${x.body}`); return x; };

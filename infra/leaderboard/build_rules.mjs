@@ -11,6 +11,9 @@
 // limit: the default) and star thresholds; no daily boards.
 // Maps: San Francisco (src/missions/catalog.js + challenges.js) and İstanbul (src/missions/ist/catalog.js +
 // challenges.js: missions `ist-<name>`, boards `ff-ist-<name>`), one rules file for both.
+// Landing challenges on every map (src/missions/landing-challenges.js): İniş serisi `ff-land-series` / `ff-ist-land-series`
+// and Günün inişi `ff-daily-land` / `ff-ist-daily-land` (daily boards only). Weekly boards `w-<yyyyww>-<board>` of any
+// board above (src/retention/weekly.js) are enabled by `weekly` (read back 8 weeks, expire 35 days after their week).
 //   node infra/leaderboard/build_rules.mjs
 import { writeFileSync, readFileSync } from 'node:fs';
 
@@ -47,7 +50,7 @@ const missions = {};
 const DAY0 = Date.UTC(2026, 8, 1);
 const counts = [];
 /** Rules of one map's catalog (+ free-flight challenges): missions and ff- boards into `missions`. */
-async function addMap(name, catalogPath, challengesPath) {
+async function addMap(name, mapId, catalogPath, challengesPath) {
   let catalog;
   try {
     catalog = await import(catalogPath);
@@ -90,17 +93,34 @@ async function addMap(name, catalogPath, challengesPath) {
   } catch (e) {
     console.error(`build_rules: ${challengesPath} not usable (${e.message}); no ${name} free-flight boards`);
   }
-  counts.push(`${name}: ${MISSIONS.length} missions + ${challenges.length} free-flight boards`);
+  // landing challenges (every map): İniş serisi, Günün inişi (daily boards only)
+  let landing = [];
+  try {
+    const lc = await import('../../src/missions/landing-challenges.js');
+    landing = lc.landingChallenges(mapId);
+    for (const c of landing) {
+      if (missions[c.board]) { warnings.add(`${c.board}: clashes with a mission id or another board`); continue; }
+      missions[c.board] = {
+        aircraft: c.aircraft.filter((a) => AIRCRAFT.includes(a)),
+        scoreMin: 0, scoreMax: Math.ceil(lc.maxLandingChallengeScore(c) * 1.1), secMin: 1, secMax: 7200, starsMin: 1,
+        daily: !!c.daily, ...(c.daily ? { dailyOnly: true } : {}),
+      };
+    }
+  } catch (e) {
+    console.error(`build_rules: landing challenges not usable (${e.message}); no ${name} landing boards`);
+  }
+  counts.push(`${name}: ${MISSIONS.length} missions + ${challenges.length + landing.length} free-flight boards`);
   return true;
 }
-const sfOk = await addMap('San Francisco', '../../src/missions/catalog.js', '../../src/missions/challenges.js');
+const sfOk = await addMap('San Francisco', 'sf', '../../src/missions/catalog.js', '../../src/missions/challenges.js');
 if (!sfOk) { console.error(`build_rules: keeping ${OUT.pathname}`); process.exit(0); }
-await addMap('İstanbul', '../../src/missions/ist/catalog.js', '../../src/missions/ist/challenges.js');
+await addMap('İstanbul', 'ist', '../../src/missions/ist/catalog.js', '../../src/missions/ist/challenges.js');
 const rules = {
-  source: `${counts.join('; ')} (src/missions/catalog.js, challenges.js, ist/catalog.js, ist/challenges.js) via infra/leaderboard/build_rules.mjs`,
+  source: `${counts.join('; ')} (src/missions/catalog.js, challenges.js, landing-challenges.js, ist/catalog.js, ist/challenges.js) via infra/leaderboard/build_rules.mjs`,
   strict: true,
   aircraft: AIRCRAFT,
   default: { scoreMin: 0, scoreMax: 100000, secMin: 1, secMax: 7200 },
+  weekly: { back: 8, ttlDays: 35 },
   missions,
   test: ['selftest'],
 };
