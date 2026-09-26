@@ -282,7 +282,12 @@ for tests; `window.__fps` is updated every second.
 
 Presets live in `src/core/quality.js` (`QUALITY.low|medium|high|ultra`, lead-owned). Settings are persisted by
 `src/core/settings.js` (`loadSettings()`, `saveSettings(s)` → broadcasts the `gokyuzu:settings` window event; main.js
-applies it live). The initial preset is auto-detected from the GPU (Intel/integrated → low, Apple M Pro/Max → ultra).
+applies it live). The initial preset is auto-detected from the GPU (`src/core/gpu-device.js` tiers, `TIER_QUALITY`:
+Apple M Pro/Max → ultra; Apple / discrete → high; midrange dedicated (GTX 1050 Ti, MX 4xx, R9) and fast iGPUs (Radeon
+780M, Intel Arc iGPU) → medium; Intel / AMD APU, entry-level dedicated (GT 730, Quadro K, GTX 4xx–7xx, RX 550) and
+software renderers → low). `DEVICE_CAPS` then caps any preset per class; the software class (Microsoft Basic Render
+Driver / SwiftShader / llvmpipe) forces no MSAA, no shadows, pixel ratio 0.6 and `pixelRatioMin` 0.5 (the dynamic
+resolution floor main.js should use instead of 0.6), and shows a notice with the steps to turn the GPU on.
 
 - main.js applies the renderer-level fields (`pixelRatioMax`, `shadows`, `antialias` at startup) and calls
   `world.setQuality(q)`, which forwards to `environment.setQuality(q)`, `terrain.setQuality(q)` and every layer's
@@ -328,6 +333,22 @@ Players keep files in their browser cache, so every asset URL carries a content 
   (page opened: screen, quality, GPU name, language), `fly` (aircraft, spawn, load seconds), `hb` (one per active flight
   minute: fps, pixel ratio, view), `err` (≤ 5 per page), `end`. No cookies, no stored id, nothing personal. Off on localhost
   (unless `?telemetry=1`), with `?telemetry=0` and under Do Not Track / Global Privacy Control.
+  - Every beacon carries the build version `v`. Events raised before `startTelemetry()` knows it (the dead-page report at
+    module load, the start gate `gate`, the software-renderer notice) are queued and sent with it (after 15 s or at
+    `pagehide` without it).
+  - `open` also carries `gpu` (readable model from `gpuLabel()`, src/core/gpu-device.js: "Intel UHD Graphics 620"; builds
+    before 27 Sep 2026 cut it to "Intel" / "AMD Radeon"), `dc` (device class `kind/os/tier`, e.g. `desktop/windows/entry`),
+    `mq` (why the start preset: `auto` | `user` | `url` | `reload` (after a context loss) | `cap` (failure ceiling) |
+    `resume` (lowered after a tab crash)), `qc` (the stored failure ceiling, if any) and the retention fields below.
+  - Returning players without an identifier: localStorage `gokyuzu.visits` = `{ f, l, n, o? }` (first / last visit day
+    `YYYYMMDD` in the player's calendar, number of visit days, `o` = 1 when the browser had other game data before the
+    record existed). `open` sends `d0` (days since the first visit: `0`–`14`, `15-29`, `30+`), `vn` (visit days incl.
+    today: `1`–`7`, `8-14`, `15+`), `vd` = 1 on the first page of the day, `vo` = 1 for pre-record browsers. Neither
+    read nor written under DNT / GPC. The report builds cohorts from `d0=0, vd=1` (D1: `d0=1, vd=1`; D7: `d0=7, vd=1`;
+    first return within 7 days: `vn=2, d0` 1–7).
+  - `dead` (the previous page of this tab died in flight): `prev`, `after` (s), `nav`, `pv` / `pq` (the dead page's
+    version / preset), `wd` = 1 when the browser discarded the tab itself, `dc`, and `v` (this page's version).
+  - `gfx` `ev=sw`: the software-renderer notice was shown (src/core/gpu-guard.js).
 - CloudFront: the `/_e` behaviour runs the CloudFront Function `gokyuzu-beacon` (204 at the edge, uncached); standard access
   logs of both distributions go to `s3://<S3_BUCKET_LOGS>/<target>/` (deleted after 30 days; bucket and distribution ids
   come from the local deploy config, `tools/deploy/deploy.env.example`).
@@ -338,6 +359,11 @@ Players keep files in their browser cache, so every asset URL carries a content 
   "Görevler (görev modu)", "Serbest uçuş görevleri", "Sıralama tablosu", a funnel (flew → opened the panel or the menu
   tab → tried ≥ 1 → completed ≥ 1, the landing entry left out); `--hourly` prints the hour-by-hour table (Türkiye time)
   with the columns görev / ffc / tamam (people who started a mission / opened the panel / completed one).
+  "Platformlar": per browser / system and per system · GPU family: share of pages reaching a flight, load time p50 / p90,
+  heartbeat fps against the cap, pixel ratio p50, dead pages, graphics events, own errors, and the visitors whose browser
+  sends no beacon. "Geri dönen oyuncular": D1 / D7 / within-7-days per cohort day and device from the visit fields, and
+  the daily share of returning browsers. "Destekli uçuş": outcomes per `as` value on `fly` and the `assist` events.
+  `--field KEY` lists any beacon field's values per event type (e.g. `as`).
 - Gameplay events (`trackEvent(type, data)`, ≤ 40 per type and page; data keys never `t s n m v`, values short codes and
   numbers, nothing personal — never a nickname). Frequent UI clicks have their own type so they cannot use up the cap of
   the outcomes:

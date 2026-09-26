@@ -17,6 +17,11 @@ shared); raw IPs are never printed. Your own IPs (~/.config/gokyuzu/staging_ips)
 browsers "test". Countries come from the free DB-IP Lite database (CC BY 4.0, https://db-ip.com), looked up offline.
 Maps (src/maps/index.js): İstanbul beacons carry mp=ist (open / fly / mission / ffc); a session's map is its flight's
 (else the page's), minutes and heartbeats follow the session; sessions rebuilt from asset requests go by assets/<map>/.
+"Platformlar": per browser / system and per GPU family (the `open` beacon's gpu / dc): reaching a flight, load time,
+frame rate against the cap, pixel ratio, dead pages, graphics events; and the visitors whose browser sends no beacon.
+"Geri dönen oyuncular": retention from the identifier-free visit fields of `open` (d0 / vn / vd / vo,
+src/core/telemetry.js), by cohort day and device. --field KEY lists the values of any beacon field by event type
+(e.g. --field as: the assisted-flight flag).
 """
 import argparse
 import bisect
@@ -653,6 +658,250 @@ def fmt_min(m):
     return f'{m:.0f} dk' if m >= 10 else f'{m:.1f} dk'
 
 
+def gpu_family(g):
+    """GPU family of an `open` beacon's gpu name (src/core/gpu-device.js gpuLabel; builds before 27 Sep 2026 cut Intel /
+    AMD APU names to "Intel" / "AMD Radeon" and SwiftShader to "Vulkan 1.3.0")."""
+    g = g or ''
+    if not g:
+        return '?'
+    if re.search(r'Basic Render', g, re.I):
+        return 'yazılım: MS Basic Render'
+    if re.search(r'SwiftShader|^Vulkan 1\.\d', g, re.I):
+        return 'yazılım: SwiftShader'
+    if re.search(r'llvmpipe|softpipe', g, re.I):
+        return 'yazılım: llvmpipe'
+    if re.search(r'Apple M\d+ (Pro|Max|Ultra)', g):
+        return 'Apple M Pro/Max/Ultra'
+    if re.search(r'Apple M\d', g):
+        return 'Apple M'
+    if g.startswith('Apple GPU'):
+        return 'Apple GPU (Safari)'
+    for k in ('Adreno', 'Mali', 'Xclipse', 'PowerVR'):
+        if k.lower() in g.lower():
+            return k
+    if re.search(r'NVIDIA|GeForce|Quadro|RTX', g, re.I):
+        if re.search(r'\bGTS? \d{3,4}\b|GTX [4-7]\d\d\b|Quadro (K\d|FX|NVS)|MX ?[1-3]\d\d|\b[89]\d0MX?\b', g):
+            return 'NVIDIA eski / giriş'
+        if re.search(r'RTX', g):
+            return 'NVIDIA RTX'
+        return 'NVIDIA GTX / MX / Quadro'
+    if 'Intel' in g:
+        if 'Arc' in g:
+            return 'Intel Arc'
+        if 'Iris' in g:
+            return 'Intel Iris'
+        return 'Intel UHD / HD' if re.search(r'UHD|HD', g) else 'Intel (modelsiz, eski sürüm)'
+    if re.search(r'Radeon', g, re.I):
+        if re.search(r'RX|Pro|R9', g):
+            return 'AMD Radeon RX'
+        return 'AMD APU (tümleşik)'
+    return 'diğer'
+
+
+def pctile(values, p):
+    v = sorted(x for x in values if x is not None)
+    if not v:
+        return None
+    k = (len(v) - 1) * p
+    f = int(k)
+    c = min(f + 1, len(v) - 1)
+    return v[f] + (v[c] - v[f]) * (k - f)
+
+
+def page_sessions(beacons, visitors):
+    """Beacon sessions of players that sent `open`: [(visitor, platform, open, fly, heartbeats, events)]."""
+    out = []
+    for sid, evs in beacons.items():
+        vid = evs[0][2]
+        if visitors[vid]['who']:
+            continue
+        first = next((q for _, q, _ in evs if q.get('t') == 'open'), None)
+        if first is None:
+            continue
+        v = visitors[vid]
+        fly = next((q for _, q, _ in evs if q.get('t') == 'fly'), None)
+        hbs = [q for _, q, _ in evs if q.get('t') == 'hb' and (q.get('fps') or '').isdigit()]
+        out.append((vid, f"{v['browser']}/{v['system']}", first, fly, hbs, [q for _, q, _ in evs]))
+    return out
+
+
+def report_platforms(beacons, visitors, requests, min_n=10):
+    """Per browser / system and per system · GPU family (players, pages with `open`): uçuşa geçen (share of pages with a
+    flight), yükleme p50 / p90 (fly lt, s), hedef % (heartbeat fps as a share of its cap, mean) and <%80 (share of active
+    minutes below 80 % of the cap), çözünürlük (pixel ratio p50: dynamic resolution at its 0.6 floor = the GPU cannot keep
+    up), ölü (dead pages reported by the next page of the tab), gfx (context lost / budget step events), hata (own errors).
+    Then the visitors whose browser loaded the page but sent no beacon (Do Not Track / GPC, blockers, very quick exits)."""
+    rows = page_sessions(beacons, visitors)
+    if not rows:
+        return
+    by_sid_dead = Counter()
+    for evs in beacons.values():
+        for _, q, vid in evs:
+            if q.get('t') == 'dead' and not visitors[vid]['who']:
+                by_sid_dead[f"{visitors[vid]['browser']}/{visitors[vid]['system']}"] += 1
+
+    def table(title, key, dead_by=None):
+        groups = defaultdict(list)
+        for r in rows:
+            groups[key(r)].append(r)
+        print(f'\n{title}')
+        print(f"  {'':<34}{'sayfa':>6}{'uçuş%':>6}{'yük.p50':>8}{'p90':>6}{'hedef%':>7}{'<%80':>6}{'çöz.':>6}{'ölü':>5}{'gfx':>5}{'hata':>5}  kalite (açılış)")
+        for k, g in sorted(groups.items(), key=lambda kv: -len(kv[1])):
+            if len(g) < min_n:
+                continue
+            flew = [r for r in g if r[3]]
+            lts = [num(r[3].get('lt')) for r in flew]
+            hbs = [q for r in g for q in r[4]]
+            rel = [fps_rel(q) for q in hbs]
+            prs = [num(q.get('pr')) for q in hbs]
+            gfx = sum(1 for r in g for q in r[5] if q.get('t') == 'gfx' and q.get('ev') in ('lost', 'budget', 'render'))
+            err = sum(1 for r in g for q in r[5] if q.get('t') == 'err' and q.get('x') != 'foreign')
+            dead = dead_by[k] if dead_by is not None else sum(1 for r in g for q in r[5] if q.get('t') == 'dead')
+            qs = Counter(r[2].get('q') or '?' for r in g)
+            f = lambda x, d=1: '-' if x is None else f'{x:.{d}f}'
+            print(f"  {str(k)[:33]:<34}{len(g):>6}{100 * len(flew) / len(g):>6.0f}{f(pctile(lts, .5)):>8}{f(pctile(lts, .9)):>6}"
+                  f"{f(100 * statistics.mean(rel) if rel else None, 0):>7}{f(100 * sum(1 for x in rel if x < 0.8) / len(rel) if rel else None, 0):>6}"
+                  f"{f(pctile(prs, .5), 2):>6}{dead:>5}{gfx:>5}{err:>5}  {' '.join(f'{a} {b}' for a, b in qs.most_common(4))}")
+
+    print('\nPlatformlar (oyuncu sayfaları; en az %d sayfalık gruplar):' % min_n)
+    table('Tarayıcı / sistem:', lambda r: r[1], by_sid_dead)
+    table('Sistem · ekran kartı ailesi:', lambda r: f"{r[1].split('/')[-1]} · {gpu_family(r[2].get('gpu'))}")
+    dcs = Counter(r[2].get('dc') for r in rows if r[2].get('dc'))
+    if dcs:
+        tiers = Counter(d.split('/')[-1] for d in dcs.elements())
+        mq = Counter(r[2].get('mq') for r in rows if r[2].get('mq'))
+        print(f"  Cihaz sınıfı (dc, yeni sürümler): {' · '.join(f'{k} {v}' for k, v in tiers.most_common(10))}  |  kalite neden (mq): "
+              f"{' · '.join(f'{k} {v}' for k, v in mq.most_common(6))}")
+    sw = [r for r in rows if gpu_family(r[2].get('gpu')).startswith('yazılım')]
+    if sw:
+        act = [max([int(q.get('a', 0) or 0) for q in r[5] if (q.get('a') or '').isdigit()] + [0]) for r in sw if r[3]]
+        print(f"  Yazılımla çizen sayfalar: {len(sw)} ({len({r[0] for r in sw})} kişi; {pct(len(sw), len(rows))} tüm sayfaların) · "
+              f"aktif dk medyanı {med(act)} · bildirim gösterilen {sum(1 for r in sw for q in r[5] if q.get('t') == 'gfx' and q.get('ev') == 'sw')}")
+    # visitors who loaded the page (/) after the first beacon but never sent one
+    if beacons:
+        t_first = min(e[0] for evs in beacons.values() for e in evs)
+        with_beacon = {evs[0][2] for evs in beacons.values()}
+        loaded = {vid for vid, reqs in requests.items() if not visitors[vid]['who'] and any(u == '/' and at >= t_first for at, u in reqs)}
+        loaded |= {vid for vid in with_beacon if not visitors[vid]['who']}
+        silent = Counter(f"{visitors[v]['browser']}/{visitors[v]['system']}" for v in loaded if v not in with_beacon)
+        total = Counter(f"{visitors[v]['browser']}/{visitors[v]['system']}" for v in loaded)
+        print('  Sinyal göndermeyen ziyaretçi (sayfayı açtı, hiç sinyal yok: DNT / GPC, engelleyici, hemen çıkış): '
+              + ' · '.join(f'{k} {pct(silent[k], n)} ({silent[k]}/{n})' for k, n in total.most_common(8)))
+
+
+def device_kind(q, v):
+    dc = (q.get('dc') or '').split('/')[0]
+    if dc in ('phone', 'tablet', 'desktop'):
+        return {'phone': 'telefon', 'tablet': 'tablet', 'desktop': 'masaüstü'}[dc]
+    return 'telefon' if v['system'] in ('iOS', 'Android') else 'masaüstü'
+
+
+def report_visit_retention(beacons, visitors):
+    """Returning players without any identifier (src/core/telemetry.js, CONTRACTS-SF.md §11): every `open` carries d0 (days
+    since this browser's first visit; exact to 14), vn (visit days incl. today), vd=1 on the first page of a day and vo=1
+    for browsers that played before the counter existed. A cohort = the browsers whose first page (d0=0, vd=1) fell on a
+    day (Türkiye day of the beacon); D1 = those with a first-page-of-the-day beacon at d0=1, D7 at d0=7, "7 gün içinde" =
+    first return (vn=2) within d0 1..7. Each browser counts once per day; nobody is identified."""
+    firsts = []
+    for evs in beacons.values():
+        for at, q, vid in evs:
+            if q.get('t') == 'open' and q.get('vd') == '1' and q.get('d0') and not visitors[vid]['who']:
+                firsts.append((at.astimezone(IST).date(), q, device_kind(q, visitors[vid])))
+    print('\nGeri dönen oyuncular (kimliksiz sayaç: tarayıcıdaki ilk ziyaret günü, sadece günlük ilk sayfa):')
+    if not firsts:
+        print('  Henüz sinyal yok (d0 / vn alanları 27 Eylül 2026 sonrası sürümlerde).')
+        return
+    today = dt.datetime.now(IST).date()
+    last = today - dt.timedelta(days=1)
+    kinds = ('masaüstü', 'telefon', 'tablet')
+    new = defaultdict(Counter)                        # cohort day -> device -> new browsers
+    back = {k: defaultdict(Counter) for k in (1, 7)}  # D1 / D7: cohort day -> device -> returned that day
+    within = defaultdict(Counter)                     # first return within 7 days
+    for day, q, kind in firsts:
+        if q.get('vo') == '1' or not q['d0'].isdigit():
+            continue
+        d0 = int(q['d0'])
+        cohort = day - dt.timedelta(days=d0)
+        if d0 == 0:
+            new[cohort][kind] += 1
+        if d0 in back:
+            back[d0][cohort][kind] += 1
+        if q.get('vn') == '2' and 1 <= d0 <= 7:
+            within[cohort][kind] += 1
+
+    def rate(num_, den, ok):
+        return f'{pct(num_, den)} ({num_}/{den})' if ok and den else '-'
+    print(f"  {'kohort':<8}{'yeni':>6}  {'masaüstü/telefon/tablet':<24}{'D1':>13}{'D7':>13}{'7 gün içinde':>15}")
+    for c in sorted(new)[-14:]:
+        n = sum(new[c].values())
+        d1_ok, d7_ok = c + dt.timedelta(days=1) <= last, c + dt.timedelta(days=7) <= last
+        print(f"  {c:%d.%m}  {n:>6}  {'/'.join(str(new[c][k]) for k in kinds):<24}{rate(sum(back[1][c].values()), n, d1_ok):>13}"
+              f"{rate(sum(back[7][c].values()), n, d7_ok):>13}{rate(sum(within[c].values()), n, d7_ok):>15}")
+    for kind in kinds:
+        c1 = [c for c in new if c + dt.timedelta(days=1) <= last]
+        c7 = [c for c in new if c + dt.timedelta(days=7) <= last]
+        n1, n7 = sum(new[c][kind] for c in c1), sum(new[c][kind] for c in c7)
+        if n1:
+            print(f"  {kind}: D1 {rate(sum(back[1][c][kind] for c in c1), n1, True)} · D7 {rate(sum(back[7][c][kind] for c in c7), n7, bool(c7))} · "
+                  f"7 gün içinde {rate(sum(within[c][kind] for c in c7), n7, bool(c7))}")
+    by_day = defaultdict(Counter)
+    for day, q, kind in firsts:
+        vn = q.get('vn') or '1'
+        by_day[day]['all'] += 1
+        by_day[day]['ret'] += vn != '1'
+        by_day[day]['old'] += q.get('vo') == '1' and vn == '1'
+    print('  Dönen ziyaretçi (günün ilk sayfalarında daha önce gelmiş tarayıcılar):',
+          ' · '.join(f"{d:%d.%m} {pct(c['ret'] + c['old'], c['all'])} ({c['ret'] + c['old']}/{c['all']})" for d, c in sorted(by_day.items())[-10:]))
+    print('  Sınırlar: tarayıcı başına sayılır (aynı kişinin telefonu ve bilgisayarı iki tarayıcıdır); site verisini silen, gizli\n'
+          '  pencere kullanan veya Do Not Track / GPC açık olan hiç dönmemiş görünür (oran düşük çıkar); gün, oyuncunun kendi takvim\n'
+          '  günüdür ama kohort Türkiye gününe göre kurulur (başka saat dilimlerinde bir gün kayabilir); sayaçtan önce oynamış\n'
+          '  tarayıcılar (vo=1) kohortlara girmez; D7 için kohorttan sonra 8 günlük kayıt gerekir.')
+
+
+def report_field(beacons, visitors, key):
+    """--field KEY: the values of one beacon field per event type (events and people), players only."""
+    per = defaultdict(lambda: defaultdict(set))
+    count = defaultdict(Counter)
+    for evs in beacons.values():
+        for _, q, vid in evs:
+            if key in q and not visitors[vid]['who']:
+                per[q.get('t')][q[key]].add(vid)
+                count[q.get('t')][q[key]] += 1
+    print(f'\nAlan "{key}" (olay türüne göre: değer olay/kişi):')
+    if not per:
+        print('  Bu alanı taşıyan sinyal yok.')
+    for t, vals in sorted(per.items(), key=lambda kv: -sum(count[kv[0]].values())):
+        print(f"  {t}: " + ' · '.join(f'{v} {count[t][v]}/{len(p)}' for v, p in sorted(vals.items(), key=lambda kv: -count[t][kv[0]])[:12]))
+
+
+def report_extras(beacons, visitors, top):
+    """Fields other modules add (hook): `as` (assisted flight, src/flight/assist.js: sent on `fly` and outcome events) →
+    per value the flights and their outcomes (take-off, runway landings, crashes per flight); other events carrying it
+    are counted (details: --field as). The `set` beacons (settings) have their own line (report_settings)."""
+    flights = defaultdict(list)
+    for evs in beacons.values():
+        vid = evs[0][2]
+        if visitors[vid]['who']:
+            continue
+        fly = next((q for _, q, _ in evs if q.get('t') == 'fly'), None)
+        if fly is not None and 'as' in fly:
+            kinds = [q.get('t') for _, q, _ in evs]
+            flights[fly['as']].append((vid, 'takeoff' in kinds, sum(1 for _, q, _ in evs if q.get('t') == 'land' and q.get('rw') == '1'), kinds.count('crash')))
+    if flights:
+        print('\nDestekli uçuş (fly as=…): ' + ' | '.join(
+            f"as={k}: {len(v)} uçuş ({len({x[0] for x in v})} kişi) · kalkış {pct(sum(1 for x in v if x[1]), len(v))} · pist inişi/uçuş "
+            f"{sum(x[2] for x in v) / len(v):.2f} · kaza/uçuş {sum(x[3] for x in v) / len(v):.2f}" for k, v in sorted(flights.items())))
+    others = Counter(q.get('t') for evs in beacons.values() for _, q, vid in evs if 'as' in q and q.get('t') != 'fly' and not visitors[vid]['who'])
+    if others:
+        print(f"  'as' taşıyan diğer olaylar: {top(others, 8)} (ayrıntı: --field as)")
+    ev = real_events(beacons, visitors, {'assist'})   # src/ui/assist-hud.js: st = app (assisted approach: via button / gear), tip, …
+    if ev:
+        sts = sorted({q.get('st') or '?' for *_, q in ev})
+        print('Destekli uçuş olayları (assist, kişi / olay): ' + ' · '.join(
+            f"{st} {len(people(ev, lambda q, st=st: (q.get('st') or '?') == st))}/{sum(1 for *_, q in ev if (q.get('st') or '?') == st)}" for st in sts)
+            + (f" · yaklaşma nasıl: {top(Counter(q.get('via') or '?' for *_, q in ev if q.get('st') == 'app'), 4)}" if any(q.get('st') == 'app' for *_, q in ev) else ''))
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('target', nargs='?', default='production', choices=['production', 'staging'])
@@ -662,6 +911,7 @@ def main():
     ap.add_argument('--logs', type=Path, help='read the .gz logs from this folder instead (implies --no-sync)')
     ap.add_argument('--hourly', action='store_true', help='print the hour-by-hour table (Türkiye time) instead of the report')
     ap.add_argument('--map', choices=list(MAPS), help='--hourly: count only this map\'s flights in the beacon columns')
+    ap.add_argument('--field', help='list the values of this beacon field per event type (e.g. as, q, dc, mq) and stop')
     a = ap.parse_args()
 
     profile = deploy_config.profile('AWS_PROFILE_ANALYTICS')
@@ -809,6 +1059,9 @@ def main():
     if a.hourly:
         report_hourly(hours, first_seen, beacons, visitors, requests, a.map)
         return
+    if a.field:
+        report_field(beacons, visitors, a.field)
+        return
     if not sessions:
         print('Henüz kayıt yok. (Kayıtlar CloudFront\'tan 5–60 dakika gecikmeyle gelir.)')
         return
@@ -873,14 +1126,20 @@ def main():
     foreign = Counter(e for s in real for e in s['foreign'])
     if foreign:
         print('Başka kaynaklı hatalar (eklenti / uygulama içi tarayıcı):', top(foreign, 3))
-    dead = [d for s in real for d in s['dead']]
+    dead = [(d, s) for s in real for d in s['dead']]
     if dead:
-        print(f"Uçuşta ölen sayfa (sonraki açılışta bildirilen): {len(dead)} · uçuştan sonra medyan {statistics.median(int(d.get('after', 0)) for d in dead):.0f} sn")
+        plat = Counter(f"{visitors[s['vid']]['browser']}/{visitors[s['vid']]['system']}" for _, s in dead)
+        vers = Counter((d.get('pv') or '?')[-7:] for d, _ in dead if d.get('pv'))
+        print(f"Uçuşta ölen sayfa (sonraki açılışta bildirilen): {len(dead)} · uçuştan sonra medyan {statistics.median(int(d.get('after', 0)) for d, _ in dead):.0f} sn · "
+              f"{top(plat, 5)}" + (f" · tarayıcı sekmeyi kapattı (wd) {sum(1 for d, _ in dead if d.get('wd') == '1')}" if any(d.get('wd') for d, _ in dead) else '')
+              + (f" · ölen sayfanın sürümü: {top(vers, 4)}" if vers else ''))
     fails = Counter(f.get('ph', '?') + (' (ağ)' if f.get('net') == '1' else '') for s in real for f in s['fail'])
     if fails:
         print('Yükleme hataları:', top(fails, 5))
     if blocked:
         print('Eksik dosya (403):' if a.target == 'production' else 'IP kilidine takılan istek:', top(blocked, 5))
+
+    report_platforms(beacons, visitors, requests)
 
     # wave 7 (§12): missions, daily mission, landing score, shares, failures, leaderboard, retention
     by_day = report_missions(beacons, visitors, top)
@@ -894,6 +1153,8 @@ def main():
     report_settings(beacons, visitors, top)
     report_leaderboard(api, api_time, api_own, top)
     report_retention(days_seen, visitors, beacons, since, a.target)
+    report_visit_retention(beacons, visitors)
+    report_extras(beacons, visitors, top)
 
     print(f'\nSon {min(a.sessions, len(sessions))} oturum (anonim ziyaretçi kimliği · başlangıç · ülke · tarayıcı · uçak · süre):')
     for s in sorted(sessions, key=lambda s: s['start'], reverse=True)[:a.sessions]:

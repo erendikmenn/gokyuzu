@@ -3,18 +3,26 @@
 // access log line (query string = the event) is all that is kept, for 30 days. No cookies, no stored id, nothing personal:
 // a random session id that lives only in this page, the chosen aircraft/spawn, minutes played, frame rate, errors, and
 // gameplay events (takeoff, landing sink rate, crash cause, tutorial step times) through trackEvent().
-// Off on localhost (unless ?telemetry=1), with ?telemetry=0, and when the browser sends Do Not Track / Global Privacy Control.
+// Returning players are counted without any identifier: this browser keeps only its first-visit day, its last visit day
+// and a count of visit days (localStorage `gokyuzu.visits`), and `open` carries coarse buckets of them (d0, vn, vd, vo).
+// Off on localhost (unless ?telemetry=1), with ?telemetry=0, and when the browser sends Do Not Track / Global Privacy
+// Control (then nothing is sent and the visit record is neither read nor written).
+import { detectDevice, deviceLabel, gpuLabel, rendererString } from './gpu-device.js';
+import { QUALITY, detectQuality, capQuality, getQualityCap, qualitySource } from './quality.js';
 
-const params = new URLSearchParams(location.search);
-const local = /^(localhost|127\.|\[::1\])/.test(location.hostname);
-const optedOut = navigator.doNotTrack === '1' || window.doNotTrack === '1' || navigator.globalPrivacyControl === true;
-const enabled = params.get('telemetry') === '1' || (!local && !optedOut && params.get('telemetry') !== '0');
+const hasDom = typeof location !== 'undefined' && typeof navigator !== 'undefined' && typeof document !== 'undefined';
+const params = new URLSearchParams(hasDom ? location.search : '');
+const local = hasDom && /^(localhost|127\.|\[::1\])/.test(location.hostname);
+const optedOut = hasDom && (navigator.doNotTrack === '1' || (typeof window !== 'undefined' && window.doNotTrack === '1') || navigator.globalPrivacyControl === true);
+const enabled = hasDom && (params.get('telemetry') === '1' || (!local && !optedOut && params.get('telemetry') !== '0'));
 
-const sid = Array.from(crypto.getRandomValues(new Uint8Array(6)), (b) => b.toString(36).padStart(2, '0')).join('');
-const t0 = performance.now();
+const sid = typeof crypto !== 'undefined' && crypto.getRandomValues
+  ? Array.from(crypto.getRandomValues(new Uint8Array(6)), (b) => b.toString(36).padStart(2, '0')).join('') : '';
+const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+const t0 = now();
 let seq = 0, version = '', errors = 0, active = 0, getState = null;
 
-const minutes = () => ((performance.now() - t0) / 60000).toFixed(1);
+const minutes = () => ((now() - t0) / 60000).toFixed(1);
 
 // envelope keys: a data field with one of these names would overwrite the session id / sequence (it did: the
 // tutorial's step seconds were sent as `s`), so data keys never replace them
@@ -24,23 +32,102 @@ let mapTag = '';
 const MAP_EVENTS = new Set(['open', 'fly', 'mission', 'ffc']);
 export function setTelemetryMap(id) { mapTag = id && id !== 'sf' ? id : ''; }
 
-function send(type, data = {}) {
-  if (!enabled) return;
-  const q = new URLSearchParams({ t: type, s: sid, n: String(seq++), m: minutes(), v: version });
-  for (const [k, val] of Object.entries(data)) if (!RESERVED.has(k) && val !== undefined && val !== null && val !== '') q.set(k, String(val).slice(0, 120));
-  if (mapTag && MAP_EVENTS.has(type)) q.set('mp', mapTag);
+// Events raised before the build version is known (the dead-page report at module load, the start gate, the software
+// renderer notice) wait for it: startTelemetry() sends them with `v`; after 15 s or at pagehide they go without it.
+// (The dead-page report used to leave at module load with an empty `v`, so a dying build could not be told apart.)
+const early = [];
+let versionKnown = false, earlyTimer = 0;
+
+function dispatch(q) {
   // keepalive lets the last beacon leave while the page unloads; failures are irrelevant to the player
   try { fetch(`_e?${q}`, { keepalive: true, cache: 'no-store', credentials: 'omit' }).catch(() => {}); } catch { /* ignore */ }
 }
+function send(type, data = {}) {
+  if (!enabled) return;
+  const q = new URLSearchParams({ t: type, s: sid, n: String(seq++), m: minutes() });
+  for (const [k, val] of Object.entries(data)) if (!RESERVED.has(k) && val !== undefined && val !== null && val !== '') q.set(k, String(val).slice(0, 120));
+  if (mapTag && MAP_EVENTS.has(type)) q.set('mp', mapTag);
+  if (!versionKnown) {
+    if (early.length < 30) early.push(q);
+    if (!earlyTimer) earlyTimer = setTimeout(flushEarly, 15000);
+    return;
+  }
+  q.set('v', version);
+  dispatch(q);
+}
+function flushEarly() {
+  if (versionKnown) return;
+  versionKnown = true;
+  clearTimeout(earlyTimer);
+  let dc = '';
+  try { dc = deviceLabel(); } catch { /* ignore */ }
+  for (const q of early.splice(0)) {
+    q.set('v', version);
+    if (q.get('t') === 'dead' && dc) q.set('dc', dc);
+    dispatch(q);
+  }
+}
 
+/** Readable GPU name of the renderer's context (src/core/gpu-device.js gpuLabel: "Intel UHD Graphics 620", not "Intel"). */
 function gpuName(renderer) {
+  try { return gpuLabel(rendererString(renderer.getContext())); } catch { return ''; }
+}
+
+// ---- returning players without an identifier ----
+// localStorage `gokyuzu.visits` = { f: first visit day, l: last visit day ('YYYYMMDD', the player's local calendar),
+// n: number of days with a visit, o: 1 when the browser had played before the record existed }. Nothing else, never sent
+// as such: `open` carries d0 = days since the first visit (0–14, then '15-29' / '30+'), vn = visit days incl. today
+// (1–7, then '8-14' / '15+'), vd = 1 on the first page of the day (so a day's pages count once), vo = 1 for the
+// browsers that played before the counter existed (their first day is unknown: left out of the cohorts).
+const VISIT_KEY = 'gokyuzu.visits';
+const DAY_RE = /^\d{8}$/;
+export const localDay = (d = new Date()) => `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+const dayNum = (s) => Date.UTC(+s.slice(0, 4), +s.slice(4, 6) - 1, +s.slice(6, 8)) / 86400000;
+export const bucketD0 = (d) => (d <= 14 ? String(d) : d < 30 ? '15-29' : '30+');
+export const bucketVn = (n) => (n <= 7 ? String(n) : n <= 14 ? '8-14' : '15+');
+
+/**
+ * Pure: the visit record after a page opened on `today` → { rec, d0, vn, vd, vo }. `played` = this browser already had
+ * other game data when the record was created (legacy player). A clock set back never un-counts a day.
+ */
+export function updateVisits(rec, today, played = false) {
+  const valid = rec && typeof rec === 'object' && DAY_RE.test(rec.f) && DAY_RE.test(rec.l) && Number.isInteger(rec.n) && rec.n >= 1 && rec.l >= rec.f;
+  let vd = 0;
+  if (!valid) { rec = played ? { f: today, l: today, n: 1, o: 1 } : { f: today, l: today, n: 1 }; vd = 1; }
+  else if (today > rec.l) { rec = { ...rec, l: today, n: rec.n + 1 }; vd = 1; }
+  const d0 = Math.max(0, Math.round(dayNum(today) - dayNum(rec.f)));
+  return { rec, d0, vn: rec.n, vd, vo: rec.o ? 1 : 0 };
+}
+
+// other game data present before this page wrote anything (settings, tutorial, missions, models …): a legacy player
+let playedBefore = false;
+if (enabled) {
   try {
-    const gl = renderer.getContext();
-    const ext = gl.getExtension('WEBGL_debug_renderer_info');
-    const raw = String(ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER));
-    // "ANGLE (Apple, ANGLE Metal Renderer: Apple M4 Max, …)" / "ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 Direct3D11 vs_5_0 ps_5_0, D3D11)"
-    const m = /Renderer: ([^,)]+)/.exec(raw) || /^ANGLE \([^,]*, ([^,(]+)/.exec(raw);
-    return (m ? m[1] : raw).replace(/ (Direct3D|OpenGL|Vulkan).*$/, '').trim().slice(0, 60);
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i) || '';
+      if (k.startsWith('gokyuzu.') && k !== VISIT_KEY && k !== 'gokyuzu.swNotice') { playedBefore = true; break; }
+    }
+  } catch { /* storage blocked */ }
+}
+function visitFields() {
+  try {
+    let rec = null;
+    try { rec = JSON.parse(localStorage.getItem(VISIT_KEY) || 'null'); } catch { rec = null; }
+    const r = updateVisits(rec, localDay(), playedBefore);
+    localStorage.setItem(VISIT_KEY, JSON.stringify(r.rec));
+    return { d0: bucketD0(r.d0), vn: bucketVn(r.vn), vd: r.vd, vo: r.vo || undefined };
+  } catch { return {}; }   // storage blocked (some private windows): no retention fields
+}
+
+/** Why the page runs its start preset (`mq`): url | reload | user | auto | cap | resume (src/core/quality.js qualitySource). */
+function qualityReason(running) {
+  try {
+    const urlQ = params.get('quality');
+    if (urlQ && QUALITY[urlQ]) return params.get('resume') === '1' ? 'reload' : 'url';
+    let stored = null;
+    try { const s = JSON.parse(localStorage.getItem('gokyuzu.settings') || 'null'); stored = s && QUALITY[s.quality] ? s.quality : null; } catch { /* ignore */ }
+    const auto = detectQuality();
+    return qualitySource({ running, stored, auto, cap: capQuality(stored || auto) });
   } catch { return ''; }
 }
 
@@ -52,9 +139,17 @@ export function startTelemetry({ build, renderer, quality, state, extra = {} }) 
   version = (build && build.version) || '';
   getState = state;
   if (!enabled) return;   // off (localhost, ?telemetry=0, DNT / GPC): no GPU name query (a synchronous GL round trip), no timer
+  flushEarly();
+  let dc = '';
+  try { dc = deviceLabel(detectDevice()); } catch { /* ignore */ }
+  const cap = getQualityCap();
   send('open', {
     w: innerWidth, h: innerHeight, dpr: devicePixelRatio.toFixed(2), q: quality, lang: navigator.language,
     gpu: gpuName(renderer), ref: document.referrer ? new URL(document.referrer).hostname : '',
+    dc,                                   // device class kind/os/tier, e.g. desktop/windows/integrated (gpu-device.js)
+    mq: qualityReason(quality),           // why this preset: auto | user | url | reload | cap | resume
+    qc: cap ? cap.q : undefined,          // quality ceiling left by a graphics failure on this device
+    ...visitFields(),                     // d0 / vn / vd / vo: returning players without an identifier
     ...extra,   // e.g. { in: 'touch' | 'kb', touch: 1, iab: 'x' } (input kind, touch device, social-app webview)
   });
   // one heartbeat per minute of active flight (tab visible, not paused)
@@ -73,18 +168,21 @@ export function startTelemetry({ build, renderer, quality, state, extra = {} }) 
 
 // Errors are caught from the moment this module loads (not only after startTelemetry): failures while loading used to
 // leave no trace. Errors from other origins / browser extensions / in-app browsers' injected scripts are tagged `x=foreign`.
-addEventListener('error', (e) => reportError(e.message, e.filename, e.lineno));
-addEventListener('unhandledrejection', (e) => {
-  const r = e.reason;
-  const frame = r && r.stack ? (String(r.stack).split('\n').find((l) => /:\d+:\d+/.test(l)) || '') : '';
-  const m = /([^/\s(]+):(\d+):\d+\)?\s*$/.exec(frame);
-  reportError(r && (r.message || r), m ? m[1] : '', m ? m[2] : 0);
-});
+if (hasDom && typeof addEventListener === 'function') {
+  addEventListener('error', (e) => reportError(e.message, e.filename, e.lineno));
+  addEventListener('unhandledrejection', (e) => {
+    const r = e.reason;
+    const frame = r && r.stack ? (String(r.stack).split('\n').find((l) => /:\d+:\d+/.test(l)) || '') : '';
+    const m = /([^/\s(]+):(\d+):\d+\)?\s*$/.exec(frame);
+    reportError(r && (r.message || r), m ? m[1] : '', m ? m[2] : 0);
+  });
+  addEventListener('pagehide', flushEarly);   // (registered before the handlers below: early events leave first)
+}
 
 /** A flight started: aircraft, spawn, seconds from the menu click to the first playable frame (+ extra, e.g. { in: 'touch', tilt: 1 }). */
 export function trackFlight(aircraft, spawn, loadSeconds, quality, extra = {}) {
   send('fly', { ac: aircraft, sp: spawn, lt: loadSeconds.toFixed(1), q: quality, ...extra });
-  markLive();
+  markLive(quality);
 }
 
 /** Loading failed before the flight could start (the error screen is shown): phase, short message, network or not. */
@@ -94,19 +192,23 @@ export function trackFail(phase, message, net) {
 
 // Dead-page marker: a page that dies while flying (e.g. iOS kills it for memory) sends nothing. The marker lives in
 // sessionStorage from `fly` until a normal `pagehide`; if the next page of this tab still finds it, the previous one died.
+// `dead` carries the dead page's build (pv) and preset (pq), this page's device class (dc) and version (v), and wd = 1
+// when the browser itself discarded the tab (Chrome's memory saver: not a crash).
 const LIVE_KEY = 'gokyuzu.live';
-function markLive() {
-  try { sessionStorage.setItem(LIVE_KEY, JSON.stringify({ sid, t: Date.now() })); } catch { /* ignore */ }
+function markLive(q) {
+  try { sessionStorage.setItem(LIVE_KEY, JSON.stringify({ sid, t: Date.now(), v: version, q })); } catch { /* ignore */ }
 }
-addEventListener('pagehide', () => { try { sessionStorage.removeItem(LIVE_KEY); } catch { /* ignore */ } });
-try {
-  const prev = JSON.parse(sessionStorage.getItem(LIVE_KEY) || 'null');
-  if (prev && prev.sid && prev.sid !== sid) {
-    sessionStorage.removeItem(LIVE_KEY);
-    const nav = (performance.getEntriesByType && performance.getEntriesByType('navigation')[0] || {}).type || '';
-    send('dead', { prev: prev.sid, after: Math.round((Date.now() - prev.t) / 1000), nav });
-  }
-} catch { /* ignore */ }
+if (hasDom && typeof addEventListener === 'function') {
+  addEventListener('pagehide', () => { try { sessionStorage.removeItem(LIVE_KEY); } catch { /* ignore */ } });
+  try {
+    const prev = JSON.parse(sessionStorage.getItem(LIVE_KEY) || 'null');
+    if (prev && prev.sid && prev.sid !== sid) {
+      sessionStorage.removeItem(LIVE_KEY);
+      const nav = (performance.getEntriesByType && performance.getEntriesByType('navigation')[0] || {}).type || '';
+      send('dead', { prev: prev.sid, after: Math.round((Date.now() - prev.t) / 1000), nav, pv: prev.v, pq: prev.q, wd: document.wasDiscarded ? 1 : undefined });
+    }
+  } catch { /* ignore */ }
+}
 
 // Gameplay events (takeoff, land, crash, tutorial steps): same anonymous beacon, capped per type and page so a crash
 // loop or a bouncing landing cannot flood the log. Values are short codes and numbers, never anything personal.
