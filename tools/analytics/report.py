@@ -961,6 +961,58 @@ def report_assist(beacons, visitors, top):
                                   f"{sum(f['rw'] for f in v) / max(sum(f['to'] for f in v), 1):.2f}" for d, v in sorted(by.items(), key=lambda kv: -len(kv[1]))))
 
 
+def report_comeback(beacons, visitors, top):
+    """Reasons to come back (src/retention/**, owned by the retention work; CONTRACTS-SF.md §11): the daily streak
+    (`streak`: day with b = streak bucket and k = what finished the day, badge, pick, open), the weekly challenge (`wk`:
+    show / play / submit with the week's pick in id), challenge links (`chl`: open / beat / lost / back), the "Yenilikler"
+    card (`news`: show / close), the home-screen suggestion (`inst`: show with p = android | ios, accept / dismiss / later /
+    installed) and the landing challenges (`ffc` ids lseries / dland, `ffp` final = "Son yaklaşmaya git"). People =
+    anonymous visitors, players only."""
+    ev = real_events(beacons, visitors, {'streak', 'wk', 'chl', 'news', 'inst'})
+    lc = [e for e in real_events(beacons, visitors, {'ffc', 'ffp'}) if e[3].get('id') in ('lseries', 'dland')]
+    if not ev and not lc:
+        print('\nGeri gelme özellikleri (seri, haftanın görevi, beni geç, yenilikler, ana ekran): henüz sinyal yok.')
+        return
+    t = lambda name, st=None: [e for e in ev if e[3].get('t') == name and (st is None or e[3].get('st') == st)]
+    print('\nGeri gelme özellikleri:')
+    days = t('streak', 'day')
+    if days:
+        order = ['1', '2', '3-6', '7-13', '14-29', '30+']
+        b = Counter(q.get('b') or '?' for *_, q in days)
+        print(f"  Seri: seriye gün ekleyen {len(people(days))} kişi ({len(days)} gün) · seri uzunluğu: "
+              + ' · '.join(f'{k} gün {b[k]}' for k in order if b[k])
+              + f" · günü bitiren: {top(Counter({'m': 'görev', 'l': 'iniş', 'a': '2 dk uçuş', 'c': 'serbest görev'}.get(q.get('k'), q.get('k') or '?') for *_, q in days), 4)}"
+              + f" · rozet: {top(Counter(q.get('id') or '?' for *_, q in t('streak', 'badge')), 6)}"
+              + f" · kartı açan {len(people(t('streak', 'open')))} kişi, rozet seçen {len(people(t('streak', 'pick')))} kişi")
+    if t('wk'):
+        print(f"  Haftanın görevi: sıralamasını gören {len(people(t('wk', 'show')))} kişi · menüden başlatan {len(people(t('wk', 'play')))} kişi · "
+              f"haftalık sıralamaya giren {len(people(t('wk', 'submit')))} kişi ({len(t('wk', 'submit'))} gönderim, gönderilemeyen {len(t('wk', 'fail'))}) · "
+              f"görevler: {top(Counter(q.get('id') or '?' for *_, q in t('wk', 'play') + t('wk', 'submit')), 4)}")
+    if t('chl'):
+        lost = Counter(q.get('o') or '?' for *_, q in t('chl', 'lost'))
+        print(f"  Beni geç bağlantısı: açan {len(people(t('chl', 'open')))} kişi · geçen {len(people(t('chl', 'beat')))} kişi · geçemeyen "
+              f"{len(people(t('chl', 'lost')))} kişi ({top(lost, 3)}) · skorunu geri gönderen {len(people(t('chl', 'back')))} kişi · "
+              f"görevler: {top(Counter(q.get('id') or '?' for *_, q in t('chl', 'open')), 4)}")
+    if t('news'):
+        print(f"  Yenilikler kartı: gören {len(people(t('news', 'show')))} kişi · kapatan {len(people(t('news', 'close')))} kişi · sürüm: "
+              f"{top(Counter(q.get('id') or '?' for *_, q in t('news', 'show')), 3)}")
+    if t('inst'):
+        shown = t('inst', 'show')
+        print(f"  Ana ekrana ekle: önerilen {len(people(shown))} kişi ({top(Counter(q.get('p') or '?' for *_, q in shown), 2)}; "
+              f"{top(Counter(q.get('via') or '?' for *_, q in shown), 2)}) · kabul {len(people(t('inst', 'accept')))} · reddeden "
+              f"{len(people(t('inst', 'dismiss')))} · sonra {len(people(t('inst', 'later')))} · yükleyen {len(people(t('inst', 'installed')))}")
+    if lc:
+        for i, name in (('lseries', 'İniş serisi'), ('dland', 'Günün inişi')):
+            e = [x for x in lc if x[3].get('id') == i]
+            if not e:
+                continue
+            done = [q for *_, q in e if q.get('t') == 'ffc' and q.get('st') == 'done']
+            print(f"  {name}: tamamlayan {len(people([x for x in e if x[3].get('t') == 'ffc' and x[3].get('st') == 'done']))} kişi ({len(done)} kez; "
+                  f"destekli {sum(1 for q in done if q.get('as') == '1')}) · puan medyanı {med([num(q.get('score')) for q in done])} · "
+                  f"\"Son yaklaşmaya git\" {sum(1 for *_, q in e if q.get('t') == 'ffp' and q.get('st') == 'final')} kez "
+                  f"({len(people([x for x in e if x[3].get('t') == 'ffp' and x[3].get('st') == 'final']))} kişi)")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('target', nargs='?', default='production', choices=['production', 'staging'])
@@ -1215,6 +1267,7 @@ def main():
     report_visit_retention(beacons, visitors)
     report_extras(beacons, visitors, top)
     report_assist(beacons, visitors, top)
+    report_comeback(beacons, visitors, top)   # retention: streak, weekly, challenge links, what's new, install, landing challenges
 
     print(f'\nSon {min(a.sessions, len(sessions))} oturum (anonim ziyaretçi kimliği · başlangıç · ülke · tarayıcı · uçak · süre):')
     for s in sorted(sessions, key=lambda s: s['start'], reverse=True)[:a.sessions]:
