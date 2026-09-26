@@ -2,6 +2,7 @@
 // Virtual coordinates 1000×1000 for every unit (square DUs).
 import { font, text, line, poly, circle, stripes, clamp, lerp, wrap360, wrap180, pad, num, DEG, NM, FT, smoothK } from './core.js';
 import { MapView, drawRunways, terrainGrid, TerrainAlertImage, pickDestination, bearingTo, distTo, traffic, clockSeconds, ilsFor, drawCenterline, drawRouteND, routeIdent } from './nav.js';
+import { reducedFlash } from '../ui/display-prefs.js';   // settings.alerts.reduceFlash: warnings steady
 
 export const AC = {
   green: '#00ff00', cyan: '#00e8ff', amber: '#ff9a00', magenta: '#ff6cff', white: '#ffffff', yellow: '#ffff00',
@@ -413,7 +414,7 @@ function a320Pfd(env) {
       }
     }
     // warnings flags
-    if (S.warn.stall && Math.floor(S.t * 3) % 2 === 0) text(g, 'STALL', CX, 610, AC.red, 'center', font(44));
+    if (S.warn.stall && (reducedFlash() || Math.floor(S.t * 3) % 2 === 0)) text(g, 'STALL', CX, 610, AC.red, 'center', font(44));
     if (S.warn.overspeed) text(g, 'OVERSPEED', CX, 610, AC.red, 'center', font(40));
   };
 }
@@ -571,7 +572,7 @@ function a320Nd(env) {
         text(g, '000', 985, 984, AC.green, 'right', font(30));
       }
     }
-    if (S.warn.pullUp && Math.floor(S.t * 2.5) % 2 === 0) text(g, 'PULL UP', 500, 560, AC.red, 'center', font(56));
+    if (S.warn.pullUp && (reducedFlash() || Math.floor(S.t * 2.5) % 2 === 0)) text(g, 'PULL UP', 500, 560, AC.red, 'center', font(56));
     else if (S.warn.gear) text(g, 'L/G NOT DOWN', 500, 560, AC.red, 'center', font(40));
   };
 }
@@ -705,7 +706,7 @@ function a320Ewd(env) {
     }
     if (!S.onGround && S.agl < 1500 && S.vs > 100 && S.ias > 80) Rm.push(['T.O INHIBIT', AC.magenta]);
     if (!S.onGround && S.agl < 800 && S.vs < -100) Rm.push(['LDG INHIBIT', AC.magenta]);
-    if (S.speedbrake > 0.05) Rm.push(['SPEED BRK', S.throttle > 0.25 && Math.floor(S.t * 2) % 2 ? AC.amber : AC.green]);
+    if (S.speedbrake > 0.05) Rm.push(['SPEED BRK', S.throttle > 0.25 && (reducedFlash() || Math.floor(S.t * 2) % 2) ? AC.amber : AC.green]);
     if (S.spoilers > 0.05 && S.onGround) Rm.push(['GND SPLRS', AC.green]);
     if (S.autobrake && S.autobrake !== 'RTO' && !S.onGround) Rm.push(['AUTO BRK ' + S.autobrake, AC.green]);
     if (S.parkingBrake && S.onGround) Rm.push(['PARK BRK', AC.amber]);
