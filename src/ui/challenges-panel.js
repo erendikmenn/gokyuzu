@@ -11,7 +11,9 @@
 // collapsed by default, a tap outside closes it, and results show first as a compact card at the top centre.
 // No backdrop blur (phones): slightly more opaque glass instead.
 //
-//   const p = createChallengesPanel(hud, { touch, keyLabel, onTrack, onStart, onCancel, onPlay, onBoard, onToggle })
+//   const p = createChallengesPanel(hud, { touch, keyLabel, onTrack, onStart, onCancel, onPlay, onBoard, onFinal, onToggle })
+// (onFinal: "Son yaklaşmaya git" on the landing challenges, views with `final`; a daily result (`r.day`) shows the day's
+// board; `x.weekly` = { pick, p: Promise<submission> } adds the weekly challenge's rank under the result.)
 //   p.setEntries(views) · p.render(views) (≤ 10 Hz, only while open or after a change) · p.setCount(done, total, badge)
 //   p.open() · p.close() · p.toggle() · p.isOpen · p.showResult(r, o) · p.notify(r, onOpen) · p.pointer(camera, target, label)
 import { injectCSS } from './styles.js';
@@ -108,6 +110,10 @@ const CSS = `
 .gkf .gkq-row em { font-size: calc(11px * var(--fk)); }
 .gkf .gkq-row b { font-size: calc(11.5px * var(--fk)); min-width: 40px; }
 .gkf-best { margin-top: calc(6px * var(--fk)); font-size: calc(12px * var(--fk)); color: var(--gk-dim); }
+.gkf-wk { margin-top: calc(8px * var(--fk)); font-size: calc(12px * var(--fk)); font-weight: 650; color: #ffd98a; }
+.gkf-as { margin-top: calc(8px * var(--fk)); padding: calc(6px * var(--fk)) calc(8px * var(--fk)); border-radius: 9px; font-size: calc(11.5px * var(--fk)); line-height: 1.4;
+  color: #bfe9ff; background: rgba(108, 200, 255, .1); border: 1px solid rgba(108, 200, 255, .3); }
+.gkf-more .gkq-btn.teal { min-height: calc(30px * var(--fk)); }
 .gkf-sess { margin-top: calc(8px * var(--fk)); padding: calc(6px * var(--fk)) calc(8px * var(--fk)); border-radius: 9px; background: rgba(255, 255, 255, .04); }
 .gkf-sess h4 { margin: 0 0 3px; font-size: calc(10px * var(--fk)); font-weight: 800; letter-spacing: .14em; text-transform: uppercase; color: var(--gk-dim); }
 .gkf-sess div { display: flex; gap: 8px; align-items: baseline; padding: 2px 0; font-size: calc(12px * var(--fk)); }
@@ -294,6 +300,12 @@ export function createChallengesPanel(hud, o = {}) {
         startBtn.type = 'button';
         startBtn.addEventListener('click', (e) => { e.stopPropagation(); startBtn.blur(); if (row.running) o.onCancel && o.onCancel(v.id); else o.onStart && o.onStart(v.id); });
       }
+      if (v.final && o.onFinal) {
+        const fb = el('button', 'gkq-btn teal', acts, 'Son yaklaşmaya git');
+        fb.type = 'button';
+        fb.title = v.id.includes('daily') ? 'Bugünün pistinin son yaklaşmasına geç' : 'En yakın pistin son yaklaşmasına geç';
+        fb.addEventListener('click', (e) => { e.stopPropagation(); fb.blur(); o.onFinal(v.id); });
+      }
       const boardBtn = el('button', 'gkf-link', acts, 'Sıralama');
       boardBtn.type = 'button';
       boardBtn.addEventListener('click', (e) => { e.stopPropagation(); if (o.onBoard) o.onBoard(v.id); });
@@ -365,6 +377,7 @@ export function createChallengesPanel(hud, o = {}) {
       const sm = el('small', null, sc, `puan${r.time != null ? ` · ${fmtTime(r.time)}` : ''}`);
       if (r.ok && x.newBest && x.prevBest > 0) el('span', 'gkq-new', sm, 'Yeni rekor');
       if (!r.ok && r.reason) el('div', 'gkf-reason', resView, r.reason);
+      if (r.ok && r.assisted) el('div', 'gkf-as', resView, 'Destekli uçuş ya da otopilotla iniş: rekorun kaydedildi, sıralamaya girmez. Sıralama için Ayarlar\'dan Destekli uçuş\'u kapat ve elle in.');
       if (r.ok && r.rows && r.rows.length) {
         const rw = el('div', 'gkf-rows', resView);
         for (const [label, value, pts] of r.rows) {
@@ -386,10 +399,19 @@ export function createChallengesPanel(hud, o = {}) {
         el('b', it.ok ? '' : 'bad', d, it.ok ? `${fmtInt(it.score)} · ${'★'.repeat(it.stars)}` : 'başarısız');
       }
     }
+    if (x.weekly && x.weekly.p) {   // this week's challenge (src/retention/weekly.js): the weekly rank
+      const w = el('div', 'gkf-wk', resView, 'Haftanın görevi: skorun haftalık sıralamaya gönderiliyor…');
+      x.weekly.p.then((res) => {
+        if (!w.isConnected) return;
+        if (!res) { w.remove(); return; }
+        const lead = res.rank === 1 ? ', lider sensin!' : res.top && res.top[0] ? ` · lider ${res.top[0].name || 'İsimsiz pilot'} ${fmtInt(res.top[0].score)}` : '';
+        w.textContent = res.rank ? `Haftanın görevi: bu hafta ${res.rank}. sıradasın${lead}` : `Haftanın görevi: skorun kaydedildi${lead}`;
+      }).catch(() => w.remove());
+    }
     const lb = el('div', 'gkq-lb', resView);
     const sub = x.submit || null;   // { score, stars, sec, ac } to submit (a finished run, or the personal best)
-    showLeaderboard(lb, { board: r.board, day: '', ok: !!sub, score: sub ? sub.score : 0, stars: sub ? sub.stars : 0, sec: sub ? sub.sec : undefined, ac: sub ? sub.ac : r.ac,
-      title: 'Sıralama · serbest uçuş', showAc: true, onSubmitted: x.onSubmitted }).catch(() => {});
+    showLeaderboard(lb, { board: r.board, day: r.day || '', ok: !!sub, score: sub ? sub.score : 0, stars: sub ? sub.stars : 0, sec: sub ? sub.sec : undefined, ac: sub ? sub.ac : r.ac,
+      title: r.day ? 'Günün sıralaması · serbest uçuş' : 'Sıralama · serbest uçuş', showAc: true, onSubmitted: x.onSubmitted }).catch(() => {});
     const acts = el('div', 'gkf-acts', resView);
     if (x.onPlay) {
       const play = el('button', 'gkf-link play', acts, 'Görev olarak oyna ›');
@@ -421,7 +443,7 @@ export function createChallengesPanel(hud, o = {}) {
       tab.classList.toggle('run', !!running);
     },
     /** Result view (opens the panel). x = { newBest, prevBest, best, session, crash, submit, onPlay, onSubmitted } */
-    showResult(r, x = {}) { showResultView(r, x); fresh = !isOpen; setOpen(true); place(); },
+    showResult(r, x = {}) { showResultView(r, x); fresh = !isOpen; setOpen(true); place(); body.scrollTop = 0; },   // (the list's scroll: the result starts at its top)
     /** Touch: a compact card at the top centre; a tap opens the result (onOpen). */
     notify(r, onOpen, secs = 9) {
       fresh = false;

@@ -12,6 +12,10 @@ import { hashString, rng, istanbulDay, parseDay } from './util.js';
 
 const ALL = ['f16', 'f22', 'a320neo', 'b737', 'uh60'];
 export const DAILY_LAND_MIN_LENGTH = 2000;   // m: short runways (Oakland's 1 km 15/33) are no daily target
+// no daily target: runway ends whose 3° final crosses terrain within 6 km (measured in the game: SFO 01L / 01R run into
+// the peninsula's ridge 5–6 km out; the real airport lands on them only in rare wind) and İstanbul Havalimanı's backup
+// runways ("yedek pist", src/missions/ist/catalog.js BACKUP_RUNWAYS; the assisted approach skips them too)
+export const NO_DAILY_LANDING = ['KSFO 01L', 'KSFO 01R', 'LTFM 16L', 'LTFM 34R', 'LTFM 17R', 'LTFM 35L'];
 const SIBLING = { sf: 'sfo-28r', ist: 'ist-ltfm-inis' };   // "Görev olarak oyna": the map's landing mission
 const AIRPORT_SHORT = { KSFO: 'SFO', KOAK: 'Oakland', KNGZ: 'Alameda', LTFM: 'İstanbul Havalimanı', LTFJ: 'Sabiha Gökçen', LTBA: 'Atatürk' };
 
@@ -41,7 +45,7 @@ export function landingEndNames(runways, minLength = DAILY_LAND_MIN_LENGTH) {
       const [a, b] = r.ends || [];
       const len = r.length || (a && b ? Math.hypot(b.x - a.x, b.z - a.z) : 0);
       if (len < minLength || r.departureOnly) continue;
-      for (const e of r.ends || []) if (e.landing !== false) out.push(`${apt.icao} ${e.ident}`);
+      for (const e of r.ends || []) if (e.landing !== false && !NO_DAILY_LANDING.includes(`${apt.icao} ${e.ident}`)) out.push(`${apt.icao} ${e.ident}`);
     }
   }
   return [...new Set(out)].sort();

@@ -21,6 +21,7 @@ import { LANDING_BANDS } from './landing-score.js';
 import { createMarkers } from '../world-sf/markers.js';
 import { createMissionUI } from '../ui/missions-hud.js';
 import { trackEvent } from '../core/telemetry.js';
+import { createMissionRetention } from '../retention/mission-hooks.js';   // retention hook: challenge links, weekly board, streak
 
 export { resolveStart };   // (src/missions/util.js: Node-testable)
 
@@ -54,6 +55,7 @@ export function createMissionRuntime(plan, ctx) {
   const groundAt = (x, z) => { const h = world.getGroundHeight(x, z); return Number.isFinite(h) ? h : 0; };
   const markers = createMarkers(ctx.scene);
   const ui = createMissionUI(ctx.hud, { touch: !!ctx.touch, input: ctx.input, category: cat, missions: MISSIONS });
+  const ret = createMissionRetention({ mission, touch: !!ctx.touch });
   const idx = MISSIONS.findIndex((m) => m.id === mission.id);
   /** The next mission in the list that is unlocked (progress after this run), wrapping around. */
   function nextMission() {
@@ -204,6 +206,7 @@ export function createMissionRuntime(plan, ctx) {
     }
     const prog = recordResult(mission.id, { ok, score, stars, day: mission.day });
     result = { ok, reason, score, stars, time: t, rows, newBest: prog.newBest, prevBest: prog.prevBest, mission };
+    ret.finish(result);   // retention hook
     trackEvent('mission', { id: mission.id, st: ok ? 'done' : 'fail', stars: ok ? stars : 0, score: ok ? score : 0, sec: t.toFixed(1), d: mission.day ? 1 : undefined, why: ok ? undefined : failCode(reason) });
     if (!ok) ui.flash(reason, 'warn');
   }
@@ -231,6 +234,7 @@ export function createMissionRuntime(plan, ctx) {
       menu: () => { act('menu', { ph: 'result' }); ctx.goToMenu(); },
       share: (o) => shareResult(o),
     });
+    ret.result(result, { share: shareResult });   // retention hook: challenge outcome, weekly rank, streak, install
   }
 
   function missionUrl(id, day = null) {
@@ -307,6 +311,7 @@ export function createMissionRuntime(plan, ctx) {
         phase = 'brief';
         setHold(true);
         ui.showBrief(mission, { start: startRun, menu: () => { trackEvent('mission', { id: mission.id, st: 'menu', ph: 'brief' }); ctx.goToMenu(); }, again: true, best: loadProgress().missions[mission.id] });
+        ret.brief();   // retention hook
       }
     },
     begin() {
@@ -315,9 +320,10 @@ export function createMissionRuntime(plan, ctx) {
       ui.setMission(mission);
       // the briefing is shown (tests with ?mbrief=0 skip it but still count as reached): where the player came from
       trackEvent('mission', { id: mission.id, st: 'brief', via: ctx.via || 'link', ac: mission.aircraft, d: mission.day ? 1 : undefined });
-      if (new URLSearchParams(location.search).get('mbrief') === '0') { startRun(); return; }   // tests / tools: no briefing
+      if (new URLSearchParams(location.search).get('mbrief') === '0') { ret.brief(); startRun(); return; }   // tests / tools: no briefing
       if (ctx.hud) ctx.hud.showMessage(`Görev: ${mission.title}`, 1300);   // replaces the free-flight start message
       ui.showBrief(mission, { start: startRun, menu: () => { trackEvent('mission', { id: mission.id, st: 'menu', ph: 'brief' }); ctx.goToMenu(); }, again: false, best: loadProgress().missions[mission.id] });
+      ret.brief();   // retention hook: the challenge link's banner, the weekly tag
     },
     /** A crash the mission rates itself (water contact during the ditching objective): true = no crash card / reset. */
     claimCrash(f) {

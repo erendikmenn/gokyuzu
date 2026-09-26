@@ -4,7 +4,16 @@
 // Lazily imported by src/app/main.js in free flight only, when the main thread is idle after the first playable frame
 // (its own chunk in the production bundle). Never created in mission mode.
 // Telemetry (CONTRACTS-SF.md §11): `ffc` = the challenges (start | done | fail | cancel | drop), `ffp` = the panel UI
-// (open with src, track / untrack, play) — separate types so panel clicks can never use up the `ffc` event cap.
+// (open with src, track / untrack, play, final) — separate types so panel clicks can never use up the `ffc` event cap.
+// Retention (src/retention/**): the landing challenges of every map (İniş serisi, Günün inişi: src/missions/
+// landing-challenges.js) with "Son yaklaşmaya git" (a reposition onto the 3° glide path of the day's / the nearest runway),
+// the daily streak (a landing, 2 minutes in the air or a finished challenge joins today), the landing streak badge, the
+// weekly challenge's board (a finished run of this week's free-flight pick is also submitted to w-<yyyyww>-<board>), the
+// menu's intent (shared.retentionIntent = { track, final }: follow a challenge right away) and, on phones after a
+// 2-star landing, the "Ana ekrana ekle" suggestion (src/retention/install.js). Landings with assisted flight or on the
+// autopilot complete challenges locally but are never submitted to a leaderboard. One landing can finish several challenges:
+// the most important result shows (emergency › series › daily landing › pad › best landing), the others are toasts and
+// are submitted quietly.
 //
 //   const set = await loadChallengeSet(map)   the map's challenges + mission catalog (null: none, no panel)
 //   const ffc = createFreeFlightChallenges(ctx)
@@ -13,18 +22,27 @@
 //   ffc.onReset()                main.js resetFlight()
 //   ffc.toggle()
 // ctx = { state, scene, camera, hud, landing, touch, aircraft, set, leave(url), compile(object3d) → Promise, canToggle() }
-import { createChallengeTracker, loadChallengeProgress, recordChallenge, loadChallengeSet } from './challenges.js';
+import { createChallengeTracker, loadChallengeProgress, recordChallenge, loadChallengeSet, CHALLENGES } from './challenges.js';
 
 export { loadChallengeSet };
 import { LANDING_BANDS } from './landing-score.js';
-import { dirOf, fmtDist, fmtInt, FPM, KT } from './util.js';
+import { dirOf, fmtDist, fmtInt, FPM, KT, resolveStart } from './util.js';
+import { landingChallenges, endLabel } from './landing-challenges.js';
+import { noteActivity, noteLanding, applyAccent, streakLine } from '../retention/activity.js';
+import { weeklyFor } from '../retention/weekly.js';
+import { submitQuiet } from '../retention/lb.js';
+import { suggestInstall } from '../retention/install.js';
 import { runwayEnds } from '../flight/fixedwing-autopilot.js';
 import { createMarkers } from '../world-sf/markers.js';
 import { createChallengesPanel } from '../ui/challenges-panel.js';
 import { shared } from '../ui/shared.js';
 import { trackEvent } from '../core/telemetry.js';
 
-const TELE_ID = { bridge: 'bridge', 'low-pass': 'lowpass', 'bay-tour': 'baytour', climb: 'climb', alcatraz: 'alcatraz', landing: 'land', eng: 'eng', flameout: 'flameout', ditch: 'ditch', autorot: 'autorot' };
+const TELE_ID = { bridge: 'bridge', 'low-pass': 'lowpass', 'bay-tour': 'baytour', climb: 'climb', alcatraz: 'alcatraz', landing: 'land', eng: 'eng', flameout: 'flameout', ditch: 'ditch', autorot: 'autorot',
+  'land-series': 'lseries', 'daily-land': 'dland', 'ist-land-series': 'lseries', 'ist-daily-land': 'dland' };   // (other maps: `mp` tells them apart)
+const AIR_DAY_S = 120;   // s in the air that make a flight "finished" for the daily streak (without a landing)
+// which result of one landing shows (lower first); the others are toasts and quiet submissions
+const SHOW_ORDER = { emergency: 0, series: 1, 'daily-land': 2, alcatraz: 3, landing: 4 };
 
 export function createFreeFlightChallenges(ctx) {
   const { state, camera, hud, landing, touch = false } = ctx;
@@ -41,14 +59,25 @@ export function createFreeFlightChallenges(ctx) {
   const s = { t: 0, dt: 0, x: 0, y: 0, z: 0, px: 0, py: 0, pz: 0, agl: 0, ias: 0, gs: 0, vs: 0, hdg: 0, pitch: 0, roll: 0, onGround: true, first: true };
   const lastAir = { vs: 0, pitch: 0, roll: 0, ias: 0, gear: 0, flaps: 0 };
   const session = [];
-  let tracked = null, crashing = false, pendingSession = false, landingShown = false, dirty = true, uiT = 0, hudT = 0, distLabel = '';
+  let tracked = null, crashing = false, pendingSession = false, dirty = true, uiT = 0, hudT = 0, distLabel = '';
   let sessionShown = 0;   // session results already shown in a crash view (a crash reopens it only for something new)
   const set = ctx.set || { map: 'sf' };   // (loadChallengeSet)
   let progress = loadChallengeProgress(set.map);
   const submitted = new Set();
+  applyAccent();   // retention: the picked badge's HUD accent
+  // progress key: a daily challenge keeps its best per day (id@YYYYMMDD)
+  const pkey = (e) => (e.def.daily ? `${e.id}@${e.day}` : e.id);
+  let batch = null, airT = 0, airNoted = false;   // (batch: results of one landing, see onEvent)
+
+  // the landing challenges join the map's list after its best-landing entry (before the emergencies)
+  const baseList = set.challenges || CHALLENGES;
+  let at = baseList.findIndex((c) => c.kind === 'landing');
+  at = at >= 0 ? at + 1 : baseList.findIndex((c) => c.group === 'emergency');
+  if (at < 0) at = baseList.length;
+  const challengeList = [...baseList.slice(0, at), ...landingChallenges(set.map), ...baseList.slice(at)];
 
   const tracker = (set.tracker || createChallengeTracker)({
-    aircraft: ac, category: cat, ends, challenges: set.challenges, catalog: set.catalog,
+    aircraft: ac, category: cat, ends, challenges: challengeList, catalog: set.catalog, map: set.map,
     spanAt: world.getObstacleSpan ? (x, z, out) => world.getObstacleSpan(x, z, out || spanScratch) : null,
     isOnRunway: (x, z) => (world.isOnRunway ? world.isOnRunway(x, z) : false),
     isWater: (x, z) => (world.isWater ? !!world.isWater(x, z) : false),
@@ -70,10 +99,11 @@ export function createFreeFlightChallenges(ctx) {
     onCancel: (id) => { tracker.cancel(id); dirty = true; },
     onPlay: (id) => playMission(id),
     onBoard: (id) => showBoard(id),
+    onFinal: (id) => goFinal(id),
     onToggle: (open, src) => { dirty = true; if (open) { updateCount(false); trackEvent('ffp', { st: 'open', src }); } },
   });
   const views = entries.map((e) => ({
-    id: e.id, title: e.def.title, hint: e.def.hint, group: e.def.group || '', emergency: e.def.kind === 'emergency',
+    id: e.id, title: e.def.title, hint: e.def.hint, group: e.def.group || '', emergency: e.def.kind === 'emergency', final: !!e.def.final,
     trackable: e.def.trackable ?? (e.def.kind === 'bridge' || e.def.kind === 'gates' || e.def.kind === 'alcatraz'),
     status: 'idle', done: false, stars: 0, sub: '', subWarn: false, tracked: false, canStart: null, autoSelect: false,
   }));
@@ -82,7 +112,7 @@ export function createFreeFlightChallenges(ctx) {
 
   function updateCount(badge = false) {
     let done = 0;
-    for (const e of entries) if (progress[e.id] && progress[e.id].done) done++;
+    for (const e of entries) if (progress[pkey(e)] && progress[pkey(e)].done) done++;
     panel.setCount(done, entries.length, { badge, running: entries.some((e) => e.status === 'run') });
   }
 
@@ -161,21 +191,69 @@ export function createFreeFlightChallenges(ctx) {
   }
   function resultExtras(e, r, prog = null) {
     return {
-      newBest: prog ? prog.newBest : false, prevBest: prog ? prog.prevBest : 0, best: progress[e.id] || null,
-      submit: r.ok && !r.submitted ? { score: r.score, stars: r.stars, sec: r.time == null ? undefined : r.time, ac } : null,
+      newBest: prog ? prog.newBest : false, prevBest: prog ? prog.prevBest : 0, best: progress[pkey(e)] || null,
+      submit: r.ok && !r.submitted && !r.assisted ? { score: r.score, stars: r.stars, sec: r.time == null ? undefined : r.time, ac } : null,
+      assisted: !!r.assisted,
       onPlay: () => playMission(e.id),
-      onSubmitted: () => { r.submitted = true; submitted.add(e.id); },
+      onSubmitted: () => { r.submitted = true; submitted.add(pkey(e)); },
+      weekly: r.weekly || null,
     };
   }
   function showBoard(id) {
     const e = byId[id];
     if (!e) return;
-    const best = progress[id];
-    const r = { id, board: e.board, title: e.def.title, ac, ok: false, noRun: true };
+    const best = progress[pkey(e)];
+    const r = { id, board: e.board, title: e.def.title, ac, ok: false, noRun: true, day: e.def.daily ? e.day : undefined };
     panel.showResult(r, {
-      best, onPlay: () => playMission(id), onSubmitted: () => submitted.add(id),
-      submit: best && best.done && !submitted.has(id) ? { score: best.best, stars: best.stars, ac: best.ac || ac } : null,
+      best, onPlay: () => playMission(id), onSubmitted: () => submitted.add(pkey(e)),
+      submit: best && best.done && !best.as && !submitted.has(pkey(e)) ? { score: best.best, stars: best.stars, ac: best.ac || ac } : null,
     });
+  }
+  /**
+   * How far out a final approach can start: the longest of the usual distances whose 3° path (aimed 300 m past the
+   * threshold, as src/missions/util.js resolveStart) stays 25 m over the terrain and the obstacles all the way in; 0: none.
+   */
+  function finalDist(end, heli) {
+    const T = Math.tan(3 * Math.PI / 180);
+    const top = (x, z) => { const o = world.getObstacleHeight ? world.getObstacleHeight(x, z) : -Infinity; return Math.max(groundAt(x, z), Number.isFinite(o) ? o : -Infinity); };
+    for (const D of heli ? [1500, 1000] : cat === 'fighter' ? [7000, 4500, 3000, 2000] : [6000, 4500, 3000, 2000]) {
+      let ok = true;
+      for (let d = D; d >= 400 && ok; d -= 150) ok = (end.elevation || 0) + (d + 300) * T - top(end.x - end.dx * d, end.z - end.dz * d) >= 25;
+      if (ok) return D;
+    }
+    return 0;
+  }
+  /** "Son yaklaşmaya git": onto the 3° glide path of the day's runway (Günün inişi) or the nearest runway (İniş serisi). */
+  function goFinal(id) {
+    const e = byId[id];
+    if (!e || !f.reset) return;
+    if (f.crashed || f.ditched) { if (hud) hud.showMessage('Önce yeniden başla (R)', 2000); return; }
+    if (entries.some((x) => x.def.kind === 'emergency' && x.status === 'run')) { if (hud) hud.showMessage('Önce süren acil durumu bitir', 2000); return; }
+    const heli = cat === 'helicopter';
+    let end = e.targetEnd || null, dist = end ? finalDist(end, heli) : 0;
+    if (!end) {   // İniş serisi: the nearest runway whose final is clear of the terrain
+      let best = Infinity;
+      for (const x of ends) {
+        if (x.landing === false || (!heli && (x.length || 0) < 1800)) continue;
+        const d = Math.hypot((x.aimX ?? x.x) - s.x, (x.aimZ ?? x.z) - s.z);
+        if (d >= best) continue;
+        const fd = finalDist(x, heli);
+        if (fd) { best = d; end = x; dist = fd; }
+      }
+    }
+    if (!end || !dist) { if (hud) hud.showMessage('Bu pistin son yaklaşması arazi yüzünden kapalı', 2400); return; }
+    let st;
+    try { st = resolveStart({ final: end.name, dist }, ends); } catch { return; }
+    tracker.onReset();   // (timed runs end; the landing series goes on)
+    f.reset({ x: st.x, z: st.z, heading: st.heading, altitude: st.altitude, speed: heli ? 25 : undefined }, world);
+    const inp = state.input;
+    if (inp && inp.setThrottle) inp.setThrottle(f.throttle ?? 0);   // the lever follows the trimmed approach thrust
+    if (landing && landing.reset) landing.reset();
+    s.first = true;
+    trackEvent('ffp', { st: 'final', id: TELE_ID[id] || id });
+    if (touch) panel.close();
+    if (hud) hud.showMessage(`${e.def.title}: ${endLabel(end.name)} son yaklaşması${heli ? '' : ' · takım ve flaplar açık'}`, 2600);
+    dirty = true;
   }
 
   // ---- tracker events ----
@@ -197,11 +275,12 @@ export function createFreeFlightChallenges(ctx) {
     }
     if (type === 'abort') {
       if (e.def.objective && e.def.objective.profile && landing && landing.setProfile) landing.setProfile(null);
-      // "Vazgeç" on an emergency / a timed run abandoned (time limit, too far, landed before 10,000 ft); a flight reset and
-      // a rejected take-off (the climb re-arms) are not reported
+      // "Vazgeç" on an emergency / a timed run abandoned (time limit, too far, landed before 10,000 ft) / a landing series
+      // broken; a flight reset and a rejected take-off (the climb re-arms) are not reported
       const sec = Math.max(0, s.t - e.t0).toFixed(1);
       if (data === 'cancel') trackEvent('ffc', { id: TELE_ID[e.id] || e.id, st: 'cancel', ac, sec });
       else if (data === 'time' || data === 'gap' || data === 'far' || data === 'landed') trackEvent('ffc', { id: TELE_ID[e.id] || e.id, st: 'drop', why: data, ac, sec });
+      else if (data === 'broken') trackEvent('ffc', { id: TELE_ID[e.id] || e.id, st: 'drop', why: 'broken', ac });
       if (hud && tracked === e.id && (data === 'time' || data === 'gap' || data === 'far')) hud.showMessage(`${e.def.title}: ${data === 'time' ? 'süre doldu' : 'yarıda kaldı'}`, 2200);
       if (tracked === e.id) syncMarkers(true);
       updateCount();
@@ -210,22 +289,54 @@ export function createFreeFlightChallenges(ctx) {
     // done / fail
     const r = data;
     if (e.def.objective && e.def.objective.profile && landing && landing.setProfile) landing.setProfile(null);
-    const prog = recordChallenge(e.id, { ok: r.ok, score: r.score, stars: r.stars, ac }, set.map);
+    const prog = recordChallenge(pkey(e), { ok: r.ok, score: r.score, stars: r.stars, ac, assisted: !!r.assisted }, set.map);
     progress = loadChallengeProgress(set.map);
     session.push(r);
     if (session.length > 20) session.shift();
     trackEvent('ffc', { id: TELE_ID[e.id] || e.id, st: r.ok ? 'done' : 'fail', score: r.ok ? r.score : undefined, stars: r.ok ? r.stars : undefined, ac,
-      sec: r.time != null ? r.time.toFixed(1) : undefined });
+      sec: r.time != null ? r.time.toFixed(1) : undefined, as: r.assisted ? 1 : undefined });
     if (tracked === e.id) syncMarkers(true);
     updateCount(r.ok);
-    if (crashing) return;   // the crash handler shows the flight's results
-    if (e.def.kind === 'landing') {
-      // every landing is scored by the landing card already: the result opens only for a new personal best (and never
-      // on top of an emergency's result for the same landing)
-      if (landingShown) { landingShown = false; return; }
-      if (!prog.newBest) { if (hud) hud.showMessage(`İniş: ${fmtInt(r.score)} puan · en iyin ${fmtInt(prog.prevBest)}`, 2600); return; }
+    if (r.ok) {   // retention: the day joins the streak; this week's free-flight pick also goes to its weekly board
+      const st = noteActivity('ffc');
+      if (st && st.newDay) streakToast(st);
+      const wk = r.assisted ? null : weeklyFor({ ff: e.id });   // (assisted landings stay off the leaderboards)
+      if (wk) r.weekly = { pick: wk, p: submitQuiet({ board: wk.board, score: r.score, stars: r.stars, sec: r.time == null ? undefined : r.time, ac, weekly: wk.key }) };
     }
-    if (e.def.kind === 'emergency') landingShown = true;
+    if (crashing) return;   // the crash handler shows the flight's results
+    if (batch) { batch.push({ e, r, prog }); return; }   // a landing's results: flushBatch() picks the one to show
+    present(e, r, prog);
+  }
+  /** One landing's results: the most important shows, the others are toasts (a new best is submitted quietly). */
+  function flushBatch(list) {
+    if (!list.length) return;
+    list.sort((a, b) => (SHOW_ORDER[a.e.def.kind] ?? 9) - (SHOW_ORDER[b.e.def.kind] ?? 9));
+    const [first, ...rest] = list;
+    const shown = first.e.def.kind === 'landing' && !first.prog.newBest ? null : first;   // (a best landing opens only as a new best)
+    if (shown) present(first.e, first.r, first.prog); else toast(first);
+    rest.forEach((x, i) => setTimeout(() => toast(x), 2800 * (i + 1)));
+    for (const x of rest) {
+      const worth = x.r.ok && !x.r.assisted && (x.prog.newBest || x.e.def.kind === 'series');
+      if (worth && !x.r.submitted) {
+        x.r.submitted = true; submitted.add(pkey(x.e));
+        submitQuiet({ board: x.e.board, day: x.r.day || '', score: x.r.score, stars: x.r.stars, sec: x.r.time == null ? undefined : x.r.time, ac });
+      }
+    }
+  }
+  function toast({ e, r, prog }) {
+    if (!hud) return;
+    if (!r.ok) { hud.showMessage(`${r.title}: ${r.reason || 'başarısız'}`, 2600); return; }
+    const best = e.def.kind === 'landing' ? 'en iyin' : e.def.daily ? 'bugünkü en iyin' : 'en iyin';
+    hud.showMessage(`${e.def.kind === 'landing' ? 'İniş' : r.title}: ${fmtInt(r.score)} puan${prog.newBest && prog.prevBest > 0 ? ' · yeni rekor!' : prog.prevBest > 0 && !prog.newBest ? ` · ${best} ${fmtInt(prog.prevBest)}` : ''}`, 2600);
+  }
+  function streakToast(st) {
+    if (hud) setTimeout(() => { if (!crashing) hud.showMessage(streakLine(st), 3200); }, 3000);
+  }
+  function present(e, r, prog) {
+    if (e.def.kind === 'landing' || e.def.kind === 'daily-land') {
+      // every landing is scored by the landing card already: the result opens only for a new personal (daily) best
+      if (!prog.newBest) { toast({ e, r, prog }); return; }
+    }
     const x = resultExtras(e, r, prog);
     // touch: the compact card at the top centre says it (a tap opens the result + top 10); desktop: a toast, then the
     // panel opens beside the view with the result
@@ -235,8 +346,31 @@ export function createFreeFlightChallenges(ctx) {
   }
 
   // ---- flight events ----
-  if (landing && landing.onResult) landing.onResult((card, td) => { if (!f.crashed) { tracker.onLanding(card, td); landingShown = false; } });
+  if (landing && landing.onResult) {
+    landing.onResult((card0, td) => {
+      if (f.crashed) return;
+      // a landing with assisted flight (src/ui/landing.js card.assisted) or on the autopilot (autoland) counts for the
+      // challenges and the streak, never for a leaderboard
+      const card = card0 && !card0.assisted && apAtTouchdown ? { ...card0, assisted: true } : card0;
+      const list = batch = [];
+      try { tracker.onLanding(card, td); } finally { batch = null; }
+      flushBatch(list);
+      // retention: a landing finishes a flight (streak); runway landings in a row (badge); phones: after a good one, the
+      // home-screen suggestion once the landing card has faded
+      const ok = !!(card && card.onRunway && card.stars >= 1);
+      const lr = noteLanding(ok);
+      const st = noteActivity('landing');
+      if (st && st.newDay) streakToast(st);
+      else if (lr && lr.unlocked && lr.unlocked.length && hud) setTimeout(() => hud.showMessage(`Yeni rozet: ${lr.unlocked[0].title}`, 3000), 3000);
+      if (touch && card && card.stars >= 2) setTimeout(() => { if (!f.crashed) suggestInstall({ via: 'land', mount: (n) => panel.root.appendChild(n) }); }, 9500);   // (after the landing card faded)
+    });
+  }
+  let apAtTouchdown = false;   // the autopilot at the (first) contact of the landing being rated: an autoland
   if (f.on) {
+    f.on('touchdown', () => {   // (the landing card may have seen this contact first: then it is pending with no bounce yet)
+      const p = landing && landing.debug ? landing.debug().pending : null;
+      if (!p || p.bounces === 0) apAtTouchdown = !!(f.autopilot && f.autopilot.on);
+    });
     f.on('ditch', (i) => {
       const d = ditchSample();
       if (i) {
@@ -270,6 +404,7 @@ export function createFreeFlightChallenges(ctx) {
     /** main.js crash handler: running runs fail; the flight's results show beside the crash card (touch: after the reset). */
     onCrash(flight) {
       const before = session.length;
+      noteLanding(false);   // retention: a crash ends the landing streak
       crashing = true;
       const d = { ...ditchSample(), survived: 'ditched' in flight ? false : undefined };
       let claimed = false;
@@ -307,6 +442,8 @@ export function createFreeFlightChallenges(ctx) {
       if (!f.crashed) {
         lastAir.vs = s.vs; lastAir.pitch = s.pitch; lastAir.roll = s.roll; lastAir.ias = s.ias; lastAir.gear = Number(f.gear) || 0; lastAir.flaps = Number(f.flaps) || 0;
         tracker.update(s);
+        // retention: 2 minutes in the air finish a flight for the daily streak (once per page)
+        if (!airNoted && !s.onGround && (airT += dt) >= AIR_DAY_S) { airNoted = true; const st = noteActivity('air'); if (st && st.newDay) streakToast(st); }
       }
       s.first = false;
       // tracked entry: markers + pointer (only while something is tracked)
@@ -336,19 +473,34 @@ export function createFreeFlightChallenges(ctx) {
   function renderViews() {
     for (let i = 0; i < entries.length; i++) {
       const e = entries[i], v = views[i];
-      const pr = progress[e.id];
+      const pr = progress[pkey(e)];
       v.status = e.status; v.done = !!(pr && pr.done); v.stars = pr ? pr.stars || 0 : 0;
       v.subWarn = false;
       if (v.emergency) v.canStart = tracker.canStart(e.id, s, f);
       if (e.status === 'run' || e.status === 'armed') v.sub = e.progress(s) || 'Sürüyor';
       else if (v.emergency) { const c = v.canStart; v.sub = c.ok ? (pr && pr.done ? `Hazır · en iyin ${fmtInt(pr.best)}` : 'Hazır: Başlat ile arızayı şimdi başlat') : c.reason; v.subWarn = !c.ok; }
       else if (v.tracked && distLabel) v.sub = `Hedef ${distLabel}${e.progress(s) ? ` · ${e.progress(s)}` : ''}`;
+      else if (e.def.kind === 'daily-land') v.sub = `${e.progress(s)}${pr && pr.done ? ` · en iyin ${fmtInt(pr.best)}` : ''}`;
       else if (e.progress(s)) v.sub = e.progress(s);
       else if (pr && pr.done) v.sub = `En iyin ${fmtInt(pr.best)} puan`;
       else v.sub = v.trackable ? (touch ? 'Henüz yok · takip için dokun' : 'Henüz yok · takip için tıkla') : 'Henüz yok';
     }
     panel.render(views);
     for (const v of views) v.autoSelect = false;
+  }
+
+  // the menu's intent (Haftanın görevi / Günün inişi started free flight): follow that challenge now, onto its final
+  const intent = shared.retentionIntent;
+  shared.retentionIntent = null;
+  const ie = intent && byId[intent.track];
+  if (ie) {
+    const v = views.find((x) => x.id === ie.id);
+    if (v && v.trackable) setTracked(ie.id);
+    panel.select(ie.id);
+    if (intent.final) goFinal(ie.id);
+    else if (hud) hud.showMessage(`${ie.def.title}: ${touch ? 'GÖREV' : 'Enter'} ile ayrıntılar`, 2600);
+    if (!touch) panel.open();
+    dirty = true;
   }
 
   return api;

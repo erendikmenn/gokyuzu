@@ -17,7 +17,8 @@
 // emit(type, entry, data): 'start' (a run began), 'done' / 'fail' (data = result), 'abort' (silently ended; data = why:
 // 'time' | 'gap' | 'far' | 'landed' (timed run abandoned), 'cancel' (Vazgeç), 'reset', 'stopped' (rejected take-off)),
 // 'message' (text).
-// result = { id, board, title, ok, reason, score, stars, time (s from the run start | null), rows [[label, value, points]], ac, landing? }
+// result = { id, board, title, ok, reason, score, stars, time (s from the run start | null), rows [[label, value, points]], ac, landing?,
+//           day? (daily challenges), assisted? (a landing card flagged assisted: src/ui/landing.js card.assisted) }
 //
 // Detection (per frame only a distance check until the aircraft is near a target; objectives are allocation-free):
 //   bridge    any aircraft: the bridge objective within 3 km of the Golden Gate; a pass under the deck between the
@@ -30,9 +31,14 @@
 //   landing   every runway landing (landing card ≥ 1★): points × 20, the landing's stars
 //   emergency explicit start ("Başlat", airborne, fitting aircraft / place): inject the failure now; land safely
 //             (land objective on any runway; ditch objective; autorotation profile) → base + landing points
+//   series    İniş serisi (src/missions/landing-challenges.js): `need` successful runway landings in a row (≥ 1★);
+//             an off-runway / 0★ landing or a crash breaks it ('abort' broken), a flight reset keeps it
+//   daily-land Günün inişi: the day's runway end (dailyLandingEnd over the map's ends ≥ 2 km that take landings);
+//             a landing on it → landing points × score.landing; result.day = the Istanbul day (daily board)
 import { buildMission, BRIDGES, SF_CATALOG, loadMissionCatalog } from './catalog.js';
 import { createObjective } from './objectives.js';
-import { FT, KT, FPM, fmtTime, fmtInt } from './util.js';
+import { FT, KT, FPM, fmtTime, fmtInt, istanbulDay } from './util.js';
+import { dailyLandingEnd, endLabel, maxLandingChallengeScore, DAILY_LAND_MIN_LENGTH, NO_DAILY_LANDING } from './landing-challenges.js';
 
 const ALL = ['f16', 'f22', 'a320neo', 'b737', 'uh60'];
 const FIXED = ['f16', 'f22', 'a320neo', 'b737'];
@@ -123,6 +129,7 @@ export function maxChallengeScore(c, build = buildMission) {
   if (c.kind === 'climb') return (sc.base || 0) + sc.par * sc.perSec;
   if (c.kind === 'alcatraz') return (sc.base || 0) + 300 + 400 + (sc.landing ?? 8) * 100;
   if (c.kind === 'landing') return (sc.landing ?? 20) * 100;
+  if (c.kind === 'series' || c.kind === 'daily-land') return maxLandingChallengeScore(c);
   if (c.objective && c.objective.type === 'ditch') return (sc.base || 0) + (sc.ditch ?? 10) * 100;
   return (sc.base || 0) + (sc.landing ?? 10) * 100 + (sc.runwayBonus || 0);
 }
@@ -136,16 +143,24 @@ function readStore(map) {
 function writeStore(s, map) { try { localStorage.setItem(storeKey(map), JSON.stringify(s)); } catch { /* private mode / Node */ } }
 /** { [id]: { best, stars, runs, done, ac } } */
 export function loadChallengeProgress(map) { return readStore(map).e; }
-/** Record a finished run → { newBest, prevBest, prevStars }. */
-export function recordChallenge(id, { ok, score, stars, ac }, map) {
+/**
+ * Record a finished run → { newBest, prevBest, prevStars }. A daily challenge's id is `<id>@YYYYMMDD` (the last 14 days
+ * kept). `assisted`: the best came from an assisted landing (as: 1; the panel's "Sıralama" never submits it).
+ */
+export function recordChallenge(id, { ok, score, stars, ac, assisted = false }, map) {
   const s = readStore(map);
+  if (id.includes('@') && !s.e[id]) {
+    const pre = id.slice(0, id.indexOf('@') + 1);
+    const days = Object.keys(s.e).filter((k) => k.startsWith(pre)).sort();
+    while (days.length >= 14) delete s.e[days.shift()];
+  }
   const p = s.e[id] || (s.e[id] = { best: 0, stars: 0, runs: 0, done: false });
   const prev = { prevBest: p.best || 0, prevStars: p.stars || 0 };
   p.runs = (p.runs || 0) + 1;
   let newBest = false;
   if (ok) {
     p.done = true;
-    if (score > (p.best || 0)) { p.best = score; p.ac = ac; newBest = true; }
+    if (score > (p.best || 0)) { p.best = score; p.ac = ac; newBest = true; if (assisted) p.as = 1; else delete p.as; }
     p.stars = Math.max(p.stars || 0, stars || 0);
   }
   writeStore(s, map);
@@ -175,6 +190,7 @@ export function createChallengeTracker(o = {}) {
   const category = o.category || 'airliner';
   const ends = o.ends || [];
   const catalog = o.catalog || SF_CATALOG;
+  const map = o.map || catalog.map || 'sf';
   const bridges = o.bridges || catalog.BRIDGES || BRIDGES;
   const isOnRunway = o.isOnRunway || (() => false);
   const isWater = o.isWater || (() => false);
@@ -193,9 +209,11 @@ export function createChallengeTracker(o = {}) {
       progress: () => '',
     };
   }
-  function finish(e, ok, { score = 0, stars = 0, time = null, rows = [], reason = '', landing = null } = {}) {
+  function finish(e, ok, { score = 0, stars = 0, time = null, rows = [], reason = '', landing = null, assisted = !!(landing && landing.assisted) } = {}) {
     e.status = 'idle';
     const r = { id: e.id, board: e.board, title: e.def.title, ok, reason, score: ok ? Math.round(score) : 0, stars: ok ? stars : 0, time, rows, ac: aircraft, landing };
+    if (e.def.daily) r.day = e.day || istanbulDay();
+    if (assisted) r.assisted = true;   // a landing with assisted flight / the autopilot (card.assisted): no leaderboard
     e.last = r;
     emit(ok ? 'done' : 'fail', e, r);
     return r;
@@ -491,7 +509,71 @@ export function createChallengeTracker(o = {}) {
     return e;
   }
 
-  const MAKE = { bridge: bridgeEntry, gates: gatesEntry, climb: climbEntry, alcatraz: alcatrazEntry, landing: landingEntry, emergency: emergencyEntry };
+  // ---- İniş serisi: `need` successful runway landings in a row ----
+  function seriesEntry(def) {
+    const e = base(def);
+    const need = def.need || 3, k = (def.score && def.score.landing) || 10;
+    let run = [];
+    const broken = (why) => { run = []; e.status = 'idle'; emit('abort', e, why); };
+    e.onLanding = (card) => {
+      if (!card) return;
+      const ok = card.onRunway && card.stars >= 1 && !closedEnds.has(card.runway);
+      if (!ok) {
+        if (run.length) { emit('message', e, `${def.title} bozuldu: ${card.onRunway ? 'en az 1 yıldız gerekli' : 'pist dışı iniş'}`); broken('broken'); }
+        return;
+      }
+      run.push(card);
+      if (run.length === 1) { e.status = 'run'; e.t0 = 0; e.runs++; emit('start', e, null); }
+      if (run.length < need) { emit('message', e, `${def.title}: ${run.length}/${need}`); return; }
+      const rows = run.map((c, i) => [`${i + 1}. iniş${c.runway ? ` · ${c.runway.replace(/^K/, '')}` : ''}`, `${'★'.repeat(c.stars)} ${c.points}/100`, c.points * k]);
+      const score = run.reduce((a, c) => a + c.points, 0) * k;
+      const stars = Math.min(...run.map((c) => c.stars));
+      const assisted = run.some((c) => c.assisted);
+      run = [];
+      finish(e, true, { score, stars, rows, assisted });
+    };
+    e.crash = () => { if (run.length) broken('broken'); return false; };
+    e.reset = () => {};   // land, R, land again: the series goes on
+    e.progress = () => (run.length ? `${run.length}/${need} iniş` : '');
+    Object.defineProperty(e, 'count', { get: () => run.length });
+    return e;
+  }
+
+  // ---- Günün inişi: the day's runway end ----
+  function dailyLandEntry(def) {
+    const e = base(def);
+    const names = [...new Set(ends.filter((x) => x.landing !== false && (x.length || 0) >= DAILY_LAND_MIN_LENGTH && !NO_DAILY_LANDING.includes(x.name)).map((x) => x.name))].sort();
+    let day = null, end = null;
+    const tgt = { x: 0, y: 0, z: 0 };
+    const refresh = () => {
+      const d = istanbulDay();
+      if (d === day) return;
+      day = d;
+      const nm = dailyLandingEnd(names, d, map);
+      end = ends.find((x) => x.name === nm) || null;
+      if (end) { tgt.x = end.aimX ?? end.x; tgt.z = end.aimZ ?? end.z; tgt.y = end.elevation || 0; }
+    };
+    refresh();
+    Object.defineProperty(e, 'day', { get: () => { refresh(); return day; } });
+    Object.defineProperty(e, 'targetEnd', { get: () => { refresh(); return end; } });
+    Object.defineProperty(e, 'target', { get: () => { refresh(); return end ? tgt : null; } });
+    e.onLanding = (card, td) => {
+      refresh();
+      if (!card || !end || !card.onRunway) return;
+      if (card.runway !== end.name) { emit('message', e, `Günün inişi bugün ${endLabel(end.name)} pistinde`); return; }
+      if (card.stars < 1) { emit('message', e, 'Günün inişi: en az 1 yıldız gerekli'); return; }
+      const obj = createObjective({ type: 'land', any: true, minStars: 1, label: def.title }, env(def.score));
+      obj.start();
+      obj.onLanding(card, td);
+      obj.message = null;
+      if (obj.status === 'done') { e.runs++; finish(e, true, { score: obj.points, stars: card.stars, rows: [[`Pist ${endLabel(end.name)}`, '', 0], ...obj.parts], landing: card }); }
+    };
+    e.markers = () => { refresh(); return end ? { type: 'runway', end, heli: category === 'helicopter' } : null; };
+    e.progress = () => { refresh(); return end ? `Bugün: ${endLabel(end.name)}` : ''; };
+    return e;
+  }
+
+  const MAKE = { bridge: bridgeEntry, gates: gatesEntry, climb: climbEntry, alcatraz: alcatrazEntry, landing: landingEntry, emergency: emergencyEntry, series: seriesEntry, 'daily-land': dailyLandEntry };
   const entries = (o.challenges ? o.challenges.filter((c) => c.aircraft.includes(aircraft)) : challengesFor(aircraft)).map((def) => MAKE[def.kind](def));
   const byId = Object.fromEntries(entries.map((e) => [e.id, e]));
 

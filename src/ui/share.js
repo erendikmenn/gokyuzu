@@ -2,7 +2,10 @@
 // (canvas 1200×630: optional snapshot of the view, title, stars, score) and shares it — the Web Share API on phones
 // (with the image file where supported), on desktops an X / Twitter intent URL with the text + link, "Bağlantıyı
 // kopyala" and "Görseli indir". The link is a deep link (?mission=<id>, &daily=YYYYMMDD) so friends play the same
-// mission. No third-party scripts; the only external address is the intent URL the player opens themself.
+// mission; a finished run's link is a challenge link ("Beni geç", src/retention/challenge-link.js: &challenge=<score>),
+// and a run that beat a friend's challenge says so in the text. The card shows the player's streak / picked badge title
+// (src/retention/streak.js, local only). No third-party scripts; the only external address is the intent URL the player
+// opens themself.
 // Telemetry: `share` { id, via }. Lazily imported on the first "Paylaş".
 //
 //   const h = prepareMission({ id, day, title, aircraft, ok, score, stars, time, snapshot })   // when the result shows
@@ -11,6 +14,9 @@
 import { injectCSS } from './styles.js';
 import { el } from './util.js';
 import { trackEvent } from '../core/telemetry.js';
+import { parseChallenge, challengeUrl, challengeOutcome } from '../retention/challenge-link.js';
+import { readStreak, streakView, pickedBadge } from '../retention/streak.js';
+import { istanbulDay } from '../missions/util.js';
 
 const W = 1200, H = 630;
 const FONT = '-apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", "Helvetica Neue", Arial, sans-serif';
@@ -99,6 +105,14 @@ export function renderCard(d) {
   // link
   ctx.fillStyle = 'rgba(255, 178, 87, .95)'; ctx.font = `700 24px ${FONT}`;
   ctx.fillText((d.link || '').replace(/^https?:\/\//, ''), 64, H - 40);
+  // streak / badge title (top right)
+  if (d.tag) {
+    ctx.font = `750 22px ${FONT}`;
+    const tw = ctx.measureText(d.tag).width;
+    ctx.fillStyle = 'rgba(255, 162, 74, .16)';
+    ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(W - 64 - tw - 32, 54, tw + 32, 42, 21); else ctx.rect(W - 64 - tw - 32, 54, tw + 32, 42); ctx.fill();
+    ctx.fillStyle = '#ffc27a'; ctx.fillText(d.tag, W - 64 - tw - 16, 83);
+  }
   return c;
 }
 
@@ -175,7 +189,7 @@ function popover(h, { id, text, url, fileName, anchor }) {
     dl.href = imgUrl; dl.download = fileName; dl.innerHTML = ICON.down; dl.append('Görseli indir');
     dl.addEventListener('click', () => trackEvent('share', { id, via: 'png' }));
   }
-  el('small', null, pop, id === 'land' ? 'Bağlantı oyunu açar.' : 'Arkadaşın bağlantıyla aynı görevi uçar.');
+  el('small', null, pop, id === 'land' ? 'Bağlantı oyunu açar.' : /[?&]challenge=/.test(url) ? 'Arkadaşın bağlantıyla aynı görevi uçar ve puanını geçmeye çalışır.' : 'Arkadaşın bağlantıyla aynı görevi uçar.');
   // placement: above the anchor button (or centred)
   const r = anchor && anchor.getBoundingClientRect ? anchor.getBoundingClientRect() : null;
   const pw = Math.min(320, innerWidth - 16);
@@ -191,19 +205,32 @@ function popover(h, { id, text, url, fileName, anchor }) {
 const fmtInt = (v) => String(Math.round(v)).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
 const fmtT = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
 
+/** '5 gün seri · Kıdemli pilot' (the local streak and the picked badge), or ''. */
+export function streakTag(today = istanbulDay()) {
+  try {
+    const s = readStreak(), v = streakView(s, today), b = pickedBadge(s);
+    return [v.current >= 2 ? `${v.current} gün seri` : '', b ? b.title : ''].filter(Boolean).join(' · ');
+  } catch { return ''; }
+}
+
 export function missionShareData({ id, day, title, aircraft, ok, score, stars, time }) {
-  const url = missionLink(id, day);
+  // a finished run: a challenge link ("Beni geç"); opened from a friend's challenge and beaten: say so
+  const url = ok && score >= 1 ? challengeUrl(missionLink(id, day), { id, day, score }) : missionLink(id, day);
+  const ch = typeof location !== 'undefined' ? parseChallenge(location.search) : null;
+  const beat = ch && ch.id === id && challengeOutcome(ch, { ok, score }) === 'beat';
   const kicker = day ? `Günün görevi · ${aircraft}` : `Görev · ${aircraft}`;
-  const text = ok
-    ? `Gökyüzü'nde "${title}" görevini ${stars} yıldızla bitirdim: ${fmtInt(score)} puan, ${fmtT(time)}. Sen yenebilir misin?`
-    : `Gökyüzü'nde "${title}" görevini denedim. Sen yapabilir misin?`;
-  return { url, kicker, text, big: ok ? fmtInt(score) : '—', bigSub: ok ? 'puan' : '', lines: ok ? [['Süre', fmtT(time)], ['Uçak', aircraft]] : [['Uçak', aircraft]] };
+  const text = !ok ? `Gökyüzü'nde "${title}" görevini denedim. Sen yapabilir misin?`
+    : beat ? `Gökyüzü'nde "${title}" görevinde arkadaşımın ${fmtInt(ch.score)} puanını ${fmtInt(score)} puanla geçtim! Sıra sende: beni geçebilir misin?`
+      : `Gökyüzü'nde "${title}" görevini ${stars} yıldızla bitirdim: ${fmtInt(score)} puan, ${fmtT(time)}. Beni geçebilir misin?`;
+  const lines = ok ? [['Süre', fmtT(time)], ['Uçak', aircraft]] : [['Uçak', aircraft]];
+  if (beat) lines.unshift(['Geçilen skor', fmtInt(ch.score)]);
+  return { url, kicker, text, big: ok ? fmtInt(score) : '—', bigSub: ok ? 'puan' : '', lines, beat };
 }
 
 /** Prepared share of a mission result (see prepare). o = { id, day, title, aircraft, ok, score, stars, time, snapshot, map? } */
 export function prepareMission(o) {
   const d = missionShareData(o);
-  const canvas = renderCard({ kicker: d.kicker, title: o.title, stars: o.ok ? o.stars : 0, big: d.big, bigSub: d.bigSub, lines: d.lines, link: d.url, snapshot: o.snapshot, subtitle: o.map && o.map.shareTitle });
+  const canvas = renderCard({ kicker: d.kicker, title: o.title, stars: o.ok ? o.stars : 0, big: d.big, bigSub: d.bigSub, lines: d.lines, link: d.url, snapshot: o.snapshot, subtitle: o.map && o.map.shareTitle, tag: streakTag() });
   return prepare({ id: o.id, text: d.text, url: d.url, canvas, fileName: `gokyuzu-${o.id}.png` });
 }
 
@@ -215,6 +242,6 @@ export function prepareLanding(card, { aircraft = '', map = null } = {}) {
   const lines = [['Dikey hız', `${card.fpm} ft/dk`]];
   if (card.cl != null) lines.push(['Merkez çizgi', `${String(card.cl).replace('.', ',')} m`]);
   if (card.tdz != null) lines.push(['Eşikten', `${card.tdz} m`]);
-  const canvas = renderCard({ kicker: `İniş · ${aircraft}${rw ? ` · ${rw}` : ''}`, title: card.label, stars: card.stars, big: `${card.points}`, bigSub: '/ 100', lines, link: url, subtitle: map && map.shareTitle });
+  const canvas = renderCard({ kicker: `İniş · ${aircraft}${rw ? ` · ${rw}` : ''}`, title: card.label, stars: card.stars, big: `${card.points}`, bigSub: '/ 100', lines, link: url, subtitle: map && map.shareTitle, tag: streakTag() });
   return prepare({ id: 'land', text, url, canvas, fileName: 'gokyuzu-inis.png' });
 }
