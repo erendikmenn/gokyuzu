@@ -433,6 +433,39 @@ def report_failures(beacons, visitors, top):
     print(f'\nArızalar: {len(starts)} ({rnd} rastgele) · türler: {top(kind, 8)} · ardından kaza: {after} ({pct(after, len(starts))})')
 
 
+# settings beacons (src/ui/settings-live.js): `set` with k = setting, v2 = bucketed value (volumes 0/25/50/75/100, switches
+# 1/0, valert 2 all / 1 critical / 0 off); default volume buckets: master .9 → 100, engine / voice 1 → 100, atc / ambient .8 → 75
+VOLUME_DEFAULT = {'master': 100, 'engine': 100, 'voice': 100, 'atc': 75, 'ambient': 75}
+
+
+def report_settings(beacons, visitors, top):
+    """How many people mute the sound, lower a volume, turn off assisted flight or the spoken warnings."""
+    evs = real_events(beacons, visitors, {'set'})
+    if not evs:
+        return
+    base = len(flyers(beacons, visitors)) or len({vid for _, vid, _, _ in evs})
+
+    def who(pred):
+        return len(people(evs, pred))
+
+    def lowered(q):
+        k = q.get('k')
+        return k in VOLUME_DEFAULT and num(q.get('v2')) is not None and num(q.get('v2')) < VOLUME_DEFAULT[k]
+
+    muted, lower = who(lambda q: q.get('k') == 'mute' and q.get('v2') == '1'), who(lowered)
+    zero = who(lambda q: q.get('k') == 'master' and q.get('v2') == '0')
+    assist = who(lambda q: q.get('k') == 'assist' and q.get('v2') == '0')
+    crit, voff = who(lambda q: q.get('k') == 'valert' and q.get('v2') == '1'), who(lambda q: q.get('k') == 'valert' and q.get('v2') == '0')
+    chime = who(lambda q: q.get('k') == 'chime' and q.get('v2') == '0')
+    hud = who(lambda q: q.get('k') == 'hudwarn' and q.get('v2') == '0')
+    calm = who(lambda q: q.get('k') == 'calm' and q.get('v2') == '1')
+    print(f'\nAyarlar (kişi; uçanların oranı): sesi kapatan {muted} ({pct(muted, base)}) · sesi kısan {lower} ({pct(lower, base)};'
+          f' genel sesi sıfıra çeken {zero}) · destekli uçuşu kapatan {assist} ({pct(assist, base)}) · sesli uyarıları kısan'
+          f' {crit + voff} ({pct(crit + voff, base)}; sadece kritik {crit}, kapalı {voff}) · uyarı çanı kapalı {chime}'
+          f' · ekran uyarıları kapalı {hud} · yanıp sönme azaltılmış {calm}')
+    print('  değiştirilen ayarlar (kişi):', top(Counter(k for k, _ in {(q.get('k') or '?', vid) for _, vid, _, q in evs}), 10))
+
+
 def report_leaderboard(api, api_time, api_own, top):
     if not api and not api_own:
         return
@@ -858,6 +891,7 @@ def main():
     report_landings(beacons, visitors, top)
     report_shares(beacons, visitors, top)
     report_failures(beacons, visitors, top)
+    report_settings(beacons, visitors, top)
     report_leaderboard(api, api_time, api_own, top)
     report_retention(days_seen, visitors, beacons, since, a.target)
 
