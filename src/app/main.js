@@ -521,12 +521,39 @@ function keepLightCount(rig) {
   for (const l of list) if (!l.visible) l.visible = true;
 }
 
+// Aircraft shadow casters on phones / tablets (2048² map; near cascade ≈ 10 cm per texel up to ~130 m, far cascade ≈ 25 cm
+// up to 500 m). Each casting mesh costs one draw call per cascade: with 82 casters the F-16 was 164 of a tablet's ~410
+// draw calls per frame. Parts smaller than SMALL_CASTER (bounding radius: nav / lamp lenses, the pilot's visor and
+// straps, the nose wheel hub) cover ≤ 3 texels that the PCF filter blurs away: no shadow. Parts smaller than FAR_CASTER
+// (the pilot, nozzle petals, wheels, speed brakes) skip the far cascade, which only shades the aircraft's shadow on the
+// ground seen from 130–500 m: there they are ≤ 2 texels. More than FAR_AGL above the ground the aircraft's shadow falls
+// beyond the 500 m shadow range whatever the sun's elevation (ray length = height / sin(elevation)): then no part of it is
+// drawn into the far cascade (its self-shadowing comes from the near one). Desktop classes keep every caster.
+const SMALL_CASTER = 0.15, FAR_CASTER = 0.5, FAR_AGL = 550;
+const mobileShadows = quality.deviceClass === 'phone' || quality.deviceClass === 'tablet';
+/** Frustum test that refuses the sun's far cascade (three.js culls every shadow caster per cascade frustum). */
+function farCascadeTest(frustum) {
+  const env = state.world && state.world.environment, sh = env && env.sun && env.sun.shadow;
+  if (sh && sh.getFrustum && frustum === sh.getFrustum(1) && sh.getViewportCount() > 1) {
+    const f = state.flight;
+    if (this.__farSmall || (f && f.agl > FAR_AGL)) return false;
+  }
+  return this.__intersectsFrustum(frustum);
+}
 function setupShadows(root) {
+  if (mobileShadows) root.updateMatrixWorld(true);
   root.traverse((o) => {
     if (!o.isMesh) return;
     // glass, plumes and other see-through materials neither cast shadows nor darken the cockpit
     const seeThrough = [].concat(o.material).some((m) => m && (m.transparent || m.transmission > 0 || m.blending === THREE.AdditiveBlending));
-    o.castShadow = !seeThrough || !!o.customDepthMaterial;   // rigs may give see-through parts (rotor disc) a custom shadow
+    let cast = !seeThrough || !!o.customDepthMaterial;   // rigs may give see-through parts (rotor disc) a custom shadow
+    if (cast && mobileShadows && !o.customDepthMaterial && o.geometry) {
+      if (!o.geometry.boundingSphere) o.geometry.computeBoundingSphere();
+      const r = o.geometry.boundingSphere.radius * o.matrixWorld.getMaxScaleOnAxis();
+      if (r < SMALL_CASTER) cast = false;
+      else if (!o.__intersectsFrustum) { o.__intersectsFrustum = o.intersectsFrustum; o.intersectsFrustum = farCascadeTest; o.__farSmall = r < FAR_CASTER; }
+    }
+    o.castShadow = cast;
     o.receiveShadow = true;
   });
 }
