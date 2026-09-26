@@ -63,6 +63,10 @@ html.gk-noblur .gka-glass { -webkit-backdrop-filter: none; backdrop-filter: none
 @keyframes gka-pulse { 0%, 100% { box-shadow: 0 6px 18px rgba(92, 242, 200, .28); } 50% { box-shadow: 0 0 0 6px rgba(92, 242, 200, .25), 0 6px 22px rgba(92, 242, 200, .5); } }
 .gka-btn:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
 html.gk-touch .gka-btn { min-height: 40px; padding: 8px 18px; font-size: 13.5px; }
+html.gk-touch .gka-cue { max-width: 44vw; font-size: 12.5px; }
+html.gk-touch .gka-app { max-width: 64vw; }
+html.gk-touch .gka-txt { min-width: 0; }
+html.gk-touch .gka-t2, html.gk-touch .gka-t3 { overflow: hidden; text-overflow: ellipsis; }
 .gka-app { display: none; align-items: center; gap: calc(10px * var(--as)); padding: calc(6px * var(--as)) calc(12px * var(--as)); border-radius: calc(14px * var(--as)); }
 .gka-app.on { display: flex; }
 .gka-arrow { width: calc(34px * var(--as)); height: calc(34px * var(--as)); flex: 0 0 auto; }
@@ -294,7 +298,7 @@ export function createAssistHud({ hud = null, input = null } = {}) {
     if (tdAt >= 0 && now - tdAt > 3) {
       if (tdOk && !f.crashed) {
         stats.landed++;
-        if (!stats.tip && stats.landed >= TIP_AFTER && !info.tutorial) { stats.tip = 1; tipOn = true; tipT = 14; tip.classList.add('on'); trackEvent('assist', { st: 'tip', n: stats.landed }); }
+        if (!stats.tip && stats.landed >= TIP_AFTER && !info.tutorial) { stats.tip = 1; tipOn = true; tipT = 14; tip.classList.add('on'); trackEvent('assist', { st: 'tip', lc: stats.landed }); }   // (lc: assisted landings so far; `n` is a reserved key)
         storageSet(STATS_KEY, stats);
       }
       tdAt = -1;

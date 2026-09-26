@@ -1,4 +1,4 @@
-// Assisted flight tests (src/flight/assist.js, "Destekli uçuş"). Run: node tests/assist.test.mjs [--quick]
+// Assisted flight tests (src/flight/assist.js, "Destekli uçuş"). Run: node tests/assist.test.mjs (≈ 15 s)
 // No framework: scripted "novice" pilots fly the real flight models through the real keyboard input module
 // (src/flight/input.js: key ramps, lever rates, the AB detent, the lever sync) against flat worlds built from the San
 // Francisco and İstanbul runway data, once with the assist and once without, with the same seeds. Prints a PASS/FAIL
@@ -18,7 +18,6 @@ import { createInput } from '../src/flight/input.js';
 import { runwayEnds } from '../src/flight/fixedwing-autopilot.js';
 import { assistWanted, pickRunway, landingEnds, BACKUP_RUNWAYS } from '../src/flight/assist.js';
 
-const QUICK = process.argv.includes('--quick');
 const KT = 0.514444, DEG = Math.PI / 180;
 const FIXED = ['a320neo', 'b737', 'f16', 'f22'];
 const SPECS = {};
@@ -224,6 +223,22 @@ function landRun({ id, map, rwName, dist, lat = 0, hdgOff = 0, altOff = 0, assis
   check('Setting: the assisted flight, tutorial, hints, landing card, missions and progression never save settings', !forbidden.length, forbidden.join(', '));
 }
 
+// telemetry: `as` on the outcome events, no data key that would overwrite an envelope key (t, s, n, m, v)
+{
+  const bad = [], outcome = {};
+  for (const rel of ['src/ui/assist-hud.js', 'src/ui/tutorial.js']) {
+    const src = readFileSync(new URL(`../${rel}`, import.meta.url), 'utf8');
+    for (const m of src.matchAll(/trackEvent\('(\w+)', \{([^}]*)\}/g)) {
+      const keys = [...m[2].matchAll(/(?:^|,)\s*(\w+)\s*(?::|,|$)/g)].map((k) => k[1]);
+      for (const k of keys) if (['t', 's', 'n', 'm', 'v'].includes(k)) bad.push(`${rel}: ${m[1]}.${k}`);
+      if (['takeoff', 'land', 'crash'].includes(m[1])) outcome[m[1]] = /\bas:/.test(m[2]);
+    }
+    for (const m of src.matchAll(/setEventExtras\('(\w+)'/g)) outcome[`extras:${m[1]}`] = true;
+  }
+  check('Telemetry: takeoff / land / crash carry `as`, fly / end get it as event extras', outcome.takeoff && outcome.land && outcome.crash && outcome['extras:fly'] && outcome['extras:end'], JSON.stringify(outcome));
+  check('Telemetry: no assisted-flight data key clashes with the envelope keys t / s / n / m / v', !bad.length, bad.join(', '));
+}
+
 // 2. assist off: identical flights (the layer never created, created and switched off)
 {
   const world = makeWorld('sf', 4, (x) => x > 3000);
@@ -237,7 +252,7 @@ function landRun({ id, map, rwName, dist, lat = 0, hdgOff = 0, altOff = 0, assis
       const r = rng(id.length * 7 + (air ? 1 : 0));
       const inp = { pitch: 0, roll: 0, yaw: 0, throttle: air ? 0.6 : 0, brake: 0 };
       const h = createHash('sha256');
-      for (let i = 0; i < 60 * (QUICK ? 30 : 60); i++) {
+      for (let i = 0; i < 60 * 60; i++) {
         if (f.pendingThrottle != null) { inp.throttle = f.pendingThrottle; f.pendingThrottle = null; }
         if (i % 20 === 0) { inp.pitch = (r() - 0.45) * 0.6; inp.roll = (r() - 0.5) * 0.5; inp.yaw = (r() - 0.5) * 0.3; }
         if (i % 90 === 0) inp.throttle = Math.min(1, Math.max(0, inp.throttle + (r() - 0.3) * 0.4));
@@ -257,7 +272,7 @@ function landRun({ id, map, rwName, dist, lat = 0, hdgOff = 0, altOff = 0, assis
 // 3. novice take-offs: assisted vs not, same seeds
 const summary = {};
 {
-  const N = QUICK ? 4 : 10;
+  const N = 10;
   const runways = [['sf', 'KSFO 28R'], ['ist', 'LTFM 35R']];
   let on = 0, off = 0, n = 0, crashOn = 0;
   for (const id of FIXED) {
@@ -277,7 +292,7 @@ const summary = {};
 // 4. novice landings from 5–10 km at SF and İstanbul
 {
   const AIRPORTS = [['sf', 'KSFO 28R'], ['sf', 'KOAK 30'], ['sf', 'KNGZ 24'], ['ist', 'LTFM 35R'], ['ist', 'LTBA 05'], ['ist', 'LTFJ 06R']];
-  const N = QUICK ? 1 : 2;
+  const N = 2;
   let on = 0, off = 0, n = 0, crashOn = 0;
   for (const id of FIXED) {
     let a = 0, b = 0, ca = 0, m = 0;
@@ -303,7 +318,7 @@ const summary = {};
     ['ist', 'LTBA 05', 6000, -600, 0, 0], ['sf', 'KNGZ 24', 5000, 0, 90, 0], ['ist', 'LTFJ 06R', 7000, 1500, 30, 200]];
   for (const id of FIXED) {
     const bad = [];
-    for (const [map, rwName, dist, lat, hdgOff, altOff] of (QUICK ? cases.slice(0, 3) : cases)) {
+    for (const [map, rwName, dist, lat, hdgOff, altOff] of cases) {
       const r = landRun({ id, map, rwName, dist, lat, hdgOff, altOff, assist: true, maxT: 480 });
       if (!r.ok || Math.abs(r.td.vs) > 2) bad.push(`${rwName}: ${r.td ? `vs ${r.td.vs.toFixed(2)} rw ${r.td.rw}` : 'no touchdown'} ${r.reason}`);
     }
@@ -341,19 +356,19 @@ const summary = {};
     kb.input.setAircraft(f.spec); kb.input.setThrottle(idle ? 0 : 1); f.pendingThrottle = null;
     let stalled = 0, minAgl = Infinity, maxAoa = 0;
     kb.down('KeyS');
-    for (let t = 0; t < (QUICK ? 45 : 90); t += DT) {
+    for (let t = 0; t < 90; t += DT) {
       kb.input.update(DT); f.step(DT, kb.input.state, world);
       if (f.stalled) stalled++; minAgl = Math.min(minAgl, f.agl); maxAoa = Math.max(maxAoa, f.aoa);
       if (f.crashed) break;
     }
-    check(`Pull back held ${QUICK ? 45 : 90} s, ${idle ? 'idle' : 'full power'}, ${id}: no stall, no crash, no height lost`,
+    check(`Pull back held 90 s, ${idle ? 'idle' : 'full power'}, ${id}: no stall, no crash, no height lost`,
       !f.crashed && stalled === 0 && minAgl > 850 && maxAoa < f.lp.alphaStall / DEG, `max AoA ${maxAoa.toFixed(1)}° (stall ${(f.lp.alphaStall / DEG).toFixed(1)}°), min ${minAgl.toFixed(0)} m`);
   }
 }
 
 // 8. helicopter: assisted lift-off, a novice's collective, the vertical landing, water
 {
-  const N = QUICK ? 6 : 16;
+  const N = 16;
   let on = 0, off = 0, hover = 0;
   for (let s = 1; s <= N; s++) {
     for (const assist of [true, false]) {
