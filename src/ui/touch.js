@@ -18,7 +18,10 @@
 // Layout: safe-area insets, sizes from the short screen side; the HUD's compact columns, the tutorial stack and the map
 // are fitted around the controls (hud.setTouchLayout, CSS variables on <html class="gk-touch">).
 //
-//   createTouchControls(hudRoot, { input, hud, getState }) → { update(dt, flight, info), enable(), get active(), debug() }
+//   createTouchControls(hudRoot, { input, hud, getState }) → { update(dt, flight, info), sample(), enable(), get active(), debug() }
+//   sample() writes the stick / tilt / pedal axes into input.touch; main.js calls it on every refresh right before
+//   input.update(), so the flight step of that refresh uses the latest finger position (written after the step, as part
+//   of update(), a stick movement reached the flight model one simulation step later: +33 ms at 30 fps).
 import { injectCSS, BASE_CSS } from './styles.js';
 import { el, clamp } from './util.js';
 import { shared } from './shared.js';
@@ -207,6 +210,7 @@ export function createTouchControls(hudRoot, { input, hud, getState = () => ({})
     get active() { return active; },
     enable() { if (!active) { active = true; build(); } },
     update() {},
+    sample() {},
     debug() { return { active }; },
   };
   if (touchMode()) api.enable();
@@ -668,6 +672,17 @@ function createControls(hudRoot, { input, hud, getState }) {
   }
 
   let wasPaused = false;
+  // axes: stick (+ tilt), ground steering from the stick for fixed wing, pedals for the helicopter (see sample() above)
+  function sample() {
+    const f = flightRef.f;
+    if (!f) return;
+    let px = shapeAxis(st.x), py = shapeAxis(st.y);
+    if (tiltOn && tilt.read(tiltOut)) { px = clamp(px + tiltOut.roll, -1, 1); py = clamp(py + tiltOut.pitch, -1, 1); }
+    input.touch.roll = px;
+    input.touch.pitch = py;
+    if (flightRef.cat === 'helicopter') input.touch.yaw = pd.v * Math.abs(pd.v) * 0.5 + pd.v * 0.5;
+    else input.touch.yaw = f.onGround ? px : 0;
+  }
   // last values written to the DOM: update() only touches what changed (the lever position includes the layout's sl.top / sl.H)
   const ui = { top: NaN, fill: NaN, ab: null, rev: null, txtRev: null, txtAb: null, pct: NaN, fail: false, fs: null };
   function update(dt, f, info = {}) {
@@ -680,13 +695,6 @@ function createControls(hudRoot, { input, hud, getState }) {
     const nav = s.mapOpen;
     const hide = !!nav;
     if (hide !== hideOn) { hideOn = hide; root.classList.toggle('gkx-off', hide); if (hide) releaseAll(); }
-    // axes: stick (+ tilt), ground steering from the stick for fixed wing, pedals for the helicopter
-    let px = shapeAxis(st.x), py = shapeAxis(st.y);
-    if (tiltOn && tilt.read(tiltOut)) { px = clamp(px + tiltOut.roll, -1, 1); py = clamp(py + tiltOut.pitch, -1, 1); }
-    input.touch.roll = px;
-    input.touch.pitch = py;
-    if (flightRef.cat === 'helicopter') input.touch.yaw = pd.v * Math.abs(pd.v) * 0.5 + pd.v * 0.5;
-    else input.touch.yaw = f.onGround ? px : 0;
     // slider readout (the lever may also move by keys, a reset or the hover hold)
     // (DOM written only on change: a still lever costs no style work)
     const rev = revCmd();
@@ -741,6 +749,7 @@ function createControls(hudRoot, { input, hud, getState }) {
 
   return {
     update,
+    sample,
     layout,
     debug() {
       return {

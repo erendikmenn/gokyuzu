@@ -715,6 +715,9 @@ function frame(ts) {
   timer.update(ts);
   const rawDt = timer.getDelta();
   pacer.raf(ts);
+  // touch axes (stick / tilt / pedals) sampled here, right before the input module folds them in: the flight step below
+  // uses the finger position of this refresh (they used to be written after the step: one step later, +33 ms at 30 fps)
+  touchUI.sample();
   input.update(Math.min(rawDt, 0.1));   // every refresh: keyboard ramps and gamepad edges stay exactly as before
   if (state.halted) return;   // robustness: graphics failure being handled (notice shown, page reloading)
   simAcc += rawDt;
