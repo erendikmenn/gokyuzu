@@ -86,12 +86,15 @@ html.gk-touch .gka-x { width: 32px; height: 32px; }
 .gka-at { font: 700 calc(10px * var(--as)) var(--gk-sans); letter-spacing: .1em; color: var(--gk-teal); border: 1px solid rgba(92, 242, 200, .4); padding: 1px 5px; border-radius: 5px; white-space: nowrap; }
 .gka-prot { display: none; font-size: calc(12px * var(--as)); font-weight: 650; color: var(--gk-caution); padding: 2px 10px; border-radius: 999px; background: rgba(12, 16, 24, .55); }
 .gka-prot.on { display: block; }
-.gka-tip { display: none; align-items: center; gap: 10px; padding: calc(7px * var(--as)) calc(8px * var(--as)) calc(7px * var(--as)) calc(14px * var(--as)); border-radius: 16px;
-  max-width: min(calc(100vw - 32px), calc(460px * var(--as))); font-size: calc(13px * var(--as)); line-height: 1.4; border-color: rgba(92, 242, 200, .35); }
+.gka-tip { display: none; position: absolute; left: calc(16px * var(--as)); bottom: calc(206px * var(--as)); align-items: center; gap: 10px;
+  padding: calc(7px * var(--as)) calc(8px * var(--as)) calc(7px * var(--as)) calc(14px * var(--as)); border-radius: 16px;
+  max-width: min(calc(100vw - 32px), calc(400px * var(--as))); font-size: calc(13px * var(--as)); line-height: 1.4; border-color: rgba(92, 242, 200, .35); }
+html.gk-touch .gka-tip { left: 0; right: 0; margin: 0 auto; width: max-content; bottom: calc(62px + env(safe-area-inset-bottom, 0px));
+  max-width: min(50vw, 420px); font-size: 12px; }
 .gka-tip.on { display: flex; pointer-events: auto; animation: gka-in .35s ease both; }
 .gka-path { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
 .gka-path path { fill: none; stroke: rgba(92, 242, 200, .85); stroke-width: 2; stroke-linejoin: round; filter: drop-shadow(0 0 2px rgba(0, 0, 0, .6)); }
-.gka.gka-hide .gka-col, .gka.gka-hide .gka-path { visibility: hidden; }
+.gka.gka-hide .gka-col, .gka.gka-hide .gka-path, .gka.gka-hide .gka-tip { visibility: hidden; }
 `;
 
 const ARROW = '<svg class="gka-arrow" viewBox="-20 -20 40 40" aria-hidden="true"><path d="M0 -15 L11 1 L4 1 L4 14 L-4 14 L-4 1 L-11 1 Z"/></svg>';
@@ -121,6 +124,14 @@ const MESSAGES = {
   forward: () => 'İleri uçuş: askıda tutma kapandı',
   water: () => 'Altında su var: inmek için karaya ya da bir piste git',
 };
+
+// result panels the tip must never sit on: the landing card, a mission card, the free-flight challenges panel and its
+// compact result card (and <html class="gk-result-open"> from the retention module)
+const RESULT_SEL = '.gkls-card.on, .gkq-back.on, .gkf.open, .gkf-note.on';
+function resultOpen() {
+  if (typeof document === 'undefined') return false;
+  return document.documentElement.classList.contains('gk-result-open') || !!document.querySelector(RESULT_SEL);
+}
 
 /** "KSFO 28R" → "SFO 28R", "KNGZ 24" → "Alameda 24", "LTFM 35R" → "IST 35R" (the map's airport table). */
 function rwLabel(name) {
@@ -165,7 +176,7 @@ export function createAssistHud({ hud = null, input = null } = {}) {
   const btn = el('button', 'gka-btn', row, 'İNİŞE GEÇ');
   btn.type = 'button'; btn.title = 'Destekli iniş: en yakın uygun piste yaklaş';
   const prot = el('div', 'gka-prot', col, '');
-  const tip = el('div', 'gka-tip gka-glass', col);
+  const tip = el('div', 'gka-tip gka-glass', root);
   const tipTxt = el('span', null, tip, 'İnişlerin çok iyi! İstersen Ayarlar’dan “Destekli uçuş”u kapatıp tamamen elle uçabilirsin.');
   const tipX = el('button', 'gka-x', tip, '✕');
   tipX.type = 'button'; tipX.setAttribute('aria-label', 'Kapat');
@@ -173,9 +184,11 @@ export function createAssistHud({ hud = null, input = null } = {}) {
 
   let flightRef = null, def = null, wanted = true, settings = null, heli = false;
   let lastCue = null, lastProt = null, lastDot = null, lastRot = null, lastTurn = null, lastAt = null, appCueT = 0, pathT = 0;
+  let tipPending = false, tipCheckT = 0, startT = 0;
   let appOn = false, btnOn = false, btnPulse = false, tipOn = false, tipT = 0, hideOn = false, pathOn = false;
   let tdAt = -1, tdOk = false, now = 0, device = 'kb', k = keySet('kb');
   const stats = Object.assign({ landed: 0, tip: 0 }, storageGet(STATS_KEY) || {});
+  // (a tip earned in an earlier visit but not shown yet waits for this flight's start)
   const toggle = (node, cls, on) => node.classList.toggle(cls, on);
   const flight = () => flightRef;
   const assist = () => (flightRef && flightRef.assist) || null;
@@ -233,6 +246,7 @@ export function createAssistHud({ hud = null, input = null } = {}) {
   function attach(f, d) {
     if (!f || !f.on || f === flightRef) { apply(); return; }
     flightRef = f; def = d || null;
+    startT = 20;   // a new flight: a waiting tip may show in its first seconds
     heli = !!(f.spec && f.spec.category === 'helicopter');
     f.on('assist', onAssistEvent);
     // successful assisted landings (on a runway, no crash 3 s later) → the "you can turn it off" tip after a few
@@ -294,16 +308,28 @@ export function createAssistHud({ hud = null, input = null } = {}) {
     const d = input && input.gamepadConnected ? 'pad' : input && input.touchMode ? 'touch' : 'kb';
     if (d !== device) { device = d; lastCue = null; }
     k = keySet(device, heli ? 'helicopter' : f.spec && f.spec.category === 'fighter' ? 'fighter' : 'airliner');
-    // successful assisted landing → count; the tip once after a few
+    // successful assisted landing → count; after a few the tip, once, but only when nothing else is on screen: at the
+    // next stop on the ground or the next flight start, never over a result panel or the landing card
     if (tdAt >= 0 && now - tdAt > 3) {
-      if (tdOk && !f.crashed) {
-        stats.landed++;
-        if (!stats.tip && stats.landed >= TIP_AFTER && !info.tutorial) { stats.tip = 1; tipOn = true; tipT = 14; tip.classList.add('on'); trackEvent('assist', { st: 'tip', lc: stats.landed }); }   // (lc: assisted landings so far; `n` is a reserved key)
-        storageSet(STATS_KEY, stats);
-      }
+      if (tdOk && !f.crashed) { stats.landed++; storageSet(STATS_KEY, stats); }
       tdAt = -1;
     }
-    if (tipOn && (tipT -= dt) <= 0) { tipOn = false; tip.classList.remove('on'); }
+    if (startT > 0) startT -= dt;
+    tipPending = !stats.tip && stats.landed >= TIP_AFTER && on;
+    if (tipPending && !tipOn && !info.tutorial && (tipCheckT -= dt) <= 0) {
+      tipCheckT = 0.5;
+      const stopped = f.onGround && Math.hypot(f.velocity.x, f.velocity.z) < 2;
+      if ((stopped || startT > 0) && !f.crashed && !resultOpen()) {
+        stats.tip = 1; storageSet(STATS_KEY, stats);
+        tipOn = true; tipT = 14; tip.classList.add('on');
+        trackEvent('assist', { st: 'tip', lc: stats.landed });   // (lc: assisted landings so far; `n` is a reserved key)
+      }
+    }
+    if (tipOn) {   // (a result panel opening meanwhile closes it: the tip has been seen)
+      tipT -= dt;
+      if ((tipCheckT -= dt) <= 0) { tipCheckT = 0.5; if (resultOpen()) tipT = 0; }
+      if (tipT <= 0) { tipOn = false; tip.classList.remove('on'); }
+    }
     if (!on) {
       if (appOn) { appOn = false; app.classList.remove('on'); }
       if (btnOn) { btnOn = false; btn.classList.remove('on'); }

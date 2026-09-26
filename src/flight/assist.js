@@ -768,14 +768,25 @@ class HeliAssist {
     let res = raw;
     if (!ground && !ap.on) {
       const agl = m.agl, vz = m.verticalSpeed;
-      if (agl < 40) {
-        const overWater = water(m._pos.x, m._pos.z);
-        const fast = Math.hypot(m.velocity.x, m.velocity.z) > 12;       // not a landing: no descent into the ground
-        const vzMin = overWater ? (agl < 6 ? 0.5 : -(0.5 + 0.1 * agl)) : fast ? -Math.max(0, (agl - 15) * 0.15) : -(1.0 + 0.3 * agl);
-        if (vz < vzMin && m.torque < 1.02 && m.rotorRPM > 0.97) {
-          raw.throttle = Math.min(1, Math.max(Number(raw.throttle) || 0, m.collective) + 0.5 * (vzMin - vz) * dt);
-          prot = 'sink';
-        }
+      // sink-rate floor: a descent the collective can still stop before the ground (≈ 1.5 m/s² of braking, lever and
+      // rotor lag included) everywhere, tighter close to the ground (a soft touchdown), none into the water, and no
+      // descent into the ground at speed (that is not a landing)
+      const overWater = water(m._pos.x, m._pos.z);
+      const fast = Math.hypot(m.velocity.x, m.velocity.z) > 12;
+      let vzMin = -(0.8 + Math.sqrt(3 * Math.max(agl - 2, 0)));
+      if (agl < 40) vzMin = Math.max(vzMin, overWater ? (agl < 6 ? 0.5 : -(0.5 + 0.1 * agl)) : fast ? -Math.max(0, (agl - 15) * 0.15) : -(1.0 + 0.3 * agl));
+      if (vz < vzMin && m.torque < 1.02 && m.rotorRPM > 0.97) {
+        let lev = Math.max(Number(raw.throttle) || 0, m.collective) + 0.6 * (vzMin - vz) * dt;
+        if (vz < vzMin - 3) lev = Math.max(lev, m.afcs.hoverTrim.collective);   // well past it: at least the hover collective at once
+        raw.throttle = Math.min(1, lev);
+        prot = 'sink'; this.colRaised = true;
+      } else if (this.colRaised) {
+        // after the save the lever it raised comes back down to about a level hover (not to a climb the player never
+        // asked for); a lever the player moves himself ends it
+        const hover = m.afcs.hoverTrim.collective;
+        const lev = Number(raw.throttle) || 0;
+        if (Math.abs(lev - this.lastLever) > 0.02 || lev <= hover) this.colRaised = false;
+        else if (vz > 0.5) raw.throttle = Math.max(hover, lev - 0.08 * dt);
       }
       o.pitch = clamp(Number(raw.pitch) || 0, -1, 1); o.roll = clamp(Number(raw.roll) || 0, -1, 1);
       o.yaw = Number(raw.yaw) || 0; o.brake = Number(raw.brake) || 0; o.throttle = raw.throttle;
