@@ -185,7 +185,7 @@ export function createAutopilot(m) {
   function update(h, inp, world) {
     out.active = A.on;
     out.nCmd = null; out.pCmd = null; out.power = null; out.pedal = null; out.groundPitch = null;
-    if (!A.on) return;
+    if (!A.on) { if (m.assist && m.assist.on) m.assist.law(h, inp, out); return; }   // assisted flight (src/flight/assist.js)
     const ad = m.ad;
     // ---- automatic disconnects
     if (m.crashed || (!m.wow && (Math.abs(ad.phi) > 50 * DEG || ad.theta > 30 * DEG || ad.theta < -25 * DEG || m.stalled))) { disengage('limit'); return; }
