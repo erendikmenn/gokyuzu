@@ -6,7 +6,7 @@
 //   a.cue, a.prot, a.app, a.at, a.phase     // read by the HUD guidance (src/ui/assist-hud.js); numbers / short codes
 //   flight.on('assist', (e) => …)           // e.type: 'power' | 'overspeed' | 'pullUp' | 'gear' | 'flaps' | 'speedbrake' |
 //                                           //   'atOff' | 'approach' | 'noRunway' | 'goAround' | 'landed' | 'hover' |
-//                                           //   'rotate' | 'takeoffPower' | 'water' | 'forward' | 'brake' (UI messages)
+//                                           //   'rotate' | 'takeoffPower' | 'water' | 'obstacle' | 'forward' (UI messages)
 //
 // The layer never changes the flight model's physics: it shapes the player's inputs before the model step and, in
 // flight, sends demands through the model's own flight-control path (the autopilot's apOut: load factor, roll rate and
@@ -827,11 +827,31 @@ class HeliAssist {
       if (ap.radar && ap.altitude < 8) ap.altitude = 8;
       return;
     }
+    // buildings / structures under the rotor (≈ 25 m around): never a vertical descent onto or between them
+    if ((a.clearT = (a.clearT || 0) - dt) <= 0) { a.clearT = 0.5; a.blocked = !this._clearBelow(world); }
+    if (a.blocked) {
+      if (a.stage !== 'blocked') { a.stage = 'blocked'; this._emit('obstacle'); }
+      if (ap.radar && ap.altitude < Math.max(m.agl, 8)) ap.altitude = Math.max(m.agl, 8);   // hold here, the player moves on
+      return;
+    }
     if (gs > 2.5 && a.stage !== 'descend') { a.stage = 'slow'; return; }
     if (!ap.radar) { a.stage = 'descend'; ap.altitude = Math.min(ap.altitude, (m._pos.y - m.agl) + 60); return; }
     a.stage = 'descend';
     ap.altitude = -1;                                // AFCS coupled landing (helicopter-afcs.js isLanding)
     a.vert = m.agl;
+  }
+
+  /** No structure within ≈ 25 m of the rotor's spot rises above the ground (a flat, open landing spot). */
+  _clearBelow(world) {
+    if (!world || !world.getObstacleHeight) return true;
+    const m = this.m, x = m._pos.x, z = m._pos.z;
+    const g = world.getGroundHeight ? world.getGroundHeight(x, z) : 0;
+    for (let i = 0; i < 17; i++) {
+      const r = i === 0 ? 0 : i <= 8 ? 12 : 25, a = (i % 8) * (Math.PI / 4);
+      const o = world.getObstacleHeight(x + r * Math.cos(a), z + r * Math.sin(a));
+      if (Number.isFinite(o) && o > g + 1.5) return false;
+    }
+    return true;
   }
 
   law() {}

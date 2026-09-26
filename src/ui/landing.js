@@ -92,6 +92,10 @@ export function createLandingCard({ hud, getWorld = () => null, prepareShare = n
   shareBtn.type = 'button';
 
   let flightRef = null, def = null, cat = 'airliner', missionMode = false, profile = null;
+  // assisted flight (src/flight/assist.js) on at any moment since the last take-off / reset: the landing that ends that
+  // flight is an assisted one (card.assisted → the "Destekli" leaderboards), even if it was switched off just before
+  const assistOn = (f) => !!(f && f.assist && f.assist.on);
+  let assistUsed = false;
   let pending = null;          // { td, card0, bounces, air, airT, groundT, t }
   let shown = null, hideT = 0, open = false;
   let last = null;             // immediate (pre-bounce) card of the latest touchdown, for the telemetry event
@@ -128,7 +132,7 @@ export function createLandingCard({ hud, getWorld = () => null, prepareShare = n
     const td = sampleTouchdown(f, info, {});
     const c0 = score(td, 0);
     last = { at: performance.now(), card: c0 };
-    pending = { td, bounces: 0, air: false, airT: 0, groundT: 0, t: 0, final: false, assisted: !!(f.assist && f.assist.on) };
+    pending = { td, bounces: 0, air: false, airT: 0, groundT: 0, t: 0, final: false, assisted: assistUsed || assistOn(f) };
   }
 
   function finalize() {
@@ -235,8 +239,11 @@ export function createLandingCard({ hud, getWorld = () => null, prepareShare = n
       cat = c === 'fighter' || c === 'helicopter' ? c : 'airliner';
       flight.on('touchdown', onTouchdown);
       flight.on('crash', () => { pending = null; hide(); });
+      flight.on('takeoff', () => { assistUsed = assistOn(flight); });
+      assistUsed = assistOn(flight);
     },
     update(dt, f) {
+      if (f && !assistUsed && !f.onGround && assistOn(f)) assistUsed = true;
       if (hideT > 0 && (hideT -= dt) <= 0) hide();
       const p = pending;
       if (!p || !f) return;
@@ -258,7 +265,9 @@ export function createLandingCard({ hud, getWorld = () => null, prepareShare = n
     /** Scoring profile for the flight (missions): null or 'autorotation' (helicopter power-off landing). */
     setProfile(p) { profile = p || null; },
     /** Clear a pending touchdown and the card (flight reset / mission restart). */
-    reset() { pending = null; hide(); },
+    reset() { pending = null; hide(); assistUsed = assistOn(flightRef); },
+    /** Assisted flight was on at some moment since the last take-off / reset (mission and challenge results). */
+    get assistUsed() { return assistUsed || assistOn(flightRef); },
     get last() { return shown; },
     debug() { return { pending: pending ? { t: +pending.t.toFixed(2), bounces: pending.bounces } : null, shown, visible: card.classList.contains('on'), open }; },
   };

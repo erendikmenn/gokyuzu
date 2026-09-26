@@ -416,6 +416,25 @@ const summary = {};
   }
 }
 
+// helicopter over a city block: no vertical descent between buildings
+{
+  const world = makeWorld('sf', 4);
+  world.getObstacleHeight = (x, z) => (Math.abs(x - 20) < 15 && Math.abs(z) < 15 ? 60 : -Infinity);   // a 56 m building 20 m east
+  const f = model('uh60'), kb = keyboard();
+  globalThis.__game = { flight: f };
+  f.reset({ x: 0, z: 0, heading: 0, altitude: 120, speed: 0 }, world);
+  f.setAssist(true); kb.input.setAircraft(f.spec);
+  let td = null, stage = '';
+  f.on('touchdown', (i) => { td = td || i; });
+  for (let t = 0; t < 90; t += DT) {
+    if (Math.abs(t - 1) < DT / 2) f.assist.requestApproach(world);
+    kb.input.update(DT); f.step(DT, kb.input.state, world);
+    if (f.assist.app) stage = f.assist.app.stage;
+    if (f.crashed || td) break;
+  }
+  check('Helicopter "İnişe geç" next to a building: holds the hover, no descent between the buildings', !f.crashed && !td && stage === 'blocked' && f.agl > 7, `stage ${stage}, agl ${f.agl.toFixed(1)}`);
+}
+
 // 9. cost per frame (phones): the layer's own work is a small fraction of the model step
 {
   const world = makeWorld('sf', 4);

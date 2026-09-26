@@ -27,6 +27,7 @@ import { AIRPORTS } from './data.js';
 import { loadSettings, storedSettings } from '../core/settings.js';
 import { trackEvent, setEventExtras } from '../core/telemetry.js';
 import { assistWanted } from '../flight/assist.js';
+import { resultOpen } from '../retention/result-flag.js';   // <html class="gk-result-open">
 
 const STATS_KEY = 'gokyuzu.assist';          // { landed: successful assisted landings, tip: 1 once the tip was shown }
 const TIP_AFTER = 3;
@@ -123,14 +124,15 @@ const MESSAGES = {
   hover: () => 'Havada asılı kalıyor: çubukla yavaşça hareket et, kolektifle yüksel / alçal',
   forward: () => 'İleri uçuş: askıda tutma kapandı',
   water: () => 'Altında su var: inmek için karaya ya da bir piste git',
+  obstacle: () => 'Altında bina var: inmek için açık bir alana ya da bir piste git',
 };
 
-// result panels the tip must never sit on: the landing card, a mission card, the free-flight challenges panel and its
-// compact result card (and <html class="gk-result-open"> from the retention module)
+// what the tip must never sit on: a result view (src/retention/result-flag.js: the free-flight result, its compact card on
+// phones, a mission result card), the landing card, a mission card (briefing) and the open free-flight panel
 const RESULT_SEL = '.gkls-card.on, .gkq-back.on, .gkf.open, .gkf-note.on';
-function resultOpen() {
+function resultOnScreen() {
   if (typeof document === 'undefined') return false;
-  return document.documentElement.classList.contains('gk-result-open') || !!document.querySelector(RESULT_SEL);
+  return resultOpen() || !!document.querySelector(RESULT_SEL);
 }
 
 /** "KSFO 28R" → "SFO 28R", "KNGZ 24" → "Alameda 24", "LTFM 35R" → "IST 35R" (the map's airport table). */
@@ -240,7 +242,7 @@ export function createAssistHud({ hud = null, input = null } = {}) {
       return;
     }
     const m = MESSAGES[e.type];
-    if (m) hud.showMessage(m(e, heli), e.type === 'hover' || e.type === 'water' ? 3500 : 2200);
+    if (m) hud.showMessage(m(e, heli), e.type === 'hover' || e.type === 'water' || e.type === 'obstacle' ? 3500 : 2200);
   }
 
   function attach(f, d) {
@@ -319,7 +321,7 @@ export function createAssistHud({ hud = null, input = null } = {}) {
     if (tipPending && !tipOn && !info.tutorial && (tipCheckT -= dt) <= 0) {
       tipCheckT = 0.5;
       const stopped = f.onGround && Math.hypot(f.velocity.x, f.velocity.z) < 2;
-      if ((stopped || startT > 0) && !f.crashed && !resultOpen()) {
+      if ((stopped || startT > 0) && !f.crashed && !resultOnScreen()) {
         stats.tip = 1; storageSet(STATS_KEY, stats);
         tipOn = true; tipT = 14; tip.classList.add('on');
         trackEvent('assist', { st: 'tip', lc: stats.landed });   // (lc: assisted landings so far; `n` is a reserved key)
@@ -327,7 +329,7 @@ export function createAssistHud({ hud = null, input = null } = {}) {
     }
     if (tipOn) {   // (a result panel opening meanwhile closes it: the tip has been seen)
       tipT -= dt;
-      if ((tipCheckT -= dt) <= 0) { tipCheckT = 0.5; if (resultOpen()) tipT = 0; }
+      if ((tipCheckT -= dt) <= 0) { tipCheckT = 0.5; if (resultOnScreen()) tipT = 0; }
       if (tipT <= 0) { tipOn = false; tip.classList.remove('on'); }
     }
     if (!on) {
@@ -364,7 +366,7 @@ export function createAssistHud({ hud = null, input = null } = {}) {
     if (showApp) {
       if (heli) {
         setText(t1, 'DESTEKLİ İNİŞ', c1);
-        setText(t2, ap.water ? 'Altında su var' : ap.stage === 'descend' ? 'Dikey iniş' : 'Yavaşlanıyor', c2);
+        setText(t2, ap.water ? 'Altında su var' : ap.blocked ? 'Altında bina var' : ap.stage === 'descend' ? 'Dikey iniş' : 'Yavaşlanıyor', c2);
         setText(t3, `${Math.round(f.agl * 3.28084 / 10) * 10} ft`, c3);
         if (lastDot !== 0) { lastDot = 0; gsDot.style.transform = 'translateY(0px)'; }
         if (lastRot !== 0) { lastRot = 0; arrow.style.transform = 'rotate(180deg)'; }
