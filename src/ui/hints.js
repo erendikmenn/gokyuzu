@@ -261,6 +261,7 @@ const RULES = [
       const f = c.f;
       if (!fixedWing(c) || f.onGround || f.gearHandleDown !== false) return false;
       if (slowFlag(c) || f.athrMode || idleDecay(c, s) || (s.sinceTakeoff < 300 && c.lever < 0.1)) return false;   // losing speed, not landing
+      if (f.assist && f.assist.on && f.assist.app) return false;   // the assisted approach lowers it
       if (f.agl < 5 || f.agl > 300 || f.verticalSpeed > -2) return false;
       const vref = (f.vSpeeds && f.vSpeeds.vref) || (c.spec && c.spec.vRef) || 70;
       return (f.warnings && f.warnings.gear) || f.ias < vref * 1.5;
@@ -269,14 +270,14 @@ const RULES = [
   },
   {
     id: 'idle', topic: 'idle', tone: 'info', after: 20, cooldown: 60, cap: 2,
-    cond: (c) => c.f.onGround && c.gsKt < 1 && c.lever < 0.08,
+    cond: (c) => c.f.onGround && c.gsKt < 1 && c.lever < 0.08 && !c.assistOn,   // (assisted flight: its cue says it)
     text: (k, c) => (fixedWing(c)
       ? `Kalkış için gaz ver: ${k.hold('thrUp')}${k.kb ? ' ya da {9} tuşuna bas' : ''}.`
       : `Havalanmak için kolektifi artır: ${k.hold('thrUp')}.`),
   },
   {
     id: 'rotate', topic: 'rotate', tone: 'caution', after: 1.5, cooldown: 30, cap: 3,
-    cond: (c) => fixedWing(c) && c.f.onGround && c.kt > c.vr + 12 && c.lever > 0.5 && c.inp.pitch < 0.3 && !(c.f.reverser > 0.05),
+    cond: (c) => fixedWing(c) && c.f.onGround && c.kt > c.vr + 12 && c.lever > 0.5 && c.inp.pitch < 0.3 && !(c.f.reverser > 0.05) && !c.assistOn,
     text: (k) => `Kalkış hızını geçtin: ${k.hold('pitchUp')}, burun kalksın.`,
   },
   {

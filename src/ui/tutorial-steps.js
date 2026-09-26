@@ -293,10 +293,113 @@ const HELI_GROUND = [
   freeStep('helicopter'),
 ];
 
-/** Pick the scenario for a flight start: 'runway' | 'air' | 'final' × category. */
-export function pickScenario(category, spawn, flight) {
+// ---------- assisted flight (settings.assist, src/flight/assist.js): the first flight ends with an assisted landing ----------
+const km = (m) => (m >= 1000 ? `${(m / 1000).toFixed(1).replace('.', ',')} km` : `${Math.round(m / 10) * 10} m`);
+const appOf = (c) => (c.f && c.f.assist && c.f.assist.on && c.f.assist.app) || null;
+
+function assistThrottleStep(fighter) {
+  return {
+    ...throttleStep(fighter),
+    title: () => 'Gazı aç',
+    text: (k) => (k.touch
+      ? 'Gaz sürgüsünü biraz yukarı it: destek gazı kalkış gücüne getirir, frenler kendiliğinden bırakılır.'
+      : `${k.chip('thrUp')} tuşuna bir kez bas: destek gazı kalkış gücüne getirir, frenler kendiliğinden bırakılır.`),
+    explicit: (k) => (k.touch ? 'Sağdaki gaz sürgüsünü parmağınla biraz yukarı kaydır.' : `${k.hold('thrUp')} yarım saniye.${k.kb ? ' Ya da {9} tuşuna bas.' : ''}`),
+    done: (c) => c.lever >= c.detent - 0.05 || c.kt > 60 || c.airborne,
+  };
+}
+const assistRotateStep = {
+  ...rotateStep,
+  title: (k, c, p) => (p ? 'Şimdi burnu kaldır!' : 'Hızlanıyorsun'),
+  text: (k, c, p) => (p
+    ? `${k.hold('pitchUp')}: destek burnu güvenli açıya kaldırır, uçak yerden kesilir.`
+    : `Destek pistin ortasında tutuyor. Hız ${c.vr} kt olunca ${k.hold('pitchUp')}.`),
+  explicit: (k) => `${k.hold('pitchUp')}; uçak havalanana kadar bırakma. Fazla kaldıramazsın: destek sınırlar.`,
+};
+const assistAppStep = {
+  id: 'app',
+  topics: ['approach', 'autopilot'],
+  keys: () => 'İNİŞE GEÇ',
+  phase: (c) => (c.f.agl > 120 || appOf(c) ? 1 : 0),
+  ripe: (c) => c.f.agl > 120,
+  nudge: 10,
+  title: (k, c, p) => (p ? 'Şimdi inişe geç' : 'Tırmanmaya devam et'),
+  text: (k, c, p) => (p
+    ? `Ekrandaki {İNİŞE GEÇ} düğmesine ${k.touch ? 'dokun' : 'bas'}: destek en yakın pisti seçer ve seni oraya götürür.`
+    : 'Destek güvenli yüksekliğe tırmanıyor. Birazdan inişe geçeceğiz.'),
+  explicit: (k) => `${k.touch ? 'Ekranın altındaki' : 'Ekranın üstündeki'} yeşil {İNİŞE GEÇ} düğmesine bir kez ${k.touch ? 'dokun' : 'tıkla'}.`,
+  done: (c) => !!appOf(c) || c.ev.touchdown,
+};
+const assistLandStep = {
+  id: 'land',
+  topics: ['approach', 'sink', 'gear', 'stall', 'brake'],
+  keys: (k) => `${k.label('roll')} · ${k.label('pitch')}`,
+  phase: (c) => { const a = appOf(c); return a && a.stage === 'final' ? 1 : 0; },
+  title: (k, c, p) => (p ? 'Piste yaklaşıyorsun' : 'Destek seni piste götürüyor'),
+  text: (k, c, p) => (p
+    ? `Ok ve kapılar pisti gösteriyor. İstersen ${k.touch ? 'çubukla' : `${k.chip('roll')} ile`} yönlendir, istersen bırak: destek süzülür, pist başında burnu kaldırır.`
+    : `Takım, flap ve hız otomatik. Ekrandaki oku izle ya da ${k.touch ? 'çubuğu' : 'tuşları'} bırak.`),
+  explicit: null,
+  meter(c, m) { const a = appOf(c); m.label = 'Piste'; m.value = a ? km(a.dist) : '—'; m.frac = a ? clamp01(1 - a.dist / 15000) : 0; },
+  done: (c) => c.ev.touchdown || (c.f.onGround && c.f.agl < 1 && c.stepT > 2),
+};
+function assistFinal(heli) {
+  return {
+    id: 'free',
+    topics: [],
+    final: true,
+    hold: 12,
+    keys: (k) => (k.touch ? `${k.label('pause')}` : `${k.label('reset')} · ${k.label('menu')} · F1`),
+    title: () => 'Tebrikler, ilk inişin!',
+    text: (k) => (heli
+      ? `İniş puanın ekranda. Yeniden kalkmak için kolektifi artır; ${k.touch ? `${k.chip('pause')} menüsünden ana menüye dönebilirsin` : `${k.chip('reset')} baştan başlatır`}.`
+      : `İniş puanın ve yıldızların ekranda. Yeniden kalkmak için gazı aç; ${k.touch ? `${k.chip('pause')} menüsünden ana menüye dönebilirsin` : `${k.chip('reset')} baştan başlatır, {F1} tüm kontroller`}.`),
+    explicit: null,
+    done: (c) => c.stepT >= 12,
+  };
+}
+function assistStopStep() {
+  const stop = landingSteps('airliner')[2];
+  return { ...stop, text: (k) => `Destek frenliyor. Daha sert frenlemek için ${k.hold('brake')}.`, done: (c) => c.f.onGround && c.gsKt < 20 };
+}
+function assistedScenario(cat, air, finalStart) {
+  const heli = cat === 'helicopter';
+  if (heli) {
+    const lift = {
+      ...HELI_GROUND[0],
+      title: () => 'Kolektifi artır',
+      text: (k) => (k.touch ? 'Kolektif sürgüsünü biraz yukarı it: destek helikopteri kaldırır ve alçakta askıda tutar.' : `${k.chip('thrUp')} tuşuna bir kez bas: destek helikopteri kaldırır ve alçakta askıda tutar.`),
+      explicit: (k) => `${k.hold('thrUp')} yarım saniye, sonra bırak.`,
+      done: (c) => !c.f.onGround && c.f.agl > 2,
+    };
+    const land = {
+      ...assistAppStep,
+      id: 'land',
+      phase: () => 1,
+      ripe: () => true,
+      title: () => 'Şimdi in',
+      text: (k) => `Ekrandaki {İNİŞE GEÇ} düğmesine ${k.touch ? 'dokun' : 'bas'}: helikopter yavaşlar ve dikey olarak yere iner.`,
+      done: (c) => c.ev.touchdown || (c.f.onGround && c.stepT > 2),
+    };
+    const steps = air ? [airborneSteps(cat)[0], airborneSteps(cat)[1], land, assistFinal(true)] : [lift, HELI_GROUND[2], HELI_GROUND[3], land, assistFinal(true)];
+    return { id: air ? 'heli-air-as' : 'heli-ground-as', steps };
+  }
+  if (finalStart) return { id: `${cat}-final-as`, steps: [assistAppStep, assistLandStep, assistStopStep(), assistFinal(false)] };
+  if (air) { const a = airborneSteps(cat); return { id: `${cat}-air-as`, steps: [a[0], a[1], assistAppStep, assistLandStep, assistStopStep(), assistFinal(false)] }; }
+  const fighter = cat === 'fighter';
+  // (the gear step also ends when the player goes straight to "İnişe geç": the approach wants the gear down)
+  const gear = { ...gearUpStep, done: (c) => c.f.gearHandleDown === false || !!appOf(c) || c.ev.touchdown };
+  return { id: `${cat}-runway-as`, steps: [assistThrottleStep(fighter), assistRotateStep, gear, assistAppStep, assistLandStep, assistStopStep(), assistFinal(false)] };
+}
+
+/**
+ * Pick the scenario for a flight start: 'runway' | 'air' | 'final' × category; with assisted flight on
+ * ({ assist: true }) the assisted variants ('…-as': take-off with the assist, then "İnişe geç" and an assisted landing).
+ */
+export function pickScenario(category, spawn, flight, { assist = false } = {}) {
   const cat = category === 'fighter' || category === 'helicopter' ? category : 'airliner';
   const air = !!(spawn && spawn.altitude != null);
+  if (assist) return assistedScenario(cat, air, air && cat !== 'helicopter' && (spawn.id === 'AIR-SFO-FINAL' || spawn.final) && flight && flight.gearHandleDown);
   if (cat === 'helicopter') return air ? { id: 'heli-air', steps: airborneSteps(cat) } : { id: 'heli-ground', steps: HELI_GROUND };
   if (air && (spawn.id === 'AIR-SFO-FINAL' || spawn.final) && flight && flight.gearHandleDown) return { id: `${cat}-final`, steps: landingSteps(cat) };
   if (air) return { id: `${cat}-air`, steps: airborneSteps(cat) };

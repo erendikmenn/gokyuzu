@@ -19,6 +19,7 @@ import { el, keyChips, richText, pressKey, storageGet, storageSet, clamp, wrap18
 import { keySet, essentialKeys } from './tutorial-keys.js';
 import { pickScenario } from './tutorial-steps.js';
 import { createHints, explainCrash } from './hints.js';
+import { createAssistHud } from './assist-hud.js';   // assisted flight: guidance + the setting → flight.setAssist
 import { AIRCRAFT_INFO } from './data.js';
 import { shared } from './shared.js';
 import { loadSettings } from '../core/settings.js';
@@ -175,6 +176,9 @@ export function createOnboarding(container, { input = null, hud = null, restart 
 
   // ---------- hints ----------
   const hints = createHints(stack, { busy: (topic) => tut.active && !tut.okT && tut.steps[tut.i].topics.includes(topic) });
+  // ---------- assisted flight (src/ui/assist-hud.js): on / off from the setting, guidance, telemetry `as` ----------
+  const assistHud = createAssistHud({ hud, input });
+  const as = () => (assistHud.on ? 1 : 0);
 
   // ---------- tutorial card ----------
   const card = el('div', 'gkt-card gkt-glass', stack);
@@ -420,20 +424,22 @@ export function createOnboarding(container, { input = null, hud = null, restart 
     if (!flight || flight === flightRef || !flight.on) return;
     flightRef = flight;
     const ac = () => (def && def.id) || '';
+    // as: assisted flight on (1) / off (0); aa: the assisted approach ("İnişe geç") was flying at the touchdown
     flight.on('takeoff', () => {
       c.ev.takeoff = true;
-      trackEvent('takeoff', { ac: ac(), sp: spawn && spawn.id });
+      trackEvent('takeoff', { ac: ac(), sp: spawn && spawn.id, as: as() });
     });
     flight.on('touchdown', (i) => {
       c.ev.touchdown = true;
       if (flight.crashed || !i) return;
-      trackEvent('land', { ac: ac(), sp: spawn && spawn.id, vs: Number(i.verticalSpeed || 0).toFixed(2), rw: i.onRunway ? 1 : 0 });
+      const aa = flight.assist && flight.assist.on && flight.assist.app ? 1 : undefined;
+      trackEvent('land', { ac: ac(), sp: spawn && spawn.id, vs: Number(i.verticalSpeed || 0).toFixed(2), rw: i.onRunway ? 1 : 0, as: as(), aa });
     });
     flight.on('crash', (i) => {
       const reason = (i && i.reason) || flight.crashReason || '';
       // w: warnings active at the impact, short codes (e.g. "le,pu" = low energy + pull up)
       const w = Object.entries(flight.warnings || {}).filter(([k, on]) => on && WARN_CODES[k]).map(([k]) => WARN_CODES[k]).join(',');
-      trackEvent('crash', { ac: ac(), sp: spawn && spawn.id, r: explainCrash(reason, c.cat).code, d: reason.slice(0, 60), w });
+      trackEvent('crash', { ac: ac(), sp: spawn && spawn.id, r: explainCrash(reason, c.cat).code, d: reason.slice(0, 60), w, as: as() });
       if (tut.active) trackEvent('tut', { ac: ac(), sc: scenario.id, st: tut.steps[tut.i].id, x: 'crash' });
     });
   }
@@ -455,6 +461,7 @@ export function createOnboarding(container, { input = null, hud = null, restart 
     c.ap = !!(f.autopilot && f.autopilot.on);
     c.sinkFpm = -(f.verticalSpeed || 0) * 196.85;
     c.airborne = !f.onGround && f.agl > 3;
+    c.assistOn = !!(f.assist && f.assist.on);   // assisted flight (src/flight/assist.js): the hints its cues replace stay quiet
     c.turned = c.base.hdg0 == null ? 0 : Math.abs(wrap180((f.heading || 0) - c.base.hdg0));
     if (f.vSpeeds && f.vSpeeds.vr > 0) {
       c.vr = Math.round(f.vSpeeds.vr * KT);
@@ -502,8 +509,9 @@ export function createOnboarding(container, { input = null, hud = null, restart 
       c.flap0 = (spec.flapDetents && spec.flapDetents[0] && spec.flapDetents[0].label) || '0';
       if (flight && flight.vSpeeds && flight.vSpeeds.vr > 0) c.vr = Math.round(flight.vSpeeds.vr * KT);
       else if (spec.vRotate) c.vr = Math.round(spec.vRotate * KT);
+      assistHud.attach(flight, def);   // before the events are bound: `as` is right from the first event
       bindFlight(flight);
-      scenario = pickScenario(c.cat, sp, flight);
+      scenario = pickScenario(c.cat, sp, flight, { assist: assistHud.on });
       tut.steps = scenario.steps;
       started = true;
       hints.begin(c.cat);
@@ -520,6 +528,8 @@ export function createOnboarding(container, { input = null, hud = null, restart 
     },
 
     update(dt, f, info) {
+      // assisted flight runs for every flight (also a resumed one, which has no begin())
+      if (f) assistHud.update(dt, f, { paused: !!(info && info.paused), tutorialStep: tut.active && !tut.okT ? tut.steps[tut.i].id : null, tutorial: tut.active, hidden: hudOff });
       if (!started || !f) return;
       paused = !!(info && info.paused);
       crashed = !!f.crashed;
@@ -545,6 +555,7 @@ export function createOnboarding(container, { input = null, hud = null, restart 
     /** The flight was reset to its spawn (R, crash, "Eğitimi yeniden başlat"): a running tutorial starts over. */
     reset() {
       hints.reset();
+      assistHud.reset();
       c.ev.takeoff = false; c.ev.touchdown = false;
       if (tut.active && tut.okT === 0 && !tut.steps[tut.i].final) enterStep(0);
       else if (tut.active && tut.okT > 0 && !(tut.i + 1 < tut.steps.length && tut.steps[tut.i + 1].final)) enterStep(0);
@@ -555,12 +566,14 @@ export function createOnboarding(container, { input = null, hud = null, restart 
       if (!started) return;
       trackEvent('tut', { ac: def && def.id, sc: scenario && scenario.id, st: 'restart' });
       if (restart) restart();
-      scenario = pickScenario(c.cat, spawn, flightRef);
+      scenario = pickScenario(c.cat, spawn, flightRef, { assist: assistHud.on });
       tut.steps = scenario.steps;
       startTutorial(true);
     },
 
     get tutorialActive() { return tut.active; },
+    /** Assisted flight (src/ui/assist-hud.js): on / off, "İnişe geç", test hook. */
+    assist: assistHud,
 
     debug() {
       const st = tut.active ? tut.steps[tut.i] : null;
@@ -574,6 +587,7 @@ export function createOnboarding(container, { input = null, hud = null, restart 
           meter: meterEl.classList.contains('on') ? meterVal.textContent : null,
         } : null,
         keyCard: key.active ? [...kcGrid.querySelectorAll('.gkt-kc-cell')].map((x) => x.textContent) : null,
+        assist: assistHud.debug(),
         f1: f1.classList.contains('on'),
         hint: hints.current(),
         status: storageGet(DONE_KEY),

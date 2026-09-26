@@ -60,6 +60,15 @@ const FW = {
 
 const HOLD = null;
 
+/**
+ * Assisted flight wanted for a flight: the player's setting (settings.assist: on unless the player turned it off; only
+ * the settings panel ever writes it) and not a mission flown by hand (catalog `manual: true`, which suspends the layer
+ * for that mission without touching the setting).
+ */
+export function assistWanted(settings, mission) {
+  return !(settings && settings.assist === false) && !(mission && mission.manual);
+}
+
 /** The layer for a model (FixedWingModel or HelicopterModel). */
 export function createAssist(m) {
   return (m.spec && m.spec.category === 'helicopter') ? new HeliAssist(m) : new FixedWingAssist(m);
@@ -502,7 +511,7 @@ class FixedWingAssist {
     }
     const lim = (m.agl < 60 ? 10 : C.bankApp) * DEG;
     a.phiT = clamp(trkErr * 2.0, -lim, lim);
-    a.dir = Math.abs(trkErr) > 4 * DEG ? Math.sign(trkErr) : 0;                    // where the path is: sola / sağa
+    a.dir = Math.abs(trkErr) > 6 * DEG ? Math.sign(trkErr) : 0;                    // where the path is: sola / sağa
     const dPhi = a.phiT - ad.phi;
     a.cueRoll = Math.abs(dPhi) > 6 * DEG ? Math.sign(dPhi) : 0;                   // flight director: stick left / right
     // vertical: the gate altitude until the final, then the 3° glide path (from below: level until it is intercepted)

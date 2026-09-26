@@ -902,6 +902,65 @@ def report_extras(beacons, visitors, top):
             + (f" · yaklaşma nasıl: {top(Counter(q.get('via') or '?' for *_, q in ev if q.get('st') == 'app'), 4)}" if any(q.get('st') == 'app' for *_, q in ev) else ''))
 
 
+def flight_device(evs, visitor):
+    """phone / tablet / desktop of a beacon session: the `open` device class (dc), else touch + screen size, else the UA."""
+    op = next((q for _, q, _ in evs if q.get('t') == 'open'), {})
+    dc = (op.get('dc') or '').split('/')[0]
+    if dc in ('phone', 'tablet', 'desktop'):
+        return dc
+    touch = op.get('touch') == '1' or any(q.get('in') == 'touch' for _, q, _ in evs if q.get('t') == 'fly')
+    w, h = num(op.get('w')), num(op.get('h'))
+    if visitor['system'] in ('iOS', 'Android') or touch:
+        return 'phone' if (w and h and min(w, h) <= 500) or (not w and visitor['system'] in ('iOS', 'Android')) else 'tablet'
+    return 'desktop'
+
+
+def report_assist(beacons, visitors, top):
+    """Take-off / landing / crash funnel per assisted-flight state (src/flight/assist.js, "Destekli uçuş"): `as` on the
+    `fly` beacon (main.js hook) or else on the flight's first outcome event (takeoff / land / crash, src/ui/tutorial.js);
+    '?' = builds before the field. Per state: flights, share of ground starts with a take-off, take-offs, landings and
+    runway landings per take-off, flights with a runway landing, crashes per flight / per take-off, the top crash causes,
+    landings flown with the assisted approach ("İnişe geç", aa=1); then take-off share and runway landings per take-off by
+    device. Flights are page sessions with a `fly` beacon; players only."""
+    rows = defaultdict(list)
+    for evs in beacons.values():
+        vid = evs[0][2]
+        if visitors[vid]['who']:
+            continue
+        fly = next((q for _, q, _ in evs if q.get('t') == 'fly'), None)
+        if fly is None:
+            continue
+        outcome = [q for _, q, _ in evs if q.get('t') in ('takeoff', 'land', 'crash')]
+        state = fly.get('as') or next((q.get('as') for q in outcome if q.get('as')), '?')
+        sp = fly.get('sp') or ''
+        land = [q for q in outcome if q.get('t') == 'land']
+        rows[state].append({
+            'ground': not sp.startswith('AIR') and not fly.get('mi'), 'to': sum(1 for q in outcome if q.get('t') == 'takeoff'),
+            'ld': len(land), 'rw': sum(1 for q in land if q.get('rw') == '1'), 'aa': sum(1 for q in land if q.get('aa') == '1'),
+            'cr': [q.get('r') or '?' for q in outcome if q.get('t') == 'crash'], 'dev': flight_device(evs, visitors[vid]),
+        })
+    if not rows:
+        return
+    name = {'1': 'destekli', '0': 'desteksiz', '?': 'bilinmiyor (eski sürüm)'}
+    print('\nKalkış / iniş hunisi, destekli uçuşa göre (as; uçuş = fly sinyali olan sayfa oturumu):')
+    for k in ('1', '0', '?'):
+        fl = rows.get(k)
+        if not fl:
+            continue
+        n, g = len(fl), [f for f in fl if f['ground']]
+        to, ld, rw = sum(f['to'] for f in fl), sum(f['ld'] for f in fl), sum(f['rw'] for f in fl)
+        cr = Counter(c for f in fl for c in f['cr'])
+        print(f"  {name[k]:<24} uçuş {n} · yerden kalkış yapan {pct(sum(1 for f in g if f['to']), len(g))} · kalkış {to} · iniş/kalkış "
+              f"{ld / max(to, 1):.2f} (pist {rw / max(to, 1):.2f}) · pist inişi yapan uçuş {pct(sum(1 for f in fl if f['rw']), n)} · kaza/uçuş "
+              f"{sum(cr.values()) / n:.2f} (kaza/kalkış {sum(cr.values()) / max(to, 1):.2f})"
+              + (f" · İnişe geç ile iniş {sum(f['aa'] for f in fl)}" if k == '1' else '') + (f" · kaza nedenleri: {top(cr, 4)}" if cr else ''))
+        by = defaultdict(list)
+        for f in fl:
+            by[f['dev']].append(f)
+        print('    ' + ' · '.join(f"{d} {len(v)} uçuş: kalkış {pct(sum(1 for f in v if f['ground'] and f['to']), sum(1 for f in v if f['ground']))}, pist inişi/kalkış "
+                                  f"{sum(f['rw'] for f in v) / max(sum(f['to'] for f in v), 1):.2f}" for d, v in sorted(by.items(), key=lambda kv: -len(kv[1]))))
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('target', nargs='?', default='production', choices=['production', 'staging'])
@@ -1155,6 +1214,7 @@ def main():
     report_retention(days_seen, visitors, beacons, since, a.target)
     report_visit_retention(beacons, visitors)
     report_extras(beacons, visitors, top)
+    report_assist(beacons, visitors, top)
 
     print(f'\nSon {min(a.sessions, len(sessions))} oturum (anonim ziyaretçi kimliği · başlangıç · ülke · tarayıcı · uçak · süre):')
     for s in sorted(sessions, key=lambda s: s['start'], reverse=True)[:a.sessions]:

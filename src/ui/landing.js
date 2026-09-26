@@ -18,6 +18,7 @@ import { setEventExtras } from '../core/telemetry.js';
 
 const BOUNCE_WINDOW = 2.5;     // s on the ground after the last contact before the card is final
 const SHOW_S = 7;              // compact card visible (s)
+const FIRST_KEY = 'gokyuzu.firstLanding';   // the player's first rated runway landing: a bigger moment (once per browser)
 const STAR = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.6l2.9 6 6.5.8-4.8 4.5 1.2 6.5L12 17.3l-5.8 3.1 1.2-6.5L2.6 9.4l6.5-.8z"/></svg>';
 
 const CSS = `
@@ -37,6 +38,10 @@ const CSS = `
 .gkls-stars { display: flex; gap: 2px; flex: 0 0 auto; }
 .gkls-stars svg { width: calc(19px * var(--ps, 1)); height: calc(19px * var(--ps, 1)); fill: rgba(255, 255, 255, .18); }
 .gkls-stars svg.on { fill: #ffc94a; filter: drop-shadow(0 0 5px rgba(255, 201, 74, .5)); }
+.gkls-card.first { border-color: rgba(255, 201, 74, .55); box-shadow: 0 12px 32px rgba(0, 0, 0, .3), 0 0 26px rgba(255, 201, 74, .25); }
+.gkls-card.first .gkls-stars svg.on { animation: gkls-pop .5s cubic-bezier(.2, .9, .3, 1.5) both; }
+.gkls-card.first .gkls-stars svg.on:nth-child(2) { animation-delay: .15s; } .gkls-card.first .gkls-stars svg.on:nth-child(3) { animation-delay: .3s; }
+@keyframes gkls-pop { from { transform: scale(.2); opacity: 0; } to { transform: none; opacity: 1; } }
 .gkls-lbl { font-size: calc(17px * var(--ps, 1)); font-weight: 780; letter-spacing: -.01em; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .gkls-sub { margin-top: calc(3px * var(--ps, 1)); font: 600 calc(12px * var(--ps, 1)) var(--gk-mono); color: var(--gk-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .gkls-rows { display: none; margin-top: calc(8px * var(--ps, 1)); border-top: 1px solid rgba(255, 255, 255, .08); padding-top: calc(6px * var(--ps, 1)); }
@@ -70,7 +75,7 @@ export function createLandingCard({ hud, getWorld = () => null, prepareShare = n
   card.setAttribute('role', 'status');
   card.setAttribute('aria-live', 'polite');
   const top = el('div', 'gkls-top', card);
-  el('span', 'gkls-tag', top, 'İniş puanı');
+  const tagEl = el('span', 'gkls-tag', top, 'İniş puanı');
   const xBtn = el('button', 'gkls-x', top, '✕');
   xBtn.type = 'button'; xBtn.title = 'Kapat';
   const main = el('div', 'gkls-main', card);
@@ -123,7 +128,7 @@ export function createLandingCard({ hud, getWorld = () => null, prepareShare = n
     const td = sampleTouchdown(f, info, {});
     const c0 = score(td, 0);
     last = { at: performance.now(), card: c0 };
-    pending = { td, bounces: 0, air: false, airT: 0, groundT: 0, t: 0, final: false };
+    pending = { td, bounces: 0, air: false, airT: 0, groundT: 0, t: 0, final: false, assisted: !!(f.assist && f.assist.on) };
   }
 
   function finalize() {
@@ -131,17 +136,24 @@ export function createLandingCard({ hud, getWorld = () => null, prepareShare = n
     pending = null;
     if (!p || !flightRef || flightRef.crashed) return;
     const c = score(p.td, p.bounces);
-    show(c);
+    show(c, p.assisted);
     for (const cb of listeners) { try { cb(c, p.td); } catch (e) { console.error(e); } }
   }
 
   function fmtNum(v, d = 1) { return v.toFixed(d).replace('.', ',').replace('-', '−'); }
-  function show(c) {
+  function show(c, assisted = false) {
     shown = c;
     const stars = starsEl.children;
     for (let i = 0; i < 3; i++) stars[i].classList.toggle('on', i < c.stars);
     starsEl.setAttribute('aria-label', `${c.stars} yıldız`);
-    lbl.textContent = c.label;
+    // the first rated runway landing of this browser: "İlk inişin!", the stars pop, the card stays longer
+    let first = false;
+    if (!missionMode && c.onRunway && c.stars >= 1) {
+      try { first = !localStorage.getItem(FIRST_KEY); if (first) localStorage.setItem(FIRST_KEY, '1'); } catch { first = false; }
+    }
+    card.classList.toggle('first', first);
+    tagEl.textContent = assisted ? 'İniş puanı · destekli' : 'İniş puanı';
+    lbl.textContent = first ? `İlk inişin! ${c.label}` : c.label;
     const rwName = c.runway ? c.runway.replace(/^K/, '').replace(/^SFO|^OAK|^NGZ/, (m) => ({ SFO: 'SFO', OAK: 'OAK', NGZ: 'Alameda' }[m]))
       .replace(/^LT[A-Z]{2}/, (m) => (airports[m] ? airports[m].code : m)) : '';   // (İstanbul: IST / SAW / ISL)
     sub.textContent = `−${c.fpm} ft/dk${c.onRunway && rwName ? ` · ${rwName}` : ''}`;
@@ -170,7 +182,7 @@ export function createLandingCard({ hud, getWorld = () => null, prepareShare = n
     open = false;
     card.classList.remove('open');
     card.classList.add('on');
-    hideT = SHOW_S;
+    hideT = first ? SHOW_S + 5 : SHOW_S;
   }
   /** Water landing card (airliner ditching): the ditching rating instead of the runway score; not a landing for missions. */
   function showDitch(f, info) {
@@ -178,6 +190,7 @@ export function createLandingCard({ hud, getWorld = () => null, prepareShare = n
     const d = { fpm: Math.max(0, -(info.verticalSpeed || 0) * 196.85), pitch: info.pitch || 0, roll: info.roll || 0, kt, gear: 0 };
     const r = scoreDitch(d);
     const stars = Math.max(1, r.stars);
+    card.classList.remove('first'); tagEl.textContent = 'İniş puanı';
     for (let i = 0; i < 3; i++) starsEl.children[i].classList.toggle('on', i < stars);
     lbl.textContent = r.survivable ? r.label : 'Suya iniş';
     sub.textContent = `−${Math.round(d.fpm)} ft/dk · suya iniş`;
