@@ -284,7 +284,8 @@ def report_missions(beacons, visitors, top):
 
 
 FFC_NAMES = {'bridge': 'Golden Gate altı', 'lowpass': 'Alçak geçiş', 'baytour': 'Körfez turu', 'climb': 'Dik tırmanış', 'alcatraz': 'Alcatraz pedi',
-             'land': 'En iyi iniş', 'eng': 'Motor arızası', 'flameout': 'Alev sönmesi', 'ditch': 'Suya iniş', 'autorot': 'Otorotasyon'}
+             'land': 'En iyi iniş', 'eng': 'Motor arızası', 'flameout': 'Alev sönmesi', 'ditch': 'Suya iniş', 'autorot': 'Otorotasyon',
+             'lseries': 'İniş serisi', 'dland': 'Günün inişi'}
 
 
 def report_challenges(beacons, visitors, top):

@@ -16,11 +16,14 @@
 // board; `x.weekly` = { pick, p: Promise<submission> } adds the weekly challenge's rank under the result.)
 //   p.setEntries(views) · p.render(views) (≤ 10 Hz, only while open or after a change) · p.setCount(done, total, badge)
 //   p.open() · p.close() · p.toggle() · p.isOpen · p.showResult(r, o) · p.notify(r, onOpen) · p.pointer(camera, target, label)
+// While the result view or the compact result card is on screen, <html> carries `gk-result-open` (src/retention/
+// result-flag.js): the landing card hides and other HUD tips wait. o.notes: lines under "Bu inişte" in the result.
 import { injectCSS } from './styles.js';
 import { el } from './util.js';
 import { STAR, injectPartsCSS, starRow, createPointer, showLeaderboard } from './mission-parts.js';
 import { AIRCRAFT_SHORT } from '../missions/catalog.js';
 import { fmtInt, fmtTime } from '../missions/util.js';
+import { setResultOpen } from '../retention/result-flag.js';   // <html class="gk-result-open"> while a result is on screen
 
 const ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 21V4"/><path d="M5 4h11l-2 4 2 4H5"/></svg>';
 
@@ -247,8 +250,11 @@ export function createChallengesPanel(hud, o = {}) {
     root.classList.toggle('open', on);
     tab.setAttribute('aria-expanded', String(on));
     if (on) { place(); if (touch) hideNote(); }
+    flag();
     if (o.onToggle) o.onToggle(on, nextSrc || src);
   }
+  /** The result signal (src/retention/result-flag.js): the result view open, or the compact result card on screen. */
+  function flag() { setResultOpen('ffc', (isOpen && view === 'result') || note.classList.contains('on')); }
   const close = () => setOpen(false);
   tab.addEventListener('click', (e) => { e.stopPropagation(); tab.blur(); setOpen(!isOpen, true, 'tab'); });
   xBtn.addEventListener('click', (e) => { e.stopPropagation(); close(); });
@@ -353,7 +359,7 @@ export function createChallengesPanel(hud, o = {}) {
   }
 
   // ---- result view ----
-  function showList() { view = 'list'; listView.style.display = ''; resView.style.display = 'none'; }
+  function showList() { view = 'list'; listView.style.display = ''; resView.style.display = 'none'; flag(); }
   function showResultView(r, x = {}) {
     view = 'result';
     listView.style.display = 'none';
@@ -377,7 +383,7 @@ export function createChallengesPanel(hud, o = {}) {
       const sm = el('small', null, sc, `puan${r.time != null ? ` · ${fmtTime(r.time)}` : ''}`);
       if (r.ok && x.newBest && x.prevBest > 0) el('span', 'gkq-new', sm, 'Yeni rekor');
       if (!r.ok && r.reason) el('div', 'gkf-reason', resView, r.reason);
-      if (r.ok && r.assisted) el('div', 'gkf-as', resView, 'Destekli uçuş ya da otopilotla iniş: rekorun kaydedildi, sıralamaya girmez. Sıralama için Ayarlar\'dan Destekli uçuş\'u kapat ve elle in.');
+      if (r.ok && r.assisted) el('div', 'gkf-as', resView, 'Destekli uçuşla ya da otopilotla indin: rekorun kaydedildi, sıralamaya girmez. Sıralama için elle in (Ayarlar › Destekli uçuş).');
       if (r.ok && r.rows && r.rows.length) {
         const rw = el('div', 'gkf-rows', resView);
         for (const [label, value, pts] of r.rows) {
@@ -389,6 +395,11 @@ export function createChallengesPanel(hud, o = {}) {
     if (x.best && x.best.done && !(r.ok && x.newBest)) {
       const b = el('div', 'gkf-best', resView, `En iyin: ${fmtInt(x.best.best)} puan${x.best.ac ? ` (${AIRCRAFT_SHORT[x.best.ac] || x.best.ac})` : ''} · `);
       b.append(starRow(x.best.stars || 0));
+    }
+    if (x.notes && x.notes.length) {   // the same landing's other results, the streak, a new badge (no toasts over the result)
+      const n = el('div', 'gkf-sess', resView);
+      el('h4', null, n, 'Bu inişte');
+      for (const t of x.notes.slice(0, 5)) el('div', null, n, t);
     }
     if (x.session && x.session.length) {
       const s = el('div', 'gkf-sess', resView);
@@ -421,7 +432,7 @@ export function createChallengesPanel(hud, o = {}) {
     body.scrollTop = 0;
   }
 
-  function hideNote() { note.classList.remove('on'); if (noteT) { clearTimeout(noteT); noteT = null; } }
+  function hideNote() { note.classList.remove('on'); if (noteT) { clearTimeout(noteT); noteT = null; } flag(); }
   note.addEventListener('click', (e) => { e.stopPropagation(); const fn = noteOpen; unseen = null; hideNote(); nextSrc = 'card'; if (fn) fn(); nextSrc = null; });
 
   return {
@@ -443,7 +454,7 @@ export function createChallengesPanel(hud, o = {}) {
       tab.classList.toggle('run', !!running);
     },
     /** Result view (opens the panel). x = { newBest, prevBest, best, session, crash, submit, onPlay, onSubmitted } */
-    showResult(r, x = {}) { showResultView(r, x); fresh = !isOpen; setOpen(true); place(); body.scrollTop = 0; },   // (the list's scroll: the result starts at its top)
+    showResult(r, x = {}) { showResultView(r, x); fresh = !isOpen; setOpen(true); place(); body.scrollTop = 0; flag(); },   // (the list's scroll: the result starts at its top)
     /** Touch: a compact card at the top centre; a tap opens the result (onOpen). */
     notify(r, onOpen, secs = 9) {
       fresh = false;
@@ -458,6 +469,7 @@ export function createChallengesPanel(hud, o = {}) {
       el('em', null, note, 'Sıralama');
       noteOpen = onOpen; unseen = onOpen;
       note.classList.add('on');
+      flag();
       if (noteT) clearTimeout(noteT);
       noteT = setTimeout(hideNote, secs * 1000);
     },

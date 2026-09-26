@@ -372,12 +372,26 @@ Players keep files in their browser cache, so every asset URL carries a content 
   | type | st | fields |
   |---|---|---|
   | `mission` | brief · start · done · fail · quit · retry · next · menu | `id`; brief: `via` (menu, daily, link, ff = "Görev olarak oyna", next = "Sonraki görev"), `ac`, `d`=1 daily; start: `ac`, `run` (attempt on the page), `d`; done/fail: `stars`, `score`, `sec`, `why`; quit: `sec`, `why`; retry: `ok`; next: `to`; menu: `ph` (brief, result) |
-  | `mmenu` | open · daily · detail | open: `via` (tab, daily); daily: `id` (the day's mission); detail: `id` (once per mission and page) |
-  | `ffp` | open · track · untrack · play | open: `src` (key, tab, card = the compact result card, auto = a result / crash opened it); track, untrack, play: `id` |
-  | `ffc` | start · done · fail · cancel · drop | `id` (bridge, lowpass, baytour, climb, alcatraz, land, eng, flameout, ditch, autorot), `ac`; done: `score`, `stars`, `sec`; cancel/drop: `sec`; drop: `why` (time, gap, far, landed) |
-  | `lb` | show · submit · fail | `b` (board: a mission id or ff-<id>), `d`=1 daily; show: `c` (entries); submit: `r` (rank), `im`=1 improved, `nm`=1 a nickname was given |
+  | `mmenu` | open · daily · weekly · dland · detail | open: `via` (tab, daily, weekly); daily: `id` (the day's mission); weekly: `id` (the week's pick); dland (the day's landing card); detail: `id` (once per mission and page) |
+  | `ffp` | open · track · untrack · play · final | open: `src` (key, tab, card = the compact result card, auto = a result / crash opened it); track, untrack, play: `id`; final: `id` ("Son yaklaşmaya git" on lseries / dland) |
+  | `ffc` | start · done · fail · cancel · drop | `id` (bridge, lowpass, baytour, climb, alcatraz, land, eng, flameout, ditch, autorot, lseries = İniş serisi, dland = Günün inişi; other maps: their ids, `mp` tells the map), `ac`; done: `score`, `stars`, `sec`, `as`=1 a landing with assisted flight or on the autopilot (never submitted to a leaderboard); cancel/drop: `sec`; drop: `why` (time, gap, far, landed, broken = a landing series broken) |
+  | `lb` | show · submit · fail | `b` (board: a mission id or ff-<id>), `d`=1 daily; show: `c` (entries); submit: `r` (rank), `im`=1 improved, `nm`=1 a nickname was given, `au`=1 automatic, `q`=1 quiet (a result that was not on screen: another result of the same landing) |
+  | `streak` | day · badge · pick · open | the daily streak (src/retention/activity.js): day = a new streak day, `b` streak-length bucket (1, 2, 3-6, 7-13, 14-29, 30+), `k` what finished the day (m mission, l landing, a 2 minutes in the air, c free-flight challenge); badge: `id` (d3, d7, d14, d30, l3, l10); pick: `id` (a badge or none); open: the menu's streak card |
+  | `wk` | show · play · submit · fail | the weekly challenge (src/retention/weekly.js): `id` = the week's pick (a mission id or ff:<challenge>); show: `c` (entries of the week's top 10 seen in the menu); play: started from the menu; submit: `r` (weekly rank), `im`=1 improved |
+  | `chl` | open · beat · lost · back | challenge links (?mission=<id>&challenge=<score>): `id`; open: `d`=1 daily; lost: `o` (tie, short = finished below, fail = not finished); back: "Skorunu gönder" tapped |
+  | `news` | show · close | the "Yenilikler" card: show: `id` (newest changelog entry), `c` (entries shown) |
+  | `inst` | show · accept · dismiss · later · installed | "Ana ekrana ekle": show: `p` (android = the browser's install prompt, ios = the how-to), `via` (mission, land); accept / dismiss: the browser dialog's answer; later: "Şimdi değil" / "Tamam"; installed: the browser's appinstalled event |
   | `set` | — | a setting changed (src/ui/settings-live.js; one beacon per changed setting, sent when the values have settled 1.5 s after the last change, so a slider drag is one beacon): `k` = `master` · `engine` · `voice` · `atc` · `ambient` with `v2` 0 · 25 · 50 · 75 · 100 (volume bucket); `mute` · `assist` · `chime` · `hudwarn` · `calm` (reduced flashing) · `tut` · `inv` · `tilt` · `radio` with `v2` 1 · 0; `valert` (spoken alerts) with `v2` 2 all · 1 critical · 0 off; `quality` · `fps` · `fail` · `hud` with the choice. (`v2`, not `v`: `v` is the envelope's version.) |
   Existing: `takeoff`, `land` (`fpm`, `cl`, `tdz`, `st`), `crash`, `tut`, `share` (`id`, `via`), `failure`, `gfx`.
+- Retention state is local only (localStorage, never sent; no account, no id): `gokyuzu.streak` = `{ v, days: ['YYYYMMDD', …]
+  (the last 60 Istanbul days with a finished flight or mission), best, land: { cur, best } (runway landings in a row), badges:
+  { id: day unlocked }, pick (badge id | null) }`; `gokyuzu.seen` = the newest "Yenilikler" entry id seen
+  (src/data/changelog.json); `gokyuzu.install` = `{ shown, accepted?, installed? }` (ms; the suggestion waits 14 days after
+  `shown`); `gokyuzu.ffc(.<map>)` also keeps the daily landing per day (`daily-land@YYYYMMDD`, the last 14 days) and `as`=1
+  on a best set with assisted flight. The menu's handoff to free flight is in memory (`shared.retentionIntent`).
+- Report "Geri gelme özellikleri" (report_comeback): streak days by bucket and what finished them, badges, weekly views /
+  starts / submissions, challenge links opened / beaten / sent back, the "Yenilikler" card, the home-screen suggestion by
+  platform and answer, İniş serisi / Günün inişi completions (assisted share) and "Son yaklaşmaya git".
 
 ## 12. Missions, landing score, failures, leaderboard (wave 7)
 

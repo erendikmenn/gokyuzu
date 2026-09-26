@@ -7,6 +7,7 @@
 //                    the daily variation) is also submitted to the weekly board; the result card shows the weekly rank
 //   streak           a finished mission (success, or 30 s or more) joins today to the daily streak
 //   install          phones / tablets: a finished mission may suggest "Ana ekrana ekle" in the result card
+//   result signal    <html class="gk-result-open"> while the result card is open (src/retention/result-flag.js)
 // The lines go into the mission card of src/ui/missions-hud.js (the open `.gkq-card`), before its buttons (phones: after).
 //
 //   const ret = createMissionRetention({ mission, touch })
@@ -19,6 +20,7 @@ import { weeklyFor } from './weekly.js';
 import { noteActivity, streakLine, applyAccent } from './activity.js';
 import { submitQuiet } from './lb.js';
 import { suggestInstall } from './install.js';
+import { setResultOpen } from './result-flag.js';
 import { injectCSS } from '../ui/styles.js';
 import { el } from '../ui/util.js';
 import { fmtInt } from '../missions/util.js';
@@ -84,6 +86,9 @@ export function createMissionRetention({ mission, touch = false } = {}) {
       try {
         const c = openCard();
         if (!c) return;
+        // the result signal (<html class="gk-result-open">) while this card is open ("Tekrar dene" / the menu remove it)
+        setResultOpen('mission', true);
+        const watch = setInterval(() => { if (!c.isConnected || !c.closest('.gkq-back.on')) { clearInterval(watch); setResultOpen('mission', false); } }, 400);
         // (before the buttons; phones: after them, so "Tekrar dene" stays in view without scrolling the card)
         const box = el('div', 'gkr-mres');
         const btns = c.querySelector('.gkq-btns');

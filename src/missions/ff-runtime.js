@@ -12,8 +12,9 @@
 // menu's intent (shared.retentionIntent = { track, final }: follow a challenge right away) and, on phones after a
 // 2-star landing, the "Ana ekrana ekle" suggestion (src/retention/install.js). Landings with assisted flight or on the
 // autopilot complete challenges locally but are never submitted to a leaderboard. One landing can finish several challenges:
-// the most important result shows (emergency › series › daily landing › pad › best landing), the others are toasts and
-// are submitted quietly.
+// the most important result shows (emergency › series › daily landing › pad › best landing) with the others, the streak
+// and a new badge listed in it ("Bu inişte"); the others are submitted quietly. Nothing stacks over a result: the landing
+// card hides while it is open (src/retention/result-flag.js, <html class="gk-result-open">).
 //
 //   const set = await loadChallengeSet(map)   the map's challenges + mission catalog (null: none, no panel)
 //   const ffc = createFreeFlightChallenges(ctx)
@@ -32,6 +33,7 @@ import { noteActivity, noteLanding, applyAccent, streakLine } from '../retention
 import { weeklyFor } from '../retention/weekly.js';
 import { submitQuiet } from '../retention/lb.js';
 import { suggestInstall } from '../retention/install.js';
+import { resultOpen } from '../retention/result-flag.js';
 import { runwayEnds } from '../flight/fixedwing-autopilot.js';
 import { createMarkers } from '../world-sf/markers.js';
 import { createChallengesPanel } from '../ui/challenges-panel.js';
@@ -67,7 +69,7 @@ export function createFreeFlightChallenges(ctx) {
   applyAccent();   // retention: the picked badge's HUD accent
   // progress key: a daily challenge keeps its best per day (id@YYYYMMDD)
   const pkey = (e) => (e.def.daily ? `${e.id}@${e.day}` : e.id);
-  let batch = null, airT = 0, airNoted = false;   // (batch: results of one landing, see onEvent)
+  let batch = null, batchNotes = null, airT = 0, airNoted = false;   // (batch / batchNotes: one landing's results and messages, see flushBatch)
 
   // the landing challenges join the map's list after its best-landing entry (before the emergencies)
   const baseList = set.challenges || CHALLENGES;
@@ -260,7 +262,7 @@ export function createFreeFlightChallenges(ctx) {
   function onEvent(type, e, data) {
     dirty = true;
     if (type === 'message') {
-      if (!crashing && hud && (tracked === e.id || e.status === 'run')) hud.showMessage(data, 2200);
+      if (!crashing && hud && (tracked === e.id || e.status === 'run')) { if (batchNotes) batchNotes.push(data); else hud.showMessage(data, 2200); }
       return;
     }
     if (type === 'start') {
@@ -305,17 +307,26 @@ export function createFreeFlightChallenges(ctx) {
     }
     if (crashing) return;   // the crash handler shows the flight's results
     if (batch) { batch.push({ e, r, prog }); return; }   // a landing's results: flushBatch() picks the one to show
-    present(e, r, prog);
+    if (opens({ e, r, prog })) present(e, r, prog); else if (hud) hud.showMessage(toastText({ e, r, prog }), 2600);
   }
   /** One landing's results: the most important shows, the others are toasts (a new best is submitted quietly). */
-  function flushBatch(list) {
-    if (!list.length) return;
+  /**
+   * One landing's results and notes (other results, "İniş serisi: 2/3", the streak, a new badge): the most important
+   * result that opens shows with the rest folded into it under "Bu inişte" (nothing stacks over it); without one, the
+   * lines are toasts, on phones only after the landing card (top centre, 7 s) has faded. New bests of the results that
+   * did not open are submitted quietly.
+   */
+  const opens = (x) => !x.r.ok || !(x.e.def.kind === 'landing' || x.e.def.kind === 'daily-land') || x.prog.newBest;   // (a landing's own result: only a new best)
+  function flushBatch(list, notes = []) {
     list.sort((a, b) => (SHOW_ORDER[a.e.def.kind] ?? 9) - (SHOW_ORDER[b.e.def.kind] ?? 9));
-    const [first, ...rest] = list;
-    const shown = first.e.def.kind === 'landing' && !first.prog.newBest ? null : first;   // (a best landing opens only as a new best)
-    if (shown) present(first.e, first.r, first.prog); else toast(first);
-    rest.forEach((x, i) => setTimeout(() => toast(x), 2800 * (i + 1)));
-    for (const x of rest) {
+    const primary = list.find(opens) || null;
+    const lines = [...list.filter((x) => x !== primary).map(toastText), ...notes].filter(Boolean);
+    // (a result still open from an earlier landing goes back to the list: this landing's card must not hide behind it)
+    if (!primary && panel.view === 'result') panel.showList();
+    if (primary) present(primary.e, primary.r, primary.prog, lines);
+    else if (hud) lines.forEach((t, i) => setTimeout(() => { if (!crashing) hud.showMessage(t, 2600); }, (touch ? 7500 : 0) + 2800 * i));
+    for (const x of list) {
+      if (x === primary) continue;
       const worth = x.r.ok && !x.r.assisted && (x.prog.newBest || x.e.def.kind === 'series');
       if (worth && !x.r.submitted) {
         x.r.submitted = true; submitted.add(pkey(x.e));
@@ -323,21 +334,18 @@ export function createFreeFlightChallenges(ctx) {
       }
     }
   }
-  function toast({ e, r, prog }) {
-    if (!hud) return;
-    if (!r.ok) { hud.showMessage(`${r.title}: ${r.reason || 'başarısız'}`, 2600); return; }
-    const best = e.def.kind === 'landing' ? 'en iyin' : e.def.daily ? 'bugünkü en iyin' : 'en iyin';
-    hud.showMessage(`${e.def.kind === 'landing' ? 'İniş' : r.title}: ${fmtInt(r.score)} puan${prog.newBest && prog.prevBest > 0 ? ' · yeni rekor!' : prog.prevBest > 0 && !prog.newBest ? ` · ${best} ${fmtInt(prog.prevBest)}` : ''}`, 2600);
+  function toastText({ e, r, prog }) {
+    if (!r.ok) return `${r.title}: ${r.reason || 'başarısız'}`;
+    const best = e.def.daily ? 'bugünkü en iyin' : 'en iyin';
+    return `${e.def.kind === 'landing' ? 'İniş' : r.title}: ${fmtInt(r.score)} puan${prog.newBest && prog.prevBest > 0 ? ' · yeni rekor!' : prog.prevBest > 0 && !prog.newBest ? ` · ${best} ${fmtInt(prog.prevBest)}` : ''}`;
   }
   function streakToast(st) {
+    if (batchNotes) { batchNotes.push(streakLine(st)); return; }   // (a landing: folded into its result)
     if (hud) setTimeout(() => { if (!crashing) hud.showMessage(streakLine(st), 3200); }, 3000);
   }
-  function present(e, r, prog) {
-    if (e.def.kind === 'landing' || e.def.kind === 'daily-land') {
-      // every landing is scored by the landing card already: the result opens only for a new personal (daily) best
-      if (!prog.newBest) { toast({ e, r, prog }); return; }
-    }
+  function present(e, r, prog, notes = []) {
     const x = resultExtras(e, r, prog);
+    x.notes = notes;
     // touch: the compact card at the top centre says it (a tap opens the result + top 10); desktop: a toast, then the
     // panel opens beside the view with the result
     if (touch) { panel.notify(r, () => panel.showResult(r, x)); return; }
@@ -352,17 +360,22 @@ export function createFreeFlightChallenges(ctx) {
       // a landing with assisted flight (src/ui/landing.js card.assisted) or on the autopilot (autoland) counts for the
       // challenges and the streak, never for a leaderboard
       const card = card0 && !card0.assisted && apAtTouchdown ? { ...card0, assisted: true } : card0;
-      const list = batch = [];
-      try { tracker.onLanding(card, td); } finally { batch = null; }
-      flushBatch(list);
-      // retention: a landing finishes a flight (streak); runway landings in a row (badge); phones: after a good one, the
-      // home-screen suggestion once the landing card has faded
-      const ok = !!(card && card.onRunway && card.stars >= 1);
-      const lr = noteLanding(ok);
-      const st = noteActivity('landing');
-      if (st && st.newDay) streakToast(st);
-      else if (lr && lr.unlocked && lr.unlocked.length && hud) setTimeout(() => hud.showMessage(`Yeni rozet: ${lr.unlocked[0].title}`, 3000), 3000);
-      if (touch && card && card.stars >= 2) setTimeout(() => { if (!f.crashed) suggestInstall({ via: 'land', mount: (n) => panel.root.appendChild(n) }); }, 9500);   // (after the landing card faded)
+      const list = batch = [], notes = batchNotes = [];
+      try {
+        tracker.onLanding(card, td);
+        // retention: a landing finishes a flight (streak); runway landings in a row (badge)
+        const lr = noteLanding(!!(card && card.onRunway && card.stars >= 1));
+        const st = noteActivity('landing');
+        if (st && st.newDay) streakToast(st);
+        for (const b of (lr && lr.unlocked) || []) notes.push(`Yeni rozet: ${b.title}`);
+      } finally { batch = null; batchNotes = null; }
+      flushBatch(list, notes);
+      // phones: after a good landing, the home-screen suggestion once the landing card has faded and no result is open
+      if (touch && card && card.stars >= 2) {
+        let tries = 0;
+        const later = () => { if (f.crashed || tries++ > 12) return; if (resultOpen()) { setTimeout(later, 2500); return; } suggestInstall({ via: 'land', mount: (n) => panel.root.appendChild(n) }); };
+        setTimeout(later, 9500);
+      }
     });
   }
   let apAtTouchdown = false;   // the autopilot at the (first) contact of the landing being rated: an autoland

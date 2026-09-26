@@ -1,7 +1,7 @@
 // Main menu: the daily streak ("🔥 3 gün seri") and the next daily mission's countdown ("Yarınki görev 14 sa sonra") under
 // the title, and the streak card (a tap on the streak): today's status, the longest streak and the badges (src/retention/
 // streak.js) with the title and HUD accent the player picks. Local only (localStorage), phone-friendly (the card is a
-// centred sheet on narrow screens).
+// centred sheet over a dim backdrop on narrow screens).
 //
 //   const strip = mountStreakStrip({ root, brand, sub, touch })   root: the menu (.gkm), sub: the subtitle it follows
 //   strip.refresh() · strip.destroy()
@@ -46,13 +46,16 @@ const CSS = `
   .gkm.gkm-touch .gkr-cd { font-size: 11px; padding-left: 4px; }
 }
 
-/* streak card */
+/* streak card: opaque like the settings card (src/ui/panels.js), no fade (a transform-only entrance); phones: a centred
+   sheet over a dim backdrop that closes it */
 .gkr-pop { position: absolute; z-index: 40; width: min(360px, calc(100vw - 24px)); max-height: calc(100% - 24px); overflow-y: auto; box-sizing: border-box;
   padding: 14px 14px 12px; border-radius: 16px; font-family: var(--gk-sans); color: var(--gk-fg); text-align: left; user-select: none; -webkit-user-select: none;
-  background: linear-gradient(180deg, rgba(18, 28, 46, .97), rgba(7, 12, 22, .97)); border: 1px solid rgba(255, 255, 255, .14); box-shadow: 0 22px 60px rgba(0, 0, 0, .55);
-  animation: gkr-in .2s cubic-bezier(.2, .8, .2, 1) both; overscroll-behavior: contain; }
-@keyframes gkr-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  background: linear-gradient(180deg, #111b2c, #060b15); border: 1px solid rgba(255, 255, 255, .14);
+  box-shadow: 0 22px 60px rgba(0, 0, 0, .55), inset 0 1px 0 rgba(255, 255, 255, .06);
+  animation: gkr-in .2s cubic-bezier(.2, .8, .2, 1) both; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+@keyframes gkr-in { from { transform: translateY(6px); } to { transform: none; } }
 .gkr-pop.sheet { left: 50% !important; top: 50% !important; transform: translate(-50%, -50%); animation: none; }
+.gkr-pop-back { position: absolute; inset: 0; z-index: 39; background: rgba(2, 6, 12, .62); -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px); }
 .gkr-h { display: flex; align-items: center; gap: 12px; }
 .gkr-big { display: grid; place-items: center; width: 54px; height: 54px; border-radius: 14px; flex: 0 0 auto; font: 800 22px var(--gk-mono);
   background: linear-gradient(135deg, rgba(255, 93, 51, .35), rgba(255, 162, 74, .15)); border: 1px solid rgba(255, 170, 110, .5); }
@@ -91,7 +94,7 @@ export function mountStreakStrip({ root, brand, sub = null, touch = false }) {
   pill.type = 'button';
   pill.setAttribute('aria-haspopup', 'dialog');
   const cd = el('span', 'gkr-cd', strip);
-  let pop = null, timer = 0, destroyed = false;
+  let pop = null, back = null, timer = 0, destroyed = false;
 
   function refresh() {
     const today = istanbulDay();
@@ -161,7 +164,10 @@ export function mountStreakStrip({ root, brand, sub = null, touch = false }) {
   function place() {
     const narrow = touch || innerWidth < 640 || innerHeight < 520;
     pop.classList.toggle('sheet', narrow);
-    if (narrow) return;
+    if (narrow) {   // phones: a dim backdrop behind the sheet; a tap on it closes the card
+      if (!back) { back = el('div', 'gkr-pop-back'); root.insertBefore(back, pop); back.addEventListener('click', (e) => { e.stopPropagation(); close(); }); }
+      return;
+    }
     const rr = root.getBoundingClientRect(), pr = pill.getBoundingClientRect();
     pop.style.left = `${Math.round(pr.left - rr.left)}px`;
     pop.style.top = `${Math.round(pr.bottom - rr.top + 8)}px`;
@@ -170,7 +176,7 @@ export function mountStreakStrip({ root, brand, sub = null, touch = false }) {
     if (!pop) return;
     if (e.code === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
   }
-  function outside(e) { if (pop && !pop.contains(e.target) && !pill.contains(e.target)) close(); }
+  function outside(e) { if (pop && !back && !pop.contains(e.target) && !pill.contains(e.target)) close(); }   // (desktop; phones: the backdrop)
   function open() {
     if (pop) { close(); return; }
     pop = el('div', 'gkr-pop', root);
@@ -186,6 +192,7 @@ export function mountStreakStrip({ root, brand, sub = null, touch = false }) {
   function close() {
     if (!pop) return;
     pop.remove(); pop = null;
+    if (back) { back.remove(); back = null; }
     shared.modalOpen = Math.max(0, (shared.modalOpen || 1) - 1);
     window.removeEventListener('keydown', onKey, true);
     document.removeEventListener('pointerdown', outside, true);
