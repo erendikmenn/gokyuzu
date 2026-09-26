@@ -5,12 +5,15 @@
 //                    every shared mission link a challenge link)
 //   weekly           a run of this week's mission ("Haftanın görevi", src/retention/weekly.js; the plain mission, not
 //                    the daily variation) is also submitted to the weekly board; the result card shows the weekly rank
+//   assisted         a run with assisted flight on (missions not flown by hand keep it) or a touchdown on the autopilot
+//                    is marked result.assisted: its entries go to the "Destekli" lists (src/retention/boards.js; the
+//                    mission's own board through src/ui/mission-parts.js). The assist setting is never changed here.
 //   streak           a finished mission (success, or 30 s or more) joins today to the daily streak
 //   install          phones / tablets: a finished mission may suggest "Ana ekrana ekle" in the result card
 //   result signal    <html class="gk-result-open"> while the result card is open (src/retention/result-flag.js)
 // The lines go into the mission card of src/ui/missions-hud.js (the open `.gkq-card`), before its buttons (phones: after).
 //
-//   const ret = createMissionRetention({ mission, touch })
+//   const ret = createMissionRetention({ mission, touch, flight })   flight() → the flight model
 //   ret.brief()                       after ui.showBrief (first briefing and every restart)
 //   ret.finish(result)                when the run ends (result = { ok, score, stars, time, … })
 //   ret.result(result, { share })     after ui.showResult; share({ anchor }) = the runtime's share
@@ -19,6 +22,7 @@ import { parseChallenge, briefLine, resultLine, challengeOutcome } from './chall
 import { weeklyFor } from './weekly.js';
 import { noteActivity, streakLine, applyAccent } from './activity.js';
 import { submitQuiet } from './lb.js';
+import { boardFor } from './boards.js';
 import { suggestInstall } from './install.js';
 import { setResultOpen } from './result-flag.js';
 import { injectCSS } from '../ui/styles.js';
@@ -50,8 +54,19 @@ const FLAG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-
 
 const openCard = () => document.querySelector('.gkq-back.on .gkq-card');
 
-export function createMissionRetention({ mission, touch = false } = {}) {
+export function createMissionRetention({ mission, touch = false, flight = null } = {}) {
   let ch = null;
+  // assisted run: the assist layer on during the run (sampled at the briefing's end and the finish) or a touchdown on the
+  // autopilot (autoland); reset at every briefing (a restart)
+  let apTouchdown = false, hooked = null;
+  const f = () => { try { return flight ? flight() : null; } catch { return null; } };
+  const assistOn = () => { const m = f(); return !!(m && m.assist && m.assist.on); };
+  function hook() {
+    const m = f();
+    if (!m || !m.on || hooked === m) return;
+    hooked = m;
+    m.on('touchdown', () => { if (m.autopilot && m.autopilot.on) apTouchdown = true; });
+  }
   try { const c = parseChallenge(location.search); ch = c && c.id === mission.id ? c : null; } catch { ch = null; }
   injectCSS('retention-mission', CSS);
   applyAccent();
@@ -62,6 +77,7 @@ export function createMissionRetention({ mission, touch = false } = {}) {
     challenge: ch,
     brief() {
       try {
+        apTouchdown = false; hook();
         if (ch && !opened) { opened = true; trackEvent('chl', { st: 'open', id: mission.id, d: mission.day ? 1 : undefined }); }
         const c = openCard();
         if (!c || c.querySelector('.gkr-chl, .gkr-wk')) return;
@@ -73,9 +89,10 @@ export function createMissionRetention({ mission, touch = false } = {}) {
     },
     finish(result) {
       try {
+        if (assistOn() || apTouchdown) result.assisted = true;   // (read by the result card's leaderboard)
         streak = result.ok || result.time >= 30 ? noteActivity('mission') : null;
         const wk = result.ok ? isWeekly() : null;
-        weekly = wk ? { pick: wk, p: submitQuiet({ board: wk.board, score: result.score, stars: result.stars, sec: result.time, ac: mission.aircraft, weekly: wk.key }) } : null;
+        weekly = wk ? { pick: wk, assisted: !!result.assisted, p: submitQuiet({ board: boardFor(wk.board, result.assisted), score: result.score, stars: result.stars, sec: result.time, ac: mission.aircraft, weekly: wk.key, assisted: !!result.assisted }) } : null;
         if (ch) {
           const o = challengeOutcome(ch, result);
           trackEvent('chl', o === 'beat' ? { st: 'beat', id: mission.id } : { st: 'lost', id: mission.id, o });
@@ -114,7 +131,8 @@ export function createMissionRetention({ mission, touch = false } = {}) {
             if (!w.isConnected) return;
             if (!r) { w.remove(); return; }
             const lead = r.rank === 1 ? ', lider sensin!' : r.top && r.top[0] ? ` · lider ${r.top[0].name || 'İsimsiz pilot'} ${fmtInt(r.top[0].score)}` : '';
-            w.textContent = r.rank ? `Haftanın görevi: bu hafta ${r.rank}. sıradasın${lead}` : `Haftanın görevi: skorun kaydedildi${lead}`;
+            const list = weekly.assisted ? ' (Destekli)' : '';
+            w.textContent = r.rank ? `Haftanın görevi${list}: bu hafta ${r.rank}. sıradasın${lead}` : `Haftanın görevi${list}: skorun kaydedildi${lead}`;
           }).catch(() => w.remove());
         }
         if (touch && result.ok) suggestInstall({ via: 'mission', inline: box });

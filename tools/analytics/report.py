@@ -328,7 +328,8 @@ def report_challenges(beacons, visitors, top):
 
 def report_lb(beacons, visitors, top):
     """Leaderboard use in the game (§11 `lb`): tables shown, scores submitted (with or without a nickname; the nickname
-    itself is never sent), failed submissions; per board."""
+    itself is never sent), failed submissions; split into the manual ("Elle") and the assisted ("Destekli", as=1: boards
+    as-<board> / w-<yyyyww>-as-<base>) lists; per board (the assisted variant on the base board's line)."""
     evs = real_events(beacons, visitors, {'lb'})
     if not evs:
         print('\nSıralama tablosu: henüz sinyal yok.')
@@ -340,10 +341,18 @@ def report_lb(beacons, visitors, top):
     print(f"\nSıralama tablosu: gören {len(shown)} kişi · skor gönderen {len(sub)} kişi (takma adla {len(named)}) · gönderilemeyen "
           f"{sum(1 for *_, q in evs if q.get('st') == 'fail')} · sıra medyanı {med(ranks)} · rekorunu geliştiren "
           f"{sum(1 for *_, q in evs if q.get('st') == 'submit' and q.get('im') == '1')} gönderim")
-    boards = Counter(q.get('b') or '?' for *_, q in evs if q.get('st') == 'show')
+    for name, pred in (('Elle', lambda q: q.get('as') != '1'), ('Destekli', lambda q: q.get('as') == '1')):
+        e = [x for x in evs if pred(x[3])]
+        subs = [q for *_, q in e if q.get('st') == 'submit']
+        print(f"  {name:<8} görüntüleme {sum(1 for *_, q in e if q.get('st') == 'show')} ({len(people(e, st('show')))} kişi) · gönderim {len(subs)} "
+              f"({len(people(e, st('submit')))} kişi) · sıra medyanı {med([num(q.get('r')) for q in subs])}")
+    base = lambda b: re.sub(r'^(w-\d{6}-)?as-', r'\1', b or '?')
+    boards = Counter(base(q.get('b')) for *_, q in evs if q.get('st') in ('show', 'submit'))
     for b, n in boards.most_common(12):
-        e = [x for x in evs if x[3].get('b') == b]
-        print(f"  {b:<14} görüntüleme {n} ({len(people(e, st('show')))} kişi) · gönderim {sum(1 for *_, q in e if q.get('st') == 'submit')} "
+        e = [x for x in evs if base(x[3].get('b')) == b]
+        sub_m = sum(1 for *_, q in e if q.get('st') == 'submit' and q.get('as') != '1')
+        sub_a = sum(1 for *_, q in e if q.get('st') == 'submit' and q.get('as') == '1')
+        print(f"  {b:<22} görüntüleme {sum(1 for *_, q in e if q.get('st') == 'show')} ({len(people(e, st('show')))} kişi) · gönderim elle {sub_m} / destekli {sub_a} "
               f"({len(people(e, st('submit')))} kişi) · sıra medyanı {med([num(q.get('r')) for *_, q in e if q.get('st') == 'submit'])}"
               + (' · günlük' if any(q.get('d') == '1' for *_, q in e) else ''))
 

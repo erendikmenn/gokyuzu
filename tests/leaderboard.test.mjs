@@ -4,7 +4,8 @@
 import { createHash } from 'node:crypto';
 import { cleanName, NAME_MAX } from '../src/net/names.js';
 import { viewerIp, ipBucket, isCloudflare } from '../infra/leaderboard/lambda/net.mjs';
-import { checkScore, checkTop, dayMs, utcDay, rankKey, boardKey, missionRule, istWeek, weekStartMs, parseWeekly } from '../infra/leaderboard/lambda/validate.mjs';
+import { checkScore, checkTop, dayMs, utcDay, rankKey, boardKey, missionRule, istWeek, weekStartMs, parseWeekly, parseAssisted } from '../infra/leaderboard/lambda/validate.mjs';
+import { assistedBoard, manualBoard, isAssistedBoard } from '../src/retention/boards.js';
 import { createApp } from '../infra/leaderboard/lambda/app.mjs';
 import { createMemoryDb } from '../infra/leaderboard/lambda/memdb.mjs';
 
@@ -137,6 +138,26 @@ check('board keys', boardKey('m', null) === 'b#m' && boardKey('m', '20260924') =
   check('weekly: off without rules.weekly (older rules files)', checkScore(wk, ctx).error === 'mission' && checkTop({ mission: 'w-202639-ggb-ring' }, ctx).error === 'mission');
   check('weekly: a test base stays a test board (staging only)', checkScore({ ...wk, mission: 'w-202639-selftest', stars: 0, score: 1 }, wctx).value.test === true
     && checkScore({ ...wk, mission: 'w-202639-selftest', stars: 0, score: 1 }, { ...wctx, stage: 'production' }).error === 'mission');
+  // assisted boards ("Destekli" list): as-<board>, weekly w-<yyyyww>-as-<base>
+  const A = { ...W, assisted: true };
+  const actx = { rules: A, stage: 'staging', now: NOW };
+  const va = checkScore({ ...good, mission: 'as-ggb-ring' }, actx);
+  check('assisted: as-<board> takes the base rule (flagged), the same plausibility', va.ok && va.value.assisted && va.value.mission === 'as-ggb-ring' && parseAssisted('as-ggb-ring') === 'ggb-ring'
+    && checkScore({ ...good, mission: 'as-ggb-ring', score: 5001 }, actx).error === 'score' && checkScore({ ...good, mission: 'as-ggb-ring', ac: 'b737' }, actx).error === 'ac'
+    && checkScore({ ...good, mission: 'as-ggb-ring', stars: 3, score: 3000 }, actx).error === 'stars' && missionRule(A, 'as-ggb-ring', 'staging').scoreMax === 5000, JSON.stringify(va));
+  check('assisted: daily days as the base (daily yes / free-land no), unknown base refused', checkScore({ ...good, mission: 'as-ggb-ring', day: '20260924' }, actx).ok
+    && checkScore({ ...good, mission: 'as-free-land', ac: 'b737', stars: 0, score: 10, day: '20260924' }, actx).error === 'day' && checkScore({ ...good, mission: 'as-nope' }, actx).error === 'mission'
+    && checkTop({ mission: 'as-ggb-ring', day: '20260901' }, actx).ok && checkTop({ mission: 'as-nope' }, actx).error === 'mission');
+  const vw = checkScore({ ...good, mission: 'w-202639-as-ggb-ring' }, actx);
+  check('assisted weekly: w-<yyyyww>-as-<base> (the week window, the weekly expiry, assisted)', vw.ok && vw.value.assisted && vw.value.weekEndMs === Date.UTC(2026, 8, 27, 21)
+    && checkScore({ ...good, mission: 'w-202638-as-ggb-ring' }, actx).error === 'week' && checkTop({ mission: 'w-202638-as-ggb-ring' }, actx).ok, JSON.stringify(vw));
+  check('assisted: one spelling per board (as-w-…, as-as-…, w-…-as-as-… refused)', checkScore({ ...good, mission: 'as-w-202639-ggb-ring' }, actx).error === 'mission'
+    && checkScore({ ...good, mission: 'as-as-ggb-ring' }, actx).error === 'mission' && checkScore({ ...good, mission: 'w-202639-as-as-ggb-ring' }, actx).error === 'mission');
+  check('assisted: off without rules.assisted (older rules files); test base only outside production', checkScore({ ...good, mission: 'as-ggb-ring' }, wctx).error === 'mission'
+    && checkScore({ ...good, mission: 'as-selftest', stars: 0, score: 1 }, actx).value.test === true && checkScore({ ...good, mission: 'as-selftest', stars: 0, score: 1 }, { ...actx, stage: 'production' }).error === 'mission');
+  check('assisted: client board ids (src/retention/boards.js) = the server\'s spelling', assistedBoard('ggb-ring') === 'as-ggb-ring' && assistedBoard('w-202639-ggb-ring') === 'w-202639-as-ggb-ring'
+    && assistedBoard('as-ggb-ring') === 'as-ggb-ring' && assistedBoard('w-202639-as-ggb-ring') === 'w-202639-as-ggb-ring' && manualBoard('w-202639-as-ff-bridge') === 'w-202639-ff-bridge'
+    && manualBoard('as-ff-daily-land') === 'ff-daily-land' && isAssistedBoard('w-202639-as-x') && !isAssistedBoard('w-202639-ff-x') && checkScore({ ...good, mission: assistedBoard('w-202639-ggb-ring') }, actx).ok);
   check('weekly: board ids fit the 40-character limit (longest base)', checkScore({ ...wk, mission: `w-202639-${'a'.repeat(31)}` }, { ...wctx, rules: { ...W, strict: false } }).ok
     && checkScore({ ...wk, mission: `w-202639-${'a'.repeat(32)}` }, { ...wctx, rules: { ...W, strict: false } }).error === 'mission');
 }
@@ -232,6 +253,10 @@ check('shipped rules: selftest refused in production, unknown ids refused', chec
   } catch (e) { ok = false; detail = e.message; }
   check('shipped rules: landing challenges ff-(ist-)land-series (all-time) and ff-(ist-)daily-land (daily boards only) on both maps', ok, detail);
   const series = { mission: 'ff-land-series', score: 2700, stars: 2, ac: 'a320neo', sid: SID };
+  const longest = ids.reduce((a, b) => (b.length > a.length ? b : a), '');
+  check(`shipped rules: every board's assisted variant (as-, weekly w-<week>-as-) fits the 40-character id limit (longest ${longest})`,
+    ids.every((id) => `w-202653-as-${id}`.length <= 40) && checkScore({ mission: 'as-ff-daily-land', score: 1800, stars: 3, ac: 'b737', sid: SID, day: '20260924' }, sctx).ok
+    && checkScore({ mission: 'as-ff-daily-land', score: 1800, stars: 3, ac: 'b737', sid: SID }, sctx).error === 'day');
   check('shipped rules ff-land-series / ff-daily-land: 3 × 100 × 10 max, any aircraft; the daily landing only with a day',
     checkScore(series, sctx).ok && checkScore({ ...series, score: 3400 }, sctx).error === 'score' && checkScore({ ...series, ac: 'uh60' }, sctx).ok
     && checkScore({ mission: 'ff-daily-land', score: 1800, stars: 3, ac: 'b737', sid: SID, day: '20260924' }, sctx).ok
@@ -241,8 +266,8 @@ check('shipped rules: selftest refused in production, unknown ids refused', chec
   const bad = WEEKLY_POOL.filter((p) => !SHIPPED.missions[p.ff ? p.board : p.mission] || (p.ff && !p.spawn)).map((p) => p.ff || p.mission);
   const wp = weeklyPick('202639');
   const shippedWeekly = SHIPPED.weekly && SHIPPED.weekly.back >= 1 && SHIPPED.weekly.ttlDays >= 7;
-  check('shipped rules: weekly boards on (read-back, TTL); every weekly pool entry is a known board and fits the id limit',
-    shippedWeekly && bad.length === 0 && WEEKLY_POOL.every((p) => `w-202653-${p.ff ? p.board : p.mission}`.length <= 40)
+  check('shipped rules: weekly and assisted boards on; every weekly pool entry is a known board and fits the id limit (also assisted: w-<week>-as-<base>)',
+    shippedWeekly && SHIPPED.assisted === true && bad.length === 0 && WEEKLY_POOL.every((p) => `w-202653-as-${p.ff ? p.board : p.mission}`.length <= 40)
     && checkTop({ mission: wp.board }, { ...sctx, now: NOW }).ok, bad.join(' '));
 }
 
@@ -303,6 +328,20 @@ check('GET top daily', J(r).entries.length === 1 && J(r).day === '20260924');
   check('GET top weekly', w.statusCode === 200 && J(w).entries.length === 1 && J(w).entries[0].score === 2600 && J(w).mission === `w-${week}-ggb-ring`, w.body);
   w = await wApp(wev({ ...good, mission: 'w-202601-ggb-ring', sid: 'WeeklyPlayerKey_00002', score: 2600, stars: 2 }));
   check('POST weekly: a past week → 400 week', w.statusCode === 400 && J(w).error === 'week', w.body);
+  // assisted boards through the handler: separate from the base board, nickname added afterwards names the entry
+  const aApp = createApp({ db, salt: SALT, rules: { ...RULES, weekly: { back: 8, ttlDays: 35 }, assisted: true }, stage: 'staging', now: () => clock, limits: { post: 5, get: 8 } });
+  const aev = (body) => ({ ...wev(body), headers: { ...wev(body).headers, 'cloudfront-viewer-address': '198.51.100.10:1' } });
+  let a = await aApp(aev({ ...good, mission: 'as-ggb-ring', sid: 'AssistedPlayerKey_001', score: 1500, stars: 1 }));
+  const main = [...db.items.values()].filter((x) => x.pk === 'b#ggb-ring').length;
+  check('POST assisted: own board as-<board>, ranked alone, the base board untouched', a.statusCode === 200 && J(a).rank === 1 && J(a).top.length === 1
+    && [...db.items.values()].some((x) => x.pk === 'b#as-ggb-ring') && main === [...db.items.values()].filter((x) => x.pk === 'b#ggb-ring').length, a.body);
+  a = await aApp(aev({ ...good, mission: 'as-ggb-ring', sid: 'AssistedPlayerKey_001', score: 1500, stars: 1, name: 'Pilot 1903' }));
+  check('POST assisted: a nickname sent afterwards names the entry', J(a).name === 'Pilot 1903' && J(a).top[0].name === 'Pilot 1903', a.body);
+  a = await aApp(aev({ ...good, mission: `w-${week}-as-ggb-ring`, sid: 'AssistedPlayerKey_001', score: 1500, stars: 1 }));
+  const wit = [...db.items.values()].find((x) => x.pk === `b#w-${week}-as-ggb-ring`);
+  check('POST assisted weekly: w-<week>-as-<base>, expires like the weekly board', a.statusCode === 200 && wit && wit.exp === it.exp, a.body);
+  a = await aApp({ requestContext: { http: { method: 'GET' } }, rawPath: '/api/top', headers: { 'cloudfront-viewer-address': '198.51.100.10:1' }, queryStringParameters: { mission: 'as-ggb-ring' } });
+  check('GET top assisted', a.statusCode === 200 && J(a).entries.length === 1 && J(a).entries[0].name === 'Pilot 1903' && J(a).mission === 'as-ggb-ring', a.body);
 }
 
 // bad requests

@@ -55,7 +55,7 @@ export function createMissionRuntime(plan, ctx) {
   const groundAt = (x, z) => { const h = world.getGroundHeight(x, z); return Number.isFinite(h) ? h : 0; };
   const markers = createMarkers(ctx.scene);
   const ui = createMissionUI(ctx.hud, { touch: !!ctx.touch, input: ctx.input, category: cat, missions: MISSIONS });
-  const ret = createMissionRetention({ mission, touch: !!ctx.touch });
+  const ret = createMissionRetention({ mission, touch: !!ctx.touch, flight: () => state.flight });
   const idx = MISSIONS.findIndex((m) => m.id === mission.id);
   /** The next mission in the list that is unlocked (progress after this run), wrapping around. */
   function nextMission() {

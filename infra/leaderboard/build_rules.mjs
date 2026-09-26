@@ -13,7 +13,8 @@
 // challenges.js: missions `ist-<name>`, boards `ff-ist-<name>`), one rules file for both.
 // Landing challenges on every map (src/missions/landing-challenges.js): İniş serisi `ff-land-series` / `ff-ist-land-series`
 // and Günün inişi `ff-daily-land` / `ff-ist-daily-land` (daily boards only). Weekly boards `w-<yyyyww>-<board>` of any
-// board above (src/retention/weekly.js) are enabled by `weekly` (read back 8 weeks, expire 35 days after their week).
+// board above (src/retention/weekly.js) are enabled by `weekly` (read back 8 weeks, expire 35 days after their week);
+// assisted boards `as-<board>` / `w-<yyyyww>-as-<board>` (the "Destekli" list, src/retention/boards.js) by `assisted`.
 //   node infra/leaderboard/build_rules.mjs
 import { writeFileSync, readFileSync } from 'node:fs';
 
@@ -121,6 +122,7 @@ const rules = {
   aircraft: AIRCRAFT,
   default: { scoreMin: 0, scoreMax: 100000, secMin: 1, secMax: 7200 },
   weekly: { back: 8, ttlDays: 35 },
+  assisted: true,
   missions,
   test: ['selftest'],
 };

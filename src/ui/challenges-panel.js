@@ -13,7 +13,8 @@
 //
 //   const p = createChallengesPanel(hud, { touch, keyLabel, onTrack, onStart, onCancel, onPlay, onBoard, onFinal, onToggle })
 // (onFinal: "Son yaklaşmaya git" on the landing challenges, views with `final`; a daily result (`r.day`) shows the day's
-// board; `x.weekly` = { pick, p: Promise<submission> } adds the weekly challenge's rank under the result.)
+// board; `x.weekly` = { pick, p: Promise<submission> } adds the weekly challenge's rank under the result; x.submit.assisted:
+// the result goes to the board's "Destekli" list, src/ui/mission-parts.js showLeaderboard.)
 //   p.setEntries(views) · p.render(views) (≤ 10 Hz, only while open or after a change) · p.setCount(done, total, badge)
 //   p.open() · p.close() · p.toggle() · p.isOpen · p.showResult(r, o) · p.notify(r, onOpen) · p.pointer(camera, target, label)
 // While the result view or the compact result card is on screen, <html> carries `gk-result-open` (src/retention/
@@ -114,8 +115,6 @@ const CSS = `
 .gkf .gkq-row b { font-size: calc(11.5px * var(--fk)); min-width: 40px; }
 .gkf-best { margin-top: calc(6px * var(--fk)); font-size: calc(12px * var(--fk)); color: var(--gk-dim); }
 .gkf-wk { margin-top: calc(8px * var(--fk)); font-size: calc(12px * var(--fk)); font-weight: 650; color: #ffd98a; }
-.gkf-as { margin-top: calc(8px * var(--fk)); padding: calc(6px * var(--fk)) calc(8px * var(--fk)); border-radius: 9px; font-size: calc(11.5px * var(--fk)); line-height: 1.4;
-  color: #bfe9ff; background: rgba(108, 200, 255, .1); border: 1px solid rgba(108, 200, 255, .3); }
 .gkf-more .gkq-btn.teal { min-height: calc(30px * var(--fk)); }
 .gkf-sess { margin-top: calc(8px * var(--fk)); padding: calc(6px * var(--fk)) calc(8px * var(--fk)); border-radius: 9px; background: rgba(255, 255, 255, .04); }
 .gkf-sess h4 { margin: 0 0 3px; font-size: calc(10px * var(--fk)); font-weight: 800; letter-spacing: .14em; text-transform: uppercase; color: var(--gk-dim); }
@@ -383,7 +382,6 @@ export function createChallengesPanel(hud, o = {}) {
       const sm = el('small', null, sc, `puan${r.time != null ? ` · ${fmtTime(r.time)}` : ''}`);
       if (r.ok && x.newBest && x.prevBest > 0) el('span', 'gkq-new', sm, 'Yeni rekor');
       if (!r.ok && r.reason) el('div', 'gkf-reason', resView, r.reason);
-      if (r.ok && r.assisted) el('div', 'gkf-as', resView, 'Destekli uçuşla ya da otopilotla indin: rekorun kaydedildi, sıralamaya girmez. Sıralama için elle in (Ayarlar › Destekli uçuş).');
       if (r.ok && r.rows && r.rows.length) {
         const rw = el('div', 'gkf-rows', resView);
         for (const [label, value, pts] of r.rows) {
@@ -416,13 +414,14 @@ export function createChallengesPanel(hud, o = {}) {
         if (!w.isConnected) return;
         if (!res) { w.remove(); return; }
         const lead = res.rank === 1 ? ', lider sensin!' : res.top && res.top[0] ? ` · lider ${res.top[0].name || 'İsimsiz pilot'} ${fmtInt(res.top[0].score)}` : '';
-        w.textContent = res.rank ? `Haftanın görevi: bu hafta ${res.rank}. sıradasın${lead}` : `Haftanın görevi: skorun kaydedildi${lead}`;
+        const list = r.assisted ? ' (Destekli)' : '';
+        w.textContent = res.rank ? `Haftanın görevi${list}: bu hafta ${res.rank}. sıradasın${lead}` : `Haftanın görevi${list}: skorun kaydedildi${lead}`;
       }).catch(() => w.remove());
     }
     const lb = el('div', 'gkq-lb', resView);
     const sub = x.submit || null;   // { score, stars, sec, ac } to submit (a finished run, or the personal best)
     showLeaderboard(lb, { board: r.board, day: r.day || '', ok: !!sub, score: sub ? sub.score : 0, stars: sub ? sub.stars : 0, sec: sub ? sub.sec : undefined, ac: sub ? sub.ac : r.ac,
-      title: r.day ? 'Günün sıralaması · serbest uçuş' : 'Sıralama · serbest uçuş', showAc: true, onSubmitted: x.onSubmitted }).catch(() => {});
+      title: r.day ? 'Günün sıralaması' : 'Sıralama', showAc: true, onSubmitted: x.onSubmitted, assisted: !!(sub && sub.assisted) }).catch(() => {});
     const acts = el('div', 'gkf-acts', resView);
     if (x.onPlay) {
       const play = el('button', 'gkf-link play', acts, 'Görev olarak oyna ›');

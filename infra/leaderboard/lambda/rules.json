@@ -18,6 +18,7 @@
   "back": 8,
   "ttlDays": 35
  },
+ "assisted": true,
  "missions": {
   "climb": {
    "aircraft": [

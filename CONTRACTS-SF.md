@@ -374,10 +374,10 @@ Players keep files in their browser cache, so every asset URL carries a content 
   | `mission` | brief · start · done · fail · quit · retry · next · menu | `id`; brief: `via` (menu, daily, link, ff = "Görev olarak oyna", next = "Sonraki görev"), `ac`, `d`=1 daily; start: `ac`, `run` (attempt on the page), `d`; done/fail: `stars`, `score`, `sec`, `why`; quit: `sec`, `why`; retry: `ok`; next: `to`; menu: `ph` (brief, result) |
   | `mmenu` | open · daily · weekly · dland · detail | open: `via` (tab, daily, weekly); daily: `id` (the day's mission); weekly: `id` (the week's pick); dland (the day's landing card); detail: `id` (once per mission and page) |
   | `ffp` | open · track · untrack · play · final | open: `src` (key, tab, card = the compact result card, auto = a result / crash opened it); track, untrack, play: `id`; final: `id` ("Son yaklaşmaya git" on lseries / dland) |
-  | `ffc` | start · done · fail · cancel · drop | `id` (bridge, lowpass, baytour, climb, alcatraz, land, eng, flameout, ditch, autorot, lseries = İniş serisi, dland = Günün inişi; other maps: their ids, `mp` tells the map), `ac`; done: `score`, `stars`, `sec`, `as`=1 a landing with assisted flight or on the autopilot (never submitted to a leaderboard); cancel/drop: `sec`; drop: `why` (time, gap, far, landed, broken = a landing series broken) |
-  | `lb` | show · submit · fail | `b` (board: a mission id or ff-<id>), `d`=1 daily; show: `c` (entries); submit: `r` (rank), `im`=1 improved, `nm`=1 a nickname was given, `au`=1 automatic, `q`=1 quiet (a result that was not on screen: another result of the same landing) |
+  | `ffc` | start · done · fail · cancel · drop | `id` (bridge, lowpass, baytour, climb, alcatraz, land, eng, flameout, ditch, autorot, lseries = İniş serisi, dland = Günün inişi; other maps: their ids, `mp` tells the map), `ac`; done: `score`, `stars`, `sec`, `as`=1 a landing with assisted flight or on the autopilot (its entries go to the "Destekli" lists); cancel/drop: `sec`; drop: `why` (time, gap, far, landed, broken = a landing series broken) |
+  | `lb` | show · submit · fail · name | `b` (board: a mission id, ff-<id>, w-<yyyyww>-<base>, or an assisted board as-<board> / w-<yyyyww>-as-<base>), `d`=1 daily, `as`=1 an assisted ("Destekli") board; show: `c` (entries); submit: `r` (rank), `im`=1 improved, `nm`=1 a nickname was given, `au`=1 automatic, `q`=1 quiet (a result that was not on screen: another result of the same landing); name: `ok` |
   | `streak` | day · badge · pick · open | the daily streak (src/retention/activity.js): day = a new streak day, `b` streak-length bucket (1, 2, 3-6, 7-13, 14-29, 30+), `k` what finished the day (m mission, l landing, a 2 minutes in the air, c free-flight challenge); badge: `id` (d3, d7, d14, d30, l3, l10); pick: `id` (a badge or none); open: the menu's streak card |
-  | `wk` | show · play · submit · fail | the weekly challenge (src/retention/weekly.js): `id` = the week's pick (a mission id or ff:<challenge>); show: `c` (entries of the week's top 10 seen in the menu); play: started from the menu; submit: `r` (weekly rank), `im`=1 improved |
+  | `wk` | show · play · submit · fail | the weekly challenge (src/retention/weekly.js): `id` = the week's pick (a mission id or ff:<challenge>); show: `c` (entries of the week's top 10 seen in the menu), `as`=1 its "Destekli" list; play: started from the menu; submit: `r` (weekly rank), `im`=1 improved, `as`=1 |
   | `chl` | open · beat · lost · back | challenge links (?mission=<id>&challenge=<score>): `id`; open: `d`=1 daily; lost: `o` (tie, short = finished below, fail = not finished); back: "Skorunu gönder" tapped |
   | `news` | show · close | the "Yenilikler" card: show: `id` (newest changelog entry), `c` (entries shown) |
   | `inst` | show · accept · dismiss · later · installed | "Ana ekrana ekle": show: `p` (android = the browser's install prompt, ios = the how-to), `via` (mission, land); accept / dismiss: the browser dialog's answer; later: "Şimdi değil" / "Tamam"; installed: the browser's appinstalled event |
@@ -386,7 +386,8 @@ Players keep files in their browser cache, so every asset URL carries a content 
 - Retention state is local only (localStorage, never sent; no account, no id): `gokyuzu.streak` = `{ v, days: ['YYYYMMDD', …]
   (the last 60 Istanbul days with a finished flight or mission), best, land: { cur, best } (runway landings in a row), badges:
   { id: day unlocked }, pick (badge id | null) }`; `gokyuzu.seen` = the newest "Yenilikler" entry id seen
-  (src/data/changelog.json); `gokyuzu.install` = `{ shown, accepted?, installed? }` (ms; the suggestion waits 14 days after
+  (src/data/changelog.json); `gokyuzu.lbList` = `{ <board>: 'a' | 'm' }` (the list the latest result on a board went to:
+  the "Elle / Destekli" switch opens there); `gokyuzu.install` = `{ shown, accepted?, installed? }` (ms; the suggestion waits 14 days after
   `shown`); `gokyuzu.ffc(.<map>)` also keeps the daily landing per day (`daily-land@YYYYMMDD`, the last 14 days) and `as`=1
   on a best set with assisted flight. The menu's handoff to free flight is in memory (`shared.retentionIntent`).
 - Report "Geri gelme özellikleri" (report_comeback): streak days by bucket and what finished them, badges, weekly views /
@@ -417,6 +418,14 @@ and cheap (instanced, no new heavy assets). Everything must stay optimized: no p
   and `topScores({ mission, day })`; both resolve `null` when the service is unavailable (the UI then hides the table).
   The service lives on the game's own origin under `/api/` (no third-party calls from the page). Names are optional,
   short, filtered; no other personal data. Production is only connected with the owner's approval.
+  Board ids (`mission`, ≤ 40 characters, `[a-z0-9][a-z0-9_-]*`): a mission id; `ff-<challenge>` (free flight); weekly
+  `w-<yyyyww>-<base>` (the Istanbul ISO week; scores only in that week ± 1 day, readable 8 weeks back, expiring 35 days
+  after it); assisted `as-<board>` and weekly assisted `w-<yyyyww>-as-<base>` (the "Destekli" list: runs flown with
+  assisted flight on, or with a touchdown on the autopilot, go there and never to the manual board; the base board's
+  rules, days and expiry; `as-w-…` / `as-as-…` are refused). `infra/leaderboard/lambda/validate.mjs` and
+  `src/retention/boards.js` (`assistedBoard`, `manualBoard`, `boardFor`) spell them the same way. Every leaderboard view
+  (mission results, the free-flight panel, the menu's weekly card and Günün inişi) has an "Elle / Destekli" switch that
+  opens on the list the player's latest result on that board went to, else "Elle"; nothing here changes settings.assist.
 
 ### 12.1 Free-flight challenges ("Serbest uçuş görevleri")
 
@@ -443,7 +452,8 @@ aircraft). Mission mode is unchanged and never builds any of this.
   centre (touch); after a crash the flight's results + the last entry's top 10 open beside the crash card (touch: after
   the reset). The landing entry opens its result only for a new personal best.
 - **Leaderboards**: boards `ff-<id>` (not comparable to missions), all fitting aircraft (entries carry `ac`, shown in the
-  table), no daily boards; `infra/leaderboard/build_rules.mjs` derives score / time / star rules from `CHALLENGES`.
+  table), no daily boards (Günün inişi: daily only); `infra/leaderboard/build_rules.mjs` derives score / time / star
+  rules from `CHALLENGES`. Assisted results go to `as-ff-<id>` (§12 board ids).
 - **Progress**: localStorage `gokyuzu.ffc` `{ v: 1, e: { [id]: { best, stars, runs, done, ac } } }` (`gokyuzu.missions`
   untouched). **Telemetry** (§11): `ffc` start / done / fail / cancel / drop and `ffp` for the panel. Gate runs, the
   climb, Alcatraz (after the hover) and emergencies send `start` first; the bridge and the landing entry are instant

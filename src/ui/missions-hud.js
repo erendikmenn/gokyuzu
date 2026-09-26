@@ -291,7 +291,8 @@ export function createMissionUI(hud, { touch = false, input = null, category = '
       onEnter = primary;
       // leaderboard (src/net/leaderboard.js): shown only when the service answers
       const lb = el('div', 'gkq-lb', c);
-      showLeaderboard(lb, { board: m.id, day: m.day || '', ok: r.ok, score: r.score, stars: r.stars, sec: r.time, ac: m.aircraft, title: m.day ? 'Günün sıralaması' : 'Sıralama' }).catch(() => {});
+      showLeaderboard(lb, { board: m.id, day: m.day || '', ok: r.ok, score: r.score, stars: r.stars, sec: r.time, ac: m.aircraft, title: m.day ? 'Günün sıralaması' : 'Sıralama',
+        assisted: !!r.assisted }).catch(() => {});   // (r.assisted: src/retention/mission-hooks.js → the "Destekli" list)
     },
     debug() { return { strip: root.classList.contains('on') ? `${objEl.textContent} ${progEl.textContent} ${time.textContent}` : null, card: card ? card.className : null, pointer: ptr.state, dist }; },
   };

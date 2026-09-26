@@ -13,7 +13,8 @@
 // challenge for everyone, src/retention/weekly.js; its top 10 and last week's champion from the leaderboard's weekly
 // boards; maybe on the other map) and "Günün inişi" (the day's runway, src/missions/landing-challenges.js: free flight from
 // its final approach). A free-flight start calls start({ free: true, map, spawn | airport + ident, track, final }).
-// Telemetry `wk`: show (id = the pick, c = entries: the weekly top 10 seen), play (id).
+// Telemetry `wk`: show (id = the pick, c = entries: the weekly top 10 seen, as = 1 its "Destekli" list), play (id).
+// Every leaderboard list here has the "Elle / Destekli" switch (src/retention/boards.js).
 import { injectCSS } from './styles.js';
 import { el } from './util.js';
 import { shared } from './shared.js';
@@ -24,6 +25,7 @@ import { istanbulDay, secondsToNextDay, fmtClock, fmtInt, fmtTime, dayLabel } fr
 import { trackEvent } from '../core/telemetry.js';
 import { currentWeek, weeklyPick, addWeeks, weekLabel, secondsToNextWeek, fmtLeft } from '../retention/weekly.js';
 import { boardTop } from '../retention/lb.js';
+import { boardFor, lastList } from '../retention/boards.js';
 import { landingChallenges, landingEndNames, dailyLandingEnd, endLabel } from '../missions/landing-challenges.js';
 
 const STAR = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.6l2.9 6 6.5.8-4.8 4.5 1.2 6.5L12 17.3l-5.8 3.1 1.2-6.5L2.6 9.4l6.5-.8z"/></svg>';
@@ -166,6 +168,14 @@ const CSS = `
 .gkmm-spc small { display: block; margin-top: 2px; font-size: calc(12 * var(--u1)); color: var(--gk-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .gkmm-lb { margin-top: calc(12 * var(--u1)); padding-top: calc(10 * var(--u1)); border-top: 1px solid rgba(255, 255, 255, .08); }
 .gkmm-lb h4 { margin: 0 0 6px; font-size: calc(10.5 * var(--u1)); font-weight: 800; letter-spacing: .16em; text-transform: uppercase; color: var(--gk-dim); }
+.gkmm-lbh { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.gkmm-lbh h4 { margin: 0; flex: 1 1 auto; min-width: 0; }
+.gkmm-seg { display: inline-flex; flex: 0 0 auto; gap: 2px; padding: 2px; border-radius: 8px; background: rgba(255, 255, 255, .07); }
+.gkmm-seg button { border: 0; background: none; padding: 3px 9px; min-height: 26px; border-radius: 6px; cursor: pointer; font: 700 11.5px var(--gk-sans) !important; color: var(--gk-dim) !important; }
+.gkmm-seg button[aria-pressed="true"] { background: rgba(255, 255, 255, .16); color: var(--gk-fg) !important; }
+.gkm.gkm-touch .gkmm-seg button { min-height: 32px; padding: 4px 11px; }
+.gkmm-lb small.gkmm-asn { margin-bottom: 4px; color: #bfe9ff; }
+.gkmm-champ div { margin-top: 2px; }
 .gkmm-lb ol { margin: 0; padding: 0; list-style: none; }
 .gkmm-lb li { display: flex; gap: 8px; align-items: baseline; padding: 2px 0; font-size: calc(12.5 * var(--u1)); }
 .gkmm-lb li i { font-style: normal; font: 700 calc(11 * var(--u1)) var(--gk-mono); color: var(--gk-faint); min-width: 18px; }
@@ -206,10 +216,12 @@ export function mountMissions({ root, brand, foot, container, touch = false, sta
   }
 
   // ---------- retention: the weekly challenge and the day's landing ----------
-  let week = currentWeek(), wk = weeklyPick(week), wkInfo = null, wkTop, wkChamp, wkShown = false;
+  // two lists per board ("Elle" / "Destekli", src/retention/boards.js): tops[side] = { entries } | null (unavailable) |
+  // undefined (loading); a list opens on the side of the player's latest result on that board, else "Elle"
+  let week = currentWeek(), wk = weeklyPick(week), wkInfo = null, wkTops = {}, wkSide = lastList(wk.board) || 'm', wkChamp, wkShown = new Set();
   const dl = landingChallenges(map).find((c) => c.kind === 'daily-land');
   const dlNames = landingEndNames(runways);
-  let dlEnd = dlNames.length ? dailyLandingEnd(dlNames, day, map) : null, dlTop, dlTopDay = null;
+  let dlEnd = dlNames.length ? dailyLandingEnd(dlNames, day, map) : null, dlTops = {}, dlSide = (dl && lastList(dl.board)) || 'm', dlTopDay = null;
   /** The pick's texts: its mission (this or the other map's catalog) or its free-flight challenge. */
   async function resolveInfo(p) {
     if (p.kind === 'mission') {
@@ -228,23 +240,33 @@ export function mountMissions({ root, brand, foot, container, touch = false, sta
   function loadWeekly() {
     const w = week, p = wk;
     resolveInfo(p).then((info) => { if (w !== week || destroyed) return; wkInfo = info; refreshEntry(); if (panel) rerender(); }).catch(() => {});
-    boardTop(p.board, { n: 10 }).then((t) => { if (w !== week || destroyed) return; wkTop = t; refreshEntry(); if (panel && sel === 'weekly') rerender(); });
+    loadWkSide('m');   // (the entry button shows the manual list's leader)
+    if (wkSide !== 'm') loadWkSide(wkSide);
+  }
+  function loadWkSide(sd) {
+    if (sd in wkTops) return;   // (loaded or loading)
+    const w = week;
+    wkTops[sd] = undefined;
+    boardTop(boardFor(wk.board, sd === 'as'), { n: 10 }).then((t) => { if (w !== week || destroyed) return; wkTops[sd] = t; if (sd === 'm') refreshEntry(); if (panel && sel === 'weekly') rerender(); });
   }
   function loadChampion() {
     if (wkChamp !== undefined) return;
     wkChamp = 'loading';
     const w = week, pp = weeklyPick(addWeeks(week, -1));
-    Promise.all([boardTop(pp.board, { n: 10 }), resolveInfo(pp).catch(() => null)]).then(([t, info]) => {
+    Promise.all([boardTop(pp.board, { n: 10 }), boardTop(boardFor(pp.board, true), { n: 10 }), resolveInfo(pp).catch(() => null)]).then(([t, ta, info]) => {
       if (w !== week) return;
-      wkChamp = t && t.entries && t.entries[0] ? { ...t.entries[0], title: info ? info.title : '' } : null;
+      const top1 = (x) => (x && x.entries && x.entries[0] ? x.entries[0] : null);
+      wkChamp = top1(t) || top1(ta) ? { m: top1(t), as: top1(ta), title: info ? info.title : '' } : null;
       if (panel && sel === 'weekly') rerender();
     });
   }
-  function loadDland() {
-    if (!dlEnd || dlTopDay === day) return;
-    dlTopDay = day; dlTop = undefined;
+  function loadDland(sd = dlSide) {
+    if (!dlEnd) return;
+    if (dlTopDay !== day) { dlTopDay = day; dlTops = {}; }
+    if (sd in dlTops) return;
+    dlTops[sd] = undefined;
     const d = day;
-    boardTop(dl.board, { day: d, n: 10 }).then((t) => { if (d !== day) return; dlTop = t; if (panel && sel === 'dland') rerender(); });
+    boardTop(boardFor(dl.board, sd === 'as'), { day: d, n: 10 }).then((t) => { if (d !== day) return; dlTops[sd] = t; if (panel && sel === 'dland') rerender(); });
   }
   const rerender = () => { if (panel) select(sel, panel.classList.contains('detail')); };
   loadWeekly();
@@ -291,7 +313,7 @@ export function mountMissions({ root, brand, foot, container, touch = false, sta
     eWeekB.textContent = 'Haftanın görevi';
     if (wkInfo) el('span', 't', eWeekB, `: ${wkInfo.title}`);
     eWeekS.textContent = `${wk.map !== map ? `${MAP_NAME[wk.map] || wk.map} · ` : ''}${wkInfo && wkInfo.free ? 'serbest uçuş · ' : wkInfo && wkInfo.aircraft ? `${AIRCRAFT_SHORT[wkInfo.aircraft]} · ` : ''}`;
-    const lead = wkTop && wkTop.entries && wkTop.entries[0];
+    const lead = wkTops.m && wkTops.m.entries && wkTops.m.entries[0];
     if (lead) { eWeekS.append('lider '); el('b', null, eWeekS, fmtInt(lead.score)); }
     else { eWeekS.append('yeni hafta '); el('b', null, eWeekS, fmtLeft(secondsToNextWeek())); }
   }
@@ -307,7 +329,7 @@ export function mountMissions({ root, brand, foot, container, touch = false, sta
       day = d; daily = buildMission(dailyMissionId(day), day);
       dlEnd = dlNames.length ? dailyLandingEnd(dlNames, day, map) : null;
       const w = currentWeek();
-      if (w !== week) { week = w; wk = weeklyPick(w); wkInfo = null; wkTop = undefined; wkChamp = undefined; loadWeekly(); }
+      if (w !== week) { week = w; wk = weeklyPick(w); wkInfo = null; wkTops = {}; wkSide = lastList(wk.board) || 'm'; wkChamp = undefined; wkShown = new Set(); loadWeekly(); }
       refreshEntry();
       if (panel) renderPanel();
     }
@@ -416,12 +438,24 @@ export function mountMissions({ root, brand, foot, container, touch = false, sta
   function dlBest() {
     try { const st = JSON.parse(localStorage.getItem(map === 'sf' ? 'gokyuzu.ffc' : `gokyuzu.ffc.${map}`) || 'null'); const p = st && st.e && st.e[`${dl.id}@${day}`]; return p && p.done ? p : null; } catch { return null; }
   }
-  function boardList(det, top, title, { showAc = false } = {}) {
+  /** A top 10 with the "Elle / Destekli" switch; onSide(side) switches (the caller loads and re-renders). */
+  function boardList(det, top, title, { showAc = false, side = 'm', onSide = null } = {}) {
     const lb = el('div', 'gkmm-lb', det);
-    if (top === null) { lb.remove(); return null; }   // the service is unavailable (and the local dev server): no table
-    el('h4', null, lb, title);
+    if (top === null && side === 'm') { lb.remove(); return null; }   // the service is unavailable (and the local dev server): no table
+    const h = el('div', 'gkmm-lbh', lb);
+    el('h4', null, h, title);
+    if (onSide) {
+      const seg = el('span', 'gkmm-seg', h);
+      for (const [sd, label] of [['m', 'Elle'], ['as', 'Destekli']]) {
+        const b = el('button', null, seg, label);
+        b.type = 'button';
+        b.setAttribute('aria-pressed', String(sd === side));
+        b.addEventListener('click', (e) => { e.stopPropagation(); if (sd !== side) onSide(sd); });
+      }
+    }
+    if (side === 'as') el('small', 'gkmm-asn', lb, 'Destekli uçuş listesi · elle uçarak ana listeye girebilirsin');
     if (top === undefined) { el('small', null, lb, 'Sıralama yükleniyor…'); return lb; }
-    if (!top.entries || !top.entries.length) { el('small', null, lb, 'Henüz skor yok: ilk sen ol!'); return lb; }
+    if (!top || !top.entries || !top.entries.length) { el('small', null, lb, 'Henüz skor yok: ilk sen ol!'); return lb; }
     const ol = el('ol', null, lb);
     for (const x of top.entries.slice(0, 10)) {
       const li = el('li', null, ol);
@@ -453,14 +487,18 @@ export function mountMissions({ root, brand, foot, container, touch = false, sta
     if (wkInfo) el('p', null, det, wkInfo.brief);
     if (wkInfo && wkInfo.goal) { const g = el('div', 'gkmm-goal', det); el('span', null, g, 'Hedef'); g.append(wkInfo.goal); }
     el('div', 'gkmm-note', det, `Bir hafta boyunca herkes aynı görevde: en iyi skorun haftalık sıralamaya girer. Yeni hafta ${fmtLeft(secondsToNextWeek())} sonra.`);
-    const lb = boardList(det, wkTop, 'Bu haftanın ilk 10\'u', { showAc: !!(wkInfo && wkInfo.free) });
-    if (lb && wkTop && wkTop.entries && !wkShown) { wkShown = true; trackEvent('wk', { st: 'show', id: wk.key, c: wkTop.entries.length }); }
+    loadWkSide(wkSide);
+    const top = wkTops[wkSide];
+    const lb = boardList(det, top, 'Bu haftanın ilk 10\'u', { showAc: !!(wkInfo && wkInfo.free), side: wkSide,
+      onSide: (sd) => { wkSide = sd; loadWkSide(sd); rerender(); } });
+    if (lb && top && top.entries && !wkShown.has(wkSide)) { wkShown.add(wkSide); trackEvent('wk', { st: 'show', id: wk.key, c: top.entries.length, as: wkSide === 'as' ? 1 : undefined }); }
     loadChampion();
     if (wkChamp && wkChamp !== 'loading') {
       const c = el('div', 'gkmm-champ', det);
-      el('span', null, c, 'Geçen haftanın şampiyonu');
-      el('b', null, c, wkChamp.name || 'İsimsiz pilot');
-      c.append(` · ${fmtInt(wkChamp.score)} puan${wkChamp.title ? ` (${wkChamp.title})` : ''}`);
+      el('span', null, c, `Geçen haftanın şampiyonu${wkChamp.title ? ` · ${wkChamp.title}` : ''}`);
+      const line = (x, label) => { const d = el('div', null, c); el('b', null, d, x.name || 'İsimsiz pilot'); d.append(` · ${fmtInt(x.score)} puan${label}`); };
+      if (wkChamp.m) line(wkChamp.m, '');
+      if (wkChamp.as) line(wkChamp.as, ' · Destekli');
     }
     goButton(wkInfo && wkInfo.free ? 'Uç' : 'Başla', wkInfo && wkInfo.free ? `seçili uçakla · ${MAP_NAME[wk.map] || ''}` : `${wkInfo && wkInfo.aircraft ? AIRCRAFT_SHORT[wkInfo.aircraft] : ''} · haftanın görevi`);
   }
@@ -476,7 +514,7 @@ export function mountMissions({ root, brand, foot, container, touch = false, sta
     el('div', 'gkmm-note', det, 'Uç: seçili uçakla bu pistin son yaklaşmasından başlarsın. İniş puanın × 20 günün sıralamasına girer; yarın başka pist.');
     const best = dlBest();
     if (best) { const b = el('div', 'gkmm-best', det, `Bugünkü en iyin: ${fmtInt(best.best)} puan  `); b.append(stars(best.stars || 0)); }
-    boardList(det, dlTop, 'Günün sıralaması', { showAc: true });
+    boardList(det, dlTops[dlSide], 'Günün sıralaması', { showAc: true, side: dlSide, onSide: (sd) => { dlSide = sd; loadDland(sd); rerender(); } });
     goButton('Uç', `seçili uçakla · ${endLabel(dlEnd)}`);
   }
   function select(id, userDetail = false) {
@@ -570,7 +608,7 @@ export function mountMissions({ root, brand, foot, container, touch = false, sta
 
   return {
     open: openPanel, close: closePanel, get isOpen() { return !!panel; }, daily: () => ({ id: daily.id, day, title: daily.title }), select, go,
-    weekly: () => ({ ...wk, info: wkInfo, top: wkTop, champion: wkChamp }), dailyLanding: () => ({ end: dlEnd, id: dl && dl.id, board: dl && dl.board }),
+    weekly: () => ({ ...wk, info: wkInfo, tops: wkTops, side: wkSide, champion: wkChamp }), dailyLanding: () => ({ end: dlEnd, id: dl && dl.id, board: dl && dl.board }),
     /** The menu switched maps: remove the entry (a new mount shows the other map's missions). */
     destroy() { destroyed = true; closePanel(); clearInterval(timer); entry.remove(); },
   };

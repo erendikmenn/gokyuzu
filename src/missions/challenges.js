@@ -145,7 +145,7 @@ function writeStore(s, map) { try { localStorage.setItem(storeKey(map), JSON.str
 export function loadChallengeProgress(map) { return readStore(map).e; }
 /**
  * Record a finished run → { newBest, prevBest, prevStars }. A daily challenge's id is `<id>@YYYYMMDD` (the last 14 days
- * kept). `assisted`: the best came from an assisted landing (as: 1; the panel's "Sıralama" never submits it).
+ * kept). `assisted`: the best came from an assisted landing (as: 1; the panel's "Sıralama" submits it to the "Destekli" list).
  */
 export function recordChallenge(id, { ok, score, stars, ac, assisted = false }, map) {
   const s = readStore(map);
@@ -213,7 +213,7 @@ export function createChallengeTracker(o = {}) {
     e.status = 'idle';
     const r = { id: e.id, board: e.board, title: e.def.title, ok, reason, score: ok ? Math.round(score) : 0, stars: ok ? stars : 0, time, rows, ac: aircraft, landing };
     if (e.def.daily) r.day = e.day || istanbulDay();
-    if (assisted) r.assisted = true;   // a landing with assisted flight / the autopilot (card.assisted): no leaderboard
+    if (assisted) r.assisted = true;   // a landing with assisted flight / the autopilot (card.assisted): the "Destekli" lists
     e.last = r;
     emit(ok ? 'done' : 'fail', e, r);
     return r;

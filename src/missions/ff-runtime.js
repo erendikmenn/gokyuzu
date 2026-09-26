@@ -11,7 +11,8 @@
 // weekly challenge's board (a finished run of this week's free-flight pick is also submitted to w-<yyyyww>-<board>), the
 // menu's intent (shared.retentionIntent = { track, final }: follow a challenge right away) and, on phones after a
 // 2-star landing, the "Ana ekrana ekle" suggestion (src/retention/install.js). Landings with assisted flight or on the
-// autopilot complete challenges locally but are never submitted to a leaderboard. One landing can finish several challenges:
+// autopilot go to the "Destekli" list of each board (src/retention/boards.js), never to the manual one. One landing can
+// finish several challenges:
 // the most important result shows (emergency › series › daily landing › pad › best landing) with the others, the streak
 // and a new badge listed in it ("Bu inişte"); the others are submitted quietly. Nothing stacks over a result: the landing
 // card hides while it is open (src/retention/result-flag.js, <html class="gk-result-open">).
@@ -32,6 +33,7 @@ import { landingChallenges, endLabel } from './landing-challenges.js';
 import { noteActivity, noteLanding, applyAccent, streakLine } from '../retention/activity.js';
 import { weeklyFor } from '../retention/weekly.js';
 import { submitQuiet } from '../retention/lb.js';
+import { boardFor } from '../retention/boards.js';
 import { suggestInstall } from '../retention/install.js';
 import { resultOpen } from '../retention/result-flag.js';
 import { runwayEnds } from '../flight/fixedwing-autopilot.js';
@@ -194,8 +196,7 @@ export function createFreeFlightChallenges(ctx) {
   function resultExtras(e, r, prog = null) {
     return {
       newBest: prog ? prog.newBest : false, prevBest: prog ? prog.prevBest : 0, best: progress[pkey(e)] || null,
-      submit: r.ok && !r.submitted && !r.assisted ? { score: r.score, stars: r.stars, sec: r.time == null ? undefined : r.time, ac } : null,
-      assisted: !!r.assisted,
+      submit: r.ok && !r.submitted ? { score: r.score, stars: r.stars, sec: r.time == null ? undefined : r.time, ac, assisted: !!r.assisted } : null,
       onPlay: () => playMission(e.id),
       onSubmitted: () => { r.submitted = true; submitted.add(pkey(e)); },
       weekly: r.weekly || null,
@@ -208,7 +209,7 @@ export function createFreeFlightChallenges(ctx) {
     const r = { id, board: e.board, title: e.def.title, ac, ok: false, noRun: true, day: e.def.daily ? e.day : undefined };
     panel.showResult(r, {
       best, onPlay: () => playMission(id), onSubmitted: () => submitted.add(pkey(e)),
-      submit: best && best.done && !best.as && !submitted.has(pkey(e)) ? { score: best.best, stars: best.stars, ac: best.ac || ac } : null,
+      submit: best && best.done && !submitted.has(pkey(e)) ? { score: best.best, stars: best.stars, ac: best.ac || ac, assisted: !!best.as } : null,
     });
   }
   /**
@@ -302,8 +303,8 @@ export function createFreeFlightChallenges(ctx) {
     if (r.ok) {   // retention: the day joins the streak; this week's free-flight pick also goes to its weekly board
       const st = noteActivity('ffc');
       if (st && st.newDay) streakToast(st);
-      const wk = r.assisted ? null : weeklyFor({ ff: e.id });   // (assisted landings stay off the leaderboards)
-      if (wk) r.weekly = { pick: wk, p: submitQuiet({ board: wk.board, score: r.score, stars: r.stars, sec: r.time == null ? undefined : r.time, ac, weekly: wk.key }) };
+      const wk = weeklyFor({ ff: e.id });   // (an assisted result: the weekly board's "Destekli" list)
+      if (wk) r.weekly = { pick: wk, p: submitQuiet({ board: boardFor(wk.board, r.assisted), score: r.score, stars: r.stars, sec: r.time == null ? undefined : r.time, ac, weekly: wk.key, assisted: !!r.assisted }) };
     }
     if (crashing) return;   // the crash handler shows the flight's results
     if (batch) { batch.push({ e, r, prog }); return; }   // a landing's results: flushBatch() picks the one to show
@@ -327,10 +328,10 @@ export function createFreeFlightChallenges(ctx) {
     else if (hud) lines.forEach((t, i) => setTimeout(() => { if (!crashing) hud.showMessage(t, 2600); }, (touch ? 7500 : 0) + 2800 * i));
     for (const x of list) {
       if (x === primary) continue;
-      const worth = x.r.ok && !x.r.assisted && (x.prog.newBest || x.e.def.kind === 'series');
+      const worth = x.r.ok && (x.prog.newBest || x.e.def.kind === 'series');
       if (worth && !x.r.submitted) {
         x.r.submitted = true; submitted.add(pkey(x.e));
-        submitQuiet({ board: x.e.board, day: x.r.day || '', score: x.r.score, stars: x.r.stars, sec: x.r.time == null ? undefined : x.r.time, ac });
+        submitQuiet({ board: boardFor(x.e.board, x.r.assisted), day: x.r.day || '', score: x.r.score, stars: x.r.stars, sec: x.r.time == null ? undefined : x.r.time, ac, assisted: !!x.r.assisted });
       }
     }
   }
@@ -357,8 +358,8 @@ export function createFreeFlightChallenges(ctx) {
   if (landing && landing.onResult) {
     landing.onResult((card0, td) => {
       if (f.crashed) return;
-      // a landing with assisted flight (src/ui/landing.js card.assisted) or on the autopilot (autoland) counts for the
-      // challenges and the streak, never for a leaderboard
+      // a landing with assisted flight (src/ui/landing.js card.assisted) or on the autopilot (autoland): the challenges and
+      // the streak as any landing; its leaderboard entries go to the "Destekli" lists
       const card = card0 && !card0.assisted && apAtTouchdown ? { ...card0, assisted: true } : card0;
       const list = batch = [], notes = batchNotes = [];
       try {

@@ -5,6 +5,10 @@
 // mission or a free-flight board) and yyyyww an ISO week of the Istanbul calendar (UTC+3). A weekly board inherits its
 // base's rule, has no daily boards, takes scores only in the current week (± 1 day of clock skew), can be read for the
 // last `weekly.back` weeks and expires `weekly.ttlDays` after its week ended. rules.weekly missing: no weekly boards.
+// Assisted boards ("Destekli" list: runs flown with assisted flight or landed on the autopilot): `as-<board>` for every
+// board, inside a weekly id as `w-<yyyyww>-as-<base>` (one spelling per board: `as-w-…` and `as-as-…` are refused). An
+// assisted board inherits its base's rule (score, stars, aircraft, time, daily days, TTL) and has the same nickname flow.
+// rules.assisted missing: no assisted boards.
 import { cleanName } from '../../../src/net/names.js';
 
 export const DAY_MS = 86400000;
@@ -52,6 +56,9 @@ export function weekStartMs(week) {
   const t = week1Monday(+m[1]) + (+m[2] - 1) * WEEK_MS;
   return istWeek(t - IST_OFFSET) === week ? t : NaN;
 }
+const ASSISTED = 'as-';
+/** An assisted board id → its base board (or null: not an assisted board). */
+export const parseAssisted = (mission) => (String(mission || '').startsWith(ASSISTED) ? String(mission).slice(ASSISTED.length) : null);
 /** A weekly board id → { week, base } (or null: not a weekly board). */
 export function parseWeekly(mission) {
   const m = WEEKLY_RE.exec(String(mission || ''));
@@ -60,6 +67,12 @@ export function parseWeekly(mission) {
 
 /** The rule for a mission (defaults merged), or null when the mission is unknown and the rules are strict. */
 export function missionRule(rules, mission, stage) {
+  const as = parseAssisted(mission);
+  if (as !== null) {   // an assisted board: its base's rule (not a weekly id: that spelling is w-<week>-as-<base>)
+    if (!rules.assisted || parseAssisted(as) !== null || parseWeekly(as)) return null;
+    const base = missionRule(rules, as, stage);
+    return base ? { ...base, assisted: true } : null;
+  }
   const wk = parseWeekly(mission);
   if (wk) {   // a weekly board: its base's rule (not another weekly board), weekly boards enabled, a real week
     if (!rules.weekly || parseWeekly(wk.base) || Number.isNaN(weekStartMs(wk.week))) return null;
@@ -129,7 +142,7 @@ export function checkScore(body, { rules, stage, now }) {
   return {
     ok: true,
     value: { mission, day: day.day, dayMs: day.ms ?? null, score: sc, stars, ac, sec: seconds, sid, v: v || '',
-      name: nm.name, nameRejected: !nm.ok, lower: !!rule.lower, test: rule.test,
+      name: nm.name, nameRejected: !nm.ok, lower: !!rule.lower, test: rule.test, assisted: !!rule.assisted,
       weekEndMs: wk.endMs ?? null, weeklyTtlDays: rule.weekly ? (rules.weekly && rules.weekly.ttlDays) || 35 : null },
   };
 }
