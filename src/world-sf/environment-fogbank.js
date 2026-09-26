@@ -127,24 +127,38 @@ function neutralGroundMap() {
   return neutralGround;
 }
 
-export function createFogBank({ sunDir, sunE, amb, ground }) {
+/**
+ * The camera-centred polar grid (outer radius ~81 km). step 1: 150 rings × 288 segments (86 k triangles); step 2 (clouds
+ * 'low': phones, integrated / software GPUs): every second ring and segment of the same grid, 22 k triangles — the fog
+ * top keeps its broad swells, the shading (per-fragment billows) is unchanged.
+ */
+function bankGeometry(step) {
   const RINGS = 150, SEGS = 288;
-  const g = 1.041, r0 = 8;   // outer radius ~81 km
-  const polar = new Float32Array((RINGS + 1) * SEGS * 2);
+  const g = 1.041, r0 = 8;
+  const nr = Math.floor(RINGS / step), ns = SEGS / step;
+  const polar = new Float32Array((nr + 1) * ns * 2);
   let k = 0;
-  for (let i = 0; i <= RINGS; i++) {
-    const r = i === 0 ? 0 : r0 * (Math.pow(g, i) - 1) / (g - 1);
-    for (let s = 0; s < SEGS; s++) { polar[k++] = r; polar[k++] = (s / SEGS) * Math.PI * 2; }
+  for (let i = 0; i <= nr; i++) {
+    const ri = i * step, r = ri === 0 ? 0 : r0 * (Math.pow(g, ri) - 1) / (g - 1);
+    for (let s = 0; s < ns; s++) { polar[k++] = r; polar[k++] = (s / ns) * Math.PI * 2; }
   }
-  const idx = [];
-  for (let i = 0; i < RINGS; i++) for (let s = 0; s < SEGS; s++) {
-    const a = i * SEGS + s, b = i * SEGS + (s + 1) % SEGS, c = a + SEGS, d = b + SEGS;
-    idx.push(a, b, c, b, d, c);   // counter-clockwise seen from above (+Y)
+  const idx = new ((nr + 1) * ns > 65535 ? Uint32Array : Uint16Array)(nr * ns * 6);
+  k = 0;
+  for (let i = 0; i < nr; i++) for (let s = 0; s < ns; s++) {
+    const a = i * ns + s, b = i * ns + (s + 1) % ns, c = a + ns, d = b + ns;
+    idx[k++] = a; idx[k++] = b; idx[k++] = c; idx[k++] = b; idx[k++] = d; idx[k++] = c;   // counter-clockwise seen from above (+Y)
   }
   const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array((RINGS + 1) * SEGS * 3), 3));
+  geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array((nr + 1) * ns * 3), 3));
   geo.setAttribute('polar', new THREE.BufferAttribute(polar, 2));
-  geo.setIndex(idx);
+  geo.setIndex(new THREE.BufferAttribute(idx, 1));
+  geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e9);   // (frustumCulled is off; no bounds from zeroed positions)
+  return geo;
+}
+
+export function createFogBank({ sunDir, sunE, amb, ground }) {
+  const geos = { 1: bankGeometry(1), 2: null };
+  const geo = geos[1];
   const uniforms = THREE.UniformsUtils.merge([THREE.UniformsLib.fog, {
     uCamPos: { value: new THREE.Vector3() }, uTime: { value: 0 },
     uSunDir: { value: sunDir.clone() }, uSunE: { value: new THREE.Vector3(...sunE) }, uAmb: { value: new THREE.Vector3(...amb) },
@@ -152,7 +166,7 @@ export function createFogBank({ sunDir, sunE, amb, ground }) {
   }]);
   const mat = new THREE.ShaderMaterial({
     name: 'sf-fogbank',
-    defines: { SF_GROUND: 1, SF_BANK_DETAIL: '1.0' },
+    defines: { SF_GROUND: 1, SF_BANK_DETAIL: '1.0', SF_BANK_MG: '0.07' },
     uniforms,
     fog: true,
     transparent: true,
@@ -177,7 +191,7 @@ export function createFogBank({ sunDir, sunE, amb, ground }) {
         // triangle with such a vertex has no fog anywhere, so it is moved behind the far plane (clipped) and whatever is
         // left of it is discarded (vCull). Most of the 81 km grid was shaded only to be discarded (overdraw: half a screen
         // of fragments, 84–100 % thrown away, in every San Francisco view); the fog itself is unchanged.
-        float mg = polar.x * 0.07 + 20.0;
+        float mg = polar.x * SF_BANK_MG + 20.0;   // (grid cells: 0.04 × radius at step 1, 0.09 at step 2)
         vec2 ta = vec2(-14500.0, -22750.0), tab = vec2(7600.0, 850.0);
         float tt = clamp(dot(xz - ta, tab) / dot(tab, tab), 0.0, 1.0);
         bool maybe = (xz.x < -10100.0 + mg || length(xz - ta - tab * tt) < 2050.0 + mg) && xz.x > -62000.0 - mg && xz.y > -54000.0 - mg && xz.y < 18000.0 + mg;
@@ -239,10 +253,14 @@ export function createFogBank({ sunDir, sunE, amb, ground }) {
       if (!g) return;
       uniforms.uGround.value = g.tex; uniforms.uGroundXf.value.copy(g.xform);
     },
-    /** clouds quality 'low' drops the finest billow octave */
+    /** clouds quality 'low' drops the finest billow octave and draws the coarser grid (bankGeometry) */
     setQuality(c) {
       const v = c === 'low' ? '0.0' : '1.0';
       if (mat.defines.SF_BANK_DETAIL !== v) { mat.defines.SF_BANK_DETAIL = v; mat.needsUpdate = true; }
+      const step = c === 'low' ? 2 : 1, mg = step === 2 ? '0.14' : '0.07';
+      if (!geos[step]) geos[step] = bankGeometry(step);
+      if (mesh.geometry !== geos[step]) mesh.geometry = geos[step];
+      if (mat.defines.SF_BANK_MG !== mg) { mat.defines.SF_BANK_MG = mg; mat.needsUpdate = true; }
     },
     /** returns { inside (0..1), topAbove (m above the camera) } */
     update(dt, camera) {
