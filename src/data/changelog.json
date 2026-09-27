@@ -1,13 +1,15 @@
 {
   "entries": [
     {
-      "id": "2026-09-28",
-      "title": "Seri, haftanın görevi ve iniş görevleri",
+      "id": "2026-09-27",
+      "title": "Destekli uçuş, günlük seri ve daha akıcı oyun",
       "items": [
+        "Destekli uçuş: kalkışta ne yapacağını ekranda gösterir, stall ve dalışa karşı korur; \"İnişe geç\" pisti bulup seni yumuşakça indirir. İstersen Ayarlar'dan kapatabilirsin.",
         "Günlük seri: her gün bir uçuş ya da görev bitir, serin büyüsün. 3, 7, 14 ve 30 günde unvanlar ve HUD renkleri açılır.",
-        "Haftanın görevi: bir hafta boyunca herkes aynı görevde; haftalık sıralama ve geçen haftanın şampiyonu Görevler'de.",
-        "Beni geç: görev sonucunu paylaştığında arkadaşın aynı görevi senin puanını geçmek için uçar.",
-        "Yeni iniş görevleri: İniş serisi ve her gün başka pistte Günün inişi. \"Son yaklaşmaya git\" ile hemen pistin önündesin."
+        "Haftanın görevi ve yeni iniş görevleri (İniş serisi, Günün inişi). Sıralamalarda Elle ve Destekli listeleri ayrı.",
+        "Beni geç: görev sonucunu paylaş, arkadaşın senin puanını geçmeye çalışsın.",
+        "Ses ve uyarı ayarları: sesi tamamen kapat (M), ses seviyelerini ayrı ayrı ayarla, sesli uyarıları azalt.",
+        "Telefon ve tablette daha az ısınma, daha hızlı dokunmatik tepki ve daha az çökme; Windows'ta eski ekran kartlarına uygun ayarlar."
       ]
     }
   ]

@@ -163,7 +163,7 @@ export function startTelemetry({ build, renderer, quality, state, extra = {} }) 
     const cap = s.cap ?? (pacing && Number.isFinite(pacing.cap) ? pacing.cap : undefined);
     send('hb', { a: active, ac: s.aircraft, fps: Math.round(s.fps || 0), cap, pr: s.pixelRatio && s.pixelRatio.toFixed(2), vw: s.view === 'cockpit' ? 'c' : 'e' });
   }, 60000);
-  addEventListener('pagehide', () => send('end', { a: active }));
+  addEventListener('pagehide', () => send('end', withExtras('end', { a: active })));
 }
 
 // Errors are caught from the moment this module loads (not only after startTelemetry): failures while loading used to
@@ -181,7 +181,7 @@ if (hasDom && typeof addEventListener === 'function') {
 
 /** A flight started: aircraft, spawn, seconds from the menu click to the first playable frame (+ extra, e.g. { in: 'touch', tilt: 1 }). */
 export function trackFlight(aircraft, spawn, loadSeconds, quality, extra = {}) {
-  send('fly', { ac: aircraft, sp: spawn, lt: loadSeconds.toFixed(1), q: quality, ...extra });
+  send('fly', withExtras('fly', { ac: aircraft, sp: spawn, lt: loadSeconds.toFixed(1), q: quality, ...extra }));
   markLive(quality);
 }
 
@@ -218,14 +218,17 @@ const eventCount = {};
 // (src/ui/landing.js) adds fpm / cl / tdz / st to `land`; fn(data) → { key: value } | null, never throws into the caller
 const eventExtras = {};
 export function setEventExtras(type, fn) { eventExtras[type] = typeof fn === 'function' ? fn : null; }
+function withExtras(t, data) {   // (fly and end use the hook too, e.g. assisted flight's `as`)
+  if (eventExtras[t]) { try { const x = eventExtras[t](data); if (x) return { ...data, ...x }; } catch { /* ignore */ } }
+  return data;
+}
 /** Generic gameplay event, e.g. trackEvent('land', { ac: 'a320neo', vs: -1.2, rw: 1 }). */
 export function trackEvent(type, data = {}) {
   const t = String(type || '').replace(/[^a-z0-9_-]/gi, '').slice(0, 16);
   if (!t) return;
   eventCount[t] = (eventCount[t] || 0) + 1;
   if (eventCount[t] > EVENT_CAP) return;
-  if (eventExtras[t]) { try { const x = eventExtras[t](data); if (x) data = { ...data, ...x }; } catch { /* ignore */ } }
-  send(t, data);
+  send(t, withExtras(t, data));
 }
 
 function reportError(message, file, line) {
