@@ -45,7 +45,15 @@ const memStore = () => { const m = new Map(); return { getItem: (k) => (m.has(k)
   const t = memStore(); const q = readStreak(t);
   for (let i = 0; i < 31; i++) recordDay(q, new Date(Date.UTC(2026, 8, 1 + i)).toISOString().slice(0, 10).replace(/-/g, ''));
   check('streak: 30+ days in a row → d3, d7, d14, d30 unlocked; bucket 30+', ['d3', 'd7', 'd14', 'd30'].every((id) => q.badges[id]) && streakView(q, '20261001').current === 31 && bucket(31) === '30+');
-  check('streak: kept days capped at 60', (() => { const z = readStreak(memStore()); for (let i = 0; i < 90; i++) recordDay(z, new Date(Date.UTC(2026, 0, 1 + i)).toISOString().slice(0, 10).replace(/-/g, '')); return z.days.length === 60 && streakView(z, '20260331').current === 60; })());
+  check('streak: kept days capped at 60, a longer run still counts (it stopped at 60)', (() => { const z = readStreak(memStore()); for (let i = 0; i < 90; i++) recordDay(z, new Date(Date.UTC(2026, 0, 1 + i)).toISOString().slice(0, 10).replace(/-/g, '')); return z.days.length === 60 && streakView(z, '20260331').current === 90 && z.best === 90; })());
+  check('streak: a 75-day run survives a write / read and goes on; a gap after it starts over', (() => {
+    const st = memStore(); let z = readStreak(st);
+    for (let i = 0; i < 75; i++) recordDay(z, new Date(Date.UTC(2026, 0, 1 + i)).toISOString().slice(0, 10).replace(/-/g, ''));
+    writeStreak(z, st); z = readStreak(st);
+    const a = streakView(z, '20260317').current, b = recordDay(z, '20260317').current, c = recordDay(z, '20260320').current;
+    return a === 75 && b === 76 && c === 1 && z.best === 76 && z.run0 === null;
+  })());
+  check('streak: stored days of the wrong type are dropped (a number threw in the menu)', (() => { const g = memStore(); g.setItem(STORE, JSON.stringify({ days: [20260926, '20260927'], run0: 5 })); const z = readStreak(g); return z.days.join() === '20260927' && z.run0 === null && streakView(z, '20260927').current === 1; })());
   check('streak: clock set back → later days dropped, no negative run', (() => { const z = readStreak(memStore()); recordDay(z, '20260910'); recordDay(z, '20260911'); const x = recordDay(z, '20260905'); return z.days.join() === '20260905' && x.current === 1; })());
   check('streak: buckets', bucket(0) === '0' && bucket(1) === '1' && bucket(2) === '2' && bucket(3) === '3-6' && bucket(7) === '7-13' && bucket(14) === '14-29' && dayDiff('20261231', '20270101') === 1);
   const garbage = memStore(); garbage.setItem(STORE, JSON.stringify({ days: ['x', '20260101', '20260101'], best: -3, badges: { d3: '20260101', bogus: 1 }, pick: 'bogus', land: { cur: 'a' } }));
