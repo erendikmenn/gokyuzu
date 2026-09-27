@@ -1001,6 +1001,28 @@ def report_assist(beacons, visitors, top):
             by[f['dev']].append(f)
         print('    ' + ' · '.join(f"{d} {len(v)} uçuş: kalkış {pct(sum(1 for f in v if f['ground'] and f['to']), sum(1 for f in v if f['ground']))}, pist inişi/kalkış "
                                   f"{sum(f['rw'] for f in v) / max(sum(f['to'] for f in v), 1):.2f}" for d, v in sorted(by.items(), key=lambda kv: -len(kv[1]))))
+    report_assist_off(beacons, visitors, top)
+
+
+def report_assist_off(beacons, visitors, top):
+    """Turning assisted flight off (people, players only): the "DESTEKLİ UÇUŞ" chip on the flight screen (`assist` st=chip:
+    tapped, the question asked; st=off via=chip: "Kapat"; st=keep: Vazgeç / a second tap / the 4 s timeout / the chip hid),
+    and Ayarlar → Destekli uçuş → Kapalı (`set` k=assist v2=0 of a visitor with no chip "off"; the chip's own switch sends
+    that `set` too). How far into the page the chip's "Kapat" came (median minutes)."""
+    ev = real_events(beacons, visitors, {'assist'})
+    chip = [x for x in ev if x[3].get('st') in ('chip', 'off', 'keep')]
+    sets = real_events(beacons, visitors, {'set'})
+    off_set = people(sets, lambda q: q.get('k') == 'assist' and q.get('v2') == '0')
+    if not chip and not off_set:
+        return
+    st = lambda name: (lambda q: q.get('st') == name)
+    tapped, off, keep = people(chip, st('chip')), people(chip, lambda q: q.get('st') == 'off' and q.get('via') == 'chip'), people(chip, st('keep'))
+    keeps = Counter(q.get('via') or '?' for *_, q in chip if q.get('st') == 'keep')
+    mins = [num(q.get('m')) for *_, q in chip if q.get('st') == 'off']
+    base = len(flyers(beacons, visitors))
+    print(f"  Kapatma: çipe dokunan {len(tapped)} kişi ({sum(1 for *_, q in chip if q.get('st') == 'chip')} kez) → \"Kapat\" {len(off)} kişi "
+          f"({pct(len(off), len(tapped))}; uçanların {pct(len(off), base)}; sayfada medyan {med(mins, '{:.1f}')} dk) · vazgeçen {len(keep - off)} kişi "
+          f"({top(keeps, 4)}) · Ayarlar'dan kapatan {len(off_set - off)} kişi")
 
 
 def report_comeback(beacons, visitors, top):

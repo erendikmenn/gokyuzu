@@ -534,7 +534,7 @@ export function createOnboarding(container, { input = null, hud = null, restart 
 
     update(dt, f, info) {
       // assisted flight runs for every flight (also a resumed one, which has no begin())
-      if (f) assistHud.update(dt, f, { paused: !!(info && info.paused), tutorialStep: tut.active && !tut.okT ? tut.steps[tut.i].id : null, tutorial: tut.active, hidden: hudOff });
+      if (f) assistHud.update(dt, f, { paused: !!(info && info.paused), view: info && info.view, tutorialStep: tut.active && !tut.okT ? tut.steps[tut.i].id : null, tutorial: tut.active, hidden: hudOff });
       if (!started || !f) return;
       paused = !!(info && info.paused);
       crashed = !!f.crashed;
