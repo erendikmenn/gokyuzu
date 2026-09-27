@@ -7,16 +7,21 @@ import { parseDay, fmtInt } from '../missions/util.js';
 
 export const CHALLENGE_MAX = 1000000;
 
-/** ?mission=<id>&challenge=<score>(&daily=) → { id, score, day } or null (no / bad challenge). */
-export function parseChallenge(search) {
+/**
+ * ?mission=<id>&challenge=<score>(&daily=) → { id, score, day } or null (no / bad challenge). `max`: the most the mission
+ * can give (src/missions/score-max.js); a link claiming more is not a real result and shows nothing.
+ */
+export function parseChallenge(search, { max = CHALLENGE_MAX } = {}) {
   let q;
   try { q = new URLSearchParams(search || ''); } catch { return null; }
   const id = q.get('mission'), c = q.get('challenge');
   if (!id || !/^[a-z0-9][a-z0-9_-]{0,39}$/.test(id) || !c || !/^\d{1,7}$/.test(c)) return null;
   const score = Number(c);
-  if (score < 1 || score > CHALLENGE_MAX) return null;
+  if (score < 1 || score > CHALLENGE_MAX || !(score <= max)) return null;
   return { id, score, day: parseDay(q.get('daily')) };
 }
+/** The highest challenge a mission accepts: its maximum score with the leaderboard's 10 % margin (infra/leaderboard). */
+export const challengeCap = (maxScore) => (Number.isFinite(maxScore) && maxScore > 0 ? Math.ceil(maxScore * 1.1) : CHALLENGE_MAX);
 
 /** The link that challenges a friend to beat `score` on mission `id` (same origin and path as `base`). */
 export function challengeUrl(base, { id, day = null, score }) {

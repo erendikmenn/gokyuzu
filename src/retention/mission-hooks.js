@@ -18,7 +18,8 @@
 //   ret.finish(result)                when the run ends (result = { ok, score, stars, time, … })
 //   ret.result(result, { share })     after ui.showResult; share({ anchor }) = the runtime's share
 // Telemetry `chl` (challenge links): open (id, d = 1 daily), beat / lost (o = tie | short | fail), back (share-back tapped).
-import { parseChallenge, briefLine, resultLine, challengeOutcome } from './challenge-link.js';
+import { parseChallenge, briefLine, resultLine, challengeOutcome, challengeCap } from './challenge-link.js';
+import { missionMaxScore } from '../missions/score-max.js';
 import { weeklyFor } from './weekly.js';
 import { noteActivity, streakLine, applyAccent } from './activity.js';
 import { submitQuiet } from './lb.js';
@@ -68,7 +69,8 @@ export function createMissionRetention({ mission, touch = false, flight = null }
     hooked = m;
     m.on('touchdown', () => { if (m.autopilot && m.autopilot.on) apTouchdown = true; });
   }
-  try { const c = parseChallenge(location.search); ch = c && c.id === mission.id ? c : null; } catch { ch = null; }
+  // a link's claimed score above what this mission can give is not shown ("Arkadaşın 999.999 puan yaptı")
+  try { const c = parseChallenge(location.search, { max: challengeCap(missionMaxScore(mission)) }); ch = c && c.id === mission.id ? c : null; } catch { ch = null; }
   injectCSS('retention-mission', CSS);
   applyAccent();
   let opened = false, weekly = null, streak = null;

@@ -5,7 +5,10 @@
 import { readFileSync } from 'node:fs';
 import { readStreak, writeStreak, recordDay, recordLanding, streakView, badgeProgress, pickedBadge, bucket, dayDiff, BADGES, STORE } from '../src/retention/streak.js';
 import { isoWeek, parseWeek, weekMonday, addWeeks, currentWeek, weekIndex, secondsToNextWeek, weekLabel, fmtLeft, weeklyPick, weeklyFor, WEEKLY_POOL } from '../src/retention/weekly.js';
-import { parseChallenge, challengeUrl, challengeOutcome, briefLine, resultLine } from '../src/retention/challenge-link.js';
+import { parseChallenge, challengeUrl, challengeOutcome, briefLine, resultLine, challengeCap, CHALLENGE_MAX } from '../src/retention/challenge-link.js';
+import { missionMaxScore } from '../src/missions/score-max.js';
+import { buildMission as buildSfMission } from '../src/missions/catalog.js';
+import { buildMission as buildIstMission } from '../src/missions/ist/catalog.js';
 import { pendingNews } from '../src/retention/news.js';
 import { landingChallenges, landingEndNames, dailyLandingEnd, endLabel, maxLandingChallengeScore, NO_DAILY_LANDING } from '../src/missions/landing-challenges.js';
 import { BACKUP_RUNWAYS } from '../src/missions/ist/catalog.js';
@@ -130,6 +133,18 @@ const memStore = () => { const m = new Map(); return { getItem: (k) => (m.has(k)
   check('challenge link: Turkish lines (thousands separator, diacritics)', briefLine(c) === 'Arkadaşın 2.450 puan yaptı — geçebilir misin?'
     && resultLine(c, { ok: true, score: 2610 }).title === 'Arkadaşını geçtin!' && /160 puan kaldı/.test(resultLine(c, { ok: true, score: 2290 }).text)
     && /2\.610 > 2\.450/.test(resultLine(c, { ok: true, score: 2610 }).text));
+  // a crafted link cannot put an impossible score on the briefing ("Arkadaşın 999.999 puan yaptı")
+  const RULES = JSON.parse(readFileSync(new URL('../infra/leaderboard/lambda/rules.json', import.meta.url), 'utf8'));
+  const caps = [...MISSIONS.map((m) => [m.id, buildSfMission(m.id)]), ...IST_MISSIONS.map((m) => [m.id, buildIstMission(m.id)])]
+    .map(([id, built]) => ({ id, cap: challengeCap(missionMaxScore(built)), stars: built.stars, rule: RULES.missions[id] }));
+  const capBad = caps.filter((x) => !(x.cap > 0 && x.cap < CHALLENGE_MAX && (!x.rule || x.cap <= x.rule.scoreMax)
+    && (!Array.isArray(x.stars) || x.cap >= x.stars[2])));
+  check('challenge link: every mission has a cap above its 3-star score and within the leaderboard maximum', caps.length >= 20 && capBad.length === 0,
+    capBad.map((x) => `${x.id}:${x.cap}`).join(' '));
+  const lp = caps.find((x) => x.id === 'low-pass');
+  check('challenge link: a score above the mission cap is ignored, the cap itself accepted', parseChallenge(`?mission=low-pass&challenge=${lp.cap + 1}`, { max: lp.cap }) === null
+    && parseChallenge(`?mission=low-pass&challenge=${lp.cap}`, { max: lp.cap }).score === lp.cap && parseChallenge('?mission=low-pass&challenge=999999', { max: lp.cap }) === null
+    && parseChallenge('?mission=low-pass&challenge=999999').score === 999999 && challengeCap(0) === CHALLENGE_MAX && challengeCap(NaN) === CHALLENGE_MAX, JSON.stringify(lp));
 }
 
 // ---- what's new ---------------------------------------------------------------------------------------------------------
