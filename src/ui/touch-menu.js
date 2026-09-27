@@ -61,6 +61,22 @@ export const MENU_TOUCH_CSS = `
   .gkm.gkm-touch .gkm-blurb { display: none; }
   .gkm.gkm-touch .gkm-hero h2 { margin-bottom: 0; }
 }
+/* short landscape phones (a browser's bars or an app's toolbar take 40-60 px: Pixel 7 863x360, iPhone SE 667x375 and
+   667x323 in Safari, the X app 780x330, Galaxy S9 658x320): the card row (grid row 3, minmax(0, 1fr), aligned to the
+   bottom) grew over the aircraft blurb and title once brand + hero + cards + entry buttons were taller than the screen.
+   Below 400 px no blurb and the entry buttons on one row (they wrapped to two below ~700 px); below 345 px no category
+   chip above the aircraft name either (the cards carry the same badge) */
+@media (max-height: 400px) and (orientation: landscape) {
+  .gkm.gkm-touch .gkm-blurb { display: none; }
+  .gkm.gkm-touch .gkm-hero h2 { margin-bottom: 0; }
+  .gkm.gkm-touch .gkmm-entry.in-foot { flex-wrap: nowrap; min-width: 0; max-width: 100%; }
+  .gkm.gkm-touch .gkmm-entry.in-foot .gkmm-eb { padding: 6px 9px; gap: 7px; min-width: 0; flex: 0 1 auto; }
+  .gkm.gkm-touch .gkmm-entry.in-foot .gkmm-eb b { overflow: hidden; text-overflow: ellipsis; }
+}
+@media (max-height: 345px) and (orientation: landscape) {
+  .gkm.gkm-touch .gkm-hero .gkm-chip { display: none; }
+  .gkm.gkm-touch .gkm-hero h2 { margin-top: 0; }
+}
 @media (max-width: 560px) and (orientation: portrait) {
   .gkm.gkm-touch .gkm-ui { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto auto minmax(0, 1fr) auto; row-gap: 0;
     padding-top: max(14px, env(safe-area-inset-top)); }

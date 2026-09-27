@@ -65,6 +65,11 @@ const CSS = `
 .gkg-iab button { flex: 0 0 auto; min-height: 34px; padding: 6px 12px; border-radius: 10px; border: 1px solid rgba(255, 255, 255, .16); background: rgba(255, 255, 255, .08);
   color: var(--gk-fg); font: 700 12.5px var(--gk-sans); cursor: pointer; touch-action: manipulation; }
 .gkg-iab button.x { padding: 6px 10px; border: 0; background: none; color: var(--gk-dim); font-size: 16px; }
+/* landscape phones: over the brand in the left column (the touch menu's right column, 41 %, starts with the map tabs) */
+@media (orientation: landscape) and (max-height: 520px) {
+  .gkg-iab { left: max(12px, env(safe-area-inset-left)); transform: none; max-width: calc(59% - 40px); animation-name: gkg-in-l; }
+}
+@keyframes gkg-in-l { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
 `;
 
 const ART = '<svg class="gkg-art" viewBox="0 0 132 88" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
