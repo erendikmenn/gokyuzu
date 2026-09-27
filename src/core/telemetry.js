@@ -6,15 +6,16 @@
 // Returning players are counted without any identifier: this browser keeps only its first-visit day, its last visit day
 // and a count of visit days (localStorage `gokyuzu.visits`), and `open` carries coarse buckets of them (d0, vn, vd, vo).
 // Off on localhost (unless ?telemetry=1), with ?telemetry=0, and when the browser sends Do Not Track / Global Privacy
-// Control (then nothing is sent and the visit record is neither read nor written).
+// Control (then nothing is sent and the visit record is neither read nor written; a ?telemetry=1 link does not override
+// the browser's choice).
 import { detectDevice, deviceLabel, gpuLabel, rendererString } from './gpu-device.js';
-import { QUALITY, detectQuality, capQuality, getQualityCap, qualitySource } from './quality.js';
+import { isQuality, detectQuality, capQuality, getQualityCap, qualitySource } from './quality.js';
 
 const hasDom = typeof location !== 'undefined' && typeof navigator !== 'undefined' && typeof document !== 'undefined';
 const params = new URLSearchParams(hasDom ? location.search : '');
 const local = hasDom && /^(localhost|127\.|\[::1\])/.test(location.hostname);
 const optedOut = hasDom && (navigator.doNotTrack === '1' || (typeof window !== 'undefined' && window.doNotTrack === '1') || navigator.globalPrivacyControl === true);
-const enabled = hasDom && (params.get('telemetry') === '1' || (!local && !optedOut && params.get('telemetry') !== '0'));
+const enabled = hasDom && !optedOut && (local ? params.get('telemetry') === '1' : params.get('telemetry') !== '0');
 
 const sid = typeof crypto !== 'undefined' && crypto.getRandomValues
   ? Array.from(crypto.getRandomValues(new Uint8Array(6)), (b) => b.toString(36).padStart(2, '0')).join('') : '';
@@ -123,9 +124,9 @@ function visitFields() {
 function qualityReason(running) {
   try {
     const urlQ = params.get('quality');
-    if (urlQ && QUALITY[urlQ]) return params.get('resume') === '1' ? 'reload' : 'url';
+    if (isQuality(urlQ)) return params.get('resume') === '1' ? 'reload' : 'url';
     let stored = null;
-    try { const s = JSON.parse(localStorage.getItem('gokyuzu.settings') || 'null'); stored = s && QUALITY[s.quality] ? s.quality : null; } catch { /* ignore */ }
+    try { const s = JSON.parse(localStorage.getItem('gokyuzu.settings') || 'null'); stored = s && isQuality(s.quality) ? s.quality : null; } catch { /* ignore */ }
     const auto = detectQuality();
     return qualitySource({ running, stored, auto, cap: capQuality(stored || auto) });
   } catch { return ''; }

@@ -32,6 +32,31 @@ check('d0 buckets: exact to 14 days, then 15-29 / 30+', bucketD0(0) === '0' && b
 check('vn buckets: exact to 7 days, then 8-14 / 15+', bucketVn(1) === '1' && bucketVn(7) === '7' && bucketVn(8) === '8-14' && bucketVn(14) === '8-14' && bucketVn(15) === '15+');
 check('local day format YYYYMMDD', /^\d{8}$/.test(localDay()) && localDay(new Date(2026, 0, 5)) === '20260105');
 
+// opt-outs: Do Not Track / Global Privacy Control always win, also against a ?telemetry=1 link; ?telemetry=1 only switches
+// the statistics on where they are off by default (localhost). Each case loads the module fresh in a child process.
+{
+  const { execFileSync } = await import('node:child_process');
+  const mod = new URL('../src/core/telemetry.js', import.meta.url).href;
+  const beaconsFor = ({ host, search, dnt = null, gpc = false }) => Number(execFileSync(process.execPath, ['--input-type=module', '-e', `
+    let n = 0;
+    globalThis.location = { search: ${JSON.stringify(search)}, hostname: ${JSON.stringify(host)}, origin: 'https://' + ${JSON.stringify(host)}, pathname: '/' };
+    Object.defineProperty(globalThis, 'navigator', { value: { language: 'tr', doNotTrack: ${JSON.stringify(dnt)}, globalPrivacyControl: ${gpc}, userAgent: '' }, configurable: true });
+    globalThis.document = { referrer: '', hidden: false }; globalThis.window = globalThis; globalThis.addEventListener = () => {};
+    globalThis.innerWidth = 800; globalThis.innerHeight = 600; globalThis.devicePixelRatio = 1; globalThis.setInterval = () => 0;
+    globalThis.localStorage = { getItem: () => null, setItem() {}, removeItem() {} }; globalThis.sessionStorage = globalThis.localStorage;
+    globalThis.fetch = () => { n++; return Promise.resolve({ ok: true }); };
+    const T = await import(${JSON.stringify(mod)});
+    try { T.startTelemetry({ build: { version: 't' }, renderer: null, quality: 'low', state: () => null }); } catch { /* the count is what matters */ }
+    T.trackEvent('x', { a: 1 });
+    console.log(n);`], { encoding: 'utf8' }).trim());
+  const site = 'game.example';
+  check('beacons: sent on the site by default (control)', beaconsFor({ host: site, search: '' }) > 0);
+  check('beacons: none under Do Not Track, even with ?telemetry=1', beaconsFor({ host: site, search: '?telemetry=1', dnt: '1' }) === 0);
+  check('beacons: none under Global Privacy Control, even with ?telemetry=1', beaconsFor({ host: site, search: '?telemetry=1', gpc: true }) === 0);
+  check('beacons: none with ?telemetry=0; localhost only with ?telemetry=1', beaconsFor({ host: site, search: '?telemetry=0' }) === 0
+    && beaconsFor({ host: 'localhost', search: '' }) === 0 && beaconsFor({ host: 'localhost', search: '?telemetry=1' }) > 0);
+}
+
 // unhandled rejections: the frame's whole URL, so the game's own rejections are not tagged foreign (they all were:
 // only the file name was kept, which never starts with the origin; e.g. "signal is aborted without reason" at app-….js)
 const O = 'https://fs.example.test';
