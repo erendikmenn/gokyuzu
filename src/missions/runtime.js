@@ -54,7 +54,7 @@ export function createMissionRuntime(plan, ctx) {
   const objectives = mission.objectives.map((d) => createObjective(d, env));
   const groundAt = (x, z) => { const h = world.getGroundHeight(x, z); return Number.isFinite(h) ? h : 0; };
   const markers = createMarkers(ctx.scene);
-  const ui = createMissionUI(ctx.hud, { touch: !!ctx.touch, input: ctx.input, category: cat, missions: MISSIONS });
+  const ui = createMissionUI(ctx.hud, { touch: !!ctx.touch, input: ctx.input, category: cat, missions: MISSIONS, paused: () => !!state.paused });
   const ret = createMissionRetention({ mission, touch: !!ctx.touch, flight: () => state.flight });
   const idx = MISSIONS.findIndex((m) => m.id === mission.id);
   /** The next mission in the list that is unlocked (progress after this run), wrapping around. */
@@ -166,7 +166,7 @@ export function createMissionRuntime(plan, ctx) {
 
   function setHold(on) {
     rt.hold = on;
-    if (ctx.audio && ctx.audio.setPaused && holdAudio !== on) { holdAudio = on; ctx.audio.setPaused(on); }
+    if (ctx.audio && ctx.audio.setPaused && holdAudio !== on) { holdAudio = on; ctx.audio.setPaused(on, 'mission'); }   // (its own pause source: the player's pause toggle does not undo it)
   }
 
   function startRun() {

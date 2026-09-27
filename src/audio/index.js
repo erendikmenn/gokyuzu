@@ -217,8 +217,14 @@ export function createAudioSystem({ camera: defaultCamera, settings: followSetti
     }
   }
 
-  function setPaused(p) {
-    userPaused = !!p;
+  // Pause sources: the player's pause (P / Esc, source 'user') and a mission card holding the flight ('mission',
+  // src/missions/runtime.js) are separate switches; the sound stays off while any of them holds. (One shared boolean
+  // let the pause toggle undo the mission's hold: pausing and resuming over a briefing or a result card played the
+  // engines behind the card.)
+  const pausedBy = new Set();
+  function setPaused(p, source = 'user') {
+    if (p) pausedBy.add(source); else pausedBy.delete(source);
+    userPaused = pausedBy.size > 0;
     if (!G) return;
     G.duck.gain.setTargetAtTime(userPaused ? 0 : 1, ctx.currentTime, userPaused ? 0.08 : 0.2);
     if (userPaused && inst) stopVoice();

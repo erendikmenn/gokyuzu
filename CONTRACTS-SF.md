@@ -250,7 +250,8 @@ additive blending on the combiner glass). Unknown types draw a neutral "NO DATA"
 export function createAudioSystem({ camera }): AudioSystem
 interface AudioSystem {
   start(): void;                       // on the first user click
-  muted: boolean; setMuted(m): void; setPaused(p): void;
+  muted: boolean; setMuted(m): void;
+  setPaused(p, source = 'user'): void;  // silent while any source holds ('user' = the pause screen, 'mission' = a mission card)
   loadAircraft(id: string): Promise<void>;   // assets/audio/<id>/*.wav + profile src/audio/profiles/<id>.js
   update(dt, flight, { view: 'cockpit'|'exterior', aircraftObject, camera }): void;  // detects gear/flap/canopy/AB transitions itself
   play(name): void;                     // one-shots: 'touchdown','crash','click','chime', GPWS callouts

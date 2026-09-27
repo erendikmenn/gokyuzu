@@ -5,7 +5,7 @@
 // / speed area: desktop — the strip under the info panel (top left); touch — the strip at the top centre between the
 // speed and altitude columns (the landing card and the tutorial stack move below it via --gkm-strip-h).
 //
-//   const ui = createMissionUI(hud, { touch, input, category })
+//   const ui = createMissionUI(hud, { touch, input, category, paused })   paused(): the pause screen is up (Enter leaves the card alone)
 //   ui.setMission(m) · ui.setObjective(o, i, n) · ui.update({ t, limit, objective, phase, s }) (10 Hz)
 //   ui.pointer(camera, target, s) (every frame; allocation-free) · ui.flash(text, kind)
 //   ui.showBrief(m, { start, menu, again, best }) · ui.showResult(result, { retry, next, nextTitle, menu, share }) · ui.hideCard()
@@ -100,7 +100,7 @@ html.gk-mis .gkh-ccard small, html.gk-mis .gkh-ccard > i { display: none; }   /*
 }
 `;
 
-export function createMissionUI(hud, { touch = false, input = null, category = 'airliner', missions = MISSIONS } = {}) {
+export function createMissionUI(hud, { touch = false, input = null, category = 'airliner', missions = MISSIONS, paused = () => false } = {}) {
   injectPartsCSS();
   injectCSS('missions-hud', CSS);
   const root = el('div', 'gkq');
@@ -154,8 +154,9 @@ export function createMissionUI(hud, { touch = false, input = null, category = '
     if (modal) { modal = false; shared.modalOpen = Math.max(0, (shared.modalOpen || 1) - 1); }
   }
   // Enter = the card's main button (captured before the game input; Space stays the brake)
+  // (not while the pause screen covers the card: Enter would start / leave the mission behind it)
   window.addEventListener('keydown', (e) => {
-    if (!onEnter || !back.classList.contains('on')) return;
+    if (!onEnter || !back.classList.contains('on') || paused()) return;
     if (e.target && /^(INPUT|TEXTAREA)$/.test(e.target.tagName)) return;
     if (e.code === 'Enter' || e.code === 'NumpadEnter') { e.preventDefault(); e.stopPropagation(); const fn = onEnter; fn(); }
   }, true);
