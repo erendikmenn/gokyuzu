@@ -56,7 +56,8 @@ const openCard = () => document.querySelector('.gkq-back.on .gkq-card');
 
 export function createMissionRetention({ mission, touch = false, flight = null } = {}) {
   let ch = null;
-  // assisted run: the assist layer on during the run (sampled at the briefing's end and the finish) or a touchdown on the
+  // assisted run: the assist layer on at any moment of the run (the runtime sets result.assisted: sticky, so turning the
+  // assist off just before the end keeps the run on the "Destekli" lists), on at the finish, or a touchdown on the
   // autopilot (autoland); reset at every briefing (a restart)
   let apTouchdown = false, hooked = null;
   const f = () => { try { return flight ? flight() : null; } catch { return null; } };
