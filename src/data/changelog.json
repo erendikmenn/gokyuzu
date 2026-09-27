@@ -4,12 +4,12 @@
       "id": "2026-09-27",
       "title": "Destekli uçuş, günlük seri ve daha akıcı oyun",
       "items": [
-        "Destekli uçuş: kalkışta ne yapacağını ekranda gösterir, stall ve dalışa karşı korur; \"İnişe geç\" pisti bulup seni yumuşakça indirir. İstersen Ayarlar'dan kapatabilirsin.",
-        "Günlük seri: her gün bir uçuş ya da görev bitir, serin büyüsün. 3, 7, 14 ve 30 günde unvanlar ve HUD renkleri açılır.",
-        "Haftanın görevi ve yeni iniş görevleri (İniş serisi, Günün inişi). Sıralamalarda Elle ve Destekli listeleri ayrı.",
-        "Beni geç: görev sonucunu paylaş, arkadaşın senin puanını geçmeye çalışsın.",
-        "Ses ve uyarı ayarları: sesi tamamen kapat (M), ses seviyelerini ayrı ayrı ayarla, sesli uyarıları azalt.",
-        "Telefon ve tablette daha az ısınma, daha hızlı dokunmatik tepki ve daha az çökme; Windows'ta eski ekran kartlarına uygun ayarlar."
+        "Destekli uçuş: kalkışta ve inişte yardım, \"İnişe geç\" ile pisti bulup yumuşak iniş. Ayarlar'dan kapatabilirsin.",
+        "Günlük seri: her gün uç, unvanlar ve HUD renkleri kazan.",
+        "Haftanın görevi, İniş serisi ve Günün inişi; sıralamalarda Elle ve Destekli listeleri ayrı.",
+        "Beni geç: skorunu paylaş, arkadaşın geçmeye çalışsın.",
+        "Ses ayarları: sesi tamamen kapat (M), seviyeleri ayrı ayrı ayarla.",
+        "Telefon ve tablette daha az ısınma, daha hızlı dokunmatik tepki."
       ]
     }
   ]

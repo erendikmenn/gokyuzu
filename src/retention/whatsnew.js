@@ -15,7 +15,7 @@ import { pendingNews, SEEN_KEY, RETURNING_KEYS } from './news.js';
 const CSS = `
 .gkr-news { position: absolute; z-index: 6; left: calc(40 * var(--u1)); top: calc(330 * var(--u1)); width: calc(480 * var(--u1)); box-sizing: border-box;
   padding: calc(14 * var(--u1)) calc(16 * var(--u1)) calc(12 * var(--u1)); border-radius: calc(16 * var(--u1)); font-family: var(--gk-sans); color: var(--gk-fg);
-  background: linear-gradient(180deg, rgba(18, 30, 50, .92), rgba(7, 12, 22, .92)); border: 1px solid rgba(92, 242, 200, .35);
+  background: linear-gradient(180deg, rgb(18, 30, 50), rgb(7, 12, 22)); border: 1px solid rgba(92, 242, 200, .35);
   box-shadow: 0 20px 50px rgba(0, 0, 0, .45); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); animation: gkr-news-in .45s .3s cubic-bezier(.2, .8, .2, 1) both; }
 @keyframes gkr-news-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
 .gkr-news-h { display: flex; align-items: center; gap: 8px; }
