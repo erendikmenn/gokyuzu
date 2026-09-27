@@ -54,7 +54,9 @@ class Objective {
     this.status = 'active'; this.failReason = ''; this.points = 0; this.parts = []; this.progress = ''; this.message = null;
     this.target = null;
   }
-  start() { this.status = 'active'; this.failReason = ''; this.points = 0; this.parts = []; this.progress = ''; this.message = null; }
+  // (a run's landing card / ditching rating goes too: "Tekrar dene" reuses the objectives, and a stale o.ditch from the
+  // previous run rated the next one: a 3★ runway landing after a failed ditching showed 1★)
+  start() { this.status = 'active'; this.failReason = ''; this.points = 0; this.parts = []; this.progress = ''; this.message = null; this.landing = null; this.ditch = null; }
   done(points = 0) { this.status = 'done'; this.points = Math.round(points); }
   fail(reason) { this.status = 'fail'; this.failReason = reason; }
   say(text) { this.message = text; }
