@@ -1,0 +1,225 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  erenailab-stats: hourly Gokyuzu statistics feed. A Lambda reads the CloudFront access logs (read-only, one prefix),
+  keeps the per-day history in its own private bucket and pushes aggregated numbers to the private dashboard.
+  Deployed by infra/stats-feed/deploy.py (values come from the local deploy config; nothing account-specific here).
+
+Parameters:
+  LogBucket:
+    Type: String
+    Description: Bucket that receives the CloudFront access logs (S3_BUCKET_LOGS of the local deploy config).
+  LogPrefix:
+    Type: String
+    Default: production/
+    AllowedPattern: '^[a-z0-9-]+/$'
+  IngestUrl:
+    Type: String
+    Default: https://stats.erenailab.com/api/ingest/gokyuzu
+  TokenParameter:
+    Type: String
+    Default: /erenailab-stats/ingest-token
+  SaltParameter:
+    Type: String
+    Default: /erenailab-stats/gokyuzu/analytics-salt
+  OwnIpsParameter:
+    Type: String
+    Default: /erenailab-stats/gokyuzu/own-ips
+  ScheduleState:
+    Type: String
+    Default: ENABLED
+    AllowedValues: [ENABLED, DISABLED]
+
+Resources:
+  StateBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: {SSEAlgorithm: AES256}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules: [{ObjectOwnership: BucketOwnerEnforced}]
+      VersioningConfiguration: {Status: Enabled}
+      LifecycleConfiguration:
+        Rules:
+          - Id: old-versions
+            Status: Enabled
+            NoncurrentVersionExpiration: {NoncurrentDays: 14}
+            AbortIncompleteMultipartUpload: {DaysAfterInitiation: 1}
+      Tags:
+        - {Key: project, Value: erenailab-stats}
+
+  StateBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref StateBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: TlsOnly
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource: [!GetAtt StateBucket.Arn, !Sub '${StateBucket.Arn}/*']
+            Condition: {Bool: {'aws:SecureTransport': 'false'}}
+
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/erenailab-stats-gokyuzu-feed
+      RetentionInDays: 14
+      Tags:
+        - {Key: project, Value: erenailab-stats}
+
+  FunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: erenailab-stats-gokyuzu-feed
+      Description: erenailab-stats Gokyuzu feed - read one log prefix, own state, three SSM parameters, own log group
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: lambda.amazonaws.com}
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: feed
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: ReadAccessLogs
+                Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub 'arn:${AWS::Partition}:s3:::${LogBucket}/${LogPrefix}*'
+              - Sid: ListAccessLogs
+                Effect: Allow
+                Action: s3:ListBucket
+                Resource: !Sub 'arn:${AWS::Partition}:s3:::${LogBucket}'
+                Condition:
+                  StringLike: {'s3:prefix': !Sub '${LogPrefix}*'}
+              - Sid: History
+                Effect: Allow
+                Action: [s3:GetObject, s3:PutObject]
+                Resource: !Sub '${StateBucket.Arn}/gokyuzu/*'
+              - Sid: HistoryMissingIs404
+                Effect: Allow
+                Action: s3:ListBucket
+                Resource: !GetAtt StateBucket.Arn
+              - Sid: Secrets
+                Effect: Allow
+                Action: ssm:GetParameters
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${TokenParameter}'
+                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SaltParameter}'
+                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${OwnIpsParameter}'
+              - Sid: OwnLogs
+                Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !GetAtt LogGroup.Arn
+      Tags:
+        - {Key: project, Value: erenailab-stats}
+
+  Function:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: erenailab-stats-gokyuzu-feed
+      Description: Hourly Gokyuzu statistics -> stats.erenailab.com (infra/stats-feed)
+      Runtime: python3.12
+      Architectures: [arm64]
+      Handler: handler.handler
+      MemorySize: 2048
+      Timeout: 600
+      EphemeralStorage: {Size: 1024}
+      Role: !GetAtt FunctionRole.Arn
+      LoggingConfig:
+        LogGroup: !Ref LogGroup
+        LogFormat: Text
+      # placeholder: deploy.py uploads the real package (handler.py + tools/analytics/report.py) right after
+      Code:
+        ZipFile: |
+          def handler(event, context):
+              raise RuntimeError('code not deployed yet: run infra/stats-feed/deploy.py')
+      Environment:
+        Variables:
+          HOME: /tmp
+          LOG_BUCKET: !Ref LogBucket
+          LOG_PREFIX: !Ref LogPrefix
+          STATE_BUCKET: !Ref StateBucket
+          STATE_KEY: gokyuzu/state.json.gz
+          INGEST_URL: !Ref IngestUrl
+          PARAM_TOKEN: !Ref TokenParameter
+          PARAM_SALT: !Ref SaltParameter
+          PARAM_OWN_IPS: !Ref OwnIpsParameter
+      Tags:
+        - {Key: project, Value: erenailab-stats}
+
+  FunctionInvokeConfig:
+    Type: AWS::Lambda::EventInvokeConfig
+    Properties:
+      FunctionName: !Ref Function
+      Qualifier: $LATEST
+      MaximumRetryAttempts: 0
+      MaximumEventAgeInSeconds: 900
+
+  SchedulerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: erenailab-stats-gokyuzu-feed-scheduler
+      Description: erenailab-stats - lets the hourly schedule invoke the Gokyuzu feed function only
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: scheduler.amazonaws.com}
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals: {'aws:SourceAccount': !Ref 'AWS::AccountId'}
+      Policies:
+        - PolicyName: invoke
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: [!GetAtt Function.Arn, !Sub '${Function.Arn}:*']
+      Tags:
+        - {Key: project, Value: erenailab-stats}
+
+  ScheduleGroup:
+    Type: AWS::Scheduler::ScheduleGroup
+    Properties:
+      Name: erenailab-stats
+      Tags:
+        - {Key: project, Value: erenailab-stats}
+
+  Schedule:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      Name: gokyuzu-feed-hourly
+      GroupName: !Ref ScheduleGroup
+      Description: Gokyuzu statistics to the dashboard, every hour at :05 (Europe/Istanbul)
+      ScheduleExpression: cron(5 * * * ? *)
+      ScheduleExpressionTimezone: Europe/Istanbul
+      FlexibleTimeWindow: {Mode: 'OFF'}
+      State: !Ref ScheduleState
+      Target:
+        Arn: !GetAtt Function.Arn
+        RoleArn: !GetAtt SchedulerRole.Arn
+        Input: '{}'
+        RetryPolicy:
+          MaximumRetryAttempts: 2
+          MaximumEventAgeInSeconds: 900
+
+Outputs:
+  FunctionName:
+    Value: !Ref Function
+  StateBucket:
+    Value: !Ref StateBucket
+  ScheduleName:
+    Value: !Sub '${ScheduleGroup}/${Schedule}'
