@@ -234,7 +234,9 @@ async function start() {
   state.aircraftId = choice.aircraftId;
   if (state.halted) return;   // robustness: the graphics guard gave up while loading (notice shown): no flight to report
   if (state.standIn) upgradeAircraft();   // LOD start: the full model now, swapped in when it is ready
-  trackFlight(choice.aircraftId, spawn.id, (performance.now() - t0) / 1000, settings.quality, { in: touchUI.active ? 'touch' : input.kind, tilt: touchUI.active && settings.tilt ? 1 : undefined, mi: state.mission ? state.mission.mission.id : undefined });
+  // pw: seconds of the pre-warm behind the loading screen (shader links + first uploads; Firefox links every program there
+  // without KHR_parallel_shader_compile): tells a shader-bound start (Firefox / Windows, integrated GPUs) from a slow line
+  trackFlight(choice.aircraftId, spawn.id, (performance.now() - t0) / 1000, settings.quality, { in: touchUI.active ? 'touch' : input.kind, tilt: touchUI.active && settings.tilt ? 1 : undefined, mi: state.mission ? state.mission.mission.id : undefined, pw: state.prewarmMs >= 0 ? (state.prewarmMs / 1000).toFixed(1) : undefined });
   if (resumed) {   // robustness hook: back in the same flight after a graphics failure (no tutorial / key card)
     gpu.report('resume', { why: resumed.crash ? 'crash' : resumed.reason || 'gpu', ac: choice.aircraftId });
     hud.showMessage(`Uçuşa kaldığın yerden devam ediliyor · Grafik: ${quality.label}${resumeNote ? ' · ' + resumeNote : ''}`, 4500);
@@ -374,7 +376,7 @@ function attachCockpit(def, rig, cockpitScene) {
   bindDisplays(def, rig);
   // the first switch to the cockpit view without shader compiles (after the rig's next update, which may adjust shadow
   // flags); its textures still upload on the first cockpit frame (a background upload would stall a random frame)
-  afterFrames(2, () => { if (state.rig === rig) renderer.compileAsync(cockpitScene, camera, scene).catch(() => {}); });
+  afterFrames(2, () => { if (state.rig === rig) compileInScene(cockpitScene).catch(() => {}); });
 }
 /** Local transforms, visibility and screen UVs of a freshly loaded cockpit, to give a second rig the same starting point. */
 function snapshotNodes(root) {
@@ -494,6 +496,24 @@ function texturesIn(root) {
   return out;
 }
 
+/**
+ * compileAsync for a subtree that is already in the scene. three.js' compile(object, camera, targetScene) is made for an
+ * object about to be added: it counts the lights of targetScene *and* of the object, so the aircraft's own landing and
+ * cockpit lights were counted twice when the rig (or its cockpit) was compiled in place. Every program built there had
+ * light counts the frames never use (wasted links, the screen materials linked again at their first draw), and the
+ * renderer's light state stayed doubled until the next frame's light setup, which comes after its shadow pass: that pass
+ * built four more depth programs, synchronously, right after the first playable frame (Chromium and Firefox alike).
+ * The subtree is taken out of its parent for the duration of the call (compile() itself is synchronous; the promise
+ * only polls the programs), so each light counts once.
+ */
+function compileInScene(obj) {
+  const parent = obj.parent, i = parent ? parent.children.indexOf(obj) : -1;
+  if (i < 0) return renderer.compileAsync(obj, camera, scene);
+  parent.children.splice(i, 1);
+  obj.parent = null;
+  try { return renderer.compileAsync(obj, camera, scene); } finally { parent.children.splice(i, 0, obj); obj.parent = parent; }
+}
+
 // ---- pre-warm (plan #4): the first playable frame without the start-up stutter
 // Compile every material of the scene against the final lights (in parallel where KHR_parallel_shader_compile exists),
 // then render the start view once behind the loading screen (it uploads the textures the view shows), then lift it.
@@ -593,7 +613,7 @@ function bindDisplays(def, rig) {
       state.displays.push({ display, mesh });
       added++;
     }
-    if (added) renderer.compileAsync(rig.object, camera, scene).catch(() => {});   // the screen materials before their first frame
+    if (added) compileInScene(rig.object).catch(() => {});   // the screen materials before their first frame
   }).catch((e) => { if (!isNetworkError(e)) console.warn('[app] avionics', e); });
 }
 
