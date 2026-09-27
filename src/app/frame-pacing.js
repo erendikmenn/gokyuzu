@@ -183,7 +183,9 @@ export function createFramePacer({ deviceClass = 'desktop', setting = null, enab
         lockCount++;
       }
     },
-    setSetting(v) { userSetting = parseFpsSetting(v); lockUntil = 0; lowFor = 0; },
+    // (every settings broadcast calls this: M, H, a volume … Only a real change of the frame-rate setting unlocks the
+    // tablet / weak-GPU 30 fps fallback; any broadcast used to, costing a ≥ 3 s failed try at 60 and a longer backoff)
+    setSetting(v) { const n = parseFpsSetting(v); if (n === userSetting) return; userSetting = n; lockUntil = 0; lowFor = 0; },
     /** The flight cap now (0 = display rate). */
     cap,
     /** Frames per second of the cruise mode on this device / setting (0: none; main.js skips its motion estimate then). */
