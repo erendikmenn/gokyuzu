@@ -25,7 +25,8 @@
 import { injectCSS, BASE_CSS } from './styles.js';
 import { el, clamp } from './util.js';
 import { shared } from './shared.js';
-import { touchMode, isPhoneSize, mobileOS } from './touch-env.js';
+import { touchMode, isPhoneSize, mobileOS, inAppBrowser } from './touch-env.js';
+import { browserIntentUrl, copyText, gameLink, inAppMenuPath } from './touch-gate.js';
 import { getTilt } from './touch-tilt.js';
 import { CAMERA_NAMES } from './camera-modes.js';
 import { loadSettings } from '../core/settings.js';
@@ -145,6 +146,11 @@ html.gk-touch #app canvas { touch-action: none; }
 @keyframes gkx-rot { 0%, 20% { transform: rotate(0); } 55%, 80% { transform: rotate(-90deg); } 100% { transform: rotate(-90deg); opacity: 0; } }
 .gkx-rot h2 { margin: 0; font-size: 22px; font-weight: 800; letter-spacing: -.01em; }
 .gkx-rot p { margin: 0; max-width: 300px; font-size: 14.5px; line-height: 1.5; color: rgba(226, 236, 250, .8); }
+.gkx-rot p.gkx-rot-iab { max-width: 320px; margin-top: 6px; padding: 10px 14px; border-radius: 12px; font-size: 13.5px; background: rgba(92, 242, 200, .07);
+  border: 1px solid rgba(92, 242, 200, .25); }
+.gkx-rot p.gkx-rot-iab b { color: var(--gk-teal); }
+.gkx-rot button { min-height: 44px; padding: 10px 20px; border-radius: 12px; border: 0; cursor: pointer; font: 750 15px var(--gk-sans); color: #04140f;
+  background: var(--gk-teal); touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
 
 /* Android (Chromium): no backdrop blur over the live 3D view. Every blurred element (12 control buttons, the slider,
    the tapes, the autopilot strip…) costs the compositor an extra render pass of the screen area behind it, every
@@ -265,6 +271,24 @@ function createControls(hudRoot, { input, hud, getState }) {
   rot.innerHTML = ROT_SVG;
   el('h2', null, rot, 'Telefonu yan çevir');
   el('p', null, rot, 'Uçuş kontrolleri yatay ekranda: sol başparmak çubuk, sağ başparmak gaz. Uçuş bu sırada duraklatıldı.');
+  // social-app webviews often cannot turn to landscape (live telemetry 23-27 Sep 2026: 2 of 180 pages of the X app on
+  // iPhone and 5 of 141 on Android opened in landscape, against 27 % in Safari and 18 % in Chrome; 0 of 111 X iPhone
+  // flights and 6 of 50 X Android flights took off, 64 % in Chrome from portrait): the prompt shows the way out
+  const iab = inAppBrowser();
+  let rotSeen = false;
+  if (iab) {
+    const how = el('p', 'gkx-rot-iab', rot, '');
+    el('b', null, how, 'Ekran dönmüyorsa: ');
+    how.append(`${iab.name} içindeki tarayıcı yan çevirmeye izin vermiyor olabilir. Oyunu tarayıcıda aç (${inAppMenuPath(iab)}).`);
+    const b = el('button', null, rot, iab.os === 'android' ? 'Tarayıcıda aç' : 'Bağlantıyı kopyala');
+    b.type = 'button';
+    b.addEventListener('click', async () => {
+      if (iab.os === 'android') { trackEvent('iab', { id: iab.id, x: 'browser', via: 'rot' }); location.href = browserIntentUrl(); return; }
+      const ok = await copyText(gameLink());
+      b.textContent = ok ? 'Kopyalandı: Safari’de yapıştır' : 'Kopyalanamadı';
+      trackEvent('iab', { id: iab.id, x: ok ? 'copy' : 'copyfail', via: 'rot' });
+    });
+  }
 
   const flightRef = { f: null, cat: 'airliner', det: null, hasRev: false };
   const vib = (ms) => { try { if (navigator.vibrate) navigator.vibrate(ms); } catch { /* ignore */ } };
@@ -647,6 +671,7 @@ function createControls(hudRoot, { input, hud, getState }) {
   function orient() {
     const portrait = H > W && W < 700;
     rot.classList.toggle('on', portrait && flightRef.f != null);
+    if (iab && !rotSeen && rot.classList.contains('on')) { rotSeen = true; trackEvent('iab', { id: iab.id, st: 'rot' }); }
     const s = getState();
     if (portrait && s.flying && !s.paused && !autoPaused) { autoPaused = true; input.trigger('pause'); }
     else if (!portrait && autoPaused) { autoPaused = false; if (getState().paused) input.trigger('pause'); }
@@ -704,6 +729,9 @@ function createControls(hudRoot, { input, hud, getState }) {
     if (f !== flightRef.f) setAircraft(f);
     if (!f) return;
     const s = getState();
+    // a flight that became live behind the portrait prompt (started in portrait: orient() ran while it was loading) is
+    // paused like one turned upright; it ran on at 15 simulation steps / s with nobody at the controls (air starts)
+    if (!autoPaused && s.flying && !s.paused && rot.classList.contains('on')) { autoPaused = true; input.trigger('pause'); }
     // tilt: the pose the phone is held in when the flight resumes becomes the new neutral (it may have been put down)
     if (wasPaused && !s.paused && tiltOn) tilt.calibrate();
     wasPaused = !!s.paused;

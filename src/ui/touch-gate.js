@@ -125,6 +125,12 @@ export function noteHandoff() {
 /** The social app this page was handed over from ('' = none): telemetry `hf`. */
 export const handoffFrom = () => handoff;
 
+/** Where "open in the browser" sits in this social-app webview's own menu (iOS: •••, Android: ⋮). */
+export function inAppMenuPath(iab) {
+  if (iab && iab.os === 'ios') return IAB_MENU[iab.id] || '••• menüsü → «Tarayıcıda aç»';
+  return '⋮ menüsü → «Tarayıcıda aç»';
+}
+
 /** The game's link without query parameters (what to open on the computer). */
 export function gameLink() { return `${location.origin}${location.pathname.replace(/index\.html$/, '')}`; }
 
