@@ -51,6 +51,8 @@ const CSS = `
 .gkq-card { position: relative; width: min(560px, 100%); max-height: 100%; overflow-y: auto; box-sizing: border-box; padding: 20px 24px 18px; border-radius: 18px;
   scrollbar-width: thin; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; animation: gkq-in .35s cubic-bezier(.2, .9, .3, 1.15) both; }
 @keyframes gkq-in { from { opacity: 0; transform: translateY(10px) scale(.97); } to { opacity: 1; transform: none; } }
+/* without the backdrop blur (phones) the glass let the mission strip's text show through the score and the title */
+html.gk-noblur .gkq-card { background: linear-gradient(180deg, rgb(14, 23, 38), rgb(6, 11, 20)); }
 .gkq-kick { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; font-size: 11px; font-weight: 750; letter-spacing: .14em; text-transform: uppercase; color: var(--gk-dim); }
 .gkq-kick b { color: var(--gk-orange-2); font-weight: 800; }
 .gkq-kick b.daily { color: #04140f; background: var(--gk-teal); padding: 2px 7px; border-radius: 5px; letter-spacing: .1em; }
