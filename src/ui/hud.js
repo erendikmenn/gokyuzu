@@ -16,6 +16,7 @@ import { explainCrash } from './hints.js';
 import { loadSettings, saveSettings } from '../core/settings.js';
 import { goToMenu } from '../core/leave.js';
 import { activeMap } from '../maps/index.js';
+import { createMuteButton } from './settings-live.js';   // pause-screen speaker (settings.muted, the M key's switch)
 
 const MONO = 'ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace';
 const SANS = '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif';
@@ -349,6 +350,7 @@ export function createHUD(container) {
   const helpKbd = el('kbd', null, helpBtn, 'F1');
   const setBtn = el('button', 'gkh-pbtn', pbtns);
   setBtn.append('Ayarlar');
+  pbtns.append(createMuteButton({ className: 'gkh-pbtn', text: true, key: 'M' }));
   const menuBtn = el('button', 'gkh-pbtn', pbtns);
   menuBtn.append('Ana menü');
   // touch hook: no R key on a phone — restart from the pause screen (reset, then resume)
