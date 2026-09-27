@@ -296,6 +296,35 @@ export function retryDelay(failures) {
   return Math.min(60000, 3000 * 2 ** Math.max(0, failures - 1)) * (0.75 + 0.5 * Math.random());
 }
 
+/**
+ * Give the memory of an ArrayBuffer that nothing reads any more back now, not at the next full garbage collection.
+ * WebKit's JavaScriptCore can go minutes without a full collection while tiles stream (only young-generation ones run),
+ * and every download or decoded tile that outlived a young collection stayed in the page's footprint until then: +500 MB
+ * in 10 minutes of a phone flight over San Francisco, all of it freed by one forced full GC (tools/perf/soak.mjs). iOS
+ * kills the page on that footprint. The buffer is detached (byteLength 0): ArrayBuffer.prototype.transfer(0) where
+ * available (Safari 17.4, Chrome 114, Firefox 122), else a structuredClone transfer (the contents move to a new buffer
+ * nothing references, which a young collection frees). Views on a released buffer read as empty.
+ */
+export function releaseArrayBuffer(buf) {
+  if (!buf || !(buf instanceof ArrayBuffer) || buf.byteLength === 0) return;
+  try {
+    if (typeof buf.transfer === 'function') buf.transfer(0);
+    else if (typeof structuredClone === 'function') structuredClone(buf, { transfer: [buf] });
+  } catch { /* not transferable (e.g. a WebAssembly memory): left to the collector */ }
+}
+
+/** releaseArrayBuffer for every vertex / index array of a geometry that is being dropped (its buffers shared with nothing
+ *  still in use, e.g. a streamed tile's own parse result). */
+export function releaseGeometryArrays(geo) {
+  if (!geo) return;
+  const bufs = new Set();
+  for (const a of [...Object.values(geo.attributes), geo.index]) {
+    const arr = a && (a.isInterleavedBufferAttribute ? a.data.array : a.array);
+    if (arr && arr.buffer) bufs.add(arr.buffer);
+  }
+  for (const b of bufs) releaseArrayBuffer(b);
+}
+
 const failLog = new Map();
 /**
  * Rate-limited console report of streaming failures: one warning per tag at most every 30 s, with the number of

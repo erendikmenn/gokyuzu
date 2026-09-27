@@ -8,7 +8,7 @@ import * as THREE from 'three';
 import { createTerrainShared, createTerrainMaterial, setTerrainWaterQuality, applyWaterDefine, terrainMaterialState } from './terrain-material.js';
 import { createHorizonRing } from './terrain-horizon.js';
 import { parseHeightFile, decodeTile, heightFileOf } from './terrain-heights.js';
-import { assetData, assetImage, isNetworkError, reportLoadFailure, retryDelay } from '../core/assets.js';
+import { assetData, assetImage, isNetworkError, reportLoadFailure, retryDelay, releaseArrayBuffer, releaseGeometryArrays } from '../core/assets.js';
 
 let BASE = new URL('../../assets/sf/terrain/', import.meta.url).href;   // the active map's (createTerrain: ctx.map.assets)
 const Q = 64, NV = 65, NS = 67;          // quads, vertices per edge, samples per edge (1 border)
@@ -42,7 +42,9 @@ async function loadDeflated(url) {
     const u = unzlibSync(new Uint8Array(raw));
     return u.byteOffset === 0 && u.byteLength === u.buffer.byteLength ? u.buffer : u.slice().buffer;
   }
-  return new Response(new Blob([raw]).stream().pipeThrough(new DecompressionStream('deflate'))).arrayBuffer();
+  const out = await new Response(new Blob([raw]).stream().pipeThrough(new DecompressionStream('deflate'))).arrayBuffer();
+  releaseArrayBuffer(raw);   // (the Blob took a copy)
+  return out;
 }
 /** Image file -> THREE.Texture (versioned URL, retried like every asset request). */
 async function loadTexture(url) {
@@ -504,6 +506,7 @@ export async function createTerrain(ctx) {
     if (n.mesh) {
       object.remove(n.mesh);
       n.mesh.geometry.index = null;   // the index buffer is shared by all tiles: never delete it
+      releaseGeometryArrays(n.mesh.geometry);   // the tile's own vertex arrays: memory back now, not at a full GC
       n.mesh.geometry.dispose();
       n.mesh.material.dispose();
       n.mesh = null;
@@ -514,7 +517,7 @@ export async function createTerrain(ctx) {
       n.tex = null;
       texCount--;
     }
-    if (!n.pinned) { n.heights = null; n.wbits = null; }
+    if (!n.pinned) { if (n.heights) releaseArrayBuffer(n.heights.buffer); n.heights = null; n.wbits = null; }   // (one buffer per tile: heights, water bits, sun visibility)
     n.state = UNLOADED; n.retry = 0; n.retryAt = 0; n.drawn = false;
     loadedCount--;
   }
