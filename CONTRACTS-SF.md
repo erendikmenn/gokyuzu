@@ -386,7 +386,7 @@ Players keep files in their browser cache, so every asset URL carries a content 
   | `set` | — | a setting changed (src/ui/settings-live.js; one beacon per changed setting, sent when the values have settled 1.5 s after the last change, so a slider drag is one beacon): `k` = `master` · `engine` · `voice` · `atc` · `ambient` with `v2` 0 · 25 · 50 · 75 · 100 (volume bucket); `mute` · `assist` · `chime` · `hudwarn` · `calm` (reduced flashing) · `tut` · `inv` · `tilt` · `radio` with `v2` 1 · 0; `valert` (spoken alerts) with `v2` 2 all · 1 critical · 0 off; `quality` · `fps` · `fail` · `hud` with the choice. (`v2`, not `v`: `v` is the envelope's version.) |
   Existing: `takeoff`, `land` (`fpm`, `cl`, `tdz`, `st`), `crash`, `tut`, `share` (`id`, `via`), `failure`, `gfx`.
 - Retention state is local only (localStorage, never sent; no account, no id): `gokyuzu.streak` = `{ v, days: ['YYYYMMDD', …]
-  (the last 60 Istanbul days with a finished flight or mission), best, land: { cur, best } (runway landings in a row), badges:
+  (the last 60 Istanbul days with a finished flight or mission), run0? (the first day of the current run when it began before the kept days), best, land: { cur, best } (runway landings in a row), badges:
   { id: day unlocked }, pick (badge id | null) }`; `gokyuzu.seen` = the newest "Yenilikler" entry id seen
   (src/data/changelog.json); `gokyuzu.lbList` = `{ <board>: 'a' | 'm' }` (the list the latest result on a board went to:
   the "Elle / Destekli" switch opens there); `gokyuzu.install` = `{ shown, accepted?, installed? }` (ms; the suggestion waits 14 days after
