@@ -1285,7 +1285,7 @@ def load(folder, since, target='production', key_salt=None, mine=None, geo=None)
 # tables carry id, title, tab (genel | gunluk | haftalik | toplam | saatlik), columns and rows; titles and columns are
 # Turkish, numbers stay numbers (hours with 1 decimal, shares in % with 1 decimal), null = not available yet; a table's
 # `note` says what its numbers mean. The dashboard (stats.erenailab.com, src/ingest.ts) has no "saatlik" tab yet, so the
-# last-48-hours table sits on HOURLY_TAB; a stale snapshot also gets a "Veri durumu" card (the dashboard drops `stale`).
+# last-48-hours table sits on HOURLY_TAB; a stale snapshot also gets a "Veri durumu" card (the dashboard also shows `stale`).
 # Definitions (the same as the text report): visitor = anonymous id (salted hash of IP + browser) with a session;
 # player = visitor who started a flight (a `fly` beacon or, without beacons, an aircraft model download); flight = such a
 # session; hours = active flight minutes (one heartbeat per active minute) / 60. Sessions go by their start, other events
@@ -1300,7 +1300,7 @@ FEED_FINAL = dt.timedelta(days=2, hours=2)   # a day's record is final 26 h afte
 FEED_CATCH_UP = 10                        # the feed rereads at most this many days of logs (after an outage)
 DEVICE_TR = {'desktop': 'masaüstü', 'phone': 'telefon', 'tablet': 'tablet'}
 ASSIST_TR = {'1': 'destekli', '0': 'desteksiz', '?': 'bilinmiyor (eski sürüm)'}
-HOURLY_TAB = 'gunluk'                     # "saatlik" once the dashboard has that tab
+HOURLY_TAB = 'saatlik'                    # the dashboard's Saatlik tab (stats.erenailab.com)
 
 
 def mark_stale(payload, why):
