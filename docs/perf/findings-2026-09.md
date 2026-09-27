@@ -79,3 +79,18 @@ captured before any change with time frozen, HUD hidden, streaming settled. `noi
 `PERF_BASE=http://localhost:5173/ node tools/perf/refshots.mjs gate` (references in `$PERF_REF` or `.cache/perf-ref`) (exit 1 on FAIL, heat maps); `--classes phone --maps ist` for a subset.
 Pass: SSIM ≥ min(0.995, noise − 0.002) and worst tile ≥ noise tile − 0.02. Exact changes (frame pacing, pre-warm, drape
 stop, sort flag, shadow colour buffer) must pass; approximate ones (texture sizes, atlas, draw distance, lights) need a maintainer's review of the heat maps.
+
+## 5. Long flights on WebKit (2026-09-27)
+10-25 min soaks, phone / tablet class, `tools/perf/soak.mjs --profile phone-webkit --map sf|ist --route tour|line|orbit`
+(per sample: WebContent / GPU process footprint by category, JavaScriptCore full / eden collections, scene census, CPU
+arrays the game holds, decoder worker heaps; a forced full GC at the end). No resource leak: geometry / texture counts,
+the GPU meter and the arrays the game references level off within ~10 min (terrain tile cache, landmark LODs, the three
+airports' background loads). The sporadic growth was garbage: JavaScriptCore sometimes stops running full collections
+2-7 min into a flight (only young-generation ones keep running), and every ArrayBuffer that outlived a young collection
+(tile downloads, GLB binary chunks, decoded tiles) stayed in the footprint; San Francisco phone, 8 of 14 runs: +300-730 MB
+in 10 min, freed by one forced full GC; İstanbul kept its full collections in every run. Since 64d736e the streaming
+layers release those buffers themselves (core/assets.js `releaseArrayBuffer`): phone, 25 min without full collections,
+464 → 1115 MB before, 474 → 614 MB after; tablet (medium preset, more streaming), 10 min without full collections,
+599 → 3146 MB before, 600 → 846 MB after. In WebContent "WebAssembly Memory" is the Gigacage (ArrayBuffer contents) and
+"WebKit Malloc" includes the decoder workers' wasm heaps (~130 MB on a phone for the page's lifetime: 4 KTX2, 2 Draco,
+1 meshopt worker).
