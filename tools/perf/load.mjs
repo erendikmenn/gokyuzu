@@ -213,7 +213,7 @@ async function flow(context, net, label) {
   }
   const readySet = new Set(progAtReady);
   const newPrograms = progAfter.filter((k) => !readySet.has(k));
-  const warm = await page.evaluate(() => ({ steps: window.__perfSteps, early: window.__game.earlyCompile || null, prewarm: window.__game.prewarmInfo || null, swap: window.__game.swapInfo ? Object.fromEntries(Object.entries(window.__game.swapInfo).map(([k, v]) => [k, Math.round(v - window.__game.readyAt)])) : null }));
+  const warm = await page.evaluate(() => ({ steps: window.__perfSteps, prewarm: window.__game.prewarmInfo || null, swap: window.__game.swapInfo ? Object.fromEntries(Object.entries(window.__game.swapInfo).map(([k, v]) => [k, Math.round(v - window.__game.readyAt)])) : null }));
   const sEnd = await serverStats();
   const hitch = await page.evaluate((readyAt) => {
     const f = window.__perf.frames.filter((x) => x.t >= readyAt);
@@ -246,7 +246,7 @@ async function flow(context, net, label) {
       linkedAfter: (window.__perf.links || []).filter((l) => l.t >= readyAt).map((l) => `${((l.t - readyAt) / 1000).toFixed(1)}s ${l.type}${l.name ? ' "' + l.name + '"' : ''}${l.flags ? ' [' + l.flags + ']' : ''}`),
     };
   }, marks.ready);
-  Object.assign(hitch, { newPrograms, prewarm: warm.prewarm, early: warm.early, swap: warm.swap, steps: warm.steps });
+  Object.assign(hitch, { newPrograms, prewarm: warm.prewarm, swap: warm.swap, steps: warm.steps });
   const trace = tracing ? summarizeTrace(await readTrace(cdp)) : null;
   const heap = await page.evaluate(() => performance.memory ? Math.round(performance.memory.usedJSHeapSize / 1048576) : null);
   await page.close();
@@ -276,9 +276,12 @@ async function flow(context, net, label) {
   const server = { menu: sd(s0, sClick), load: sd(sClick || s0, sReady), untilReady: sd(s0, sReady), after: sd(sReady, sEnd) };
   // every request until the first playable frame, in start order (the critical path; --dump)
   const reqList = flag('--dump') ? list.filter((r) => phaseOf(r) !== 'after').sort((a, b) => a.start - b.start).map((r) => ({ u: r.url.replace(/^https?:\/\/[^/]+\//, ''), s: Math.round((r.start - navStart) * 1000), e: Math.round(((r.end || r.start) - navStart) * 1000), KB: Math.round((r.bytes || 0) / 1024), c: r.cache || '', st: r.status })) : undefined;
-  const res = { reqList, label, net, engine, marks: { ...Object.fromEntries(Object.entries(marks).map(([k, v]) => [k, typeof v === 'number' ? Math.round(v) : v])), nav }, timeToMenuS: marks.menu ? +(marks.menu / 1000).toFixed(2) : null, clickToPlayableS: +((marks.ready - (clickAt || 0)) / 1000).toFixed(2), totals, server, byType: agg, topFiles, hitch, heapMB: heap, trace, jsWaterfall, errors: errors.slice(0, 20) };
+  // loading screen up → first playable frame (the click → playable time also holds the menu's exit, which varied
+  // 0.4–1.1 s between identical runs)
+  const loadingS = hitch.steps && hitch.steps.length ? +((marks.ready - hitch.steps[0][0]) / 1000).toFixed(2) : null;
+  const res = { reqList, loadingS, label, net, engine, marks: { ...Object.fromEntries(Object.entries(marks).map(([k, v]) => [k, typeof v === 'number' ? Math.round(v) : v])), nav }, timeToMenuS: marks.menu ? +(marks.menu / 1000).toFixed(2) : null, clickToPlayableS: +((marks.ready - (clickAt || 0)) / 1000).toFixed(2), totals, server, byType: agg, topFiles, hitch, heapMB: heap, trace, jsWaterfall, errors: errors.slice(0, 20) };
   const pw = hitch.prewarm || {};
-  console.log(`${label.padEnd(14)} menu ${res.timeToMenuS}s  click→playable ${res.clickToPlayableS}s  | ${server.untilReady ? `${server.untilReady.req} req to the server (${server.untilReady.r304} × 304) ${server.untilReady.MB}` : `${totals.requestsUntilReady} req ${totals.MBuntilReady}`} MB until ready | prewarm ${pw.totalMs ?? '-'} ms (compile ${pw.compileMs ?? '-'}, programs ${pw.programs0 ?? '-'}→${pw.programs1 ?? '-'}→${pw.programs2 ?? '-'}) | after ready: ${hitch.newPrograms.length} new programs, ${hitch.linksAfter} links ${hitch.compileMsAfter} ms, worst ${hitch.worstAfter} ms, >50 ms ${hitch.framesOver50After}, long ${hitch.longAfter.n}/${hitch.longAfter.ms} ms (before ready ${hitch.longBefore.n}/${hitch.longBefore.ms} ms) | errors ${errors.length}`);
+  console.log(`${label.padEnd(14)} menu ${res.timeToMenuS}s  click→playable ${res.clickToPlayableS}s (loading screen ${loadingS}s)  | ${server.untilReady ? `${server.untilReady.req} req to the server (${server.untilReady.r304} × 304) ${server.untilReady.MB}` : `${totals.requestsUntilReady} req ${totals.MBuntilReady}`} MB until ready | prewarm ${pw.totalMs ?? '-'} ms (compile ${pw.compileMs ?? '-'}, programs ${pw.programs0 ?? '-'}→${pw.programs1 ?? '-'}→${pw.programs2 ?? '-'}) | after ready: ${hitch.newPrograms.length} new programs, ${hitch.linksAfter} links ${hitch.compileMsAfter} ms, worst ${hitch.worstAfter} ms, >50 ms ${hitch.framesOver50After}, long ${hitch.longAfter.n}/${hitch.longAfter.ms} ms (before ready ${hitch.longBefore.n}/${hitch.longBefore.ms} ms) | errors ${errors.length}`);
   return res;
 }
 
