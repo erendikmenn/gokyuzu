@@ -11,7 +11,7 @@
 // meter and the texture / geometry counts over the second half of the flight (caches should be full by then), per minute.
 // usage: node tools/perf/soak.mjs [--minutes 10] [--map sf|ist] [--profile <tools/perf/matrix.mjs profile, e.g. phone-cpu4>]
 //          [--preset high] [--cpu 1] [--size 1920x1080] [--every 20] [--aircraft f16] [--spawn AIR-CITY] [--tag name] [--webkit]
-//          [--alt 700] [--base URL]
+//          [--alt 700] [--base URL] [--extra '&x=y' (URL switches for A/B)]
 import { launch, openGame, attach, save, arg, flag, sleep, OUT, BASE } from './lib.mjs';
 import { PROFILES } from './matrix.mjs';
 
@@ -35,7 +35,7 @@ const MAP = {
 
 const { browser, page, cdp, log } = await launch({ engine, width, height, dpr: prof ? prof.dpr : 1, gl: 'mem', heap: true, cpuThrottle: cpu, hasTouch: prof && prof.touch, isMobile: prof && prof.mobile });
 const out = { map, profile: arg('--profile', null), preset, cpu, engine, width, height, series: [], windows: {} };
-const loadS = await openGame(page, { aircraft: arg('--aircraft', 'f16'), spawn: arg('--spawn', MAP.spawn), quality: preset, pr: prof ? prof.pr : 1, extra: `${prof ? prof.extra : ''}${MAP.extra}&telemetry=0`, base: arg('--base', BASE) });
+const loadS = await openGame(page, { aircraft: arg('--aircraft', 'f16'), spawn: arg('--spawn', MAP.spawn), quality: preset, pr: prof ? prof.pr : 1, extra: `${prof ? prof.extra : ''}${MAP.extra}&telemetry=0${arg('--extra', '')}`, base: arg('--base', BASE) });
 await attach(page, { gpu: engine === 'chromium', subs: true });
 out.loadS = loadS;
 console.log(`loaded in ${loadS}s`);
