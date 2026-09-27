@@ -158,9 +158,14 @@ class FixedWingAssist {
     this.airT = 0; this.gndT = 0; this.climbout = false; this.theta0 = 0;
     this.toSet = false; this.powerSet = false; this.overSet = false; this.pullSet = false; this.rotAuto = false;
     this.rw = null; this.rwT = 0; this.lastLever = 0; this.lawT = -1; this.idleSet = false; this.touchT = 0;
-    this.gearCueT = 0; this.landedApp = false;
+    this.gearCueT = 0; this.landedApp = false; this.manualApp = false;
     this.app = null;
     this.at.on = false;
+    // a reset in the air (R on an airborne start, a crash reset, "Son yaklaşmaya git", an airborne mission retry) goes on
+    // from the present flight like setEnabled in the air: phase 'ground' took the first airborne frame for a lift-off
+    // (take-off climb attitude, a climb to the safe height)
+    const m = this.m;
+    if (m && m.fcs && !(m.wow || m.onGround)) { this.phase = m.fcs.st.blend > 0.95 ? 'flight' : 'initial'; this.theta0 = m.ad.theta; }
   }
 
   _emit(type, extra) { this.m._emit('assist', extra ? Object.assign({ type }, extra) : { type }); }
@@ -173,6 +178,7 @@ class FixedWingAssist {
     const runways = world && world.runways;
     const rw = runways ? pickRunway(runways, m._pos.x, m._pos.z, m.ad.psi, { gate: this.C.gate, minLength: this.C.minRunway }) : null;
     if (!rw) { this._emit('noRunway', { why: 'none' }); return false; }
+    this.manualApp = false;
     this._startApproach(rw, 'button');
     return true;
   }
@@ -193,6 +199,9 @@ class FixedWingAssist {
     if (!this.app) return;
     const a = this.app;
     this.app = null;
+    // the player's ✕ ("İnişi bırak"): the gear-down rule must not start it again at once (the gear is down on a final);
+    // it may again after the gear goes up, on the ground, after a reset or with "İnişe geç"
+    if (!silent) this.manualApp = true;
     if (a.sb && this.m.sys.speedbrakeCmd) this.m.command('speedbrake');
     if (this.at.on) this._atOff(false);
     if (!silent) this._emit('approach', { off: true });
@@ -234,10 +243,13 @@ class FixedWingAssist {
         if (this.app) { this.landedApp = true; this.app.stage = 'rollout'; }
         if (this.at.on) this._atOff(true);
       }
-      this.airT = 0;
+      this.airT = 0; this.manualApp = false;
     } else {
       this.gndT = 0; this.airT += dt;
       if (this.phase === 'ground' || this.phase === 'takeoff' || this.phase === 'rollout') {
+        // touch-and-go after an assisted landing (power on the roll-out): the landed approach ends (its 'rollout' stage
+        // flew as an outbound U-turn: ±25° of bank hands-off, the speedbrake out at full power), a new climb-out starts
+        if (this.phase === 'takeoff' && this.app && this.app.stage === 'rollout') { this.cancelApproach(true); this.landedApp = false; }
         this.climbout = this.phase === 'takeoff' || (this.phase === 'ground' && !this.landedApp);
         if (this.phase === 'rollout') this.climbout = false;
         this.phase = 'initial'; this.theta0 = m.ad.theta;
@@ -374,7 +386,8 @@ class FixedWingAssist {
     let bankMax = C.bank * DEG;
     this.power = null; this.retard = false;
     // automatic approach mode: gear lowered near a runway
-    if (!this.app && sys.gearHandleDown && agl > 60 && world && world.runways && (this.rwT -= dt) <= 0) {
+    if (!sys.gearHandleDown) this.manualApp = false;
+    if (!this.app && !this.manualApp && sys.gearHandleDown && agl > 60 && world && world.runways && (this.rwT -= dt) <= 0) {
       this.rwT = 1;
       const rw = findApproach(world.runways, m._pos.x, m._pos.z, ad.psi, 16000);
       if (rw && landingEnds(world.runways, C.minRunway).includes(rw)) this._startApproach(rw, 'gear');
@@ -673,7 +686,7 @@ class HeliAssist {
     on = !!on;
     if (on === this.on) return;
     this.on = on;
-    if (!on) { this.app = null; this.cue = ''; this.prot = ''; }
+    if (!on) { this.cancelApproach(true); this.cue = ''; this.prot = ''; }   // (a coupled descent does not go on by itself)
     this.phase = this.m.onGround ? 'ground' : 'flight';
   }
 
@@ -690,6 +703,9 @@ class HeliAssist {
     if (!this.on || m.crashed || m.onGround) { this._emit('noRunway', { why: 'ground' }); return false; }
     if (!m.afcs.ap.on) { m.command('autopilot'); }
     if (!m.afcs.ap.on) { this._emit('noRunway', { why: 'none' }); return false; }
+    // a route on the map: the hold flew it (nav resets the speed target every step, so it never slowed down); the
+    // landing takes over from the present flight like a pilot input does (cruise / hover hold)
+    if (m.afcs.ap.mode === 'nav') { const nav = m.afcs.nav; m.afcs.nav = null; m.afcs.engage(m._sens); m.afcs.nav = nav; }
     this.app = { stage: 'slow', name: '', t: 0, dist: 0, dir: 0, glide: 0, vert: 0, lateral: 0, water: false };
     this._emit('approach', { runway: '', via: 'button' });
     return true;
