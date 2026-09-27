@@ -2,6 +2,7 @@
 // The GLB is built by blender/aircraft/f22/build.py. Pivoting parts have their local X axis on the hinge and
 // rotation 0 = neutral; the rig rotates them about local X from their rest quaternion.
 import * as THREE from 'three';
+import { stowedParts } from '../stowed.js';
 
 // URLs are resolved against this module so they work from index.html and from dev/ pages alike.
 const asset = (p) => new URL(`../../../${p}`, import.meta.url).href;
@@ -359,6 +360,10 @@ export function createRig(gltfScene) {
   const MAIN_WHEELS = [['wheel_main_L', 1], ['wheel_main_R', 2]];
   const WHEELS = ['wheel_nose', 'wheel_main_L', 'wheel_main_R'];
   const GEAR_NODES = ['gear_nose', 'gear_main_L', 'gear_main_R'];
+  // the stowed gear is hidden by its meshes (../stowed.js), not by these nodes: the landing SpotLight hangs under
+  // gear_nose, and a hidden node took it out of the scene's light list, which recompiled every lit shader at each gear
+  // retraction and extension
+  const bayGear = stowedParts(gltfScene, GEAR_NODES);
   const NO_ENGINE = {};
   const EMPTY = [];
   let compArr = EMPTY;
@@ -449,7 +454,7 @@ export function createRig(gltfScene) {
     rotX('gear_door_main_L', mainDoor * MAX.mainDoor * D2R);
     // stowed gear is hidden (the legs would otherwise poke through the closed bays)
     const stowed = leg < 0.01;
-    for (let k = 0; k < GEAR_NODES.length; k++) { const g = pivots[GEAR_NODES[k]]; if (g) g.o.visible = !stowed; }
+    bayGear.set(stowed);
     rotX('gear_nose', (1 - leg) * MAX.noseGear * D2R);
     rotX('gear_main_L', (1 - leg) * MAX.mainGear * D2R);
     rotX('gear_main_R', (1 - leg) * MAX.mainGear * D2R);
