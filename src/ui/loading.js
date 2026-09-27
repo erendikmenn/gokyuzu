@@ -116,19 +116,20 @@ const WARN_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="#ff8a5c" stroke-
 function describeChoice() {
   const c = shared.choice;
   if (c) return { aircraft: c.aircraftName || c.aircraftId, spawn: c.spawnName ? spawnText(c.spawnName) : '' };
+  // (from the link: only known aircraft and start points are named, a link's own text is never shown)
   const q = new URLSearchParams(location.search);
   const id = q.get('aircraft');
-  if (!id) return null;
-  const info = AIRCRAFT_INFO[id];
+  const own = (o, k) => !!o && Object.prototype.hasOwnProperty.call(o, k);
+  const entry = id ? AIRCRAFT.find((a) => a.id === id) : null;
+  if (!entry && !own(AIRCRAFT_INFO, id)) return null;
   const sp = q.get('spawn') || '';
-  const m = sp.match(/^(K[A-Z]{3}|LT[A-Z]{2})-(.+)$/);
+  const m = sp.match(/^(K[A-Z]{3}|LT[A-Z]{2})-(\d{2}[LRC]?)$/);
   let spawn = '';
-  const own = (activeMap().spawns || []).find((s) => s.id === sp);   // maps hook: another map's start points
-  if (own) spawn = spawnText(own.name);
-  else if (m) spawn = `${AIRPORTS[m[1]] ? AIRPORTS[m[1]].short : m[1]} · Pist ${m[2]}`;
+  const start = (activeMap().spawns || []).find((s) => s.id === sp);   // maps hook: another map's start points
+  if (start) spawn = spawnText(start.name);
+  else if (m && own(AIRPORTS, m[1])) spawn = `${AIRPORTS[m[1]].short} · Pist ${m[2]}`;
   else if (/^AIR/.test(sp)) spawn = { 'AIR-GGB': 'Golden Gate yaklaşımı', 'AIR-SFO-FINAL': 'SFO 28L son yaklaşma', 'AIR-CITY': 'Şehir merkezi üstü' }[sp] || 'Havada başlangıç';
-  const entry = AIRCRAFT.find((a) => a.id === id);
-  return { aircraft: entry ? entry.name : info ? info.short : id, spawn };
+  return { aircraft: entry ? entry.name : AIRCRAFT_INFO[id].short, spawn };
 }
 function spawnText(name) {
   const dot = name.indexOf('·');
