@@ -1,9 +1,9 @@
 // Phones, tablets and social-app webviews: touch-only detection (Android phones whose pointer media queries report a
 // fine pointer), the pointer tag of the telemetry, in-app browser user agents, the webview → browser hand-off address and
-// the Chrome intent link. The screens themselves are covered by the Playwright checks.
+// the browser intent link. The screens themselves are covered by the Playwright checks.
 // Run: node tests/mobile.test.mjs   (no framework, no network: PASS/FAIL table, exit 1 on failure)
 import { isTouchOnly, pointerTag, inAppBrowser, mobileOS } from '../src/ui/touch-env.js';
-import { handoffUrl, chromeIntentUrl } from '../src/ui/touch-gate.js';
+import { handoffUrl, browserIntentUrl } from '../src/ui/touch-gate.js';
 
 const rows = [];
 const check = (name, ok, detail = '') => rows.push({ name, ok: !!ok, detail });
@@ -70,9 +70,10 @@ check('os: Android / iOS / other', mobileOS(UA.xAndroid) === 'android' && mobile
   check('handoff: an unknown value is removed but not counted', (() => { const r = handoffUrl('https://fs.example/?from=evil', ''); return r.from === '' && r.url === 'https://fs.example/'; })());
   check('handoff: no parameter in the browser → nothing to do', handoffUrl('https://fs.example/?aircraft=f16', '').url === null);
   check('handoff: another app re-marks the address', handoffUrl('https://fs.example/?from=x', 'instagram').url === 'https://fs.example/?from=instagram');
-  const intent = chromeIntentUrl(inApp.url);
-  check('intent: Chrome intent link carries the marked address and the https fallback',
-    intent.startsWith('intent://fs.example/?mission=climb&challenge=2500&from=x#Intent;scheme=https;package=com.android.chrome;') && intent.endsWith(';end') && intent.includes('S.browser_fallback_url=https%3A%2F%2Ffs.example%2F'), intent);
+  const intent = browserIntentUrl(inApp.url);
+  check('intent: the browser intent link carries the marked address and the https fallback, no browser package (default browser)',
+    intent.startsWith('intent://fs.example/?mission=climb&challenge=2500&from=x#Intent;scheme=https;') && intent.endsWith(';end')
+    && intent.includes('S.browser_fallback_url=https%3A%2F%2Ffs.example%2F') && !intent.includes('package='), intent);
 }
 
 const w = Math.max(...rows.map((r) => r.name.length));

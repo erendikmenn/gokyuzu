@@ -825,7 +825,7 @@ def report_mobile(beacons, visitors, top):
     if ev:
         acts = Counter(q.get('st') or q.get('x') or '?' for *_, q in ev)
         print(f"  \"Tarayıcıda aç\" bandı (olay): {top(acts, 6)} · kişi: gören {len(people(ev, lambda q: q.get('st') == 'show'))}, "
-              f"dokunan {len(people(ev, lambda q: q.get('x') in ('chrome', 'copy')))}")
+              f"dokunan {len(people(ev, lambda q: q.get('x') in ('browser', 'chrome', 'copy')))}")
     print(f"  Webview'den tarayıcıya geçen (hf): {fmt(arrived) if arrived else '-'}")
     for plat, c in sorted(ptr.items(), key=lambda kv: -sum(kv[1].values()))[:8]:
         print(f"  Dokunmatik ekran {plat}: ptr/in {top(Counter({f'{a}/{b}': n for (a, b), n in c.items()}), 6)}")
