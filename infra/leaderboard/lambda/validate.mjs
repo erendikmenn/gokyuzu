@@ -100,6 +100,7 @@ function checkWeek(rule, rules, now, write) {
 /** The day argument of a request: null (no daily board) or a valid 'YYYYMMDD' within [today - back, today + ahead]. */
 function checkDay(day, now, back, ahead) {
   if (day === undefined || day === null || day === '') return { ok: true, day: null };
+  if (typeof day !== 'string' && typeof day !== 'number') return { ok: false };   // (an array or object would stringify)
   const d = String(day);
   const t = dayMs(d), today = dayMs(utcDay(now));
   if (Number.isNaN(t) || t < today - back * DAY_MS || t > today + ahead * DAY_MS) return { ok: false };

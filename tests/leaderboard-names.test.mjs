@@ -37,6 +37,14 @@ r = await post({ ...run, sid: A, score: 2300, stars: 3 });
 check('better score without a nickname: replaces the entry (anonymous until named again)', J(r).improved && J(r).best.score === 2300 && J(r).name === null, r.body);
 r = await post({ ...run, sid: A, score: 2300, stars: 3, name: 'orospu' });
 check('rejected nickname: entry stays anonymous', !J(r).improved && J(r).name === null && J(r).nameRejected === true, r.body);
+// a nickname only ever names the sender's own entry (the player key is never sent back, only its salted hash is stored)
+r = await post({ ...run, sid: A, score: 2300, stars: 3, name: 'Kaptan' });
+r = await post({ ...run, sid: B, score: 1000, stars: 1, name: 'Sahte Kaptan' });
+check('another player\'s nickname never renames my entry', J(r).top[0].name === 'Kaptan' && J(r).top[1].name === 'Sahte Kaptan' && J(r).best.score === 1800, r.body);
+check('responses carry no player key or hash', !r.body.includes(A) && !r.body.includes(B) && !/"sk"|p#/.test(r.body), r.body);
+const C = 'PlayerKeyCCCCCCCCCCCCC';
+r = await post({ ...run, sid: C, score: 1050, stars: 1, name: 'Kaptan' });
+check('the same nickname on another entry does not touch the first one', J(r).top.filter((e) => e.name === 'Kaptan').length === 2 && J(r).top[0].score === 2300, r.body);
 
 let failed = 0;
 const w = Math.max(...rows.map((x) => x.name.length));
