@@ -75,6 +75,19 @@ const DIGITS = {};
 for (let i = 0; i <= 9; i++) { DIGITS[`Digit${i}`] = i; DIGITS[`Numpad${i}`] = i; }
 
 const HANDLED = new Set([...Object.values(AXES).flat(), ...Object.keys(ACTION_KEYS), ...Object.keys(DIGITS)]);
+// Punctuation keys go by the character they type, not by their position (letters, digits, arrows and modifiers stay
+// layout independent, by e.code): on the Turkish Q layout "." is the Slash key (it opened the help instead of the next
+// camera), "," is Backslash (nothing), ç / ö sit on Period / Comma (they switched cameras), "-" is Equal (it raised the
+// throttle) and "*" / "?" are Minus (throttle down, and the help). A press without a character (synthetic presses from
+// the on-screen buttons, dead keys) keeps its position.
+const PUNCT = new Set(['Minus', 'Equal', 'Comma', 'Period', 'Slash', 'Backslash', 'IntlRo', 'IntlBackslash', 'IntlYen', 'BracketLeft', 'BracketRight', 'Semicolon', 'Quote', 'Backquote']);
+const BY_CHAR = { '-': 'Minus', _: 'Minus', '=': 'Equal', '+': 'Equal', '.': 'Period', '>': 'Period', ',': 'Comma', '<': 'Comma', '/': 'Slash', '?': 'Slash' };
+/** The code a key press stands for (see PUNCT); 'Unbound' for punctuation the game does not use. */
+export function logicalCode(e) {
+  const code = e.code, k = e.key;
+  if (!PUNCT.has(code) || typeof k !== 'string' || k.length !== 1) return code;
+  return BY_CHAR[k] || 'Unbound';
+}
 
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 
@@ -138,15 +151,17 @@ export function createInput(target = globalThis.window) {
     state.throttle = clamp(v, 0, 1);
   }
 
+  const pressedAs = new Map();   // physical code → the code it pressed (logicalCode): its keyup releases the same one
   function onKeyDown(e) {
     if (e.metaKey) return;          // leave Cmd shortcuts to the browser / OS
     const t = e.target;
     if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName || ''))) return;
-    const code = e.code;
+    const code = pressedAs.get(e.code) || logicalCode(e);
     const isHelpKey = e.key === '?';
     if (HANDLED.has(code) || isHelpKey) e.preventDefault();
     const fresh = !down.has(code);
     down.add(code);
+    pressedAs.set(e.code, code);
     if (e.repeat || !fresh) return;
     if (e.isTrusted !== false) lastKind = 'kb';   // (synthetic presses from on-screen buttons do not count)
     // afterburner detent: a new press at the detent passes through it
@@ -171,17 +186,19 @@ export function createInput(target = globalThis.window) {
   }
 
   function onKeyUp(e) {
-    down.delete(e.code);
+    const code = pressedAs.get(e.code) || logicalCode(e);
+    pressedAs.delete(e.code);
+    down.delete(code);
     // macOS does not send keyup for keys released while Cmd is held
-    if (e.code === 'MetaLeft' || e.code === 'MetaRight') down.clear();
-    if (HANDLED.has(e.code)) e.preventDefault();
+    if (e.code === 'MetaLeft' || e.code === 'MetaRight') { down.clear(); pressedAs.clear(); }
+    if (HANDLED.has(code)) e.preventDefault();
     // speedbrake held longer than LONG_PRESS behaves as a momentary switch: retract on release
-    if (ACTION_KEYS[e.code] === 'speedbrake' && speedbrakeDownAt >= 0) {
+    if (ACTION_KEYS[code] === 'speedbrake' && speedbrakeDownAt >= 0) {
       if (clock - speedbrakeDownAt > LONG_PRESS) fire('speedbrake');
       speedbrakeDownAt = -1;
     }
   }
-  const releaseAll = () => down.clear();
+  const releaseAll = () => { down.clear(); pressedAs.clear(); };
 
   if (target && target.addEventListener) {
     target.addEventListener('gamepadconnected', () => { padSeen = true; });

@@ -712,7 +712,16 @@ addEventListener('pointermove', (e) => { if (e.buttons || e.pointerType === 'tou
 document.addEventListener('visibilitychange', () => { simAcc = 0; });   // (no catch-up step after a hidden period)
 // cockpit displays (2D canvas → texture uploads, plan 4.4): 15 Hz on phones, 20 Hz in WebKit (each canvas upload costs
 // 20–60× more there: findings T2), 30 Hz elsewhere
-const displayInterval = quality.deviceClass === 'phone' ? 1 / 15 : detectDevice().engine === 'webkit' ? 1 / 20 : 1 / 30;
+const baseDisplayInterval = quality.deviceClass === 'phone' ? 1 / 15 : detectDevice().engine === 'webkit' ? 1 / 20 : 1 / 30;
+let displayInterval = baseDisplayInterval;
+// low power (frame-pacing.js: Safari's Low Power Mode / thermal mitigation run requestAnimationFrame at 30 Hz): a tablet
+// saves like a phone while it lasts, no backdrop blur (index.html gk-noblur) and cockpit displays at 15 Hz
+let lowPowerSeen = false;
+function applyLowPower(on) {
+  if (quality.deviceClass !== 'tablet') return;
+  displayInterval = on ? 1 / 15 : baseDisplayInterval;
+  if (!params.has('blur')) document.documentElement.classList.toggle('gk-noblur', on);
+}
 // ... except when a warning comes or goes (PULL UP, STALL …): then every display is drawn on that frame, also the slower pages
 let lastWarnMask = 0;
 /** The flight's warning flags as a bit mask (no allocation). */
@@ -790,6 +799,7 @@ function frame(ts) {
   const t0 = performance.now();
   const mode = paceMode(t0);
   const { sim, draw } = pacer.decide(ts, mode, { interacting: t0 - lastInteraction < PACE.interactMs, warming: state.warming });
+  if (pacer.lowPower !== lowPowerSeen) { lowPowerSeen = pacer.lowPower; applyLowPower(lowPowerSeen); }
   if (!state.readyAt && state.texQueue.length && !state.upgrade) renderer.initTexture(state.texQueue.shift());   // aircraft textures while the world loads
   gpu.tick(Math.min(rawDt, 0.1));
   if (!sim && !draw) return;
