@@ -5,7 +5,8 @@
 // The X / Instagram / Facebook webviews on iOS (they drop the WebGL context within seconds, docs/errors/audit.md #2) get
 // "Oyunu Safari'de aç" as the way in, and again instead of a reload after a context loss (showInAppFailure).
 // Also the small "Tarayıcıda aç" banner for other social-app in-app browsers (menu) and the link helpers.
-// Anonymous telemetry: 'gate' { r: reason, x: 'try' when the player continues anyway } (CONTRACTS-SF.md §11).
+// Anonymous telemetry: 'gate' { r: reason, x: 'try' when the player continues anyway }, 'iab' (the banner: st = show,
+// x = chrome | copy | close) and the hand-off below (hf on `open`) (CONTRACTS-SF.md §11).
 import { injectCSS, BASE_CSS } from './styles.js';
 import { el } from './util.js';
 import { gateCheck, inAppBrowser, mobileOS, inBadInAppBrowser } from './touch-env.js';
@@ -83,6 +84,42 @@ const TEXT = {
 // where the "open in browser" item sits in each app's in-app browser (iOS)
 const IAB_MENU = { x: '••• menüsü → «Safari’de aç»', instagram: '••• menüsü → «Harici tarayıcıda aç»', facebook: '••• menüsü → «Harici tarayıcıda aç»' };
 
+// Hand-off from a social-app webview to the real browser, counted without an identifier: inside the webview the page's
+// address carries ?from=<app> (history.replaceState: nothing reloads), so the page that "open in browser" opens (the
+// app's own menu item, which takes the webview's current address, or the Safari / Chrome buttons here) knows where it
+// came from. That page sends hf=<app> on `open` (main.js) and drops the parameter from its address, so a reload or a
+// link copied from it does not count again. (Telemetry: CONTRACTS-SF.md §11.)
+const FROM = 'from';
+const APP_IDS = new Set(['x', 'instagram', 'facebook', 'tiktok', 'line', 'snapchat', 'linkedin', 'webview']);
+let handoff = '';
+
+/** Pure: the address with ?from=<app> added (inside a webview) or removed → { url (null: unchanged), from (read) }. */
+export function handoffUrl(href, iabId) {
+  const u = new URL(href);
+  const from = u.searchParams.get(FROM);
+  if (iabId) {
+    if (from === iabId) return { url: null, from: '' };
+    u.searchParams.set(FROM, iabId);
+    return { url: u.href, from: '' };
+  }
+  if (from === null) return { url: null, from: '' };
+  u.searchParams.delete(FROM);
+  return { url: u.href, from: APP_IDS.has(from) ? from : '' };
+}
+
+/** Mark (webview) or read and clear (browser) the hand-off parameter; once per page, before anything reads the address. */
+export function noteHandoff() {
+  try {
+    const iab = inAppBrowser();
+    const r = handoffUrl(location.href, iab ? iab.id : '');
+    if (r.from) handoff = r.from;
+    if (r.url && r.url !== location.href) history.replaceState(history.state, '', r.url);
+  } catch { /* no history API: nothing measured */ }
+}
+
+/** The social app this page was handed over from ('' = none): telemetry `hf`. */
+export const handoffFrom = () => handoff;
+
 /** The game's link without query parameters (what to open on the computer). */
 export function gameLink() { return `${location.origin}${location.pathname.replace(/index\.html$/, '')}`; }
 
@@ -108,6 +145,7 @@ export function chromeIntentUrl(url = location.href) {
  * player chooses "Yine de dene" (soft reasons) — a hard failure never resolves, so the caller stops before the world.
  */
 export function runDeviceGate(container = document.body) {
+  noteHandoff();
   let g;
   try { g = gateCheck(); } catch { g = { ok: true }; }
   if (g.ok) return Promise.resolve(g);
@@ -228,7 +266,8 @@ export function showInAppHint(parent) {
   const browser = iab.os === 'ios' ? 'Safari' : 'Chrome';
   el('b', null, t, 'İpucu: ');
   t.append(`${iab.os === 'ios' ? '•••' : '⋮'} menüsünden «Tarayıcıda aç» ile ${browser}’de tam ekran ve eğimle kumanda.`);
-  const close = () => { try { sessionStorage.setItem(BANNER_KEY, '1'); } catch { /* ignore */ } box.remove(); };
+  const close = () => { try { sessionStorage.setItem(BANNER_KEY, '1'); } catch { /* ignore */ } box.remove(); trackEvent('iab', { id: iab.id, x: 'close' }); };
+  trackEvent('iab', { id: iab.id, st: 'show' });
   if (mobileOS() === 'android') {
     const b = el('button', null, box, 'Chrome’da aç');
     b.type = 'button';

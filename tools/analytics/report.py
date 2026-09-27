@@ -799,6 +799,38 @@ def report_platforms(beacons, visitors, requests, min_n=10):
               + ' · '.join(f'{k} {pct(silent[k], n)} ({silent[k]}/{n})' for k, n in total.most_common(8)))
 
 
+def report_mobile(beacons, visitors, top):
+    """Phones in social-app webviews and the way out (src/ui/touch-gate.js, src/ui/touch-env.js): pages opened inside an
+    app's webview (`open` iab) and the share that flew, the "Tarayıcıda aç" banner (`iab`: show, chrome, copy, close),
+    the pages that arrived in a real browser from a webview (`open` hf, marked in the webview's address) and the share of
+    them that flew; then the touch screens' pointer media queries (`open` ptr: c / f / n = primary coarse / fine / none,
+    F = a fine pointer listed, h = hover) and how many of those pages started with the touch controls (`in`)."""
+    rows = page_sessions(beacons, visitors)
+    inapp, arrived, ptr = defaultdict(list), defaultdict(list), defaultdict(Counter)
+    for vid, plat, first, fly, hbs, evs in rows:
+        if first.get('iab'):
+            inapp[f"{first['iab']}/{plat.split('/')[-1]}"].append((vid, bool(fly)))
+        if first.get('hf'):
+            arrived[f"{first['hf']} → {plat}"].append((vid, bool(fly)))
+        if first.get('ptr'):
+            ptr[plat][(first['ptr'], first.get('in') or '?')] += 1
+    ev = real_events(beacons, visitors, {'iab'})
+    if not (inapp or arrived or ev or ptr):
+        return
+    fmt = lambda g: ' · '.join(f"{k} {len(v)} sayfa ({len({x[0] for x in v})} kişi), uçan %{100 * sum(1 for x in v if x[1]) / len(v):.0f}"
+                               for k, v in sorted(g.items(), key=lambda kv: -len(kv[1])))
+    print('\nUygulama içi tarayıcı (sosyal uygulamaların webview\'i):')
+    if inapp:
+        print(f'  Webview\'de açılan: {fmt(inapp)}')
+    if ev:
+        acts = Counter(q.get('st') or q.get('x') or '?' for *_, q in ev)
+        print(f"  \"Tarayıcıda aç\" bandı (olay): {top(acts, 6)} · kişi: gören {len(people(ev, lambda q: q.get('st') == 'show'))}, "
+              f"dokunan {len(people(ev, lambda q: q.get('x') in ('chrome', 'copy')))}")
+    print(f"  Webview'den tarayıcıya geçen (hf): {fmt(arrived) if arrived else '-'}")
+    for plat, c in sorted(ptr.items(), key=lambda kv: -sum(kv[1].values()))[:8]:
+        print(f"  Dokunmatik ekran {plat}: ptr/in {top(Counter({f'{a}/{b}': n for (a, b), n in c.items()}), 6)}")
+
+
 def device_kind(q, v):
     dc = (q.get('dc') or '').split('/')[0]
     if dc in ('phone', 'tablet', 'desktop'):
@@ -1261,6 +1293,7 @@ def main():
         print('Eksik dosya (403):' if a.target == 'production' else 'IP kilidine takılan istek:', top(blocked, 5))
 
     report_platforms(beacons, visitors, requests)
+    report_mobile(beacons, visitors, top)   # social-app webviews: banner, hand-off to the browser; touch screens' pointer queries
 
     # wave 7 (§12): missions, daily mission, landing score, shares, failures, leaderboard, retention
     by_day = report_missions(beacons, visitors, top)

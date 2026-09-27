@@ -341,6 +341,12 @@ Players keep files in their browser cache, so every asset URL carries a content 
     before 27 Sep 2026 cut it to "Intel" / "AMD Radeon"), `dc` (device class `kind/os/tier`, e.g. `desktop/windows/entry`),
     `mq` (why the start preset: `auto` | `user` | `url` | `reload` (after a context loss) | `cap` (failure ceiling) |
     `resume` (lowered after a tab crash)), `qc` (the stored failure ceiling, if any) and the retention fields below.
+  - Mobile fields on `open` (src/ui/touch-env.js, src/ui/touch-gate.js): `in` (touch | kb | pad: the input the page
+    started with), `touch` = 1 with the on-screen controls, `iab` (the social-app webview: x, instagram, facebook, tiktok,
+    line, snapchat, linkedin, webview), `hf` (the page was handed over from that webview to a real browser: inside a
+    webview the address carries `?from=<app>` via history.replaceState, the browser page reads it, sends `hf` and removes
+    it), `ptr` on touch screens (pointer media queries: `c` / `f` / `n` = primary coarse / fine / none, `F` = a fine
+    pointer listed, `h` = hover; Android phones often list a fine pointer they do not have).
   - Returning players without an identifier: localStorage `gokyuzu.visits` = `{ f, l, n, o? }` (first / last visit day
     `YYYYMMDD` in the player's calendar, number of visit days, `o` = 1 when the browser had other game data before the
     record existed). `open` sends `d0` (days since the first visit: `0`–`14`, `15-29`, `30+`), `vn` (visit days incl.
@@ -362,7 +368,9 @@ Players keep files in their browser cache, so every asset URL carries a content 
   with the columns görev / ffc / tamam (people who started a mission / opened the panel / completed one).
   "Platformlar": per browser / system and per system · GPU family: share of pages reaching a flight, load time p50 / p90,
   heartbeat fps against the cap, pixel ratio p50, dead pages, graphics events, own errors, and the visitors whose browser
-  sends no beacon. "Geri dönen oyuncular": D1 / D7 / within-7-days per cohort day and device from the visit fields, and
+  sends no beacon. "Uygulama içi tarayıcı": pages opened in each app's webview and the share that flew, the banner's
+  `iab` events, the pages handed over to a browser (`hf`) and the share that flew, the touch screens' `ptr` / `in`.
+  "Geri dönen oyuncular": D1 / D7 / within-7-days per cohort day and device from the visit fields, and
   the daily share of returning browsers. "Destekli uçuş": outcomes per `as` value on `fly` and the `assist` events.
   `--field KEY` lists any beacon field's values per event type (e.g. `as`). "Ayarlar" (from `set`): people who mute, lower a
   volume (below its default bucket), zero the master volume, turn off assisted flight, reduce or turn off the spoken
@@ -384,6 +392,8 @@ Players keep files in their browser cache, so every asset URL carries a content 
   | `inst` | show · accept · dismiss · later · installed | "Ana ekrana ekle": show: `p` (android = the browser's install prompt, ios = the how-to), `via` (mission, land); accept / dismiss: the browser dialog's answer; later: "Şimdi değil" / "Tamam"; installed: the browser's appinstalled event |
   | `assist` | app · tip | assisted flight (src/ui/assist-hud.js): app = an assisted approach ("İnişe geç") started, `ac`, `via` (button, gear = the gear lowered near a runway); tip = the one-time "turn it off in the settings" tip shown, `lc` (assisted landings so far). Assisted-flight state on other beacons: `as` = 1 on / 0 off on `fly`, `end`, `takeoff`, `land`, `crash` (on = the assist was on at any moment since the last take-off); `land` also `aa`=1 when "İnişe geç" flew the approach |
   | `set` | — | a setting changed (src/ui/settings-live.js; one beacon per changed setting, sent when the values have settled 1.5 s after the last change, so a slider drag is one beacon): `k` = `master` · `engine` · `voice` · `atc` · `ambient` with `v2` 0 · 25 · 50 · 75 · 100 (volume bucket); `mute` · `assist` · `chime` · `hudwarn` · `calm` (reduced flashing) · `tut` · `inv` · `tilt` · `radio` with `v2` 1 · 0; `valert` (spoken alerts) with `v2` 2 all · 1 critical · 0 off; `quality` · `fps` · `fail` · `hud` with the choice. (`v2`, not `v`: `v` is the envelope's version.) |
+  | `iab` | show | the "Tarayıcıda aç" banner in a social-app webview (src/ui/touch-gate.js): `id` (the app); show: the banner appeared; `x` = chrome (the Chrome intent link, Android) · copy (link copied) · close |
+  | `gate` | — | the start gate / "Safari'de aç" screen: `r` (reason: webgl2, memory, gpu, software, iab, iab-lost), `dev`, `iab`, `gpu`; `x` = try · safari · copy · copyfail · share |
   Existing: `takeoff`, `land` (`fpm`, `cl`, `tdz`, `st`), `crash`, `tut`, `share` (`id`, `via`), `failure`, `gfx`.
 - Retention state is local only (localStorage, never sent; no account, no id): `gokyuzu.streak` = `{ v, days: ['YYYYMMDD', …]
   (the last 60 Istanbul days with a finished flight or mission), run0? (the first day of the current run when it began before the kept days), best, land: { cur, best } (runway landings in a row), badges:
