@@ -26,8 +26,8 @@ import { goToMenu, guardUnload } from '../core/leave.js';
 import { startTelemetry, trackFlight, trackFail, setTelemetryMap } from '../core/telemetry.js';
 import { createRoute } from '../nav/route.js';     // navigation hook: route planning + LNAV (src/nav)
 import { createNavMap } from '../ui/map.js';       // navigation hook: big map (J / minimap click)
-import { runDeviceGate, showInAppFailure } from '../ui/touch-gate.js';   // mobile hook: weak / unsupported device gate
-import { inAppBrowser } from '../ui/touch-env.js';
+import { runDeviceGate, showInAppFailure, handoffFrom } from '../ui/touch-gate.js';   // mobile hook: weak / unsupported device gate
+import { inAppBrowser, pointerTag } from '../ui/touch-env.js';
 import { createTouchControls } from '../ui/touch.js';          // mobile hook: on-screen controls (phones / tablets)
 
 const params = new URLSearchParams(location.search);
@@ -963,7 +963,9 @@ loadBuildInfo().then((b) => {   // (the same memoized request the asset version 
     document.body.append(tag);
   }
 }).catch(() => {}).finally(() => startTelemetry({
-  extra: { in: touchUI.active ? 'touch' : input.kind, touch: touchUI.active ? 1 : undefined, iab: (inAppBrowser() || {}).id },   // mobile hook
+  // mobile hook: input kind, touch controls, social-app webview, hand-off from one (hf), pointer media queries on touch screens (ptr)
+  extra: { in: touchUI.active ? 'touch' : input.kind, touch: touchUI.active ? 1 : undefined, iab: (inAppBrowser() || {}).id, hf: handoffFrom() || undefined,
+    ptr: navigator.maxTouchPoints > 0 ? pointerTag() : undefined },
   build: state.build, renderer, quality: settings.quality,
   state: () => ({ flying: !!(state.flight && state.readyAt), paused: state.paused, aircraft: state.aircraftId, fps: window.__fps, pixelRatio: renderer.getPixelRatio(), view: cameraRig.view }),
 }));
