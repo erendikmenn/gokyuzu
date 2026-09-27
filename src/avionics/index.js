@@ -19,7 +19,7 @@ import { F22 } from './f22.js';
 import { UH60 } from './uh60.js';
 import { detectDevice } from '../core/gpu-device.js';
 
-// Phones and tablets: display canvases at most 512 px on the long side. Phones draw the whole 3D view at most 1.25 × a
+// Phones and tablets: display canvases at most 512 px on the long side. Phones draw the whole 3D view at most 1 × a
 // ~400 px short side and tablets at 1.25 × ~800 px (src/core/quality.js): a cockpit display covers at most ~250–500
 // rendered pixels there, so a 1024² PFD / ND / HUD canvas is 4× the pixels to rasterise and upload for no visible
 // detail, and in WebKit (iPad / iPhone Safari) the canvas → texture upload is the largest CPU cost of the cockpit view.

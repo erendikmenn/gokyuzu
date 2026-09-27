@@ -29,7 +29,7 @@ import { injectCSS, BASE_CSS } from './styles.js';
 import { el, clamp } from './util.js';
 import { shared } from './shared.js';
 import { loadSettings, saveSettings, DEFAULT_SETTINGS } from '../core/settings.js';
-import { QUALITY, QUALITY_ORDER, detectQuality } from '../core/quality.js';
+import { QUALITY, QUALITY_ORDER, detectQuality, resolveQuality } from '../core/quality.js';
 import { detectDevice, integratedGpuAdvice, softwareRenderAdvice } from '../core/gpu-device.js';
 import { resetTutorials } from './tutorial.js';
 import { isTouchOnly, touchMode, inAppBrowser, mobileOS } from './touch-env.js';
@@ -301,10 +301,13 @@ export function openSettings(container) {
   const auto = detected_();
   const items = QUALITY_ORDER.filter((id) => QUALITY[id]).map((id) => [id, QUALITY[id].label || id, id === auto ? 'Otomatik' : '']);
   let note = null;
+  // antialiasing as this device runs each preset (device caps: phones and software renderers never use it, so there the
+  // presets do not change it and the note leaves the restart sentence out)
+  const aaOf = (id) => safe(() => !!resolveQuality(id).antialias, !!(QUALITY[id] && QUALITY[id].antialias));
+  const aaVaries = new Set(QUALITY_ORDER.filter((id) => QUALITY[id]).map(aaOf)).size > 1;
   const updateNote = () => {
-    const now = QUALITY[s.quality], start = QUALITY[STARTUP_QUALITY];
-    const aaChange = now && start && !!now.antialias !== !!start.antialias;
-    note.textContent = `Bu ${touch ? 'cihaz' : 'bilgisayar'} için önerilen: ${QUALITY[auto] ? QUALITY[auto].label : auto}. Kenar yumuşatma değişikliği yeniden başlatınca geçerli.`;
+    const aaChange = aaVaries && !!QUALITY[s.quality] && !!QUALITY[STARTUP_QUALITY] && aaOf(s.quality) !== aaOf(STARTUP_QUALITY);
+    note.textContent = `Bu ${touch ? 'cihaz' : 'bilgisayar'} için önerilen: ${QUALITY[auto] ? QUALITY[auto].label : auto}.${aaVaries ? ' Kenar yumuşatma değişikliği yeniden başlatınca geçerli.' : ''}`;
     note.classList.toggle('hot', aaChange);
   };
   const qs = segmented(g, items, s.quality, (id) => { s.quality = id; commit(); updateNote(); }, 'Grafik kalitesi');

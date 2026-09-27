@@ -71,6 +71,17 @@ check('desktop Mac keeps the full "high" preset', qm.shadowMapSize === 4096 && q
 const qp = resolveQuality('low', phone);
 check('phone budget below tablet budget below desktop "low"', qp.gpuBudgetMB < resolveQuality('low', ipad).gpuBudgetMB && resolveQuality('low', ipad).gpuBudgetMB <= QUALITY.low.gpuBudgetMB, `${qp.gpuBudgetMB} / ${resolveQuality('low', ipad).gpuBudgetMB} / ${QUALITY.low.gpuBudgetMB}`);
 check('resolveQuality is memoized (identity stable for main.js)', resolveQuality('medium', ipad) === resolveQuality('medium', ipad));
+// phones keep the "low" pixel ratio, terrain, imagery, shadows and antialiasing whatever preset the player picks (live data:
+// iPhone page deaths on ultra 6/25 flights against low 9/238); the presets still differ in clouds, water and traffic
+const phonePresets = ['low', 'medium', 'high', 'ultra'].map((id) => resolveQuality(id, phone));
+check('phone caps on every preset: pixel ratio 1, no shadows / MSAA, low terrain error and imagery depth',
+  phonePresets.every((q) => q.pixelRatioMax === 1 && q.shadows === false && q.cityShadows === false && q.antialias === false && q.terrainError >= QUALITY.low.terrainError && q.imageryMaxLevel <= QUALITY.low.imageryMaxLevel),
+  phonePresets.map((q) => `${q.id}: pr ${q.pixelRatioMax} sh ${q.shadows} aa ${q.antialias} te ${q.terrainError} img ${q.imageryMaxLevel}`).join(' · '));
+const look = (q) => `${q.clouds}/${q.water}`;
+check('phone presets still change something: clouds / water differ between low, medium and high',
+  new Set(phonePresets.slice(0, 3).map(look)).size === 3, phonePresets.map(look).join(' '));
+const qt = resolveQuality('high', ipad);
+check('tablet caps unchanged by the phone caps: shadows, MSAA and the preset terrain stay', qt.shadows === true && qt.antialias === true && qt.terrainError === QUALITY.high.terrainError && qt.imageryMaxLevel === QUALITY.high.imageryMaxLevel);
 // WebKit footprint (render agent, docs/perf/findings-2026-09.md T5): meter budgets for iOS / iPadOS, not for Chromium
 const engines = [['iPadOS Safari', ipad, 'webkit'], ['macOS Safari', mac, 'webkit'], ['iPhone', phone, 'webkit'],
   ['Chrome on a Mac', classifyDevice(cases[2][1]), 'blink'], ['Android Chrome', classifyDevice(cases[4][1]), 'blink'],

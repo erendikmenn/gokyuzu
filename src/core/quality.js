@@ -58,10 +58,14 @@ export const QUALITY_ORDER = ['low', 'medium', 'high', 'ultra'];
  * LARGER_IS_CHEAPER; booleans and strings: forced).
  * Phones/tablets are limited by what iOS/Android let one tab keep (GPU process + web process), not by GPU speed;
  * integrated GPUs share system memory with the browser.
+ * Phones also keep the "low" terrain, imagery, pixel ratio, shadows and antialiasing on every preset: iPhone pages died on
+ * "ultra" in 6 of 25 flights against 9 of 238 on "low" (live data), and ultra added about 130 MB to a phone's start-up
+ * peak and 320 MB to its steady footprint. A chosen medium / high / ultra still changes clouds, water and traffic.
  */
 export const DEVICE_CAPS = {
   phone: {
-    pixelRatioMax: 1.25, shadowMapSize: 1024, shadowCascades: 1, maxImageryTiles: 90, textureMaxSize: 512,
+    pixelRatioMax: 1, shadows: false, cityShadows: false, antialias: false, terrainError: 2.5, imageryMaxLevel: -2,
+    shadowMapSize: 1024, shadowCascades: 1, maxImageryTiles: 90, textureMaxSize: 512,
     cityLodScale: 0.4, treeDensity: 0.3, treeDistance: 0.5, landmarkLodScale: 0.5, airportLodScale: 0.5, anisotropy: 2,
     cityUnloadAfter: 6, gpuBudgetMB: 900, lazyCockpit: true,
   },
