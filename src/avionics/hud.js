@@ -3,6 +3,7 @@
 // 26° F-16 / 30° F-22) and the nose boresight sits at `boresight` (fraction of the height from the top; default 0.30 / 0.33).
 import { font, text, line, poly, circle, clamp, wrap360, wrap180, pad, DEG, NM, FT } from './core.js';
 import { STEERPOINTS, steerpoint, bearingTo, distTo, ilsFor } from './nav.js';
+import { reducedFlash } from '../ui/display-prefs.js';   // settings.alerts.reduceFlash: warnings steady
 
 export const HUD_GREEN = '#2bff55';
 
@@ -184,8 +185,8 @@ export function createHud(env, style = 'f16') {
     }
     // ------------------------------------------------ warnings
     if (S.warn.pullUp) { g.lineWidth = 6; line(g, 320, 220, 680, 580); line(g, 680, 220, 320, 580); }
-    if ((S.warn.stall || S.aoa > 25) && Math.floor(S.t * 3) % 2 === 0) text(g, 'STALL', 500, 700, col, 'center', font(40));
-    if (S.warn.gear && !S.gearDown && Math.floor(S.t * 2) % 2 === 0) text(g, 'GEAR', 500, 740, col, 'center', font(36));
+    if ((S.warn.stall || S.aoa > 25) && (reducedFlash() || Math.floor(S.t * 3) % 2 === 0)) text(g, 'STALL', 500, 700, col, 'center', font(40));
+    if (S.warn.gear && !S.gearDown && (reducedFlash() || Math.floor(S.t * 2) % 2 === 0)) text(g, 'GEAR', 500, 740, col, 'center', font(36));
     g.lineCap = 'butt';
   };
 }

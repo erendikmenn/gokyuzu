@@ -110,6 +110,8 @@ if (istSet) check('İstanbul challenge boards ff-ist-*', istSet.challenges.every
 else check('no İstanbul challenges yet: no set (no panel)', !existsSync(new URL('../src/missions/ist/challenges.js', import.meta.url)));
 
 // ---- telemetry tag ----
+// (beacons raised before the build version is known wait for startTelemetry, src/core/telemetry.js)
+T.startTelemetry({ build: { version: 'test' }, renderer: null, quality: 'high', state: () => null });
 T.setTelemetryMap('sf');
 T.trackEvent('mission', { id: 'gg-under', st: 'start' });
 T.setTelemetryMap('ist');
@@ -122,6 +124,7 @@ check('telemetry: San Francisco events carry no mp', byT('mission')[0].get('mp')
 check('telemetry: İstanbul mission / ffc / fly carry mp=ist', byT('mission')[1].get('mp') === 'ist' && byT('ffc')[0].get('mp') === 'ist' && byT('fly')[0].get('mp') === 'ist');
 check('telemetry: other events untagged', byT('land')[0].get('mp') === null);
 check('telemetry: envelope keys intact', byT('fly')[0].get('t') === 'fly' && /^\d+$/.test(byT('fly')[0].get('n')));
+check('telemetry: every beacon carries the build version', beacons.length > 0 && beacons.every((b) => b.get('v') === 'test'));
 
 let fail = 0;
 for (const r of results) { if (!r.ok) fail++; console.log(`${r.ok ? 'PASS' : 'FAIL'}  ${r.name}${r.info !== '' ? `  (${r.info})` : ''}`); }

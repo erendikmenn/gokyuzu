@@ -139,11 +139,16 @@ export const POSES = {
 /** Map of a pose ('sf' unless the pose says otherwise). */
 export const poseMap = (name) => (POSES[name] && POSES[name].map) || 'sf';
 
-/** Put the aircraft and camera into a pose (flight paused). */
-export async function setPose(page, poseName) {
+/**
+ * Put the aircraft and camera into a pose (flight paused).
+ * hold: 'pause' (default; the game's pause state: since frame pacing, a paused game draws 5 frames per second) or
+ * 'step' (the flight model's step is replaced by a no-op and the game is not paused: the loop runs at the flight's
+ * frame pacing, e.g. 30 fps on phones; on the ground the game's 'parked' rate applies after 4 s without motion).
+ */
+export async function setPose(page, poseName, { hold = 'pause' } = {}) {
   const p = POSES[poseName];
   if (!p) throw new Error(`unknown pose ${poseName}`);
-  await page.evaluate((p) => {
+  await page.evaluate(([p, hold]) => {
     const g = window.__game;
     const rad = (d) => d * Math.PI / 180;
     let start;
@@ -156,8 +161,10 @@ export async function setPose(page, poseName) {
       if (p.ac.agl && g.world && g.world.getGroundHeight) alt += Math.max(0, g.world.getGroundHeight(p.ac.x, p.ac.z) || 0);   // (coarse until the heights stream in: ±10 m)
       start = { x: p.ac.x, z: p.ac.z, heading: rad(p.ac.hdg), altitude: alt, speed: g.def.spec.spawnSpeed };
     }
-    g.flight.reset(start, g.world);
-    g.paused = true;
+    const fl = g.flight;
+    if (fl.__perfStep) { fl.step = fl.__perfStep; delete fl.__perfStep; }
+    fl.reset(start, g.world);
+    if (hold === 'step') { fl.__perfStep = fl.step; fl.step = () => {}; g.paused = false; } else g.paused = true;
     const cr = g.cameraRig;
     if (p.free) {
       if (!cr.__origUpdate) cr.__origUpdate = cr.update;
@@ -189,7 +196,7 @@ export async function setPose(page, poseName) {
     if (p.cam === 'cockpit' && g.loadCockpit) { const l = g.loadCockpit; g.loadCockpit = null; l(); }
     // the detailed cockpit (and its displays) streams in after the start: wrap the new display objects too
     if (window.__perf && window.__perf.wrapPerAircraft) window.__perf.wrapPerAircraft();
-  }, p);
+  }, [p, hold]);
 }
 
 /**
@@ -283,14 +290,19 @@ export async function layerReport(page) {
   });
 }
 
-/** Per-layer draw calls + triangles: render once per layer with the others hidden (CPU-side counts from renderer.info). */
-export async function layerCalls(page) {
-  return page.evaluate(() => {
+/**
+ * Per-layer draw calls + triangles: render once per layer with the others hidden (CPU-side counts from renderer.info).
+ * shadows: true renders the shadow-map pass with every layer (the game freezes the map while nothing moves, so a still
+ * pose would otherwise count the main pass only); the calls then include each layer's shadow casters.
+ */
+export async function layerCalls(page, { shadows = false } = {}) {
+  return page.evaluate((shadows) => {
     const g = window.__game, r = g.renderer;
     const tops = g.scene.children.filter((c) => c.visible && !c.isCamera && !c.isLight);
     const out = [];
     const saved = tops.map((c) => c.visible);
-    const run = () => { r.render(g.scene, g.camera); return { calls: r.info.render.calls, tris: r.info.render.triangles }; };
+    const sm = r.shadowMap, smAuto = sm.autoUpdate;
+    const run = () => { if (shadows && sm.enabled) sm.needsUpdate = true; r.render(g.scene, g.camera); return { calls: r.info.render.calls, tris: r.info.render.triangles }; };
     const all = run();
     const cityRoot = tops.find((c) => c.name === 'city');
     const parts = [];
@@ -305,8 +317,10 @@ export async function layerCalls(page) {
       if (sub) top.children.forEach((k, i) => { k.visible = savedSub[i]; });
     }
     tops.forEach((c, i) => { c.visible = saved[i]; });
+    sm.autoUpdate = smAuto;
+    if (shadows && sm.enabled) sm.needsUpdate = true;
     return { all, layers: out };
-  });
+  }, shadows);
 }
 
 /**

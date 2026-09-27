@@ -237,12 +237,12 @@ provides no contacts) plus `id`, `category: 'fighter'|'airliner'|'helicopter'`, 
 ### 6.4 Avionics (AV: `src/avionics/index.js`)
 ```js
 export function createDisplay(type: string, opts?: { size?: number }): Display
-interface Display { canvas: HTMLCanvasElement; texture: THREE.CanvasTexture; update(dt, flight, world): void; }
+interface Display { canvas: HTMLCanvasElement; texture: THREE.CanvasTexture; update(dt, flight, world, urgent?): void; }
 // types: 'a320.pfd','a320.nd','a320.ewd','a320.sd','a320.isis', 'b737.pfd','b737.nd','b737.eicas','b737.cdu',
 //        'f16.hud','f16.mfd.left','f16.mfd.right','f16.ded','f16.rwr', 'f22.hud','f22.ufd','f22.pmfd','f22.smfd',
 //        'uh60.mfd.pfd','uh60.mfd.nd','uh60.mfd.eng'
 ```
-Displays redraw at ~30 Hz, only when visible. HUD types draw green/amber symbology on a transparent canvas (the rig uses
+Displays redraw at ~30 Hz (phones 15, WebKit 20), only when visible; `urgent` (a warning came or went) skips the rate limit. HUD types draw green/amber symbology on a transparent canvas (the rig uses
 additive blending on the combiner glass). Unknown types draw a neutral "NO DATA" page (never throw).
 
 ### 6.5 Audio (AU: `src/audio/index.js`)
@@ -282,7 +282,12 @@ for tests; `window.__fps` is updated every second.
 
 Presets live in `src/core/quality.js` (`QUALITY.low|medium|high|ultra`, lead-owned). Settings are persisted by
 `src/core/settings.js` (`loadSettings()`, `saveSettings(s)` → broadcasts the `gokyuzu:settings` window event; main.js
-applies it live). The initial preset is auto-detected from the GPU (Intel/integrated → low, Apple M Pro/Max → ultra).
+applies it live). The initial preset is auto-detected from the GPU (`src/core/gpu-device.js` tiers, `TIER_QUALITY`:
+Apple M Pro/Max → ultra; Apple / discrete → high; midrange dedicated (GTX 1050 Ti, MX 4xx, R9) and fast iGPUs (Radeon
+780M, Intel Arc iGPU) → medium; Intel / AMD APU, entry-level dedicated (GT 730, Quadro K, GTX 4xx–7xx, RX 550) and
+software renderers → low). `DEVICE_CAPS` then caps any preset per class; the software class (Microsoft Basic Render
+Driver / SwiftShader / llvmpipe) forces no MSAA, no shadows, pixel ratio 0.6 and `pixelRatioMin` 0.5 (the dynamic
+resolution floor main.js should use instead of 0.6), and shows a notice with the steps to turn the GPU on.
 
 - main.js applies the renderer-level fields (`pixelRatioMax`, `shadows`, `antialias` at startup) and calls
   `world.setQuality(q)`, which forwards to `environment.setQuality(q)`, `terrain.setQuality(q)` and every layer's
@@ -328,6 +333,22 @@ Players keep files in their browser cache, so every asset URL carries a content 
   (page opened: screen, quality, GPU name, language), `fly` (aircraft, spawn, load seconds), `hb` (one per active flight
   minute: fps, pixel ratio, view), `err` (≤ 5 per page), `end`. No cookies, no stored id, nothing personal. Off on localhost
   (unless `?telemetry=1`), with `?telemetry=0` and under Do Not Track / Global Privacy Control.
+  - Every beacon carries the build version `v`. Events raised before `startTelemetry()` knows it (the dead-page report at
+    module load, the start gate `gate`, the software-renderer notice) are queued and sent with it (after 15 s or at
+    `pagehide` without it).
+  - `open` also carries `gpu` (readable model from `gpuLabel()`, src/core/gpu-device.js: "Intel UHD Graphics 620"; builds
+    before 27 Sep 2026 cut it to "Intel" / "AMD Radeon"), `dc` (device class `kind/os/tier`, e.g. `desktop/windows/entry`),
+    `mq` (why the start preset: `auto` | `user` | `url` | `reload` (after a context loss) | `cap` (failure ceiling) |
+    `resume` (lowered after a tab crash)), `qc` (the stored failure ceiling, if any) and the retention fields below.
+  - Returning players without an identifier: localStorage `gokyuzu.visits` = `{ f, l, n, o? }` (first / last visit day
+    `YYYYMMDD` in the player's calendar, number of visit days, `o` = 1 when the browser had other game data before the
+    record existed). `open` sends `d0` (days since the first visit: `0`–`14`, `15-29`, `30+`), `vn` (visit days incl.
+    today: `1`–`7`, `8-14`, `15+`), `vd` = 1 on the first page of the day, `vo` = 1 for pre-record browsers. Neither
+    read nor written under DNT / GPC. The report builds cohorts from `d0=0, vd=1` (D1: `d0=1, vd=1`; D7: `d0=7, vd=1`;
+    first return within 7 days: `vn=2, d0` 1–7).
+  - `dead` (the previous page of this tab died in flight): `prev`, `after` (s), `nav`, `pv` / `pq` (the dead page's
+    version / preset), `wd` = 1 when the browser discarded the tab itself, `dc`, and `v` (this page's version).
+  - `gfx` `ev=sw`: the software-renderer notice was shown (src/core/gpu-guard.js).
 - CloudFront: the `/_e` behaviour runs the CloudFront Function `gokyuzu-beacon` (204 at the edge, uncached); standard access
   logs of both distributions go to `s3://<S3_BUCKET_LOGS>/<target>/` (deleted after 30 days; bucket and distribution ids
   come from the local deploy config, `tools/deploy/deploy.env.example`).
@@ -338,17 +359,41 @@ Players keep files in their browser cache, so every asset URL carries a content 
   "Görevler (görev modu)", "Serbest uçuş görevleri", "Sıralama tablosu", a funnel (flew → opened the panel or the menu
   tab → tried ≥ 1 → completed ≥ 1, the landing entry left out); `--hourly` prints the hour-by-hour table (Türkiye time)
   with the columns görev / ffc / tamam (people who started a mission / opened the panel / completed one).
+  "Platformlar": per browser / system and per system · GPU family: share of pages reaching a flight, load time p50 / p90,
+  heartbeat fps against the cap, pixel ratio p50, dead pages, graphics events, own errors, and the visitors whose browser
+  sends no beacon. "Geri dönen oyuncular": D1 / D7 / within-7-days per cohort day and device from the visit fields, and
+  the daily share of returning browsers. "Destekli uçuş": outcomes per `as` value on `fly` and the `assist` events.
+  `--field KEY` lists any beacon field's values per event type (e.g. `as`). "Ayarlar" (from `set`): people who mute, lower a
+  volume (below its default bucket), zero the master volume, turn off assisted flight, reduce or turn off the spoken
+  alerts, the alert chimes or the HUD warning texts, reduce flashing, and the settings changed most.
 - Gameplay events (`trackEvent(type, data)`, ≤ 40 per type and page; data keys never `t s n m v`, values short codes and
   numbers, nothing personal — never a nickname). Frequent UI clicks have their own type so they cannot use up the cap of
   the outcomes:
   | type | st | fields |
   |---|---|---|
   | `mission` | brief · start · done · fail · quit · retry · next · menu | `id`; brief: `via` (menu, daily, link, ff = "Görev olarak oyna", next = "Sonraki görev"), `ac`, `d`=1 daily; start: `ac`, `run` (attempt on the page), `d`; done/fail: `stars`, `score`, `sec`, `why`; quit: `sec`, `why`; retry: `ok`; next: `to`; menu: `ph` (brief, result) |
-  | `mmenu` | open · daily · detail | open: `via` (tab, daily); daily: `id` (the day's mission); detail: `id` (once per mission and page) |
-  | `ffp` | open · track · untrack · play | open: `src` (key, tab, card = the compact result card, auto = a result / crash opened it); track, untrack, play: `id` |
-  | `ffc` | start · done · fail · cancel · drop | `id` (bridge, lowpass, baytour, climb, alcatraz, land, eng, flameout, ditch, autorot), `ac`; done: `score`, `stars`, `sec`; cancel/drop: `sec`; drop: `why` (time, gap, far, landed) |
-  | `lb` | show · submit · fail | `b` (board: a mission id or ff-<id>), `d`=1 daily; show: `c` (entries); submit: `r` (rank), `im`=1 improved, `nm`=1 a nickname was given |
+  | `mmenu` | open · daily · weekly · dland · detail | open: `via` (tab, daily, weekly); daily: `id` (the day's mission); weekly: `id` (the week's pick); dland (the day's landing card); detail: `id` (once per mission and page) |
+  | `ffp` | open · track · untrack · play · final | open: `src` (key, tab, card = the compact result card, auto = a result / crash opened it); track, untrack, play: `id`; final: `id` ("Son yaklaşmaya git" on lseries / dland) |
+  | `ffc` | start · done · fail · cancel · drop | `id` (bridge, lowpass, baytour, climb, alcatraz, land, eng, flameout, ditch, autorot, lseries = İniş serisi, dland = Günün inişi; other maps: their ids, `mp` tells the map), `ac`; done: `score`, `stars`, `sec`, `as`=1 a landing with assisted flight or on the autopilot (its entries go to the "Destekli" lists); cancel/drop: `sec`; drop: `why` (time, gap, far, landed, broken = a landing series broken) |
+  | `lb` | show · submit · fail · name | `b` (board: a mission id, ff-<id>, w-<yyyyww>-<base>, or an assisted board as-<board> / w-<yyyyww>-as-<base>), `d`=1 daily, `as`=1 an assisted ("Destekli") board; show: `c` (entries); submit: `r` (rank), `im`=1 improved, `nm`=1 a nickname was given, `au`=1 automatic, `q`=1 quiet (a result that was not on screen: another result of the same landing); name: `ok` |
+  | `streak` | day · badge · pick · open | the daily streak (src/retention/activity.js): day = a new streak day, `b` streak-length bucket (1, 2, 3-6, 7-13, 14-29, 30+), `k` what finished the day (m mission, l landing, a 2 minutes in the air, c free-flight challenge); badge: `id` (d3, d7, d14, d30, l3, l10); pick: `id` (a badge or none); open: the menu's streak card |
+  | `wk` | show · play · submit · fail | the weekly challenge (src/retention/weekly.js): `id` = the week's pick (a mission id or ff:<challenge>); show: `c` (entries of the week's top 10 seen in the menu), `as`=1 its "Destekli" list; play: started from the menu; submit: `r` (weekly rank), `im`=1 improved, `as`=1 |
+  | `chl` | open · beat · lost · back | challenge links (?mission=<id>&challenge=<score>): `id`; open: `d`=1 daily; lost: `o` (tie, short = finished below, fail = not finished); back: "Skorunu gönder" tapped |
+  | `news` | show · close | the "Yenilikler" card: show: `id` (newest changelog entry), `c` (entries shown) |
+  | `inst` | show · accept · dismiss · later · installed | "Ana ekrana ekle": show: `p` (android = the browser's install prompt, ios = the how-to), `via` (mission, land); accept / dismiss: the browser dialog's answer; later: "Şimdi değil" / "Tamam"; installed: the browser's appinstalled event |
+  | `assist` | app · tip | assisted flight (src/ui/assist-hud.js): app = an assisted approach ("İnişe geç") started, `ac`, `via` (button, gear = the gear lowered near a runway); tip = the one-time "turn it off in the settings" tip shown, `lc` (assisted landings so far). Assisted-flight state on other beacons: `as` = 1 on / 0 off on `fly`, `end`, `takeoff`, `land`, `crash` (on = the assist was on at any moment since the last take-off); `land` also `aa`=1 when "İnişe geç" flew the approach |
+  | `set` | — | a setting changed (src/ui/settings-live.js; one beacon per changed setting, sent when the values have settled 1.5 s after the last change, so a slider drag is one beacon): `k` = `master` · `engine` · `voice` · `atc` · `ambient` with `v2` 0 · 25 · 50 · 75 · 100 (volume bucket); `mute` · `assist` · `chime` · `hudwarn` · `calm` (reduced flashing) · `tut` · `inv` · `tilt` · `radio` with `v2` 1 · 0; `valert` (spoken alerts) with `v2` 2 all · 1 critical · 0 off; `quality` · `fps` · `fail` · `hud` with the choice. (`v2`, not `v`: `v` is the envelope's version.) |
   Existing: `takeoff`, `land` (`fpm`, `cl`, `tdz`, `st`), `crash`, `tut`, `share` (`id`, `via`), `failure`, `gfx`.
+- Retention state is local only (localStorage, never sent; no account, no id): `gokyuzu.streak` = `{ v, days: ['YYYYMMDD', …]
+  (the last 60 Istanbul days with a finished flight or mission), best, land: { cur, best } (runway landings in a row), badges:
+  { id: day unlocked }, pick (badge id | null) }`; `gokyuzu.seen` = the newest "Yenilikler" entry id seen
+  (src/data/changelog.json); `gokyuzu.lbList` = `{ <board>: 'a' | 'm' }` (the list the latest result on a board went to:
+  the "Elle / Destekli" switch opens there); `gokyuzu.install` = `{ shown, accepted?, installed? }` (ms; the suggestion waits 14 days after
+  `shown`); `gokyuzu.ffc(.<map>)` also keeps the daily landing per day (`daily-land@YYYYMMDD`, the last 14 days) and `as`=1
+  on a best set with assisted flight. The menu's handoff to free flight is in memory (`shared.retentionIntent`).
+- Report "Geri gelme özellikleri" (report_comeback): streak days by bucket and what finished them, badges, weekly views /
+  starts / submissions, challenge links opened / beaten / sent back, the "Yenilikler" card, the home-screen suggestion by
+  platform and answer, İniş serisi / Günün inişi completions (assisted share) and "Son yaklaşmaya git".
 
 ## 12. Missions, landing score, failures, leaderboard (wave 7)
 
@@ -374,6 +419,14 @@ and cheap (instanced, no new heavy assets). Everything must stay optimized: no p
   and `topScores({ mission, day })`; both resolve `null` when the service is unavailable (the UI then hides the table).
   The service lives on the game's own origin under `/api/` (no third-party calls from the page). Names are optional,
   short, filtered; no other personal data. Production is only connected with the owner's approval.
+  Board ids (`mission`, ≤ 40 characters, `[a-z0-9][a-z0-9_-]*`): a mission id; `ff-<challenge>` (free flight); weekly
+  `w-<yyyyww>-<base>` (the Istanbul ISO week; scores only in that week ± 1 day, readable 8 weeks back, expiring 35 days
+  after it); assisted `as-<board>` and weekly assisted `w-<yyyyww>-as-<base>` (the "Destekli" list: runs flown with
+  assisted flight on, or with a touchdown on the autopilot, go there and never to the manual board; the base board's
+  rules, days and expiry; `as-w-…` / `as-as-…` are refused). `infra/leaderboard/lambda/validate.mjs` and
+  `src/retention/boards.js` (`assistedBoard`, `manualBoard`, `boardFor`) spell them the same way. Every leaderboard view
+  (mission results, the free-flight panel, the menu's weekly card and Günün inişi) has an "Elle / Destekli" switch that
+  opens on the list the player's latest result on that board went to, else "Elle"; nothing here changes settings.assist.
 
 ### 12.1 Free-flight challenges ("Serbest uçuş görevleri")
 
@@ -400,7 +453,8 @@ aircraft). Mission mode is unchanged and never builds any of this.
   centre (touch); after a crash the flight's results + the last entry's top 10 open beside the crash card (touch: after
   the reset). The landing entry opens its result only for a new personal best.
 - **Leaderboards**: boards `ff-<id>` (not comparable to missions), all fitting aircraft (entries carry `ac`, shown in the
-  table), no daily boards; `infra/leaderboard/build_rules.mjs` derives score / time / star rules from `CHALLENGES`.
+  table), no daily boards (Günün inişi: daily only); `infra/leaderboard/build_rules.mjs` derives score / time / star
+  rules from `CHALLENGES`. Assisted results go to `as-ff-<id>` (§12 board ids).
 - **Progress**: localStorage `gokyuzu.ffc` `{ v: 1, e: { [id]: { best, stars, runs, done, ac } } }` (`gokyuzu.missions`
   untouched). **Telemetry** (§11): `ffc` start / done / fail / cancel / drop and `ffp` for the panel. Gate runs, the
   climb, Alcatraz (after the hover) and emergencies send `start` first; the bridge and the landing entry are instant

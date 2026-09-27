@@ -4,7 +4,7 @@
 // once every tile of the new level is loaded (no holes), drops every building onto the live terrain
 // (ctx.terrain.getHeight) and answers heightAt / hitTest from 4 m building obstacle rasters (trees are not obstacles).
 import * as THREE from 'three';
-import { assetData, isNetworkError, reportLoadFailure, retryDelay } from '../core/assets.js';
+import { assetData, isNetworkError, reportLoadFailure, retryDelay, releaseArrayBuffer, releaseGeometryArrays } from '../core/assets.js';
 import { createCityMaterial, prepareCityGeometry, setAnisotropy } from './city_material.js';
 import { createCityObstacles } from './city_obstacles.js';
 import { createCityTrees } from './city_trees.js';
@@ -143,8 +143,16 @@ export async function createCity(ctx, options = {}) {
       rec.abort = ac;
       // downloaded here (cancellable when the tile is no longer wanted), parsed by the shared GLTFLoader (meshopt in
       // its workers, Draco in DRACOLoader's)
-      assetData(tileUrl(rec), 'arrayBuffer', ac ? { signal: ac.signal } : undefined).then((buf) => gltf.parseAsync(buf, '')).then((g) => {
-        if (ac && ac.signal.aborted) throw Object.assign(new Error('aborted'), { name: 'AbortError' });
+      // The download and GLTFLoader's copy of its binary chunk are released as soon as the parse is done, the decoded
+      // arrays once they are on the GPU (finish): streaming must not wait for a full garbage collection
+      // (core/assets.js releaseArrayBuffer)
+      assetData(tileUrl(rec), 'arrayBuffer', ac ? { signal: ac.signal } : undefined).then((buf) => gltf.parseAsync(buf, '').finally(() => releaseArrayBuffer(buf))).then((g) => {
+        const bin = g.parser && g.parser.extensions && g.parser.extensions.KHR_binary_glTF;
+        if (bin) releaseArrayBuffer(bin.body);   // (every buffer view the scene uses was copied or decoded from it)
+        if (ac && ac.signal.aborted) {
+          g.scene.traverse((o) => { if (o.isMesh) releaseGeometryArrays(o.geometry); });
+          throw Object.assign(new Error('aborted'), { name: 'AbortError' });
+        }
         let mesh = null;
         g.scene.traverse((o) => { if (o.isMesh && !mesh) mesh = o; });
         if (!mesh) throw new Error('no mesh');
@@ -196,7 +204,7 @@ export async function createCity(ctx, options = {}) {
     }
     job.v = end;
     if (end < n) return false;
-    if (anc) geo.deleteAttribute('uv1');
+    if (anc) { job.bufs = [anc.array.buffer]; geo.deleteAttribute('uv1'); }
     pos.needsUpdate = true;
     geo.computeBoundingBox();
     geo.computeBoundingSphere();
@@ -212,10 +220,15 @@ export async function createCity(ctx, options = {}) {
     mesh.updateMatrix();
     mesh.matrixWorld.copy(mesh.matrix);
     mesh.name = `city_L${rec.level}_${rec.i}_${rec.j}`;
-    // static tiles: free the JS copies of the vertex/index arrays once they are on the GPU (hundreds of MB otherwise)
+    // static tiles: free the JS copies of the vertex/index arrays once they are on the GPU (hundreds of MB otherwise),
+    // and give their memory back when the last one is uploaded (the tile's buffers belong to it alone)
     const geo = mesh.geometry;
-    for (const a of Object.values(geo.attributes)) a.onUpload(freeArray);
-    if (geo.index) geo.index.onUpload(freeArray);
+    const parts = new Set([...Object.values(geo.attributes), geo.index].filter(Boolean));
+    const bufs = new Set(job.bufs || []);
+    for (const a of parts) if (a.array) bufs.add(a.array.buffer);
+    let pending = parts.size;
+    const uploaded = function () { freeArray.call(this); if (--pending === 0) for (const b of bufs) releaseArrayBuffer(b); };
+    for (const a of parts) a.onUpload(uploaded);
     // GPU upload now (1x1 target, frustum culling off) instead of in the frame where the LOD swap reveals the tile
     if (ctx.renderer && opt.warmUpload) {
       const r = ctx.renderer, prev = r.getRenderTarget(), prevAuto = r.shadowMap.autoUpdate;
@@ -260,7 +273,13 @@ export async function createCity(ctx, options = {}) {
     if (rec.abort) rec.abort.abort();
     if (rec.state === 'processing') {
       const k = jobs.findIndex((j) => j.rec === rec);
-      if (k >= 0) { jobs[k].mesh.geometry.dispose(); jobs.splice(k, 1); }
+      if (k >= 0) {
+        const j = jobs[k];
+        releaseGeometryArrays(j.mesh.geometry);
+        for (const b of j.bufs || []) releaseArrayBuffer(b);
+        j.mesh.geometry.dispose();
+        jobs.splice(k, 1);
+      }
     }
     if (rec.mesh) {
       rec.mesh.removeFromParent();

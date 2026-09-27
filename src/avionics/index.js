@@ -1,6 +1,6 @@
 // Avionics: live cockpit displays drawn with Canvas2D and exposed as THREE.CanvasTexture (CONTRACTS-SF §6.4).
 //   createDisplay(type, { size?, width?, height?, shared?, fovDeg?, boresight?, variant?, mesh?, eye?, root? })
-//     → { canvas, texture, update(dt, flight, world), type, aspect, enabled, drawMs }
+//     → { canvas, texture, update(dt, flight, world, urgent?), type, aspect, enabled, drawMs }
 // Each type draws in a fixed virtual coordinate system (see DISPLAY_SPECS: vw×vh) whose aspect ratio follows the real
 // instrument (square DUs, portrait 6×8" UH-60M MFDs, wide F-16 DED, 4:3 F-22 UFD, CDU). The canvas pixel size is
 // `size` on the longer side (default 1024 for PFD/ND/HUD/TSD, 512 otherwise). Screen meshes map UV 0..1 onto it.
@@ -19,7 +19,7 @@ import { F22 } from './f22.js';
 import { UH60 } from './uh60.js';
 import { detectDevice } from '../core/gpu-device.js';
 
-// Phones and tablets: display canvases at most 512 px on the long side. Phones draw the whole 3D view at most 1.25 × a
+// Phones and tablets: display canvases at most 512 px on the long side. Phones draw the whole 3D view at most 1 × a
 // ~400 px short side and tablets at 1.25 × ~800 px (src/core/quality.js): a cockpit display covers at most ~250–500
 // rendered pixels there, so a 1024² PFD / ND / HUD canvas is 4× the pixels to rasterise and upload for no visible
 // detail, and in WebKit (iPad / iPhone Safari) the canvas → texture upload is the largest CPU cost of the cockpit view.
@@ -131,13 +131,13 @@ function createCore(type, def, w, h, opts, shareable) {
 
   const display = {
     type, canvas, texture, aspect: w / h, enabled: true, draws: 0, drawMs: 0, watched: false, lastSeen: 0, skips: 0,
-    /** Redraws the display. dt: seconds since the previous update. Never throws. */
-    update(dt, flight, world) {
+    /** Redraws the display. dt: seconds since the previous update; urgent: a warning came or went (no rate limit). Never throws. */
+    update(dt, flight, world, urgent = false) {
       const now = performance.now();
       pendingDt += Number.isFinite(dt) ? dt : 1 / 30;
       if (display.enabled === false) return;
       if (shareable && lastFlight === flight && now - lastDraw < 8) return;   // shared instance already drawn this tick
-      if (minInterval && lastDraw >= 0 && now - lastDraw < minInterval) return; // slow pages (CDU, DED, SD…) refresh less often
+      if (!urgent && minInterval && lastDraw >= 0 && now - lastDraw < minInterval) return; // slow pages (CDU, DED, SD…) refresh less often
       if (display.watched && lastDraw >= 0 && now - display.lastSeen > 400 && now - lastDraw < 2000) return;   // not on screen
       lastDraw = now; lastFlight = flight;
       const step = Math.min(pendingDt, 0.5); pendingDt = 0;

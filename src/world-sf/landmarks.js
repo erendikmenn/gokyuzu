@@ -286,6 +286,107 @@ function prepareMaterials(root, sink, { shadows = true, cast = shadows } = {}) {
   });
 }
 
+// ---------------------------------------------------------------------------------------------- one draw per far LOD
+// The far LODs (and any other LOD without textures) use 2–6 untextured, vertex-coloured standard materials that differ
+// only in colour, roughness, metalness and lamp emission: 2–6 draw calls for a building a few dozen pixels tall, 25–85
+// draw calls per frame in a city view (phone, İstanbul Bağcılar: 85 of 225). At load, the meshes of such an LOD are
+// merged into one geometry that carries those parameters per vertex (colour × material colour, roughness, metalness,
+// emission) and drawn with ONE shared material whose shader reads them instead of the uniforms: the same lighting, one
+// draw call. Meshes with textures, see-through / cut-out / rope-widened / blinking / polygon-offset materials, a render
+// order, or terrain anchors (re-snapped per vertex after placement) keep their own mesh; face sides are merged apart.
+const FAR = { lamp: { value: 0.02 }, mats: new Map() };
+const TEX_SLOTS = ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap', 'aoMap', 'alphaMap', 'bumpMap', 'lightMap', 'envMap', 'displacementMap'];
+/** The shared far material for a face side (lamp emission follows FAR.lamp, set by the layer's update like the lamps). */
+function farMaterial(side) {
+  let m = FAR.mats.get(side);
+  if (m) return m;
+  m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, metalness: 1, side });
+  m.name = 'lm_far';
+  m.userData.lmFar = true;
+  m.onBeforeCompile = (sh) => {
+    sh.uniforms.uLmLamp = FAR.lamp;
+    sh.vertexShader = 'attribute vec2 aLmPbr;\nattribute vec4 aLmEmit;\nuniform float uLmLamp;\nvarying vec2 vLmPbr;\nvarying vec3 vLmEmit;\n' + sh.vertexShader
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\n  vLmPbr = aLmPbr;\n  vLmEmit = aLmEmit.rgb * mix(1.0, uLmLamp, aLmEmit.w);');
+    sh.fragmentShader = 'varying vec2 vLmPbr;\nvarying vec3 vLmEmit;\n' + sh.fragmentShader
+      .replace('vec3 totalEmissiveRadiance = emissive;', 'vec3 totalEmissiveRadiance = vLmEmit;')
+      .replace('#include <roughnessmap_fragment>', 'float roughnessFactor = vLmPbr.x;')
+      .replace('#include <metalnessmap_fragment>', 'float metalnessFactor = vLmPbr.y;');
+  };
+  m.customProgramCacheKey = () => 'lm-far';
+  FAR.mats.set(side, m);
+  return m;
+}
+/** Can this mesh join its LOD's merged far mesh? (see above) */
+function farMergeable(o) {
+  if (!o.isMesh || o.isInstancedMesh || o.isSkinnedMesh || Array.isArray(o.material) || o.userData.lmFar) return false;
+  const m = o.material, g = o.geometry, n = m.name || '';
+  if (!m.isMeshStandardMaterial || m.isMeshPhysicalMaterial || m.transparent || m.alphaTest > 0 || m.opacity < 1 || m.flatShading || m.wireframe) return false;
+  if (n.endsWith('_cable') || n.endsWith('_clip') || n.endsWith('_blend') || n.includes('_glass') || n.includes('warn')) return false;
+  if (m.envMapIntensity !== 1 || !m.toneMapped || !m.fog || m.visible === false || m.polygonOffset || !m.depthWrite || !m.depthTest || !m.colorWrite || m.blending !== THREE.NormalBlending) return false;
+  if (!o.visible || o.renderOrder || !o.frustumCulled || o.onBeforeRender !== THREE.Object3D.prototype.onBeforeRender) return false;
+  for (const k of TEX_SLOTS) if (m[k]) return false;
+  if (!g.attributes.position || !g.attributes.normal || g.attributes._anchor || Object.keys(g.morphAttributes || {}).length) return false;
+  return true;
+}
+/** Merge the mergeable meshes of an LOD object into one far mesh per face side; returns the draw calls saved. */
+function collapseLod(obj) {
+  obj.updateMatrixWorld(true);
+  const inv = new THREE.Matrix4().copy(obj.matrixWorld).invert();
+  const bySide = new Map();
+  obj.traverse((o) => { if (farMergeable(o)) { const k = o.material.side; if (!bySide.has(k)) bySide.set(k, []); bySide.get(k).push(o); } });
+  let saved = 0;
+  const M = new THREE.Matrix4(), N = new THREE.Matrix3(), p = new THREE.Vector3(), nv = new THREE.Vector3(), c = new THREE.Color();
+  for (const [side, list] of bySide) {
+    if (list.length < 2) continue;
+    let nV = 0, nI = 0;
+    for (const o of list) { const g = o.geometry; nV += g.attributes.position.count; nI += g.index ? g.index.count : g.attributes.position.count; }
+    const pos = new Float32Array(nV * 3), nor = new Float32Array(nV * 3), col = new Float32Array(nV * 3);
+    const pbr = new Uint8Array(nV * 2), emit = new Float32Array(nV * 4);
+    const idx = nV > 65535 ? new Uint32Array(nI) : new Uint16Array(nI);
+    let v0 = 0, i0 = 0;
+    for (const o of list) {
+      const g = o.geometry, m = o.material, P = g.attributes.position, Nn = g.attributes.normal;
+      const C = m.vertexColors ? g.attributes.color : null;
+      M.multiplyMatrices(inv, o.matrixWorld);
+      N.getNormalMatrix(M);
+      const lamp = m.userData.baseEmissive !== undefined;
+      const ek = lamp ? m.userData.baseEmissive : m.emissiveIntensity;
+      const er = m.emissive.r * ek, eg = m.emissive.g * ek, eb = m.emissive.b * ek;
+      const r8 = Math.round(THREE.MathUtils.clamp(m.roughness, 0, 1) * 255), m8 = Math.round(THREE.MathUtils.clamp(m.metalness, 0, 1) * 255);
+      for (let i = 0; i < P.count; i++) {
+        const k = v0 + i;
+        p.fromBufferAttribute(P, i).applyMatrix4(M); pos[k * 3] = p.x; pos[k * 3 + 1] = p.y; pos[k * 3 + 2] = p.z;
+        nv.fromBufferAttribute(Nn, i).applyMatrix3(N).normalize(); nor[k * 3] = nv.x; nor[k * 3 + 1] = nv.y; nor[k * 3 + 2] = nv.z;
+        if (C) c.setRGB(C.getX(i), C.getY(i), C.getZ(i)); else c.setRGB(1, 1, 1);
+        col[k * 3] = c.r * m.color.r; col[k * 3 + 1] = c.g * m.color.g; col[k * 3 + 2] = c.b * m.color.b;
+        pbr[k * 2] = r8; pbr[k * 2 + 1] = m8;
+        emit[k * 4] = er; emit[k * 4 + 1] = eg; emit[k * 4 + 2] = eb; emit[k * 4 + 3] = lamp ? 1 : 0;
+      }
+      if (g.index) { const I = g.index; for (let j = 0; j < I.count; j++) idx[i0 + j] = I.getX(j) + v0; i0 += I.count; }
+      else { for (let j = 0; j < P.count; j++) idx[i0 + j] = v0 + j; i0 += P.count; }
+      v0 += P.count;
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    geo.setAttribute('aLmPbr', new THREE.BufferAttribute(pbr, 2, true));
+    geo.setAttribute('aLmEmit', new THREE.BufferAttribute(emit, 4));
+    geo.setIndex(new THREE.BufferAttribute(idx, 1));
+    geo.computeBoundingBox();
+    geo.computeBoundingSphere();
+    const far = new THREE.Mesh(geo, farMaterial(side));
+    far.name = `${obj.name || 'lod'}_far`;
+    far.userData.lmFar = true;
+    far.castShadow = list.some((o) => o.castShadow);
+    far.receiveShadow = list.some((o) => o.receiveShadow);
+    obj.add(far);
+    for (const o of list) o.removeFromParent();
+    saved += list.length - 1;
+  }
+  return saved;
+}
+
 // ---------------------------------------------------------------------------------------------- landmarks
 function placementY(def, terrain) {
   if (def.base !== 'terrain' || !terrain) return def.y || 0;
@@ -447,6 +548,7 @@ class Landmark {
       const f = this.shadowFlags(i);
       prepareMaterials(obj, this.sink, { shadows: f.receive, cast: f.cast });
       if (this.inst) obj = this.instantiate(obj);
+      else if (!this.def.anchored && FAR.enabled) { const t0 = performance.now(); FAR.saved += collapseLod(obj); FAR.ms += performance.now() - t0; }   // one draw call for the untextured materials
       if (this.def.anchored) this.applyAnchors(obj);
       obj.visible = false;
       this.group.add(obj);
@@ -520,6 +622,9 @@ export async function createLandmarks(ctx) {
     return empty;
   }
   const sink = { warn: [], lamp: [] };
+  // ?lmfar=0: every far-LOD mesh keeps its own material (A/B)
+  FAR.enabled = typeof location === 'undefined' || new URLSearchParams(location.search).get('lmfar') !== '0';
+  FAR.saved = 0; FAR.ms = 0;
   // graphics quality (CONTRACTS-SF.md §8): LOD distance scale + shadow policy, shared by every landmark
   const qs = { lodScale: 1, shadows: true, traffic: 1 };
   const readQuality = (q) => {
@@ -642,6 +747,7 @@ export async function createLandmarks(ctx) {
         night = THREE.MathUtils.clamp((0.12 - el) / 0.2, 0, 1);
       }
       for (const m of sink.lamp) m.emissiveIntensity = m.userData.baseEmissive * (0.02 + night);
+      FAR.lamp.value = 0.02 + night;   // (merged far LODs: the same lamp factor)
       const blinkOn = ((t / 1.5) % 1) < 0.5;
       for (const m of sink.warn) m.emissiveIntensity = m.userData.baseEmissive * (blinkOn ? 1 : 0.05);
       glow.update(t, camera, ctx.renderer, night);
@@ -662,6 +768,6 @@ export async function createLandmarks(ctx) {
       if (traffic) traffic.setDensity(qs.traffic);
     },
     // debug / tooling
-    items, get collision() { return collision; },
+    items, get collision() { return collision; }, get farSaved() { return FAR.saved; }, get farMs() { return FAR.ms; },
   };
 }

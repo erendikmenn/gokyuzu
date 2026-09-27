@@ -16,6 +16,8 @@ import { shared } from './shared.js';
 import { STAR, ARROW, injectPartsCSS, starRow, createPointer, showLeaderboard } from './mission-parts.js';   // (shared with the free-flight panel)
 import { AIRCRAFT_SHORT, LEVEL_LABEL, MISSIONS } from '../missions/catalog.js';
 import { fmtDist, fmtInt, fmtTime, bearing, wrap180, dayLabel, FT } from '../missions/util.js';
+import { ASSIST_MANUAL_NOTE } from './assist-hud.js';   // assisted flight: a mission flown by hand suspends it
+import { storedSettings } from '../core/settings.js';
 
 const CSS = `
 .gkq { position: absolute; inset: 0; pointer-events: none; font-family: var(--gk-sans); color: var(--gk-fg); -webkit-font-smoothing: antialiased; font-variant-numeric: tabular-nums; }
@@ -243,6 +245,7 @@ export function createMissionUI(hud, { touch = false, input = null, category = '
       el('span', null, g, 'Hedef');
       g.append(m.goal);
       if (m.note) el('div', 'gkq-note', c, `Bugünün farkı: ${m.note}`);
+      if (m.manual && storedSettings().assist !== false) el('div', 'gkq-note', c, ASSIST_MANUAL_NOTE);   // (the setting is not changed)
       criteria(c, m);
       const keys = el('div', 'gkq-keys', c);
       for (const [k, label] of essentialKeys(category, device())) { const d = el('div', null, keys); keyChips(d, k); el('span', null, d, label); }
@@ -288,7 +291,8 @@ export function createMissionUI(hud, { touch = false, input = null, category = '
       onEnter = primary;
       // leaderboard (src/net/leaderboard.js): shown only when the service answers
       const lb = el('div', 'gkq-lb', c);
-      showLeaderboard(lb, { board: m.id, day: m.day || '', ok: r.ok, score: r.score, stars: r.stars, sec: r.time, ac: m.aircraft, title: m.day ? 'Günün sıralaması' : 'Sıralama' }).catch(() => {});
+      showLeaderboard(lb, { board: m.id, day: m.day || '', ok: r.ok, score: r.score, stars: r.stars, sec: r.time, ac: m.aircraft, title: m.day ? 'Günün sıralaması' : 'Sıralama',
+        assisted: !!r.assisted }).catch(() => {});   // (r.assisted: src/retention/mission-hooks.js → the "Destekli" list)
     },
     debug() { return { strip: root.classList.contains('on') ? `${objEl.textContent} ${progEl.textContent} ${time.textContent}` : null, card: card ? card.className : null, pointer: ptr.state, dist }; },
   };

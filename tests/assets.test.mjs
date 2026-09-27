@@ -131,6 +131,40 @@ check('retryDelay: grows, capped at ~60 s', A.retryDelay(1) < A.retryDelay(3) &&
   check('offline: the next call loads the map', v['assets/sf/city/l0'] === 'aaaaaaaaaa' && B.assetUrl('assets/sf/city/l0/a.glb') === 'assets/sf/city/l0/a.glb?v=aaaaaaaaaa');
 }
 
+// ---- releaseArrayBuffer / releaseGeometryArrays: streamed buffers give their memory back without a full GC
+{
+  const buf = new ArrayBuffer(1 << 20), view = new Float32Array(buf);
+  A.releaseArrayBuffer(buf);
+  check('release: the buffer is detached (no bytes left)', buf.byteLength === 0 && view.length === 0);
+  A.releaseArrayBuffer(buf);   // twice: no-op
+  let threw = false;
+  try {
+    A.releaseArrayBuffer(null); A.releaseArrayBuffer(undefined); A.releaseArrayBuffer({ byteLength: 8 }); A.releaseArrayBuffer(new Float32Array(4));
+    if (typeof SharedArrayBuffer === 'function') A.releaseArrayBuffer(new SharedArrayBuffer(16));
+  } catch { threw = true; }
+  check('release: null / non-ArrayBuffer / shared: ignored', !threw);
+  const mem = new WebAssembly.Memory({ initial: 1 });
+  threw = false;
+  try { A.releaseArrayBuffer(mem.buffer); } catch { threw = true; }
+  check('release: a WebAssembly memory is left alone (not transferable)', !threw && mem.buffer.byteLength === 65536);
+  // engines without ArrayBuffer.prototype.transfer (Safari before 17.4): the structuredClone transfer detaches too
+  const desc = Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, 'transfer');
+  if (desc) delete ArrayBuffer.prototype.transfer;
+  const old = new ArrayBuffer(4096);
+  A.releaseArrayBuffer(old);
+  if (desc) Object.defineProperty(ArrayBuffer.prototype, 'transfer', desc);
+  check('release: structuredClone fallback detaches', old.byteLength === 0);
+  // a geometry whose attributes share one buffer (views), one of its own, an index and an interleaved attribute
+  const shared = new ArrayBuffer(96), own = new Float32Array(6), idx = new Uint16Array(3), inter = new Float32Array(12);
+  const geo = { attributes: { position: { array: new Float32Array(shared, 0, 12) }, normal: { array: new Int8Array(shared, 48, 24) }, uv: { array: own },
+    color: { isInterleavedBufferAttribute: true, data: { array: inter } }, gone: { array: null } }, index: { array: idx } };
+  A.releaseGeometryArrays(geo);
+  check('release geometry: every vertex / index buffer detached', shared.byteLength === 0 && own.length === 0 && idx.length === 0 && inter.length === 0);
+  threw = false;
+  try { A.releaseGeometryArrays(null); A.releaseGeometryArrays({ attributes: {}, index: null }); } catch { threw = true; }
+  check('release geometry: empty / missing geometry ignored', !threw);
+}
+
 globalThis.setTimeout = realSetTimeout;
 const w = Math.max(...results.map((r) => r.name.length));
 for (const r of results) console.log(`${r.ok ? 'PASS' : 'FAIL'}  ${r.name.padEnd(w)}  ${r.ok ? '' : r.detail}`);

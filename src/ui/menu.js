@@ -12,6 +12,8 @@ import { MENU_TOUCH_CSS } from './touch-menu.js';
 import { showInAppHint } from './touch-gate.js';
 import { enterFullscreen } from './touch.js';
 import { rememberMap } from '../maps/index.js';
+import { mountStreakStrip } from '../retention/menu-strip.js';   // retention hook: daily streak + badges, next daily countdown
+import '../retention/install.js';   // retention hook: keeps Chrome's install prompt (beforeinstallprompt) from page load for a good moment
 
 const STORE_KEY = 'gokyuzu-sf.menu';
 
@@ -509,6 +511,7 @@ export function createMenu(container, { aircraft = [], spawns = [], maps = null 
     el('div', 'gkm-over', brand, 'Uçuş simülatörü');
     el('h1', null, brand, 'Gökyüzü');
     const sub = el('div', 'gkm-sub', brand, mapInfo ? mapInfo.title : 'San Francisco Körfezi');
+    mountStreakStrip({ root, brand, sub, touch });   // retention hook: "🔥 3 gün seri" · "Yarınki görev 14 sa sonra"
 
     // hero
     const hero = el('section', 'gkm-hero', ui);
@@ -797,7 +800,34 @@ export function createMenu(container, { aircraft = [], spawns = [], maps = null 
       closed = true;
       if (touch) enterFullscreen();
       const a = list.find((x) => x.id === (sel.aircraft || '')) || currentAircraft();
-      const result = { aircraftId: a ? a.id : list[0].id, spawnId: spawnId || defSpawn(a), mission: { id: sel.id, daily: sel.daily || null }, map: mapId };
+      // (sel.map: the weekly challenge may be the other map's mission)
+      const result = { aircraftId: a ? a.id : list[0].id, spawnId: spawnId || defSpawn(a), mission: { id: sel.id, daily: sel.daily || null }, map: sel.map || mapId };
+      cleanup();
+      if (hintBox && hintBox.el.isConnected) hintBox.el.remove();
+      root.classList.add('gkm-out');
+      setTimeout(() => root.remove(), 600);
+      resolve(result);
+    }
+    // retention hook: free flight into a challenge (Haftanın görevi's free-flight pick, Günün inişi) with the chosen
+    // aircraft; the free-flight runtime (src/missions/ff-runtime.js) reads shared.retentionIntent: follow the challenge,
+    // maybe onto its final approach. The start point: sel.spawn, else the runway sel.airport / sel.ident of this map.
+    function startFree(sel) {
+      if (closed || !sel) return;
+      const a = currentAircraft();
+      if (!a) return;
+      closed = true;
+      persist();
+      if (touch) enterFullscreen();
+      let sp = sel.spawn || null;
+      if (!sp && sel.airport) {
+        const m = spawns.find((x) => x.id === `${sel.airport}-${sel.ident}`) || spawns.find((x) => x.airport === sel.airport && !x.airborne);
+        sp = m ? m.id : null;
+      }
+      const map = sel.map || mapId;
+      const result = { aircraftId: a.id, spawnId: sp || (map === mapId ? spawnId || defSpawn(a) : null), map };
+      const s = spawns.find((x) => x.id === result.spawnId);
+      shared.choice = { ...result, aircraftName: a.name, spawnName: s ? s.name : '', category: a.category };
+      shared.retentionIntent = { track: sel.track, final: !!sel.final };
       cleanup();
       if (hintBox && hintBox.el.isConnected) hintBox.el.remove();
       root.classList.add('gkm-out');
@@ -809,8 +839,12 @@ export function createMenu(container, { aircraft = [], spawns = [], maps = null 
       shared.missionsMenu = null;
       import(new URL('./missions-menu.js', import.meta.url).href)
         .then(async (m) => {
-          const catalog = await m.loadMenuMissions(id, await mapRunways());   // (a map without missions yet: no entry)
-          if (!closed && id === mapId && catalog) shared.missionsMenu = m.mountMissions({ root, brand, foot, container, touch, start: startMission, catalog });
+          const runways = await mapRunways();
+          const catalog = await m.loadMenuMissions(id, runways);   // (a map without missions yet: no entry)
+          if (!closed && id === mapId && catalog) {
+            shared.missionsMenu = m.mountMissions({ root, brand, foot, container, touch, catalog, runways,
+              start: (sel) => (sel && sel.free ? startFree(sel) : startMission(sel)) });   // (free: retention's free-flight challenges)
+          }
         })
         .catch((e) => console.warn('[menu] missions', e));
     }
@@ -875,8 +909,13 @@ export function createMenu(container, { aircraft = [], spawns = [], maps = null 
       const sb = spawnButtons.get(spawnId);
       if (sb) requestAnimationFrame(() => { const r = sb.b.getBoundingClientRect(), w = spWrap.getBoundingClientRect(); spWrap.scrollTop += (r.top + r.height / 2) - (w.top + w.height / 2); });
     }
+    // retention hook: "Yenilikler" on a return visit (src/data/changelog.json); the quality hint waits for a visit without it
+    setTimeout(() => {
+      if (closed) return;
+      import(new URL('../retention/whatsnew.js', import.meta.url).href).then((m) => { if (!closed) m.showWhatsNew(root, { touch }); }).catch((e) => console.warn('[menu] news', e));
+    }, 500);
     if (touch) showInAppHint(root);   // social-app webviews: "Tarayıcıda aç"
-    else setTimeout(() => { if (!closed && !shared.modalOpen) hintBox = showQualityHint(root, () => openSettings(container), 'gkm-hint'); }, 1600);
+    else setTimeout(() => { if (!closed && !shared.modalOpen && !root.querySelector('.gkr-news')) hintBox = showQualityHint(root, () => openSettings(container), 'gkm-hint'); }, 1600);
     if (!touch) requestAnimationFrame(() => { if (!closed) flyBtn.focus({ preventScroll: true }); });
   });
 }

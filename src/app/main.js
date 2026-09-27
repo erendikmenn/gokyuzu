@@ -65,7 +65,8 @@ const renderer = new THREE.WebGLRenderer({ antialias: quality.antialias, logarit
 let maxPixelRatio, minPixelRatio;
 function pixelRatioLimits() {
   maxPixelRatio = params.has('pr') ? Number(params.get('pr')) : Math.min(window.devicePixelRatio, quality.pixelRatioMax);
-  minPixelRatio = params.has('pr') ? maxPixelRatio : Math.max(0.6, maxPixelRatio * 0.6);
+  // floor: 60 % of the start, at least 0.6, or the preset's own floor (quality.js pixelRatioMin: software rasterizers 0.5)
+  minPixelRatio = params.has('pr') ? maxPixelRatio : Math.min(maxPixelRatio, Math.max(quality.pixelRatioMin ?? 0.6, maxPixelRatio * 0.6));
 }
 pixelRatioLimits();
 let pixelRatio = maxPixelRatio;
@@ -226,7 +227,8 @@ async function start() {
   await prewarm();
   loading.setProgress(1, 'Hazır');
   loading.hide();
-  if (state.world && state.world.setPlayable) state.world.setPlayable();   // deferred world loading starts now (streaming)
+  // deferred world loading (streaming) starts now; on WebKit phones / tablets a moment later (?playdelay=<s> for A/B)
+  if (state.world && state.world.setPlayable) state.world.setPlayable(playDelay());
   state.readyAt = performance.now();   // dynamic resolution ignores the first seconds (shader compiles, tile bursts)
   console.log(`[app] ready in ${((performance.now() - t0) / 1000).toFixed(1)} s`);
   state.aircraftId = choice.aircraftId;
@@ -252,6 +254,19 @@ async function start() {
   onboarding.begin({ flight: state.flight, def: state.def, spawn });
   loadChallenges();   // free-flight challenges hook
 }
+
+/**
+ * Seconds between the first playable frame and the start of the deferred world loading. WebKit's GPU process holds a
+ * transient copy of every texture / buffer upload for a few seconds (+280 MB for 256 MB uploaded, released 2–3 s later,
+ * tools/perf/webkit-memory.mjs --timeline): the start-up uploads peak right at the first frame, and the post-start
+ * streaming used to add its own on top of them (phone SF: 1,463 MB at the first frame → 1,716 MB half a second later →
+ * 1,226 MB after 5 s). iOS kills a page on its footprint, so there the streaming waits until the start-up copies are gone.
+ */
+function playDelay() {
+  if (params.has('playdelay')) return Math.max(0, Number(params.get('playdelay')) || 0);
+  return (quality.deviceClass === 'phone' || quality.deviceClass === 'tablet') && detectDevice().engine === 'webkit' ? PLAY_DELAY_WEBKIT : 0;
+}
+const PLAY_DELAY_WEBKIT = 3;
 
 /**
  * Definition + rig of the chosen aircraft, built while the world loads, and added to the scene with its shadow flags and
@@ -521,12 +536,39 @@ function keepLightCount(rig) {
   for (const l of list) if (!l.visible) l.visible = true;
 }
 
+// Aircraft shadow casters on phones / tablets (2048² map; near cascade ≈ 10 cm per texel up to ~130 m, far cascade ≈ 25 cm
+// up to 500 m). Each casting mesh costs one draw call per cascade: with 82 casters the F-16 was 164 of a tablet's ~410
+// draw calls per frame. Parts smaller than SMALL_CASTER (bounding radius: nav / lamp lenses, the pilot's visor and
+// straps, the nose wheel hub) cover ≤ 3 texels that the PCF filter blurs away: no shadow. Parts smaller than FAR_CASTER
+// (the pilot, nozzle petals, wheels, speed brakes) skip the far cascade, which only shades the aircraft's shadow on the
+// ground seen from 130–500 m: there they are ≤ 2 texels. More than FAR_AGL above the ground the aircraft's shadow falls
+// beyond the 500 m shadow range whatever the sun's elevation (ray length = height / sin(elevation)): then no part of it is
+// drawn into the far cascade (its self-shadowing comes from the near one). Desktop classes keep every caster.
+const SMALL_CASTER = 0.15, FAR_CASTER = 0.5, FAR_AGL = 550;
+const mobileShadows = quality.deviceClass === 'phone' || quality.deviceClass === 'tablet';
+/** Frustum test that refuses the sun's far cascade (three.js culls every shadow caster per cascade frustum). */
+function farCascadeTest(frustum) {
+  const env = state.world && state.world.environment, sh = env && env.sun && env.sun.shadow;
+  if (sh && sh.getFrustum && frustum === sh.getFrustum(1) && sh.getViewportCount() > 1) {
+    const f = state.flight;
+    if (this.__farSmall || (f && f.agl > FAR_AGL)) return false;
+  }
+  return this.__intersectsFrustum(frustum);
+}
 function setupShadows(root) {
+  if (mobileShadows) root.updateMatrixWorld(true);
   root.traverse((o) => {
     if (!o.isMesh) return;
     // glass, plumes and other see-through materials neither cast shadows nor darken the cockpit
     const seeThrough = [].concat(o.material).some((m) => m && (m.transparent || m.transmission > 0 || m.blending === THREE.AdditiveBlending));
-    o.castShadow = !seeThrough || !!o.customDepthMaterial;   // rigs may give see-through parts (rotor disc) a custom shadow
+    let cast = !seeThrough || !!o.customDepthMaterial;   // rigs may give see-through parts (rotor disc) a custom shadow
+    if (cast && mobileShadows && !o.customDepthMaterial && o.geometry) {
+      if (!o.geometry.boundingSphere) o.geometry.computeBoundingSphere();
+      const r = o.geometry.boundingSphere.radius * o.matrixWorld.getMaxScaleOnAxis();
+      if (r < SMALL_CASTER) cast = false;
+      else if (!o.__intersectsFrustum) { o.__intersectsFrustum = o.intersectsFrustum; o.intersectsFrustum = farCascadeTest; o.__farSmall = r < FAR_CASTER; }
+    }
+    o.castShadow = cast;
     o.receiveShadow = true;
   });
 }
@@ -646,7 +688,8 @@ input.on('lookBack', () => cameraRig.lookBack(true));
 input.on('reset', () => { if (state.flight) { resetFlight(); hud.showMessage('Yeniden başlatıldı', 1000); } });
 input.on('pause', () => { state.paused = !state.paused; hud.setPaused(state.paused); audio.setPaused(state.paused); });
 input.on('hud', () => { if (hud.cycleMode) hud.cycleMode(); else { state.hudVisible = !state.hudVisible; hud.setVisible(state.hudVisible); } });   // full → compact → off
-input.on('mute', () => { state.userMuted = !state.userMuted; audio.setMuted(state.userMuted); hud.showMessage(state.userMuted ? 'Ses kapalı' : 'Ses açık', 900); });
+// M and Ayarlar → "Sesi kapat" are one persisted switch (src/audio/index.js toggleMute; state.userMuted mirrors it)
+input.on('mute', () => { const m = audio.toggleMute ? audio.toggleMute() : audio.setMuted((state.userMuted = !state.userMuted)); hud.showMessage(m ? 'Ses kapalı' : 'Ses açık', 900); });
 input.on('help', () => { state.helpVisible = !state.helpVisible; hud.showHelp(input.bindings, state.helpVisible); });
 input.on('menu', goToMenu);
 input.on('map', () => navMap.toggle('key'));   // navigation hook: J opens / closes the map (Esc closes it too)
@@ -670,6 +713,10 @@ document.addEventListener('visibilitychange', () => { simAcc = 0; });   // (no c
 // cockpit displays (2D canvas → texture uploads, plan 4.4): 15 Hz on phones, 20 Hz in WebKit (each canvas upload costs
 // 20–60× more there: findings T2), 30 Hz elsewhere
 const displayInterval = quality.deviceClass === 'phone' ? 1 / 15 : detectDevice().engine === 'webkit' ? 1 / 20 : 1 / 30;
+// ... except when a warning comes or goes (PULL UP, STALL …): then every display is drawn on that frame, also the slower pages
+let lastWarnMask = 0;
+/** The flight's warning flags as a bit mask (no allocation). */
+function warnMask(w) { let b = 0, i = 0; if (w) for (const k in w) { if (w[k] === true) b |= 1 << i; i++; } return b; }
 const lastCamPose = new THREE.Vector3(), lastCamQ = new THREE.Quaternion(), lastAcPos = new THREE.Vector3();
 // opaque screens over a running page: the phone's portrait prompt "Telefonu yan çevir" (src/ui/touch.js; it pauses the
 // flight and covers everything) — nothing is drawn under it
@@ -682,14 +729,33 @@ function paceMode(now) {
   if (state.paused || (state.mission && state.mission.hold)) return 'overlay';
   if (navMap.isOpen) return 'map';
   const f = state.flight;
-  return f && f.onGround && !f.crashed && now - lastMoveAt >= PACE.parkedAfterMs ? 'parked' : 'flight';
+  if (f && f.onGround && !f.crashed && now - lastMoveAt >= PACE.parkedAfterMs) return 'parked';
+  if (slowFor >= PACE.cruiseSecs && now - lastInteraction >= PACE.cruiseAfterMs && f && !f.onGround && !f.crashed && !state.crashTimer) return 'cruise';
+  return 'flight';
 }
 // what moves between simulation steps: the aircraft, the camera, a turning rotor, the controls and the animated surfaces
 const VIS_KEYS = ['flaps', 'slats', 'spoilers', 'speedbrake', 'gear', 'canopy', 'aileron', 'elevator', 'rudder', 'stabilator'];
 const lastVis = {};
+// cruise (frame-pacing.js): seconds the picture has moved less than PACE.cruiseStepPx per cruise frame; screen motion = camera rotation +
+// the ground's apparent motion (speed over height above it, the fastest part of the ground in view), in CSS px / s;
+// never with a turning rotor (its blades would strobe at 20 fps)
+let slowFor = 0, lastNoteAt = 0;
+function noteCruise(now, flight, inp, vis) {
+  const dts = (now - lastNoteAt) / 1000;
+  lastNoteAt = now;
+  const cruiseFps = pacer.cruiseFps;
+  if (!cruiseFps || !(dts > 0 && dts < 0.5)) { slowFor = 0; return; }
+  const rot = 2 * Math.acos(Math.min(1, Math.abs(lastCamQ.dot(camera.quaternion)))) / dts;
+  const v = flight.velocity ? flight.velocity.length() : Math.abs(flight.airspeed || 0);
+  const pxPerRad = window.innerHeight / (2 * Math.tan(camera.fov * Math.PI / 360));
+  const px = (rot + v / Math.max(Number.isFinite(flight.agl) ? flight.agl : 0, 30)) * pxPerRad;
+  const still = px < PACE.cruiseStepPx * cruiseFps && Math.abs(inp.pitch) + Math.abs(inp.roll) + Math.abs(inp.yaw) < 0.02 && !state.paused && !(vis.rotor && vis.rotor.rpm > 0.05);
+  slowFor = still ? slowFor + dts : 0;
+}
 /** After a simulation step: anything moving restarts the parked timer and lets the shadow map update. */
 function noteMotion(now, flight, vis) {
   const inp = input.state;
+  noteCruise(now, flight, inp, vis);
   let moving = state.crashTimer > 0 || lastAcPos.distanceToSquared(flight.position) > 4e-4 || lastCamPose.distanceToSquared(camera.position) > 1e-4
     || 1 - Math.abs(lastCamQ.dot(camera.quaternion)) > 1e-8
     || (vis.rotor && vis.rotor.rpm > 0.05) || inp.pitch || inp.roll || inp.yaw || inp.brake;
@@ -715,6 +781,9 @@ function frame(ts) {
   timer.update(ts);
   const rawDt = timer.getDelta();
   pacer.raf(ts);
+  // touch axes (stick / tilt / pedals) sampled here, right before the input module folds them in: the flight step below
+  // uses the finger position of this refresh (they used to be written after the step: one step later, +33 ms at 30 fps)
+  touchUI.sample();
   input.update(Math.min(rawDt, 0.1));   // every refresh: keyboard ramps and gamepad edges stay exactly as before
   if (state.halted) return;   // robustness: graphics failure being handled (notice shown, page reloading)
   simAcc += rawDt;
@@ -781,7 +850,9 @@ function simulate(dt, t0) {
     if (state.cockpitFill) state.cockpitFill.intensity = cameraRig.view === 'cockpit' ? 2.5 : 0;
     world.update(dt, camera);
     displayAcc += dt;
-    if (displayAcc > displayInterval) { for (const d of state.displays) d.display.update(displayAcc, flight, world); displayAcc = 0; }
+    const warn = warnMask(flight.warnings), warnNow = warn !== lastWarnMask;   // a warning that comes or goes: drawn now
+    lastWarnMask = warn;
+    if (displayAcc > displayInterval || warnNow) { for (const d of state.displays) d.display.update(displayAcc, flight, world, warnNow); displayAcc = 0; }
     hud.update(flight, { world, spawn: state.spawn, view: cameraRig.view });
     navMap.update(dt, flight, world);   // navigation hook: track trail, map redraw while open
     onboarding.update(dt, flight, { view: cameraRig.view, paused: state.paused });   // onboarding hook
@@ -843,13 +914,33 @@ if (audio.setVolumes) audio.setVolumes(settings.volumes);
 // (GPU / compositor bound: WebGL calls are queued, so a GPU-bound frame shows as late frames, not as main-thread time),
 // more again after a sustained smooth period. Never for a CPU-bound device (the frame's main-thread work takes half the
 // budget: fewer pixels would only blur the picture) or a window with a streaming / shader-compile hitch (> 50 ms).
-let smoothFor = 0, sinceDrop = 99;
+// A drop that buys nothing is undone: the fps of the window that started the first drop from full resolution is kept;
+// after DROP_JUDGE_S at the floor, frames still slower than DROP_GAIN × that fps mean the device is not limited by its pixels
+// (30 % of the Intel iGPU sessions on low sat at 0.6 at 45 fps, full resolution gives 60): back to full resolution and no
+// further drops in this page.
+const DROP_JUDGE_S = 20, DROP_GAIN = 1.15;
+let smoothFor = 0, sinceDrop = 99, fpsBeforeDrop = 0, floorSecs = 0, floorFrames = 0, dropsOff = false;
 function adaptResolution(fps, span, cpuMs, target, hitch) {
   if (!state.flight || maxPixelRatio === minPixelRatio) return;
   if (!state.readyAt || performance.now() - state.readyAt < 6000 || hitch || !(target > 0)) { smoothFor = 0; return; }
   sinceDrop += span;
   const budget = 1000 / target;
-  if (fps < target * 0.83 && cpuMs < budget * 0.5 && pixelRatio > minPixelRatio) {
+  if (fpsBeforeDrop && !dropsOff && pixelRatio <= minPixelRatio + 1e-6) {
+    floorSecs += span; floorFrames += fps * span;
+    if (floorSecs >= DROP_JUDGE_S) {
+      if (floorFrames / floorSecs < fpsBeforeDrop * DROP_GAIN) {
+        dropsOff = true;
+        pixelRatio = maxPixelRatio;
+        renderer.setPixelRatio(pixelRatio);
+        smoothFor = 0;
+        state.pixelRatio = pixelRatio;
+        return;
+      }
+      fpsBeforeDrop = 0;   // it helped: keep adapting as before
+    }
+  } else { floorSecs = 0; floorFrames = 0; }
+  if (!dropsOff && fps < target * 0.83 && cpuMs < budget * 0.5 && pixelRatio > minPixelRatio) {
+    if (pixelRatio >= maxPixelRatio - 1e-6 && !fpsBeforeDrop) fpsBeforeDrop = fps;
     pixelRatio = Math.max(minPixelRatio, pixelRatio - 0.15);
     renderer.setPixelRatio(pixelRatio);
     smoothFor = 0; sinceDrop = 0;
@@ -858,6 +949,7 @@ function adaptResolution(fps, span, cpuMs, target, hitch) {
     if (smoothFor > 8 && sinceDrop > 20) { pixelRatio = Math.min(maxPixelRatio, pixelRatio + 0.1); renderer.setPixelRatio(pixelRatio); smoothFor = 0; }
   } else smoothFor = 0;
   state.pixelRatio = pixelRatio;
+  state.resolution = { fpsBeforeDrop, floorSecs, dropsOff };   // test hook
 }
 
 // Build stamp (dist/build.json, written by the publish build): a clear ribbon on staging so it is never mistaken for live.

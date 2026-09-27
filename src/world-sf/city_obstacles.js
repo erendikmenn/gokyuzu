@@ -3,13 +3,15 @@
 // and a solids table (anchor x, anchor z, top above the anchor ground). Heights are resolved against the live terrain
 // exactly like the rendered buildings are placed: top = terrain(anchor) + topRel.
 
-import { assetData, isNetworkError, reportLoadFailure, retryDelay } from '../core/assets.js';
+import { assetData, isNetworkError, reportLoadFailure, retryDelay, releaseArrayBuffer } from '../core/assets.js';
 
 const HEADER = 4 + 4 + 4 + 4 + 4 + 2 + 2;
 
 async function gunzip(buf) {
   const ds = new DecompressionStream('gzip');
-  return new Response(new Blob([buf]).stream().pipeThrough(ds)).arrayBuffer();
+  const out = await new Response(new Blob([buf]).stream().pipeThrough(ds)).arrayBuffer();
+  releaseArrayBuffer(buf);   // (the Blob took a copy)
+  return out;
 }
 
 export function createCityObstacles({ base, index, terrain, maxTiles = 160 }) {
@@ -40,7 +42,9 @@ export function createCityObstacles({ base, index, terrain, maxTiles = 160 }) {
         while (tiles.size > MAX) {
           let oldK = null, oldU = Infinity;
           for (const [kk, tt] of tiles) if (tt.used < oldU) { oldU = tt.used; oldK = kk; }
+          const old = tiles.get(oldK);
           tiles.delete(oldK);
+          for (const a of [old.solids, old.raster, old.ground]) releaseArrayBuffer(a.buffer);   // memory back now, not at a full GC
         }
         pending.delete(k);
         retry.delete(k);

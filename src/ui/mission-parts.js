@@ -5,7 +5,8 @@
 //
 //   injectPartsCSS()
 //   const p = createPointer(root, { touch })       p.update(camera, target, label) every frame (allocation-free when still), p.hide()
-//   showLeaderboard(lb, { board, day, ok, score, stars, sec, ac, title, showAc })   → Promise (the block stays hidden without the service)
+//   showLeaderboard(lb, { board, day, ok, score, stars, sec, ac, title, showAc, assisted })   → Promise (hidden without the service;
+//     an "Elle / Destekli" switch, assisted results go to the board's assisted variant)
 import { injectCSS, BASE_CSS } from './styles.js';
 import { el } from './util.js';
 import { fmtInt } from '../missions/util.js';
@@ -60,6 +61,13 @@ export const PARTS_CSS = `
 .gkq-lb { margin-top: 14px; padding-top: 10px; border-top: 1px solid rgba(255, 255, 255, .08); display: none; }
 .gkq-lb.on { display: block; }
 .gkq-lb h3 { margin: 0 0 6px; font-size: 11px; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; color: var(--gk-dim); }
+.gkq-lbh { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; }
+.gkq-lbh h3 { margin: 0; flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gkq-seg { display: inline-flex; flex: 0 0 auto; gap: 2px; padding: 2px; border-radius: 8px; background: rgba(255, 255, 255, .07); }
+.gkq-seg button { border: 0; background: none; padding: 3px 8px; min-height: 24px; border-radius: 6px; cursor: pointer; font: 700 11px var(--gk-sans); color: var(--gk-dim); }
+.gkq-seg button[aria-pressed="true"] { background: rgba(255, 255, 255, .16); color: var(--gk-fg); }
+html.gk-touch .gkq-seg button { min-height: 30px; padding: 4px 10px; }
+.gkq-lb small.gkq-asn { color: #bfe9ff; }
 .gkq-lb ol { margin: 0; padding: 0; list-style: none; columns: 2; column-gap: 20px; }
 .gkq-lb li { display: flex; gap: 8px; align-items: baseline; padding: 2px 0; font-size: 12.5px; break-inside: avoid; }
 .gkq-lb li i { font-style: normal; font: 700 11px var(--gk-mono); color: var(--gk-faint); min-width: 18px; }
@@ -134,72 +142,113 @@ export function createPointer(root, { touch = false } = {}) {
  * Top 10 of a board; a finished run is submitted automatically and can be named afterwards (src/net/leaderboard.js). The block
  * stays hidden when the service is unavailable; the local dev server (tools/serve.mjs) has no /api/, so no request is
  * made there (each 404 would be a console error) unless ?lb=1.
- * Telemetry `lb` (CONTRACTS-SF.md §11; never the nickname): show (b = board, d = 1 daily, c = entries), submit (automatic,
- * au = 1; b, r = rank, im = 1 improved, nm = 1 sent with a saved nickname), name (a nickname added afterwards, ok = 1
- * accepted), fail (b: the submission did not go through).
- *   o = { board, day, ok, score, stars, sec, ac, title, showAc (aircraft next to each name: boards open to every aircraft) }
+ * Two lists per board, switched in the header ("Elle / Destekli"): a run flown with assisted flight or landed on the
+ * autopilot (o.assisted) goes to the assisted variant of the board (src/retention/boards.js: as-<board>,
+ * w-<yyyyww>-as-<base>), never to the manual one; the switch opens on the list this result went to, else on the list the
+ * player's latest result on this board went to, else "Elle". The assist setting is never touched here.
+ * Telemetry `lb` (CONTRACTS-SF.md §11; never the nickname): show (b = board, d = 1 daily, c = entries, as = 1 assisted
+ * list), submit (automatic, au = 1; b, r = rank, im = 1 improved, nm = 1 sent with a saved nickname, as), name (a nickname
+ * added afterwards, ok = 1 accepted), fail (b: the submission did not go through).
+ *   o = { board, day, ok, score, stars, sec, ac, title, showAc (aircraft next to each name: boards open to every aircraft), assisted }
  */
 const submitted = new Map();   // result key → Promise of the submission answer (one submission per finished run)
+const AS_NOTE = 'Destekli uçuş listesi · elle uçarak ana listeye girebilirsin';
 export async function showLeaderboard(lb, o) {
   if (/^(localhost|127\.|\[::1\])/.test(location.hostname) && new URLSearchParams(location.search).get('lb') !== '1') return;
-  let mod;
-  try { mod = await import('../net/leaderboard.js'); } catch { return; }
+  let mod, boards;
+  try { [mod, boards] = await Promise.all([import('../net/leaderboard.js'), import('../retention/boards.js')]); } catch { return; }
   const day = o.day || '';
-  const render = (top, meRank) => {
-    if (!top || !top.entries || !top.entries.length) { lb.classList.toggle('on', !!o.ok); return; }
-    lb.classList.add('on');
+  const base = boards.manualBoard(o.board);
+  const boardOf = (sd) => (sd === 'as' ? boards.assistedBoard(base) : base);
+  const mine = o.ok ? (o.assisted ? 'as' : 'm') : null;   // the list this result goes to
+  let side = mine || boards.lastList(base) || 'm', meRank = null;
+  const tops = {}, shown = new Set();
+  lb.textContent = '';
+  const head = el('div', 'gkq-lbh', lb);
+  el('h3', null, head, o.title || 'Sıralama');
+  const seg = el('span', 'gkq-seg', head);
+  seg.setAttribute('role', 'group');
+  seg.setAttribute('aria-label', 'Liste');
+  const segBtn = (sd, label) => {
+    const b = el('button', null, seg, label);
+    b.type = 'button';
+    b.addEventListener('click', (e) => { e.stopPropagation(); b.blur(); if (side !== sd) show(sd); });
+    return b;
+  };
+  const bM = segBtn('m', 'Elle'), bA = segBtn('as', 'Destekli');
+  const list = el('ol', null, lb);
+  const asNote = el('small', 'gkq-asn', lb, AS_NOTE);
+  const render = (top) => {
+    bM.setAttribute('aria-pressed', String(side === 'm')); bA.setAttribute('aria-pressed', String(side === 'as'));
+    asNote.style.display = side === 'as' ? '' : 'none';
     list.textContent = '';
+    if (!top || !top.entries || !top.entries.length) { el('small', null, list, 'Henüz skor yok: ilk sen ol!'); return; }
     for (const x of top.entries.slice(0, 10)) {
-      const li = el('li', x.rank === meRank ? 'me' : '', list);
+      const li = el('li', side === mine && x.rank === meRank ? 'me' : '', list);
       el('i', null, li, String(x.rank));
       el('span', null, li, x.name || 'İsimsiz pilot');
       if (o.showAc && x.ac) el('u', null, li, AIRCRAFT_SHORT[x.ac] || x.ac);
       el('b', null, li, fmtInt(x.score));
     }
   };
-  lb.textContent = '';
-  el('h3', null, lb, o.title || 'Sıralama');
-  const list = el('ol', null, lb);
-  if (!o.ok) {   // a failed run: the table only
-    const top = await mod.topScores({ mission: o.board, day, n: 10 });
-    if (top === null) { lb.classList.remove('on'); return; }   // service unavailable: hide the table
-    render(top, null);
-    if (!top.entries || !top.entries.length) el('small', null, list, 'Henüz skor yok: ilk sen ol!');
-    if (lb.classList.contains('on')) trackEvent('lb', { st: 'show', b: o.board, d: day ? 1 : undefined, c: top.entries ? top.entries.length : 0 });
+  const tele = (sd, top) => {
+    const b = boardOf(sd);
+    if (shown.has(b)) return;
+    shown.add(b);
+    trackEvent('lb', { st: 'show', b, d: day ? 1 : undefined, c: top && top.entries ? top.entries.length : 0, as: sd === 'as' ? 1 : undefined });
+  };
+  /** Show a list (fetched once per block); false: the service is unavailable. */
+  async function show(sd) {
+    side = sd;
+    render(tops[sd] || null);
+    if (!tops[sd]) {
+      const top = await mod.topScores({ mission: boardOf(sd), day, n: 10 });
+      if (top === null) return false;
+      tops[sd] = top;
+    }
+    if (side === sd) { render(tops[sd]); tele(sd, tops[sd]); }
+    return true;
+  }
+  if (!o.ok) {   // no result to submit: the table only
+    if (!(await show(side))) { lb.classList.remove('on'); return; }   // service unavailable: hide the table
+    lb.classList.add('on');
     return;
   }
-  // a finished run is submitted at once (anonymous, or with the nickname saved on this device); the player can add a
-  // nickname afterwards, which names the same entry. One submission per result, also when the card is shown again.
+  // a finished run is submitted at once (anonymous, or with the nickname saved on this device) to its list; the player can
+  // add a nickname afterwards, which names the same entry. One submission per result, also when the card is shown again.
+  const board = boardOf(mine), asF = mine === 'as' ? 1 : undefined;
   const note = el('small', null, lb, 'Skorun gönderiliyor…');
+  lb.insertBefore(note, asNote);
   lb.classList.add('on');
+  render(null);
   const sec = typeof o.sec === 'number' && Number.isFinite(o.sec) ? Math.round(o.sec * 10) / 10 : undefined;
   const saved = mod.savedName ? mod.savedName() : '';
-  const key = `${o.board}|${day}|${o.score}|${o.stars}|${sec}|${o.ac}`;
+  const key = `${board}|${day}|${o.score}|${o.stars}|${sec}|${o.ac}`;
   let first = submitted.get(key);
   const fresh = !first;
-  if (fresh) { first = mod.submitScore({ mission: o.board, day, score: o.score, stars: o.stars, ac: o.ac, name: saved || undefined, sec }); submitted.set(key, first); }
+  if (fresh) { first = mod.submitScore({ mission: board, day, score: o.score, stars: o.stars, ac: o.ac, name: saved || undefined, sec }); submitted.set(key, first); }
   const res = await first;
   if (fresh && submitted.size > 50) submitted.delete(submitted.keys().next().value);
   if (!res) {   // not accepted / unreachable: the table if it answers, and a manual retry
     submitted.delete(key);
-    if (fresh) trackEvent('lb', { st: 'fail', b: o.board, d: day ? 1 : undefined });
-    const top = await mod.topScores({ mission: o.board, day, n: 10 });
-    if (top === null) { lb.classList.remove('on'); return; }
-    render(top, null);
+    if (fresh) trackEvent('lb', { st: 'fail', b: board, d: day ? 1 : undefined, as: asF });
+    if (!(await show(side))) { lb.classList.remove('on'); return; }
     note.textContent = 'Skorun gönderilemedi.'; note.className = 'bad';
     const again = el('button', 'gkq-btn teal', lb, 'Tekrar dene');
     again.type = 'button';
     again.addEventListener('click', () => { showLeaderboard(lb, o).catch(() => {}); });
     return;
   }
+  boards.rememberList(base, mine === 'as');
   if (fresh) {
-    trackEvent('lb', { st: 'submit', b: o.board, d: day ? 1 : undefined, r: res.rank ?? undefined, im: res.improved ? 1 : 0, nm: res.name ? 1 : 0, au: 1 });
+    trackEvent('lb', { st: 'submit', b: board, d: day ? 1 : undefined, r: res.rank ?? undefined, im: res.improved ? 1 : 0, nm: res.name ? 1 : 0, au: 1, as: asF });
     if (o.onSubmitted) o.onSubmitted(res);
   }
-  const rankText = (r) => (r.rank ? `Sıran: ${r.rank}${r.improved ? '' : ' (en iyi skorun duruyor)'}` : 'Skorun kaydedildi.');
+  const rankText = (r) => (r.rank ? `Sıran${mine === 'as' ? ' (Destekli)' : ''}: ${r.rank}${r.improved ? '' : ' (en iyi skorun duruyor)'}` : 'Skorun kaydedildi.');
   note.textContent = rankText(res); note.className = '';
-  render(res.top ? { entries: res.top } : null, res.rank);
-  trackEvent('lb', { st: 'show', b: o.board, d: day ? 1 : undefined, c: res.top ? res.top.length : 0 });
+  meRank = res.rank;
+  if (res.top) tops[mine] = { entries: res.top };
+  if (side === mine) { render(tops[mine] || null); tele(mine, tops[mine]); }
   if (res.name) return;
   // anonymous entry: offer the nickname
   const form = el('form', null, lb);
@@ -216,14 +265,16 @@ export async function showLeaderboard(lb, o) {
     const chk = mod.cleanName ? mod.cleanName(input.value.trim()) : { ok: true, name: input.value.trim() };
     if (!chk.ok || !chk.name) { hint.textContent = 'Bu takma ad kullanılamıyor: harf, rakam, boşluk, _ ve - (en çok 16).'; hint.className = 'bad'; return; }
     send.disabled = true; send.textContent = 'Kaydediliyor…';
-    const r2 = await mod.submitScore({ mission: o.board, day, score: o.score, stars: o.stars, ac: o.ac, name: chk.name, sec });
+    const r2 = await mod.submitScore({ mission: board, day, score: o.score, stars: o.stars, ac: o.ac, name: chk.name, sec });
     if (!r2) { send.disabled = false; send.textContent = 'Tekrar dene'; hint.textContent = 'Sıralama şu an ulaşılamıyor.'; hint.className = 'bad'; return; }
-    trackEvent('lb', { st: 'name', b: o.board, d: day ? 1 : undefined, ok: r2.name ? 1 : 0 });
+    trackEvent('lb', { st: 'name', b: board, d: day ? 1 : undefined, ok: r2.name ? 1 : 0, as: asF });
     submitted.set(key, Promise.resolve(r2));
     form.remove();
     hint.className = r2.nameRejected ? 'bad' : '';
     hint.textContent = r2.nameRejected ? 'Takma ad kabul edilmedi: skorun isimsiz duruyor.' : `Kaydedildi: ${r2.name}`;
-    note.textContent = r2.rank ? `Sıran: ${r2.rank}` : 'Skorun kaydedildi.';
-    render(r2.top ? { entries: r2.top } : null, r2.rank);
+    note.textContent = r2.rank ? `Sıran${mine === 'as' ? ' (Destekli)' : ''}: ${r2.rank}` : 'Skorun kaydedildi.';
+    meRank = r2.rank;
+    if (r2.top) tops[mine] = { entries: r2.top };
+    if (side === mine) render(tops[mine] || null);
   });
 }

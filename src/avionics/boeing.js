@@ -2,6 +2,7 @@
 import { font, text, line, poly, circle, stripes, rrect, clamp, lerp, wrap360, wrap180, pad, num, DEG, NM, FT, smoothK } from './core.js';
 import { MapView, drawRunways, terrainGrid, TerrainAlertImage, pickDestination, bearingTo, distTo, traffic, clockSeconds, ilsFor, drawCenterline, drawRouteND, routeIdent } from './nav.js';
 import { localToLonLat } from '../geo.js';
+import { reducedFlash } from '../ui/display-prefs.js';   // settings.alerts.reduceFlash: warnings steady
 
 export const BC = {
   white: '#ffffff', magenta: '#ff4dff', green: '#29ff4a', cyan: '#2ee6ff', amber: '#ffb300', red: '#ff2a2a',
@@ -293,7 +294,7 @@ function b737Pfd(env) {
       if (act && boxT[k] > S.t) { g.strokeStyle = BC.green; g.lineWidth = 3; g.strokeRect(x - 96, 16, 192, 44); }
     }
     text(g, f.status, CX, 150, BC.green, 'center', font(40));
-    if (S.warn.pullUp && Math.floor(S.t * 2.5) % 2 === 0) text(g, 'PULL UP', CX, 610, BC.red, 'center', font(48));
+    if (S.warn.pullUp && (reducedFlash() || Math.floor(S.t * 2.5) % 2 === 0)) text(g, 'PULL UP', CX, 610, BC.red, 'center', font(48));
     else if (S.warn.stall) text(g, 'STALL', CX, 610, BC.red, 'center', font(44));
   };
 }
@@ -418,7 +419,7 @@ function b737Nd(env) {
     }
     if (G) text(g, 'TERR', 984, 980, BC.cyan, 'right', font(30));
     text(g, 'TFC', 16, 980, BC.cyan, 'left', font(30));
-    if (S.warn.pullUp && Math.floor(S.t * 2.5) % 2 === 0) text(g, 'PULL UP', 500, 560, BC.red, 'center', font(56));
+    if (S.warn.pullUp && (reducedFlash() || Math.floor(S.t * 2.5) % 2 === 0)) text(g, 'PULL UP', 500, 560, BC.red, 'center', font(56));
   };
 }
 

@@ -12,6 +12,12 @@
 // 1500 MB: a heuristic for a 4 GB iPad / 6 GB iPhone tab; the owner's iPad Pro stepped down at a 1,387 MB meter reading),
 // recovery pass / fail.
 //   node tools/perf/webkit-memory.mjs [--classes tablet,phone] [--maps sf,ist] [--limit 1500] [--no-loss] [--tag name] [--base URL]
+// --timeline <s>: instead of the tour, sample the footprint continuously (about 3 times a second) from the navigation until
+// <s> seconds after the first playable frame, flying the map's matrix route on autopilot after 10 s (the start-up burst:
+// deferred world loading, the full aircraft model after a LOD start, the first streaming): peak, when it happens
+// relative to the first playable frame, and the steady level of the last 20 s. --aircraft f16 (default) | a320neo …,
+// --quality auto (default: the class's preset) | low | medium | high | ultra (a player's own choice on that device),
+// --extra '&x=y' (URL switches for A/B, e.g. &prewarm=0)
 import { launch, openGame, setPose, settle, sleep, arg, flag, save, BASE } from './lib.mjs';
 import { MAPS } from './matrix.mjs';
 import { execSync } from 'node:child_process';
@@ -111,12 +117,66 @@ async function runOne(cls, map) {
   return res;
 }
 
+/** Footprint time series from the navigation to `secs` after the first playable frame (see the header). */
+async function timeline(cls, map, secs) {
+  const C = CLASSES[cls], M = MAPS[map];
+  const before = webkitPids();
+  const { browser, page, log } = await launch({ engine: 'webkit', width: C.width, height: C.height, dpr: C.dpr, gl: 'off', hasTouch: true });
+  const res = { cls, map, aircraft: arg('--aircraft', 'f16'), quality: arg('--quality', 'auto'), budget: C.budget, series: [], events: {} };
+  const t0 = Date.now();
+  let stop = false, ready = null;
+  const sampler = (async () => {
+    while (!stop) {
+      const fp = {};
+      for (const [pid, kind] of webkitPids()) if (!before.has(pid) && kind !== 'Networking') fp[kind] = (fp[kind] || 0) + (footprintMB(pid) || 0);
+      const g = await page.evaluate(() => { const g = window.__game, m = g && g.gpu && g.gpu.meter, s = m && m.snapshot ? m.snapshot() : null; return { meter: s ? s.gpu : null, ready: !!(g && g.readyAt), swap: !!(g && g.swapAt) }; }).catch(() => ({}));
+      const t = (Date.now() - t0) / 1000;
+      res.series.push({ t: +t.toFixed(2), webContent: fp.WebContent || 0, gpu: fp.GPU || 0, total: (fp.WebContent || 0) + (fp.GPU || 0), meter: g.meter ?? null });
+      if (g.ready && res.events.ready == null) res.events.ready = +t.toFixed(2);
+      if (g.swap && res.events.swap == null) res.events.swap = +t.toFixed(2);
+      await sleep(150);
+    }
+  })();
+  try {
+    await openGame(page, { aircraft: res.aircraft, spawn: M.spawn, quality: res.quality, pr: 0, extra: `${C.extra}${M.extra}&telemetry=0${arg('--extra', '')}`, base, timeout: 300000 });
+    ready = Date.now();
+    await sleep(10000);
+    await page.evaluate((f) => {
+      const g = window.__game, rad = (d) => d * Math.PI / 180;
+      g.flight.reset({ x: f.x, z: f.z, heading: rad(f.hdg), altitude: f.alt, speed: g.def.spec.spawnSpeed }, g.world);
+      g.paused = false; g.cameraRig.setMode('chase');
+    }, M.fly);
+    const tap = async (code) => { await page.keyboard.down(code); await sleep(60); await page.keyboard.up(code); };
+    await tap('Digit7'); await sleep(200); await tap('KeyO');
+    res.events.fly = +((Date.now() - t0) / 1000).toFixed(2);
+    const left = secs * 1000 - (Date.now() - ready); if (left > 0) await sleep(left);
+  } catch (e) {
+    res.error = String(e && e.stack || e);
+    console.log(`  FAILED ${cls} ${map}: ${e.message}`);
+  } finally {
+    stop = true; await sampler;
+    res.errors = log.errors.slice(0, 10);
+    await browser.close().catch(() => {});
+  }
+  const S = res.series, r = res.events.ready ?? 0;
+  const peak = S.reduce((a, x) => (x.total > a.total ? x : a), { total: 0 });
+  const tail = S.filter((x) => x.t >= S[S.length - 1].t - 20);
+  res.peak = { totalMB: peak.total, atS: peak.t, relReadyS: +(peak.t - r).toFixed(1), webContentMB: peak.webContent, gpuMB: peak.gpu, meterMB: peak.meter };
+  res.steady = { totalMB: Math.round(tail.reduce((a, x) => a + x.total, 0) / Math.max(1, tail.length)), meterMB: Math.round(tail.reduce((a, x) => a + (x.meter || 0), 0) / Math.max(1, tail.length)) };
+  const at = (t) => { const x = S.find((y) => y.t >= t); return x ? x.total : null; };
+  res.atReady = { '0s': at(r), '+2s': at(r + 2), '+5s': at(r + 5), '+10s': at(r + 10), '+30s': at(r + 30) };
+  console.log(`  ${cls} ${map} ${res.aircraft} ${res.quality}: ready at ${r}s, peak ${res.peak.totalMB} MB (WebContent ${res.peak.webContentMB}, GPU ${res.peak.gpuMB}, meter ${res.peak.meterMB}) at ${res.peak.relReadyS >= 0 ? '+' : ''}${res.peak.relReadyS}s from ready | at ready ${JSON.stringify(res.atReady)} | steady ${res.steady.totalMB} MB (meter ${res.steady.meterMB}) | errors ${res.errors.length}`);
+  return res;
+}
+
 const out = { date: new Date().toISOString(), base, limit, runs: [] };
+const tl = Number(arg('--timeline', 0));
 for (const cls of classes) for (const map of maps) {
-  console.log(`== WebKit ${cls} ${map}`);
-  out.runs.push(await runOne(cls, map));
+  console.log(`== WebKit ${cls} ${map}${tl ? ` (timeline ${tl} s)` : ''}`);
+  out.runs.push(tl ? await timeline(cls, map, tl) : await runOne(cls, map));
   save(`${tag}.json`, out);
 }
+if (tl) process.exit(out.runs.some((r) => r.error) ? 1 : 0);
 const fails = out.runs.filter((r) => r.error || Object.values(r.verdict).some((v) => v === false));
 console.log(fails.length ? `FAIL: ${fails.map((r) => `${r.cls}/${r.map}`).join(', ')}` : 'PASS');
 process.exit(fails.length ? 1 : 0);

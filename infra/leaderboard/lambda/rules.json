@@ -1,5 +1,5 @@
 {
- "source": "San Francisco: 10 missions + 10 free-flight boards; İstanbul: 19 missions + 16 free-flight boards (src/missions/catalog.js, challenges.js, ist/catalog.js, ist/challenges.js) via infra/leaderboard/build_rules.mjs",
+ "source": "San Francisco: 10 missions + 12 free-flight boards; İstanbul: 19 missions + 18 free-flight boards (src/missions/catalog.js, challenges.js, landing-challenges.js, ist/catalog.js, ist/challenges.js) via infra/leaderboard/build_rules.mjs",
  "strict": true,
  "aircraft": [
   "f16",
@@ -14,6 +14,11 @@
   "secMin": 1,
   "secMax": 7200
  },
+ "weekly": {
+  "back": 8,
+  "ttlDays": 35
+ },
+ "assisted": true,
  "missions": {
   "climb": {
    "aircraft": [
@@ -320,6 +325,37 @@
    "secMax": 660,
    "starsMin": 1,
    "daily": false
+  },
+  "ff-land-series": {
+   "aircraft": [
+    "f16",
+    "f22",
+    "a320neo",
+    "b737",
+    "uh60"
+   ],
+   "scoreMin": 0,
+   "scoreMax": 3301,
+   "secMin": 1,
+   "secMax": 7200,
+   "starsMin": 1,
+   "daily": false
+  },
+  "ff-daily-land": {
+   "aircraft": [
+    "f16",
+    "f22",
+    "a320neo",
+    "b737",
+    "uh60"
+   ],
+   "scoreMin": 0,
+   "scoreMax": 2200,
+   "secMin": 1,
+   "secMax": 7200,
+   "starsMin": 1,
+   "daily": true,
+   "dailyOnly": true
   },
   "ist-15temmuz": {
    "aircraft": [
@@ -876,6 +912,37 @@
    "secMax": 660,
    "starsMin": 1,
    "daily": false
+  },
+  "ff-ist-land-series": {
+   "aircraft": [
+    "f16",
+    "f22",
+    "a320neo",
+    "b737",
+    "uh60"
+   ],
+   "scoreMin": 0,
+   "scoreMax": 3301,
+   "secMin": 1,
+   "secMax": 7200,
+   "starsMin": 1,
+   "daily": false
+  },
+  "ff-ist-daily-land": {
+   "aircraft": [
+    "f16",
+    "f22",
+    "a320neo",
+    "b737",
+    "uh60"
+   ],
+   "scoreMin": 0,
+   "scoreMax": 2200,
+   "secMin": 1,
+   "secMax": 7200,
+   "starsMin": 1,
+   "daily": true,
+   "dailyOnly": true
   }
  },
  "test": [

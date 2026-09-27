@@ -3,6 +3,7 @@ import { font, text, line, poly, circle, clamp, wrap360, wrap180, pad, DEG, NM, 
 import { MapView, drawRunways, traffic, clockSeconds, STEERPOINTS, steerpoint, bearingTo, distTo } from './nav.js';
 import { localToLonLat } from '../geo.js';
 import { createHud } from './hud.js';
+import { reducedFlash } from '../ui/display-prefs.js';   // settings.alerts.reduceFlash: warnings steady
 
 export const FC = { green: '#3dff5c', dim: '#1f8a33', white: '#ffffff', cyan: '#44d8ff', yellow: '#ffe640', red: '#ff3b30', amber: '#ffae00' };
 
@@ -228,7 +229,7 @@ function f16Rwr(env) {
       text(g, e.sym, x, y + 16, col, 'center', font(48));
       g.strokeStyle = col; g.lineWidth = 3.5;
       if (e.air) poly(g, [x - 24, y - 26, x, y - 44, x + 24, y - 26], false), g.stroke();
-      if (e === pri && Math.floor(t * 2) % 2 === 0) { poly(g, [x, y - 50, x + 44, y, x, y + 50, x - 44, y]); g.stroke(); }
+      if (e === pri && (reducedFlash() || Math.floor(t * 2) % 2 === 0)) { poly(g, [x, y - 50, x + 44, y, x, y + 50, x - 44, y]); g.stroke(); }
     }
     text(g, 'PRI', 70, 970, FC.green, 'left', font(34));
     text(g, 'SEARCH', 930, 970, FC.green, 'right', font(34));

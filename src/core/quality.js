@@ -54,13 +54,18 @@ export const QUALITY = {
 export const QUALITY_ORDER = ['low', 'medium', 'high', 'ultra'];
 
 /**
- * Per device-class caps, applied on top of any preset (numbers: the smaller value wins; booleans: forced).
+ * Per device-class caps, applied on top of any preset (numbers: the cheaper value wins, i.e. the smaller one except for
+ * LARGER_IS_CHEAPER; booleans and strings: forced).
  * Phones/tablets are limited by what iOS/Android let one tab keep (GPU process + web process), not by GPU speed;
  * integrated GPUs share system memory with the browser.
+ * Phones also keep the "low" terrain, imagery, pixel ratio, shadows and antialiasing on every preset: iPhone pages died on
+ * "ultra" in 6 of 25 flights against 9 of 238 on "low" (live data), and ultra added about 130 MB to a phone's start-up
+ * peak and 320 MB to its steady footprint. A chosen medium / high / ultra still changes clouds, water and traffic.
  */
 export const DEVICE_CAPS = {
   phone: {
-    pixelRatioMax: 1.25, shadowMapSize: 1024, shadowCascades: 1, maxImageryTiles: 90, textureMaxSize: 512,
+    pixelRatioMax: 1, shadows: false, cityShadows: false, antialias: false, terrainError: 2.5, imageryMaxLevel: -2,
+    shadowMapSize: 1024, shadowCascades: 1, maxImageryTiles: 90, textureMaxSize: 512,
     cityLodScale: 0.4, treeDensity: 0.3, treeDistance: 0.5, landmarkLodScale: 0.5, airportLodScale: 0.5, anisotropy: 2,
     cityUnloadAfter: 6, gpuBudgetMB: 900, lazyCockpit: true,
   },
@@ -70,9 +75,25 @@ export const DEVICE_CAPS = {
     cityUnloadAfter: 8, gpuBudgetMB: 1400, lazyCockpit: true,
   },
   integrated: { maxImageryTiles: 200, textureMaxSize: 2048, shadowMapSize: 2048, cityUnloadAfter: 12, gpuBudgetMB: 1700, lazyCockpit: true },
+  // old / entry-level dedicated GPUs (GT 730, Quadro K2200, GTX 480, RX 550: 1–2 GB, src/core/gpu-device.js): the
+  // integrated caps with a smaller budget; medium-class dedicated GPUs (GTX 1050 Ti, MX 450, R9): 2–4 GB
+  entry: { pixelRatioMax: 1, maxImageryTiles: 200, textureMaxSize: 2048, shadowMapSize: 2048, cityUnloadAfter: 12, gpuBudgetMB: 1500, lazyCockpit: true },
+  midrange: { maxImageryTiles: 320, gpuBudgetMB: 2200 },
   unknown: { textureMaxSize: 2048, gpuBudgetMB: 2000 },
-  software: { pixelRatioMax: 1, shadowMapSize: 1024, maxImageryTiles: 120, textureMaxSize: 1024, gpuBudgetMB: 800, lazyCockpit: true },
+  // Software rasterizers (Microsoft Basic Render Driver / SwiftShader / llvmpipe): every pixel and vertex is shaded by
+  // the CPU. Live: ~10 fps on "low" (4 % of the Windows sessions), dynamic resolution always at its 0.6 floor. So: start
+  // at that 0.6 instead of reaching it after half a minute of 4–5 fps, down to 0.5 (main.js reads pixelRatioMin; frame
+  // rate doubles from 1.0 to 0.5 on SwiftShader), no MSAA, no shadow pass, the shortest draw distances. The budget
+  // monitor fired at 805–921 MB with nothing left to lower: its budget is system memory here.
+  software: {
+    pixelRatioMax: 0.6, pixelRatioMin: 0.5, antialias: false, shadows: false, cityShadows: false, shadowMapSize: 1024, shadowCascades: 1,
+    terrainError: 3.5, imageryMaxLevel: -2, cityLodScale: 0.4, treeDensity: 0.15, treeDistance: 0.4, landmarkLodScale: 0.5, airportLodScale: 0.5,
+    clouds: 'low', water: 'simple', anisotropy: 1,
+    maxImageryTiles: 120, textureMaxSize: 1024, cityUnloadAfter: 10, gpuBudgetMB: 1200, lazyCockpit: true,
+  },
 };
+// numeric caps where a larger value is the cheaper one (the larger value wins); for every other number the smaller wins
+const LARGER_IS_CHEAPER = new Set(['terrainError', 'pixelRatioMin']);
 
 /**
  * GPU-meter budgets for WebKit phones / tablets (docs/perf/findings-2026-09.md T5). WebKit's WebContent + GPU process
@@ -86,7 +107,8 @@ export const webkitMeterBudget = (footprintMB) => Math.round((footprintMB - 270)
 /** Device-class key into DEVICE_CAPS (null = no extra caps). */
 export function capClass(d = detectDevice()) {
   if (d.kind === 'phone' || d.kind === 'tablet') return d.kind;
-  if (d.tier === 'integrated' || d.tier === 'software' || d.tier === 'unknown') return d.tier;
+  if (d.tier === 'integrated-fast') return 'integrated';
+  if (DEVICE_CAPS[d.tier]) return d.tier;
   return null;
 }
 
@@ -104,7 +126,7 @@ export function resolveQuality(id, device = detectDevice()) {
   const caps = cls ? DEVICE_CAPS[cls] : null;
   if (caps) {
     for (const [k, v] of Object.entries(caps)) {
-      if (typeof v === 'number' && typeof q[k] === 'number') q[k] = Math.min(q[k], v);
+      if (typeof v === 'number' && typeof q[k] === 'number') q[k] = LARGER_IS_CHEAPER.has(k) ? Math.max(q[k], v) : Math.min(q[k], v);
       else q[k] = v;
     }
     if (q.shadowCascades < 2 && q.shadowMapSize > 2048) q.shadowMapSize = 2048;
@@ -139,20 +161,35 @@ export function capQuality(id) {
   return c && qualityRank(id) > qualityRank(c.q) ? c.q : id;
 }
 
+/** Default preset per desktop tier (src/core/gpu-device.js); unknown → medium. */
+export const TIER_QUALITY = {
+  'apple-pro': 'ultra', apple: 'high', discrete: 'high', midrange: 'medium', 'integrated-fast': 'medium',
+  integrated: 'low', entry: 'low', software: 'low', unknown: 'medium',
+};
+
 /**
  * Best-guess default from the device class and GPU name: phones → low, tablets → medium (+ tablet caps),
- * Apple M-series Pro/Max → ultra, other Apple / discrete → high, integrated / software → low, unknown → medium.
+ * Apple M-series Pro/Max → ultra, other Apple / discrete → high, midrange dedicated / fast iGPU → medium,
+ * integrated / entry-level dedicated / software → low, unknown → medium.
  */
-export function detectQuality() {
+export function detectQuality(d) {
   try {
-    const d = detectDevice();
+    d = d || detectDevice();
     if (d.kind === 'phone') return 'low';
     if (d.kind === 'tablet') return 'medium';
-    switch (d.tier) {
-      case 'apple-pro': return 'ultra';
-      case 'apple': case 'discrete': return 'high';
-      case 'integrated': case 'software': return 'low';
-      default: return 'medium';
-    }
+    return TIER_QUALITY[d.tier] || 'medium';
   } catch { return 'medium'; }
+}
+
+/**
+ * Why the page runs the preset it starts with (telemetry `mq`, pure): 'url' (?quality=), 'user' (a stored choice),
+ * 'auto' (detectQuality), 'cap' (lowered by the ceiling a graphics failure left, see below) or 'resume' (lowered for the
+ * reload after a tab crash, src/app/main.js).
+ */
+export function qualitySource({ running, stored = null, auto, url = null, cap = null }) {
+  if (url) return 'url';
+  const base = stored || auto;
+  if (running === base) return stored ? 'user' : 'auto';
+  if (cap && running === cap) return 'cap';
+  return 'resume';
 }

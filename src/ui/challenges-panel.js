@@ -11,14 +11,20 @@
 // collapsed by default, a tap outside closes it, and results show first as a compact card at the top centre.
 // No backdrop blur (phones): slightly more opaque glass instead.
 //
-//   const p = createChallengesPanel(hud, { touch, keyLabel, onTrack, onStart, onCancel, onPlay, onBoard, onToggle })
+//   const p = createChallengesPanel(hud, { touch, keyLabel, onTrack, onStart, onCancel, onPlay, onBoard, onFinal, onToggle })
+// (onFinal: "Son yaklaşmaya git" on the landing challenges, views with `final`; a daily result (`r.day`) shows the day's
+// board; `x.weekly` = { pick, p: Promise<submission> } adds the weekly challenge's rank under the result; x.submit.assisted:
+// the result goes to the board's "Destekli" list, src/ui/mission-parts.js showLeaderboard.)
 //   p.setEntries(views) · p.render(views) (≤ 10 Hz, only while open or after a change) · p.setCount(done, total, badge)
 //   p.open() · p.close() · p.toggle() · p.isOpen · p.showResult(r, o) · p.notify(r, onOpen) · p.pointer(camera, target, label)
+// While the result view or the compact result card is on screen, <html> carries `gk-result-open` (src/retention/
+// result-flag.js): the landing card hides and other HUD tips wait. o.notes: lines under "Bu inişte" in the result.
 import { injectCSS } from './styles.js';
 import { el } from './util.js';
 import { STAR, injectPartsCSS, starRow, createPointer, showLeaderboard } from './mission-parts.js';
 import { AIRCRAFT_SHORT } from '../missions/catalog.js';
 import { fmtInt, fmtTime } from '../missions/util.js';
+import { setResultOpen } from '../retention/result-flag.js';   // <html class="gk-result-open"> while a result is on screen
 
 const ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 21V4"/><path d="M5 4h11l-2 4 2 4H5"/></svg>';
 
@@ -108,6 +114,8 @@ const CSS = `
 .gkf .gkq-row em { font-size: calc(11px * var(--fk)); }
 .gkf .gkq-row b { font-size: calc(11.5px * var(--fk)); min-width: 40px; }
 .gkf-best { margin-top: calc(6px * var(--fk)); font-size: calc(12px * var(--fk)); color: var(--gk-dim); }
+.gkf-wk { margin-top: calc(8px * var(--fk)); font-size: calc(12px * var(--fk)); font-weight: 650; color: #ffd98a; }
+.gkf-more .gkq-btn.teal { min-height: calc(30px * var(--fk)); }
 .gkf-sess { margin-top: calc(8px * var(--fk)); padding: calc(6px * var(--fk)) calc(8px * var(--fk)); border-radius: 9px; background: rgba(255, 255, 255, .04); }
 .gkf-sess h4 { margin: 0 0 3px; font-size: calc(10px * var(--fk)); font-weight: 800; letter-spacing: .14em; text-transform: uppercase; color: var(--gk-dim); }
 .gkf-sess div { display: flex; gap: 8px; align-items: baseline; padding: 2px 0; font-size: calc(12px * var(--fk)); }
@@ -241,8 +249,11 @@ export function createChallengesPanel(hud, o = {}) {
     root.classList.toggle('open', on);
     tab.setAttribute('aria-expanded', String(on));
     if (on) { place(); if (touch) hideNote(); }
+    flag();
     if (o.onToggle) o.onToggle(on, nextSrc || src);
   }
+  /** The result signal (src/retention/result-flag.js): the result view open, or the compact result card on screen. */
+  function flag() { setResultOpen('ffc', (isOpen && view === 'result') || note.classList.contains('on')); }
   const close = () => setOpen(false);
   tab.addEventListener('click', (e) => { e.stopPropagation(); tab.blur(); setOpen(!isOpen, true, 'tab'); });
   xBtn.addEventListener('click', (e) => { e.stopPropagation(); close(); });
@@ -294,6 +305,12 @@ export function createChallengesPanel(hud, o = {}) {
         startBtn.type = 'button';
         startBtn.addEventListener('click', (e) => { e.stopPropagation(); startBtn.blur(); if (row.running) o.onCancel && o.onCancel(v.id); else o.onStart && o.onStart(v.id); });
       }
+      if (v.final && o.onFinal) {
+        const fb = el('button', 'gkq-btn teal', acts, 'Son yaklaşmaya git');
+        fb.type = 'button';
+        fb.title = v.id.includes('daily') ? 'Bugünün pistinin son yaklaşmasına geç' : 'En yakın pistin son yaklaşmasına geç';
+        fb.addEventListener('click', (e) => { e.stopPropagation(); fb.blur(); o.onFinal(v.id); });
+      }
       const boardBtn = el('button', 'gkf-link', acts, 'Sıralama');
       boardBtn.type = 'button';
       boardBtn.addEventListener('click', (e) => { e.stopPropagation(); if (o.onBoard) o.onBoard(v.id); });
@@ -341,7 +358,7 @@ export function createChallengesPanel(hud, o = {}) {
   }
 
   // ---- result view ----
-  function showList() { view = 'list'; listView.style.display = ''; resView.style.display = 'none'; }
+  function showList() { view = 'list'; listView.style.display = ''; resView.style.display = 'none'; flag(); }
   function showResultView(r, x = {}) {
     view = 'result';
     listView.style.display = 'none';
@@ -377,6 +394,11 @@ export function createChallengesPanel(hud, o = {}) {
       const b = el('div', 'gkf-best', resView, `En iyin: ${fmtInt(x.best.best)} puan${x.best.ac ? ` (${AIRCRAFT_SHORT[x.best.ac] || x.best.ac})` : ''} · `);
       b.append(starRow(x.best.stars || 0));
     }
+    if (x.notes && x.notes.length) {   // the same landing's other results, the streak, a new badge (no toasts over the result)
+      const n = el('div', 'gkf-sess', resView);
+      el('h4', null, n, 'Bu inişte');
+      for (const t of x.notes.slice(0, 5)) el('div', null, n, t);
+    }
     if (x.session && x.session.length) {
       const s = el('div', 'gkf-sess', resView);
       el('h4', null, s, 'Bu uçuşta');
@@ -386,10 +408,20 @@ export function createChallengesPanel(hud, o = {}) {
         el('b', it.ok ? '' : 'bad', d, it.ok ? `${fmtInt(it.score)} · ${'★'.repeat(it.stars)}` : 'başarısız');
       }
     }
+    if (x.weekly && x.weekly.p) {   // this week's challenge (src/retention/weekly.js): the weekly rank
+      const w = el('div', 'gkf-wk', resView, 'Haftanın görevi: skorun haftalık sıralamaya gönderiliyor…');
+      x.weekly.p.then((res) => {
+        if (!w.isConnected) return;
+        if (!res) { w.remove(); return; }
+        const lead = res.rank === 1 ? ', lider sensin!' : res.top && res.top[0] ? ` · lider ${res.top[0].name || 'İsimsiz pilot'} ${fmtInt(res.top[0].score)}` : '';
+        const list = r.assisted ? ' (Destekli)' : '';
+        w.textContent = res.rank ? `Haftanın görevi${list}: bu hafta ${res.rank}. sıradasın${lead}` : `Haftanın görevi${list}: skorun kaydedildi${lead}`;
+      }).catch(() => w.remove());
+    }
     const lb = el('div', 'gkq-lb', resView);
     const sub = x.submit || null;   // { score, stars, sec, ac } to submit (a finished run, or the personal best)
-    showLeaderboard(lb, { board: r.board, day: '', ok: !!sub, score: sub ? sub.score : 0, stars: sub ? sub.stars : 0, sec: sub ? sub.sec : undefined, ac: sub ? sub.ac : r.ac,
-      title: 'Sıralama · serbest uçuş', showAc: true, onSubmitted: x.onSubmitted }).catch(() => {});
+    showLeaderboard(lb, { board: r.board, day: r.day || '', ok: !!sub, score: sub ? sub.score : 0, stars: sub ? sub.stars : 0, sec: sub ? sub.sec : undefined, ac: sub ? sub.ac : r.ac,
+      title: r.day ? 'Günün sıralaması' : 'Sıralama', showAc: true, onSubmitted: x.onSubmitted, assisted: !!(sub && sub.assisted) }).catch(() => {});
     const acts = el('div', 'gkf-acts', resView);
     if (x.onPlay) {
       const play = el('button', 'gkf-link play', acts, 'Görev olarak oyna ›');
@@ -399,7 +431,7 @@ export function createChallengesPanel(hud, o = {}) {
     body.scrollTop = 0;
   }
 
-  function hideNote() { note.classList.remove('on'); if (noteT) { clearTimeout(noteT); noteT = null; } }
+  function hideNote() { note.classList.remove('on'); if (noteT) { clearTimeout(noteT); noteT = null; } flag(); }
   note.addEventListener('click', (e) => { e.stopPropagation(); const fn = noteOpen; unseen = null; hideNote(); nextSrc = 'card'; if (fn) fn(); nextSrc = null; });
 
   return {
@@ -421,7 +453,7 @@ export function createChallengesPanel(hud, o = {}) {
       tab.classList.toggle('run', !!running);
     },
     /** Result view (opens the panel). x = { newBest, prevBest, best, session, crash, submit, onPlay, onSubmitted } */
-    showResult(r, x = {}) { showResultView(r, x); fresh = !isOpen; setOpen(true); place(); },
+    showResult(r, x = {}) { showResultView(r, x); fresh = !isOpen; setOpen(true); place(); body.scrollTop = 0; flag(); },   // (the list's scroll: the result starts at its top)
     /** Touch: a compact card at the top centre; a tap opens the result (onOpen). */
     notify(r, onOpen, secs = 9) {
       fresh = false;
@@ -436,6 +468,7 @@ export function createChallengesPanel(hud, o = {}) {
       el('em', null, note, 'Sıralama');
       noteOpen = onOpen; unseen = onOpen;
       note.classList.add('on');
+      flag();
       if (noteT) clearTimeout(noteT);
       noteT = setTimeout(hideNote, secs * 1000);
     },

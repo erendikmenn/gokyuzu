@@ -3,7 +3,8 @@
 //
 //   node tools/perf/matrix.mjs [--profiles desktop-high,desktop-ultra,laptop-igpu,tablet-chromium,tablet-webkit,phone-cpu4,phone-cpu6]
 //        [--maps sf,ist] [--aircraft f16,a320neo] [--ms 6000] [--startup 30] [--fly 60] [--poses sf:a,b;ist:c,d]
-//        [--lanes 1] [--rounds 1] [--tag name] [--base URL] [--no-profile] [--settle-max 25000]
+//        [--lanes 1] [--rounds 1] [--tag name] [--base URL] [--no-profile] [--settle-max 25000] [--pose-pause]
+//   profiles also: phone-webkit (the phone class in WebKit, i.e. an iPhone's engine), phone-portrait
 //   node tools/perf/matrix.mjs --report <matrix-json> [--report <second-json> …]   (markdown only, merges rounds → noise)
 //
 // Per run (one browser per profile × map × aircraft, the game's own device overrides; the pixel ratio is pinned at the
@@ -16,10 +17,15 @@
 //   3. `--fly` s of flying (first aircraft only): autopilot at 70 % throttle from above the spawn toward the city; bytes
 //      downloaded, frame statistics, CPU per system (Chromium: CPU profile aggregated by source file, plus a trace
 //      window for style / layout / paint / GC), heap and GPU memory growth
-//   4. poses (flight paused, the world keeps updating / streaming; settle, then `--ms` of measurement): fps, frame
-//      p50 / p95 / p99, CPU per frame and per system (probe wrappers), main-thread busy % (Chromium CPU profile, 1 ms
-//      sampling; WebKit: rAF share), long tasks, renderer.info (calls, triangles, textures, geometries, programs), the
-//      game's GPU memory meter (src/core/gpu-meter.js), JS heap, allocation rate, pixel ratio and preset in effect
+//   4. poses (the flight model frozen but not paused, so the loop runs at the flight's frame pacing: 30 fps on phones, 60
+//      on tablets, the parked rate on the ground after 4 s; --pose-pause measures the 5 fps pause screen instead; the
+//      world keeps updating / streaming; settle, then `--ms` of measurement): drawn fps, energy proxies per second (CPU
+//      ms of the rAF callbacks, GPU ms from timer queries, draw calls, triangles, uploaded MB) and per drawn frame, CPU
+//      per system (probe wrappers), main-thread busy % (Chromium CPU profile, 1 ms sampling; WebKit: rAF share), long
+//      tasks, renderer.info (textures, geometries, programs), the game's GPU memory meter (src/core/gpu-meter.js), JS
+//      heap, allocation rate, pixel ratio, preset and pacing mode in effect
+// Frame pacing draws on some refreshes only: "fps" / "frames" of the probe count rAF callbacks (refreshes); the drawn
+// rate and the per-second sums are what a device spends (tools/perf/probe.js perSec).
 // Frame times depend on GPU contention (other agents share this Mac's GPU): the tables flag them and prefer counts,
 // bytes, memory and CPU shares under throttling. --rounds 2 repeats every run in a different order (noise report).
 import { launch, openGame, attach, setPose, settle, sleep, arg, flag, save, OUT, POSES, BASE, gpuBusy } from './lib.mjs';
@@ -36,6 +42,8 @@ export const PROFILES = {
   // phones play in landscape: in portrait the game pauses behind a "Telefonu yan çevir" prompt (src/ui/touch.js)
   'phone-cpu4': { label: 'Phone 844×390 @3 landscape (iPhone 390×844; phone class, default preset), CPU 4×', engine: 'chromium', width: 844, height: 390, dpr: 3, quality: 'auto', cpu: 4, pr: 1, extra: '&device=phone&touch=1', touch: true, mobile: true },
   'phone-cpu6': { label: 'Phone 844×390 @3 landscape (phone class, default preset), CPU 6×', engine: 'chromium', width: 844, height: 390, dpr: 3, quality: 'auto', cpu: 6, pr: 1, extra: '&device=phone&touch=1', touch: true, mobile: true },
+  // iPhones run WebKit: the engine's own costs (canvas uploads, main-thread shader compiles, memory) at the phone class
+  'phone-webkit': { label: 'iPhone 844×390 @3 landscape (phone class, default preset), WebKit', engine: 'webkit', width: 844, height: 390, dpr: 3, quality: 'auto', cpu: 1, pr: 1, extra: '&device=phone&touch=1', touch: true },
 };
 export const MAPS = {
   sf: { spawn: 'KSFO-28R', extra: '', poses: ['downtown-300', 'ggb-low', 'sfo-ground', 'bay-3000ft', 'cockpit'], ground: 'sfo-ground', cockpit: 'cockpit',
@@ -202,11 +210,12 @@ async function gameState(page) {
       terrain: w.terrain && w.terrain.stats ? { loaded: w.terrain.stats.loaded, textures: w.terrain.stats.textures } : null,
       city: cs ? { loaded: cs.loaded, visible: cs.visible, trees } : null,
       crashed: !!(g.flight && g.flight.crashed), fps: window.__fps ? +window.__fps.toFixed(1) : null,
+      pacing: g.pacing ? { mode: g.pacing.mode, target: g.pacing.target, cap: g.pacing.cap, drawFps: g.pacing.drawFps, simFps: g.pacing.simFps } : null,
     };
   });
 }
 /** Probe summary since the last mark (per-system CPU means, allocation rate). */
-const probeSummary = (page) => page.evaluate(() => { const s = window.__perf.summary(); return { cpuMs: s.cpuMs, subMean: s.subMean, subP95: s.subP95, alloc: s.alloc, uploadMBPerSec: s.uploadMBPerSec, mipmapsPerSec: s.mipmapsPerSec, glDraws: s.glDraws, gpuMs: s.gpuMs, links: s.links }; });
+const probeSummary = (page) => page.evaluate(() => { const s = window.__perf.summary(); return { cpuMs: s.cpuMs, subMean: s.subMean, subP95: s.subP95, alloc: s.alloc, uploadMBPerSec: s.uploadMBPerSec, mipmapsPerSec: s.mipmapsPerSec, glDraws: s.glDraws, gpuMs: s.gpuMs, links: s.links, perSec: s.perSec }; });
 
 // ------------------------------------------------------------------------------------------ network accounting
 function netLog(page) {
@@ -288,13 +297,14 @@ export async function runOne({ profile, map, aircraft, full, ms, startupS, flyS,
       res.fly.gpuGrowthMB = res.fly.end.gpuMB != null && s0.gpuMB != null ? res.fly.end.gpuMB - s0.gpuMB : null;
       res.fly.pos = await page.evaluate(() => { const p = window.__game.flight.position; return [Math.round(p.x), Math.round(p.y), Math.round(p.z)]; });
       res.bytesAfterFlyMB = +(netSum(reqs, 0, Date.now()).MB).toFixed(2);
-      log(`  ${profile} ${map} fly ${flyS}s: fps ${res.fly.fps} p95 ${res.fly.frameMs.p95} p99 ${res.fly.frameMs.p99} >50 ${res.fly.over50} | +${res.fly.net.MB} MB | busy ${prof ? prof.busyPct : res.fly.rafBusyPct}% | crashed ${res.fly.end.crashed} pos ${res.fly.pos}`);
+      const fps = res.fly.probe.perSec || {};
+      log(`  ${profile} ${map} fly ${flyS}s: drawn ${fps.drawnFps} fps (refresh ${res.fly.fps}) p95 ${res.fly.frameMs.p95} p99 ${res.fly.frameMs.p99} >50 ${res.fly.over50} | per s: CPU ${fps.cpuMs} ms, GPU ${fps.gpuMs} ms, draws ${fps.draws}, ${fps.mtris} Mtris, upload ${fps.uploadMB} MB | +${res.fly.net.MB} MB | busy ${prof ? prof.busyPct : res.fly.rafBusyPct}% | alloc ${res.fly.probe.alloc ? res.fly.probe.alloc.MBperSec : '-'} MB/s | crashed ${res.fly.end.crashed} pos ${res.fly.pos}`);
       if (prof) log(`    cpu: ${Object.entries(prof.systems).slice(0, 8).map(([k, v]) => `${k} ${v.pctOfBusy}%`).join(', ')}`);
     }
     // 4. poses
     const list = full ? poses : poses.filter((p) => p === M.ground || p === M.cockpit || p === poses[0]);
     for (const pose of list) {
-      await setPose(page, pose);
+      await setPose(page, pose, { hold: flag('--pose-pause') ? 'pause' : 'step' });   // flight pacing (30 fps phones), not the 5 fps pause
       await wrapExtras(page);
       const s = await settle(page, { minMs: 3000, maxMs: settleMax, quietMs: 1500 });
       await sleep(400);
@@ -305,7 +315,8 @@ export async function runOne({ profile, map, aircraft, full, ms, startupS, flyS,
       const row = { settled: s.idle, settleMs: s.ms, ...(await windowStats(page, a, b)), probe: await probeSummary(page), state: await gameState(page), profile: prof, gpuBusy: gpuBusy() };
       res.poses[pose] = row;
       const sub = row.probe.subMean || {};
-      log(`    ${pose.padEnd(16)} fps ${row.fps} p50 ${row.frameMs.p50} p95 ${row.frameMs.p95} p99 ${row.frameMs.p99} | cpu ${row.probe.cpuMs.mean} (render ${sub.render}, world ${sub.world}, hud ${sub.hud}, avi ${sub.avionics ?? 0}) busy ${prof ? prof.busyPct : row.rafBusyPct}% | calls ${row.state.info.calls} tris ${(row.state.info.triangles / 1e6).toFixed(2)}M tex ${row.state.info.textures} geo ${row.state.info.geometries} prog ${row.state.info.programs} | gpu ${row.state.gpuMB} MB heap ${row.state.heapMB} alloc ${row.probe.alloc ? row.probe.alloc.MBperSec : '-'} MB/s | ${row.state.quality} pr ${row.state.pr} [gpu busy ${row.gpuBusy}%]`);
+      const ps = row.probe.perSec || {}, pd = ps.perDrawn || {}, pss = ps.sub || {};
+      log(`    ${pose.padEnd(16)} ${row.state.pacing ? row.state.pacing.mode : '?'} drawn ${ps.drawnFps} fps | per s: CPU ${ps.cpuMs} ms (render ${pss.render}, world ${pss.world}, hud ${pss.hud}, avi ${pss.avionics ?? 0}), GPU ${ps.gpuMs} ms, draws ${ps.draws}, ${ps.mtris} Mtris | per drawn: CPU ${pd.cpuMs} ms, ${pd.draws} draws, ${pd.ktris} ktris, GPU ${pd.gpuMs} ms | busy ${prof ? prof.busyPct : row.rafBusyPct}% | tex ${row.state.info.textures} geo ${row.state.info.geometries} prog ${row.state.info.programs} | gpu ${row.state.gpuMB} MB heap ${row.state.heapMB} alloc ${row.probe.alloc ? row.probe.alloc.MBperSec : '-'} MB/s | ${row.state.quality} pr ${row.state.pr} [gpu busy ${row.gpuBusy}%]`);
     }
     res.totalNet = netSum(reqs, 0, Date.now());
   } catch (e) {
@@ -345,8 +356,8 @@ export function markdown(runs) {
     out.push(`| ${r.profile} | ${r.map} | ${r.aircraft} | ${s.quality}/${s.deviceClass} | ${s.pr} | ${cell(rs.map((x) => x.load && x.load.ttfpS))} | ${cell(rs.map((x) => x.load && x.load.net.MB))} | ${r.fly ? cell(rs.map((x) => x.fly && x.fly.net.MB + x.load.net.MB + (x.startup ? x.startup.net.MB : 0))) : '–'} | ${cell(rs.map((x) => x.startup && x.startup.frameMs.max))} | ${cell(rs.map((x) => x.startup && x.startup.over50))} | ${cell(rs.map((x) => x.startup && x.startup.links))} | ${cell(rs.map((x) => x.startup && x.startup.longTasks.count))} | ${cell(rs.map((x) => x.startup && x.startup.state.gpuMB))} | ${cell(rs.map((x) => x.startup && x.startup.state.heapMB))} |`);
   }
   out.push('', '### Flying 60 s (first aircraft): frame times, CPU per system, bytes', '');
-  out.push('| profile | map | fps | frame p50 / p95 / p99 ms | > 50 ms | main thread busy % | top CPU systems (% of busy) | style+layout+paint ms/s | GC ms/s | MB downloaded | heap growth MB | GPU growth MB |');
-  out.push('|---|---|---|---|---|---|---|---|---|---|---|---|');
+  out.push('| profile | map | drawn fps | frame p50 / p95 / p99 ms | > 50 ms | main thread busy % | CPU ms/s (rAF) | GPU ms/s | draws/s | Mtris/s | alloc MB/s | top CPU systems (% of busy) | style+layout+paint ms/s | GC ms/s | MB downloaded | heap growth MB | GPU growth MB |');
+  out.push('|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|');
   for (const k of keys) {
     const rs = by.get(k).filter((x) => x.fly), r = rs[0];
     if (!r) continue;
@@ -354,17 +365,18 @@ export function markdown(runs) {
     const top = pr ? Object.entries(pr.systems).slice(0, 6).map(([n, v]) => `${n} ${v.pctOfBusy}`).join(', ') : Object.entries(fl.probe.subMean || {}).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([n, v]) => `${n} ${v} ms`).join(', ');
     const slp = tr ? ['UpdateLayoutTree', 'Layout', 'PrePaint', 'Paint', 'Layerize', 'Commit'].reduce((s, n) => s + (tr.msPerSec[n] || 0), 0) : null;
     const gc = tr ? ['MinorGC', 'MajorGC', 'V8.GC_SCAVENGER'].reduce((s, n) => s + (tr.msPerSec[n] || 0), 0) : null;
-    out.push(`| ${r.profile} | ${r.map} | ${cell(rs.map((x) => x.fly.fps))} | ${f1(fl.frameMs.p50)} / ${f1(fl.frameMs.p95)} / ${f1(fl.frameMs.p99)} | ${fl.over50} | ${pr ? cell(rs.map((x) => x.fly.profile && x.fly.profile.busyPct)) : `${f1(fl.rafBusyPct)} (rAF)`} | ${top} | ${f1(slp)} | ${f1(gc)} | ${cell(rs.map((x) => x.fly.net.MB))} | ${f1(fl.heapGrowthMB)} | ${f1(fl.gpuGrowthMB)} |`);
+    const psf = (x, k) => x.fly.probe.perSec && x.fly.probe.perSec[k];
+    out.push(`| ${r.profile} | ${r.map} | ${cell(rs.map((x) => psf(x, 'drawnFps') ?? x.fly.fps))} | ${f1(fl.frameMs.p50)} / ${f1(fl.frameMs.p95)} / ${f1(fl.frameMs.p99)} | ${fl.over50} | ${pr ? cell(rs.map((x) => x.fly.profile && x.fly.profile.busyPct)) : `${f1(fl.rafBusyPct)} (rAF)`} | ${cell(rs.map((x) => psf(x, 'cpuMs')))} | ${cell(rs.map((x) => psf(x, 'gpuMs')))} | ${cell(rs.map((x) => psf(x, 'draws')))} | ${cell(rs.map((x) => psf(x, 'mtris')))} | ${f1(fl.probe.alloc && fl.probe.alloc.MBperSec)} | ${top} | ${f1(slp)} | ${f1(gc)} | ${cell(rs.map((x) => x.fly.net.MB))} | ${f1(fl.heapGrowthMB)} | ${f1(fl.gpuGrowthMB)} |`);
   }
   out.push('', '### Poses (flight paused, world streaming; frame times are GPU-contended, counts / memory are not)', '');
-  out.push('| profile | map | aircraft | pose | fps | frame p50 / p95 / p99 | CPU ms/frame (render / world / HUD / avionics) | busy % | calls | tris M | tex | geo | prog | GPU MB | heap MB | alloc MB/s | preset, pr |');
-  out.push('|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|');
+  out.push('| profile | map | aircraft | pose | mode | drawn fps | CPU ms/s (render / world / HUD / avionics) | GPU ms/s | draws/s | Mtris/s | CPU ms / drawn frame | draws / drawn frame | busy % | tex | geo | prog | GPU MB | heap MB | alloc MB/s | preset, pr |');
+  out.push('|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|');
   for (const k of keys) {
     const rs = by.get(k), r = rs[0];
     for (const pose of Object.keys(r.poses || {})) {
       const ps = rs.map((x) => x.poses && x.poses[pose]).filter(Boolean), p = ps[0];
-      const sub = p.probe.subMean || {};
-      out.push(`| ${r.profile} | ${r.map} | ${r.aircraft} | ${pose} | ${cell(ps.map((x) => x.fps))} | ${f1(p.frameMs.p50)} / ${f1(p.frameMs.p95)} / ${f1(p.frameMs.p99)} | ${cell(ps.map((x) => x.probe.cpuMs.mean))} (${f1(sub.render)} / ${f1(sub.world)} / ${f1(sub.hud)} / ${f1(sub.avionics)}) | ${p.profile ? cell(ps.map((x) => x.profile && x.profile.busyPct)) : f1(p.rafBusyPct) + ' rAF'} | ${cell(ps.map((x) => x.state.info.calls))} | ${f1(p.state.info.triangles / 1e6)} | ${p.state.info.textures} | ${p.state.info.geometries} | ${p.state.info.programs} | ${cell(ps.map((x) => x.state.gpuMB))} | ${f1(p.state.heapMB)} | ${f1(p.probe.alloc && p.probe.alloc.MBperSec)} | ${p.state.quality}, ${p.state.pr} |`);
+      const q = (x) => x.probe.perSec || {}, sub = q(p).sub || {}, pd = (x) => q(x).perDrawn || {};
+      out.push(`| ${r.profile} | ${r.map} | ${r.aircraft} | ${pose} | ${p.state.pacing ? p.state.pacing.mode : '–'} | ${cell(ps.map((x) => q(x).drawnFps))} | ${cell(ps.map((x) => q(x).cpuMs))} (${f1(sub.render)} / ${f1(sub.world)} / ${f1(sub.hud)} / ${f1(sub.avionics)}) | ${cell(ps.map((x) => q(x).gpuMs))} | ${cell(ps.map((x) => q(x).draws))} | ${cell(ps.map((x) => q(x).mtris))} | ${cell(ps.map((x) => pd(x).cpuMs))} | ${cell(ps.map((x) => pd(x).draws))} | ${p.profile ? cell(ps.map((x) => x.profile && x.profile.busyPct)) : f1(p.rafBusyPct) + ' rAF'} | ${p.state.info.textures} | ${p.state.info.geometries} | ${p.state.info.programs} | ${cell(ps.map((x) => x.state.gpuMB))} | ${f1(p.state.heapMB)} | ${f1(p.probe.alloc && p.probe.alloc.MBperSec)} | ${p.state.quality}, ${p.state.pr} |`);
     }
   }
   const noisy = keys.filter((k) => by.get(k).length > 1);

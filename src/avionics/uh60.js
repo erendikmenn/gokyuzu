@@ -2,6 +2,7 @@
 // flight page (attitude, tapes, radar altitude, TRQ/NR, HSI), moving map, engine page (VIDS-style vertical scales).
 import { font, text, line, poly, circle, rrect, clamp, wrap360, wrap180, pad, DEG, NM, FT, smoothK } from './core.js';
 import { MapView, drawRunways, terrainGrid, reliefFor, LocalRelief, traffic, clockSeconds, nearestAirport, pickDestination, bearingTo, distTo, LANDMARKS } from './nav.js';
+import { reducedFlash } from '../ui/display-prefs.js';   // settings.alerts.reduceFlash: warnings steady
 
 export const HC = { white: '#ffffff', green: '#35ff5a', cyan: '#35e1ff', magenta: '#ff54ff', yellow: '#ffe23a', amber: '#ffae00', red: '#ff3434', grey: '#8d969f', tape: '#3d434a', sky: '#1f86d8', gnd: '#7c4f25' };
 const W = 750, H = 1000;
@@ -170,7 +171,7 @@ function uh60Pfd(env) {
     const sat = 15 - 1.98 * S.alt / 1000;
     text(g, 'OAT ' + Math.round(sat) + '°C', 730, 900, HC.white, 'right', font(24));
     text(g, 'BARO 29.92', 20, 900, HC.white, 'left', font(24));
-    const flash = Math.floor(S.t * 2.5) % 2 === 0;
+    const flash = reducedFlash() || Math.floor(S.t * 2.5) % 2 === 0;
     if (S.warn.pullUp && flash) text(g, 'PULL UP', CX, 470, HC.red, 'center', font(48));
     else if (S.warn.lowRotor && flash) text(g, 'LOW ROTOR RPM', CX, 470, HC.red, 'center', font(40));
     else if (S.warn.overtorque) text(g, 'OVERTORQUE', CX, 470, HC.red, 'center', font(40));

@@ -18,9 +18,15 @@
 //   big map open (the flight goes on underneath)                       draw 5, simulate at the flight rate
 //   parked on the ground with nothing moving (no input, still camera,  phones / tablets 20, desktop 30
 //     no rotor turning) for 4 s
-//   flight                                                             the cap: phones 30, tablets 60 (30 when 60 cannot
-//                                                                        be held), desktop the display rate; the player's
-//                                                                        setting (settings.fps: 30 | 60 | 0 = no limit)
+//   cruise: airborne, no input for 3 s, and the picture moves slowly     phones 20, tablets 30 (desktop: the flight cap);
+//     (main.js: camera rotation + ground speed over height, in screen    only on the 'auto' setting. The first touch / key,
+//     pixels, less than PACE.cruiseStepPx per cruise frame for 1.5 s:    a turn or a descent toward the ground returns to
+//     phones 40 px/s, tablets 60 px/s)                                   the cap on the next refresh
+//   flight                                                             the cap: phones 30, tablets and weak desktop GPUs
+//                                                                        (quality.js classes integrated / entry / software)
+//                                                                        60 (30 when 60 cannot be held), other desktops the
+//                                                                        display rate; the player's setting (settings.fps:
+//                                                                        30 | 60 | 0 = no limit)
 //
 // Frame skipping keeps the cadence regular: rAF still fires every refresh (cheap), and a frame is drawn on the first
 // refresh within half a refresh of its ideal time (a phase accumulator: 60 Hz → every 2nd refresh for 30 fps, 90 Hz →
@@ -35,11 +41,22 @@ export const PACE = {
   overlay: 5,
   overlaySim: 15,
   parked: { phone: 20, tablet: 20, desktop: 30 },
+  // cruise (energy on phones / tablets): drawn frames per second while little moves on screen (no class listed: none)
+  cruise: { phone: 20, tablet: 30 },
+  cruiseAfterMs: 3000,     // no touch / key / pointer input for this long
+  cruiseStepPx: 2,         // the picture moves less than this per cruise frame (CSS px; phones 40 px/s, tablets 60) ...
+  cruiseSecs: 1.5,         // ... for this long
   interactMs: 1200,        // full rate this long after an interaction in an overlay
   parkedAfterMs: 4000,     // parked mode after this long without input / camera movement / aircraft movement
-  // tablets on 'auto': 60, or 30 when 60 is not held (below 50 fps for 3 s of flight); 60 is tried again after a backoff
+  // tablets / weak GPUs (FALLBACK_30) on 'auto': 60, or 30 when 60 is not held (below 50 fps for 3 s of flight); 60 is
+  // tried again after a backoff
   tabletLowFps: 50, tabletLowSecs: 3, backoffSecs: [30, 60, 120, 300],
 };
+
+/** Device classes (src/core/quality.js deviceClass) that run at 60 on 'auto', falling back to a steady 30 when 60 is not
+ *  held: tablets, and laptops / desktops with an integrated, entry-level or software GPU (they rarely hold a 90–144 Hz
+ *  panel's rate: a steady 60 or 30 is smoother than a wandering rate, and cheaper). */
+export const FALLBACK_30 = new Set(['tablet', 'integrated', 'entry', 'software']);
 
 /** Normalized fps setting: null ('auto') | 30 | 60 | 0 (no limit). */
 export function parseFpsSetting(v) {
@@ -53,16 +70,17 @@ export function flightCap(deviceClass, setting) {
   const s = parseFpsSetting(setting);
   if (s !== null) return s;
   if (deviceClass === 'phone') return 30;
-  if (deviceClass === 'tablet') return 60;
+  if (FALLBACK_30.has(deviceClass)) return 60;
   return 0;
 }
 
 /**
  * createFramePacer({ deviceClass, setting, enabled })
  *   raf(ts)            once per rAF callback: returns the real time since the previous callback (s, clamped)
- *   decide(ts, mode, o) → { sim, draw }; mode: 'hidden' | 'idle' | 'loading' | 'covered' | 'overlay' | 'map' | 'parked' | 'flight';
+ *   decide(ts, mode, o) → { sim, draw }; mode: 'hidden' | 'idle' | 'loading' | 'covered' | 'overlay' | 'map' | 'parked' | 'cruise' | 'flight';
  *                        o.interacting (overlay boost), o.warming (true: no draw; 'render': draw now)
- *   drawn(ts, mode, judge)  after a drawn frame: the tablet 60 → 30 fallback (judge = false: start-up seconds, ignored)
+ *   drawn(ts, mode, judge)  after a drawn frame: the 60 → 30 fallback of FALLBACK_30 classes (judge = false: start-up
+ *                      seconds, ignored)
  *   setSetting(v)      player's fps setting changed
  *   stats              { mode, target, drawFps, simFps, vsync, cap, locked30 } (test hook / telemetry)
  */
@@ -80,7 +98,7 @@ export function createFramePacer({ deviceClass = 'desktop', setting = null, enab
   const displayFps = () => 1000 / vsync;
   function cap(ts) {
     const c = flightCap(deviceClass, userSetting);
-    if (deviceClass === 'tablet' && userSetting === null && ts < lockUntil) return 30;
+    if (FALLBACK_30.has(deviceClass) && userSetting === null && ts < lockUntil) return 30;
     return c;
   }
   /** Draw (or simulate) on this refresh for a target rate? Advances the stream's phase when it does. */
@@ -104,6 +122,7 @@ export function createFramePacer({ deviceClass = 'desktop', setting = null, enab
       case 'overlay': return o.interacting ? [c, c] : [c > 0 ? Math.min(c, PACE.overlaySim) : PACE.overlaySim, PACE.overlay];
       case 'map': return [c, PACE.overlay];
       case 'parked': { const p = PACE.parked[deviceClass] || PACE.parked.desktop; return c > 0 && c < p ? [c, c] : [p, p]; }
+      case 'cruise': { const k = userSetting === null ? PACE.cruise[deviceClass] || 0 : 0; return k > 0 && !(c > 0 && c <= k) ? [k, k] : [c, c]; }
       default: return [c, c];
     }
   }
@@ -145,9 +164,9 @@ export function createFramePacer({ deviceClass = 'desktop', setting = null, enab
       if (ts - secT >= 1000) { stats.drawFps = Math.round(secDraws * 10000 / (ts - secT)) / 10; stats.simFps = Math.round(secSims * 10000 / (ts - secT)) / 10; secT = ts; secDraws = secSims = 0; }
       return { sim, draw };
     },
-    /** After a drawn flight frame: tablets on 'auto' drop to 30 fps when 60 is not held, and try 60 again later. */
+    /** After a drawn flight frame: tablets / weak GPUs on 'auto' drop to 30 fps when 60 is not held, and try 60 again later. */
     drawn(ts, mode, judge = true) {
-      if (!enabled || deviceClass !== 'tablet' || userSetting !== null || mode !== 'flight' || ts < lockUntil || !judge) { winStart = -1; return; }
+      if (!enabled || !FALLBACK_30.has(deviceClass) || userSetting !== null || mode !== 'flight' || ts < lockUntil || !judge) { winStart = -1; return; }
       if (winStart < 0) { winStart = lastDrawTs = ts; winFrames = 0; winGap = 0; return; }
       winFrames++;
       winGap = Math.max(winGap, ts - lastDrawTs);
@@ -167,6 +186,8 @@ export function createFramePacer({ deviceClass = 'desktop', setting = null, enab
     setSetting(v) { userSetting = parseFpsSetting(v); lockUntil = 0; lowFor = 0; },
     /** The flight cap now (0 = display rate). */
     cap,
+    /** Frames per second of the cruise mode on this device / setting (0: none; main.js skips its motion estimate then). */
+    get cruiseFps() { return enabled && userSetting === null && PACE.cruise[deviceClass] > 0 ? PACE.cruise[deviceClass] : 0; },
     /** Drawn frames per second the current mode aims at (display rate when the target is 0). */
     targetFps(ts, mode, o = {}) { const t = targets(ts, mode, o)[1]; return t === 0 ? displayFps() : Math.max(t, 0); },
     get vsyncMs() { return vsync; },

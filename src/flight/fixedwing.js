@@ -32,6 +32,7 @@ import { createAutopilot, findApproach, approachGeometry, runwayEnds } from './f
 import { createLnav } from '../nav/lnav.js';
 import { FailureManager } from './failures.js';
 import { createFixedWingFailures, createFx } from './fixedwing-failures.js';
+import { createAssist } from './assist.js';
 
 const MAX_FRAME_DT = 0.25;
 const FT = 0.3048;
@@ -130,6 +131,7 @@ export class FixedWingModel {
     this.route = null;
     this.nav = null;
     this._lnav = createLnav();
+    this.assist = null;             // assisted flight layer (src/flight/assist.js), created by setAssist(true)
     this._navIn = { x: 0, z: 0, vx: 0, vz: 0, alt: 0, hdg: 0, category: spec.category, bankMax: (spec.autopilot?.bankMax ?? (this.fighter ? 45 : 25)) * DEG, onGround: true,
       rollTime: (spec.autopilot?.bankMax ?? (this.fighter ? 45 : 25)) / (spec.autopilot?.rollRate ?? (this.fighter ? 30 : 5)),
       headingGain: this.fighter ? 3.5 : (spec.autopilot?.Khdg ?? 2.0) };
@@ -268,6 +270,14 @@ export class FixedWingModel {
     this._leverLatched = airborne; this._leverRef = null;
     // an attached route is flown again from the new position
     if (this.route) { this.route.restart(this._pos.x, this._pos.z, heading); this._updateNav(0); }
+    if (this.assist) this.assist.reset();
+  }
+
+  /** Assisted flight (src/flight/assist.js) on / off; returns the layer (null when never switched on). */
+  setAssist(on) {
+    if (on && !this.assist) this.assist = createAssist(this);
+    if (this.assist) this.assist.setEnabled(!!on);
+    return this.assist;
   }
 
   _resetGround(start, world, heading, opts) {
@@ -500,7 +510,8 @@ export class FixedWingModel {
   step(dt, input, world) {
     if (this.crashed) return;
     if (this.ditched) { this._floatStep(dt, world); return; }
-    const inp = input || {};
+    const as = this.assist;
+    const inp = as && as.on ? as.input(clamp(Number.isFinite(dt) ? dt : 0, 0, MAX_FRAME_DT), input || {}, world) : (input || {});
     this._acc += clamp(Number.isFinite(dt) ? dt : 0, 0, MAX_FRAME_DT);
     this._loadAcc = 0; this._loadN = 0;
     this._frameInput(inp);

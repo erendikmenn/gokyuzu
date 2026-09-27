@@ -274,10 +274,13 @@ does not imply or constitute DoD endorsement.
 
 ## Privacy
 
-The live site sends anonymous usage beacons (aircraft, playing time, frame rate, errors, mission outcomes) to its own
-origin. It sets no cookies and stores no identifier; the server logs are deleted after 30 days; nothing is sent under
-Do Not Track or Global Privacy Control, or on `localhost`. The leaderboard stores a salted hash of a random browser
-key and an optional nickname, never an IP address. A fork of this repository sends nothing to the original site:
+The live site sends anonymous usage beacons (aircraft, playing time, frame rate, graphics card model, errors, mission
+outcomes) to its own origin. It sets no cookies and stores no identifier; the server logs are deleted after 30 days;
+nothing is sent under Do Not Track or Global Privacy Control, or on `localhost`. To count returning players without an
+identifier, the browser keeps only the day of its first visit, the day of its last visit and how many days it has
+played (`localStorage`), and the page-open beacon carries coarse buckets of them (days since the first visit, number of
+visit days); under Do Not Track / Global Privacy Control this record is neither written nor read. The leaderboard
+stores a salted hash of a random browser key and an optional nickname, never an IP address. A fork of this repository sends nothing to the original site:
 beacons and leaderboard requests go to the page's own origin.
 
 ## Contributing

@@ -29,6 +29,7 @@ import {
 import { AFCS } from './helicopter-afcs.js';
 import { createLnav } from '../nav/lnav.js';
 import { FailureManager } from './failures.js';
+import { createAssist } from './assist.js';
 
 const H = 1 / 120;             // internal fixed step (s)
 const MAX_FRAME_DT = 0.25;
@@ -159,6 +160,7 @@ export class HelicopterModel {
     this.route = null;
     this.nav = null;
     this._lnav = createLnav();
+    this.assist = null;           // assisted flight layer (src/flight/assist.js), created by setAssist(true)
     this._navIn = { x: 0, z: 0, vx: 0, vz: 0, alt: 0, hdg: 0, category: 'helicopter', bankMax: 20 * DEG, rollTime: 1, onGround: true };
     this.mass = spec.mass.typical;
     this._payload = spec.mass.typical - spec.mass.empty - spec.mass.fuel;
@@ -861,6 +863,14 @@ export class HelicopterModel {
     this._updateReadouts(world, 1, 0);
     // an attached route is flown again from the new position
     if (this.route) { this.route.restart(this._pos.x, this._pos.z, heading); this._lnav.reset(); this._updateNav(0); }
+    if (this.assist) this.assist.reset();
+  }
+
+  /** Assisted flight (src/flight/assist.js) on / off; returns the layer (null when never switched on). */
+  setAssist(on) {
+    if (on && !this.assist) this.assist = createAssist(this);
+    if (this.assist) this.assist.setEnabled(!!on);
+    return this.assist;
   }
 
   _initEnvAt(world) {
@@ -978,7 +988,9 @@ export class HelicopterModel {
     this._world = world;
     this._acc += clamp(dt || 0, 0, MAX_FRAME_DT);
     this._loadAcc = 0; this._loadN = 0;
-    const inp = input || {};
+    const inp0 = input || {};
+    const as = this.assist;
+    const inp = as && as.on ? as.input(clamp(dt || 0, 0, MAX_FRAME_DT), inp0, world) : inp0;
     this._handleLever(inp);
     this._updateNav(dt);
     const apWasOn = this.afcs.ap.on;
@@ -999,6 +1011,7 @@ export class HelicopterModel {
       this._gSmooth += (g - this._gSmooth) * clamp(dt / 0.12, 0, 1);
     }
     this._backdriveLever(inp);
+    if (inp !== inp0) inp0.throttle = inp.throttle;   // assisted flight: the lever the model flew (and back-drove)
     if (!this.crashed) { this._failFrame(dt); this.failures.frame(dt); }
     this._updateReadouts(world, this.crashed ? 1 : this._acc / H, dt);
   }

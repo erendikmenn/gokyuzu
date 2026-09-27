@@ -9,11 +9,23 @@
 // Exterior: per-emitter directivity (fan tones forward, jet roar aft), 1/r attenuation, air absorption, a delay line
 // driven by the *retarded* distance (so doppler, propagation delay and flyby timing are physical), panning from the
 // retarded position, Mach-cone gating + sonic boom. Interior: per-layer cockpit sends, muffled engine path.
+//
+// Player preferences (src/core/settings.js; createAudioSystem({ settings: false }) opts out, e.g. the dev/audio.html lab):
+//   volumes          setVolumes() (main.js passes settings.volumes); applied squared (perceptual taper)
+//   muted            follows settings.muted: silent AND the AudioContext suspended (no render thread work); while muted
+//                    before the first sound no AudioContext is created at all. setMuted() / toggleMute() (the M key)
+//                    persist the choice through patchSettings(), so "Sesi kapat" in Ayarlar and M are the same switch.
+//   alerts           settings.alerts.voice ('all' | 'critical' | 'off') filters spoken alerts, alerts.chimes the alert
+//                    tones / loops / A/P-disconnect alert (src/audio/alert-prefs.js)
+// iOS: the audio session is 'ambient' (the ring / silent switch silences the game, other apps' music keeps playing), the
+// context is created and resumed inside a user gesture and unlocked with a silent buffer.
 import * as THREE from 'three';
 import { band, clamp, db, sstep } from './util.js';
 import { approachGeometry, findApproach } from '../flight/fixedwing-autopilot.js';
 import { detectDevice } from '../core/gpu-device.js';   // mobile hook: staged decoding on phones / tablets
 import { activeMap } from '../maps/index.js';
+import { storedSettings, patchSettings } from '../core/settings.js';
+import { DEFAULT_ALERT_PREFS, alertPrefsFrom, voiceAllowed } from './alert-prefs.js';
 
 const isMobile = () => { try { const d = detectDevice(); return d.kind === 'phone' || d.kind === 'tablet'; } catch { return false; } };
 
@@ -27,7 +39,7 @@ const TRACE_MAX = 600;
 
 const num = (v, d = 0) => (typeof v === 'number' && Number.isFinite(v) ? v : typeof v === 'boolean' ? +v : d);
 
-export function createAudioSystem({ camera: defaultCamera } = {}) {
+export function createAudioSystem({ camera: defaultCamera, settings: followSettings = true } = {}) {
   let ctx = null;
   let G = null;
   let inst = null;
@@ -61,6 +73,7 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
 
   // user volume categories (0..1): master, engine (engines/rotors), voice (callouts + alert tones), atc, ambient
   const vol = { master: 1, engine: 1, voice: 1, atc: 1, ambient: 1 };
+  let alertPrefs = { ...DEFAULT_ALERT_PREFS };                // settings.alerts (voice filter, alert tones on / off)
   const ENGINE_LAYER = /^(whine|roar|ab|rumble|fan|buzzsaw|jet|reverse|apu|rotor|slap|tail|turbine|gearbox)/;
   const ENGINE_SHOT = /^(abLightoff|abOut|reverser)$/;
   const warnOnce = (k, ...a) => { if (!warned.has(k)) { warned.add(k); console.warn('[audio]', ...a); } };
@@ -74,13 +87,15 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
   function hookGesture() {
     if (gestureHooked) return;
     gestureHooked = true;
-    const go = () => {
-      if (ctx) return;
-      if (!ensureContext()) return;
-      if (pending && !inst) { inst = buildInstance(pending.id, pending.profile); pending = null; }
-      if (started) start();
-    };
+    const go = () => { if (!ctx) activate(); };
     for (const ev of ['pointerdown', 'keydown', 'touchend', 'mousedown']) window.addEventListener(ev, go, { passive: true, capture: true });
+  }
+  /** Create the context (inside a user gesture) and attach what was loaded before it existed. */
+  function activate() {
+    if (!ctx && !ensureContext()) return false;
+    if (pending && !inst) { inst = buildInstance(pending.id, pending.profile); pending = null; }
+    if (started) start();
+    return true;
   }
   let decodeCtx = null;
   function decoder() {
@@ -96,8 +111,14 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
     if (ctx) return ctx;
     const AC = typeof window !== 'undefined' && (window.AudioContext || window.webkitAudioContext);
     if (!AC) { warnOnce('noac', 'Web Audio unavailable'); return null; }
+    if (api.muted) { hookGesture(); return null; }                 // muted: no context until the player wants sound
     if (!hasGesture()) { hookGesture(); return null; }
+    // iOS / iPadOS (Safari 17+): an explicit 'ambient' session respects the ring / silent switch and mixes with the
+    // player's music instead of stopping it (the settings panel tells iPhone players about the switch)
+    try { const as = navigator.audioSession; if (as && as.type === 'auto') as.type = 'ambient'; } catch { /* older WebKit */ }
     try { ctx = new AC({ latencyHint: 'interactive' }); } catch (e) { warnOnce('acfail', 'AudioContext failed', e); return null; }
+    // iOS unlock: a context started from a gesture plays once a first buffer has started inside that gesture
+    try { const b = ctx.createBufferSource(); b.buffer = ctx.createBuffer(1, 1, ctx.sampleRate); b.connect(ctx.destination); b.start(0); } catch { /* */ }
     G = {};
     const g = (v = 1) => { const n = ctx.createGain(); n.gain.value = v; return n; };
     G.out = g(0);
@@ -143,6 +164,7 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
 
   function start() {
     started = true;
+    syncHost();
     if (!ensureContext()) return;
     if (ctx.state !== 'running' && !wantIdle()) ctx.resume().catch(() => {});
     syncIdle();
@@ -155,10 +177,44 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
     G.out.gain.setTargetAtTime(0.89, t + 0.05, 0.35);
   }
 
-  function setMuted(m) {
-    api.muted = !!m;
-    if (G) G.mute.gain.setTargetAtTime(api.muted ? 0 : 1, ctx.currentTime, 0.05);
+  /** Mute / unmute everything (the levels are kept). In the game (settings mode) the choice is persisted as settings.muted
+   *  unless save is false. Unmuting inside a user gesture creates / resumes the context there (iOS). Returns the state. */
+  function setMuted(m, { save = followSettings } = {}) {
+    const want = !!m;
+    const changed = want !== api.muted;
+    api.muted = want;
+    if (G) G.mute.gain.setTargetAtTime(want ? 0 : 1, ctx.currentTime, 0.05);
+    if (!want && !ctx) activate();
     syncIdle();
+    if (changed && save) patchSettings({ muted: want });           // → 'gokyuzu:settings': Ayarlar, telemetry
+    syncHost();
+    return want;
+  }
+  const toggleMute = () => setMuted(!api.muted);
+  // src/app/main.js's M handler flips its own flag (window.__game.userMuted) and hands it to setMuted(): keep that flag equal
+  // to the real (persisted) state, so the next press always flips what the player hears. Harmless once the host calls
+  // toggleMute() instead.
+  function syncHost() {
+    try { const g = globalThis.__game; if (followSettings && g && g.audio === api && typeof g.userMuted === 'boolean') g.userMuted = api.muted; } catch { /* */ }
+  }
+
+  /** settings.alerts → which spoken alerts / alert tones may sound (src/audio/alert-prefs.js); applies at once. */
+  function setAlertPrefs(p) {
+    const n = alertPrefsFrom(p);
+    if (n.voice === alertPrefs.voice && n.chimes === alertPrefs.chimes) return;
+    alertPrefs = n;
+    const I = inst;
+    if (!I || !ctx) return;
+    I.queue = I.queue.filter((q) => voiceAllowed(q.tag, n.voice));
+    if (I.voice && !voiceAllowed(I.voice.tag, n.voice)) {
+      const cur = I.voice; try { cur.src && cur.src.stop(); } catch { /* */ }
+      I.ended[cur.tag] = ctx.currentTime; traceAdd('voice-', cur.tag, { cut: true }); I.voice = null;
+    }
+    if (!n.chimes) {
+      stopApDisc(I);
+      for (const id in I.sysLoops) { const L = I.sysLoops[id]; if (L.on) { L.on = false; traceAdd('loop-', id); } loopGain(L, 0, 0.03); }
+      for (const id in I.alertLoops) loopGain(I.alertLoops[id], 0, 0.03);
+    }
   }
 
   function setPaused(p) {
@@ -765,7 +821,7 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
   // tags 'group#key' (e.g. 'fwc:co#50'): a newer item of the same group replaces older queued ones (callouts)
   const groupOf = (tag) => { const i = tag.indexOf('#'); return i < 0 ? null : tag.slice(0, i); };
   function enqueueVoice(I, rel, prio, tag, maxAge = 3, gainDb = 0, system = '') {
-    if (!rel) return;
+    if (!rel || !voiceAllowed(tag, alertPrefs.voice)) return;      // settings.alerts.voice ('critical' / 'off')
     const now = ctx.currentTime;
     if (I.voice && I.voice.tag === tag && tag !== 'co') return;
     if (I.queue.some((q) => q.tag === tag && tag !== 'co')) return;
@@ -831,7 +887,7 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
       if (active) { try { on = !!r.when(s); } catch { on = false; } }
       if (r.loop) {
         const L = I.alertLoops[r.id];
-        if (L) loopGain(L, on ? db(r.loopDb ?? 0) * L.norm : 0, on ? 0.02 : 0.08);
+        if (L) loopGain(L, on && alertPrefs.chimes ? db(r.loopDb ?? 0) * L.norm : 0, on ? 0.02 : 0.08);
       }
       if (r.voice) {
         const busy = (I.voice && I.voice.tag === r.id) || I.queue.some((q) => q.tag === r.id);
@@ -884,7 +940,7 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
       }
       for (const id in I.sysLoops) {
         const L = I.sysLoops[id];
-        const on = run && !!I.loopReq[id];
+        const on = run && !!I.loopReq[id] && alertPrefs.chimes;      // (alert tones off: the loop stays silent)
         if (on !== L.on) { L.on = on; traceAdd(on ? 'loop+' : 'loop-', id, on && I.loopWhy[id] ? { why: I.loopWhy[id] } : undefined); }
         loopGain(L, on ? db(L.db) * L.norm : 0, on ? 0.015 : 0.06);
       }
@@ -912,6 +968,7 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
         }
       },
       tone(rel, o = {}) {
+        if (!alertPrefs.chimes) return;                              // settings.alerts.chimes
         playFile(I, rel, { bus: G.alert, gain: db(o.gainDb ?? 0) }); traceAdd('tone', o.tag || rel, { rel });
         I.toneUntil = Math.max(I.toneUntil || 0, ctx.currentTime + (manifest?.[rel]?.dur ?? 1.5));
       },
@@ -1045,6 +1102,7 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
     const boeing = A.style === 'boeing';
     const now = ctx.currentTime;
     if (!involuntary && A.apButton) shot(I, A.apButton, { ext: 0, int: 0.8 });     // the disconnect pushbutton
+    if (!alertPrefs.chimes) return;                                 // alert tones off (settings.alerts.chimes): the click only
     const loop = boeing || involuntary;
     // 737: >= 2 s after a disconnect-switch press, until reset after an automatic disengage (safety cap 30 s);
     // A320: 1.5 s (take-over pb), permanent after an automatic disconnect until MASTER WARN / pb (cap 30 s)
@@ -1335,6 +1393,7 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
     const I = inst;
     if (name === 'crash') { if (ctx.currentTime - I.crashT > 1) { I.crashT = ctx.currentTime; shot(I, 'crash', { ext: 1.4, int: 1.2 }); } return; }
     const r = resolveName(I, String(name));
+    if (name === 'chime' && !alertPrefs.chimes) return;
     if (r.apd) { apDisconnect(I, false); return; }
     if (r.rel === 'boom') { playBoom(I, I.emitters.air); return; }
     if (r.voice) { enqueueVoice(I, r.rel, 6, 'play:' + name, 2); return; }
@@ -1365,6 +1424,9 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
     }
     return {
       state: ctx ? ctx.state : 'none', sampleRate: ctx?.sampleRate, masterGain: G ? +G.vol.gain.value.toFixed(3) : null, aircraft: I?.id ?? null, rmsDb: +rms.toFixed(1), peakDb: +peak.toFixed(1),
+      muted: api.muted, idle: idleSuspended, volumes: { ...vol }, alertPrefs: { ...alertPrefs },
+      // current gain of the user-controlled nodes (master = master², atc = atc², alert = view × voice², mute 0 / 1)
+      gains: G ? { master: +G.vol.gain.value.toFixed(3), mute: +G.mute.gain.value.toFixed(3), alert: +G.alert.gain.value.toFixed(3), atc: +G.atc.gain.value.toFixed(3), duck: +G.duck.gain.value.toFixed(3) } : null,
       reduction: G ? +(G.glue.reduction ?? 0).toFixed?.(1) : 0,
       layers: I ? I.layers.map((L) => ({ id: L.id, loaded: !!L.src, g: +(L.last.g ?? 0).toFixed(3), rate: +(L.last.rate ?? 1).toFixed(3), ext: +(L.last.ext ?? 0).toFixed(3), int: +(L.last.int ?? 0).toFixed(3) })) : [],
       emitters: I ? Object.values(I.emitters).map((e) => ({ name: e.name, d: +e.d.toFixed(1), delay: +e.delayCur.toFixed(3), tau: +e.tau.toFixed(3), cos: +e.cos.toFixed(2), inside: e.inside !== false })) : [],
@@ -1388,8 +1450,9 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
 
   const api = {
     muted: false,
-    start, setMuted, setPaused, loadAircraft, update, play, debug, setVolumes, acknowledge,
+    start, setMuted, toggleMute, setPaused, loadAircraft, update, play, debug, setVolumes, setAlertPrefs, acknowledge,
     get volumes() { return { ...vol }; },
+    get alertPrefs() { return { ...alertPrefs }; },
     get atcInput() { return G ? G.atc : null; },       // connect ATC/radio sources here (atc volume applies)
     get context() { return ctx; },
     get analyser() { return G ? G.analyser : null; },
@@ -1407,5 +1470,16 @@ export function createAudioSystem({ camera: defaultCamera } = {}) {
     get apdActive() { return !!(inst && inst.apd); },
   };
   if (typeof window !== 'undefined') window.__audioSys = api;   // test hook (headless checks)
+  // the player's stored choices (volumes come from main.js through setVolumes) and their live changes
+  if (followSettings && typeof window !== 'undefined') {
+    const applyPrefs = (st) => {
+      if (!st || typeof st !== 'object') return;
+      if (typeof st.muted === 'boolean' && st.muted !== api.muted) setMuted(st.muted, { save: false });
+      if (st.alerts) setAlertPrefs(st.alerts);
+      syncHost();
+    };
+    try { applyPrefs(storedSettings()); } catch (e) { warnOnce('prefs', 'settings unavailable', e); }
+    window.addEventListener('gokyuzu:settings', (e) => applyPrefs(e.detail));
+  }
   return api;
 }

@@ -11,8 +11,8 @@ globalThis.localStorage = mem();
 globalThis.sessionStorage = mem();
 if (typeof globalThis.location === 'undefined') globalThis.location = { search: '', pathname: '/index.html' };
 
-const { classifyDevice } = await import('../src/core/gpu-device.js');
-const { resolveQuality, lowerQuality, setQualityCap, capQuality, clearQualityCap, QUALITY } = await import('../src/core/quality.js');
+const { classifyDevice, gpuLabel, softwareRenderAdvice, integratedGpuAdvice } = await import('../src/core/gpu-device.js');
+const { resolveQuality, lowerQuality, setQualityCap, capQuality, clearQualityCap, QUALITY, detectQuality, qualitySource } = await import('../src/core/quality.js');
 const { flightSnapshot, saveSnapshot, readResume, markSnapshotClosed, applyResume, resumeStart } = await import('../src/core/gpu-resume.js');
 const { createFixedWingModel } = await import('../src/flight/fixedwing.js');
 const { createRoute } = await import('../src/nav/route.js');
@@ -22,6 +22,8 @@ const check = (name, ok, detail = '') => rows.push({ name, ok: !!ok, detail });
 
 // ---- device classes -----------------------------------------------------------------------------------------------
 const SAFARI_MAC = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Safari/605.1.15';
+const WIN = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36';
+const WIN_FF = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:156.0) Gecko/20100101 Firefox/156.0';
 const cases = [
   ['iPadOS Safari (desktop UA + touch)', { ua: SAFARI_MAC, platform: 'MacIntel', maxTouchPoints: 5, gpu: 'Apple GPU' }, 'tablet'],
   ['macOS Safari', { ua: SAFARI_MAC, platform: 'MacIntel', maxTouchPoints: 0, gpu: 'Apple GPU' }, 'desktop/apple'],
@@ -33,6 +35,25 @@ const cases = [
   ['Chrome on AMD APU', { ua: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)', gpu: 'ANGLE (AMD, AMD Radeon(TM) Graphics (0x00001638) Direct3D11 vs_5_0 ps_5_0, D3D11)' }, 'desktop/integrated'],
   ['Chrome on RTX 3060', { ua: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)', gpu: 'ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 Direct3D11 vs_5_0 ps_5_0, D3D11)' }, 'desktop/discrete'],
   ['Firefox on llvmpipe', { ua: 'Mozilla/5.0 (X11; Linux x86_64; rv:130.0) Gecko Firefox/130.0', gpu: 'llvmpipe (LLVM 15.0.7, 256 bits)' }, 'desktop/software'],
+  // Windows (live telemetry, 23–26 Sep 2026): software rasterizers, old / entry-level dedicated GPUs, strong iGPUs
+  ['Chrome on WARP (no GPU driver)', { ua: WIN, gpu: 'ANGLE (Microsoft, Microsoft Basic Render Driver (0x0000008C) Direct3D11 vs_5_0 ps_5_0, D3D11)' }, 'desktop/software'],
+  ['Chrome on SwiftShader', { ua: WIN, gpu: 'ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)' }, 'desktop/software'],
+  ['GT 730', { ua: WIN, gpu: 'ANGLE (NVIDIA, NVIDIA GeForce GT 730 (0x00001287) Direct3D11 vs_5_0 ps_5_0, D3D11)' }, 'desktop/entry'],
+  ['Quadro K2200', { ua: WIN, gpu: 'ANGLE (NVIDIA, NVIDIA Quadro K2200 Direct3D11 vs_5_0 ps_5_0, D3D11)' }, 'desktop/entry'],
+  ['GTX 480', { ua: WIN, gpu: 'ANGLE (NVIDIA, NVIDIA GeForce GTX 480 Direct3D11 vs_5_0 ps_5_0, D3D11)' }, 'desktop/entry'],
+  ['RX 550', { ua: WIN, gpu: 'ANGLE (AMD, Radeon RX550/550 Series Direct3D11 vs_5_0 ps_5_0, D3D11)' }, 'desktop/entry'],
+  ['GeForce MX150', { ua: WIN, gpu: 'ANGLE (NVIDIA, NVIDIA GeForce MX150 Direct3D11 vs_5_0 ps_5_0, D3D11)' }, 'desktop/entry'],
+  ['GTX 1050 Ti (Firefox name)', { ua: WIN_FF, gpu: 'ANGLE (NVIDIA, NVIDIA GeForce GTX 1050 Ti Direct3D11 vs_5_0 ps_5_0), or similar' }, 'desktop/midrange'],
+  ['Radeon R9 200', { ua: WIN, gpu: 'ANGLE (AMD, Radeon R9 200 Series Direct3D11 vs_5_0 ps_5_0, D3D11)' }, 'desktop/midrange'],
+  ['Arc A380', { ua: WIN, gpu: 'ANGLE (Intel, Intel(R) Arc(TM) A380 Graphics Direct3D11 vs_5_0 ps_5_0, D3D11)' }, 'desktop/midrange'],
+  ['GTX 980 stays high-class', { ua: WIN, gpu: 'ANGLE (NVIDIA, NVIDIA GeForce GTX 980 Direct3D11 vs_5_0 ps_5_0, D3D11)' }, 'desktop/discrete'],
+  ['GTX 1650 stays high-class', { ua: WIN, gpu: 'ANGLE (NVIDIA, NVIDIA GeForce GTX 1650 Direct3D11 vs_5_0 ps_5_0, D3D11)' }, 'desktop/discrete'],
+  ['RTX 4060 Laptop', { ua: WIN, gpu: 'ANGLE (NVIDIA, NVIDIA GeForce RTX 4060 Laptop GPU (0x000028E0) Direct3D11 vs_5_0 ps_5_0, D3D11)' }, 'desktop/discrete'],
+  ['Arc A770', { ua: WIN, gpu: 'ANGLE (Intel, Intel(R) Arc(TM) A770 Graphics (0x000056A0) Direct3D11 vs_5_0 ps_5_0, D3D11)' }, 'desktop/discrete'],
+  ['Radeon 780M (fast iGPU)', { ua: WIN, gpu: 'ANGLE (AMD, AMD Radeon 780M Graphics (0x000015BF) Direct3D11 vs_5_0 ps_5_0, D3D11)' }, 'desktop/integrated-fast'],
+  ['Intel Arc iGPU (Core Ultra)', { ua: WIN, gpu: 'ANGLE (Intel, Intel(R) Arc(TM) Graphics (0x00007D55) Direct3D11 vs_5_0 ps_5_0, D3D11)' }, 'desktop/integrated-fast'],
+  ['Intel UHD 620', { ua: WIN, gpu: 'ANGLE (Intel, Intel(R) UHD Graphics 620 (0x00005917) Direct3D11 vs_5_0 ps_5_0, D3D11)' }, 'desktop/integrated'],
+  ['Radeon 610M', { ua: WIN, gpu: 'ANGLE (AMD, AMD Radeon 610M (0x000015E7) Direct3D11 vs_5_0 ps_5_0, D3D11)' }, 'desktop/integrated'],
 ];
 for (const [name, input, want] of cases) {
   const d = classifyDevice(input);
@@ -50,6 +71,17 @@ check('desktop Mac keeps the full "high" preset', qm.shadowMapSize === 4096 && q
 const qp = resolveQuality('low', phone);
 check('phone budget below tablet budget below desktop "low"', qp.gpuBudgetMB < resolveQuality('low', ipad).gpuBudgetMB && resolveQuality('low', ipad).gpuBudgetMB <= QUALITY.low.gpuBudgetMB, `${qp.gpuBudgetMB} / ${resolveQuality('low', ipad).gpuBudgetMB} / ${QUALITY.low.gpuBudgetMB}`);
 check('resolveQuality is memoized (identity stable for main.js)', resolveQuality('medium', ipad) === resolveQuality('medium', ipad));
+// phones keep the "low" pixel ratio, terrain, imagery, shadows and antialiasing whatever preset the player picks (live data:
+// iPhone page deaths on ultra 6/25 flights against low 9/238); the presets still differ in clouds, water and traffic
+const phonePresets = ['low', 'medium', 'high', 'ultra'].map((id) => resolveQuality(id, phone));
+check('phone caps on every preset: pixel ratio 1, no shadows / MSAA, low terrain error and imagery depth',
+  phonePresets.every((q) => q.pixelRatioMax === 1 && q.shadows === false && q.cityShadows === false && q.antialias === false && q.terrainError >= QUALITY.low.terrainError && q.imageryMaxLevel <= QUALITY.low.imageryMaxLevel),
+  phonePresets.map((q) => `${q.id}: pr ${q.pixelRatioMax} sh ${q.shadows} aa ${q.antialias} te ${q.terrainError} img ${q.imageryMaxLevel}`).join(' · '));
+const look = (q) => `${q.clouds}/${q.water}`;
+check('phone presets still change something: clouds / water differ between low, medium and high',
+  new Set(phonePresets.slice(0, 3).map(look)).size === 3, phonePresets.map(look).join(' '));
+const qt = resolveQuality('high', ipad);
+check('tablet caps unchanged by the phone caps: shadows, MSAA and the preset terrain stay', qt.shadows === true && qt.antialias === true && qt.terrainError === QUALITY.high.terrainError && qt.imageryMaxLevel === QUALITY.high.imageryMaxLevel);
 // WebKit footprint (render agent, docs/perf/findings-2026-09.md T5): meter budgets for iOS / iPadOS, not for Chromium
 const engines = [['iPadOS Safari', ipad, 'webkit'], ['macOS Safari', mac, 'webkit'], ['iPhone', phone, 'webkit'],
   ['Chrome on a Mac', classifyDevice(cases[2][1]), 'blink'], ['Android Chrome', classifyDevice(cases[4][1]), 'blink'],
@@ -58,6 +90,41 @@ check('browser engine: Safari / every iOS browser = webkit, Chrome / Android = b
 const tabWK = resolveQuality('medium', ipad), tabBlink = resolveQuality('medium', { ...ipad, engine: 'blink' });
 check('WebKit tablet: meter budget for a ~3 GB footprint (below the Chromium tablet budget)', tabWK.gpuBudgetMB < tabBlink.gpuBudgetMB && tabWK.gpuBudgetMB > 1000 && tabWK.gpuBudgetMB < 1200, `${tabWK.gpuBudgetMB} vs ${tabBlink.gpuBudgetMB}`);
 check('WebKit phone: meter budget for a ~2.1 GB footprint; desktop Safari unchanged', qp.gpuBudgetMB < 800 && qp.gpuBudgetMB > 650 && resolveQuality('high', mac).gpuBudgetMB === QUALITY.high.gpuBudgetMB, `${qp.gpuBudgetMB}`);
+// ---- Windows classes → presets (live telemetry: software rasterizers, weak dedicated GPUs) ----------------------------
+const dev = (name) => classifyDevice(cases.find((c) => c[0] === name)[1]);
+const presets = [['Chrome on WARP (no GPU driver)', 'low'], ['GT 730', 'low'], ['GTX 480', 'low'], ['GTX 1050 Ti (Firefox name)', 'medium'],
+  ['Radeon R9 200', 'medium'], ['Radeon 780M (fast iGPU)', 'medium'], ['Intel UHD 620', 'low'], ['GTX 980 stays high-class', 'high'], ['RTX 4060 Laptop', 'high']];
+check('default preset per Windows class (software / entry → low, midrange / fast iGPU → medium, discrete → high)', presets.every(([n, q]) => detectQuality(dev(n)) === q),
+  presets.map(([n]) => `${n}: ${detectQuality(dev(n))}`).join(', '));
+const sw = resolveQuality('high', dev('Chrome on WARP (no GPU driver)'));
+check('software renderer: fewer pixels (0.6, floor 0.5), no MSAA / shadows, coarser terrain, even on a chosen "high"',
+  sw.pixelRatioMax === 0.6 && sw.pixelRatioMin === 0.5 && sw.antialias === false && sw.shadows === false && sw.terrainError >= 3.5 && sw.clouds === 'low' && sw.water === 'simple' && sw.deviceClass === 'software',
+  `pr ${sw.pixelRatioMax}/${sw.pixelRatioMin} aa ${sw.antialias} shadows ${sw.shadows} terrain ${sw.terrainError} budget ${sw.gpuBudgetMB}`);
+check('software renderer budget above what "low" uses there (the monitor fired at 805–921 MB with nothing to lower)', resolveQuality('low', dev('Chrome on SwiftShader')).gpuBudgetMB >= 1100);
+const entry = resolveQuality('high', dev('GT 730')), fast = resolveQuality('medium', dev('Radeon 780M (fast iGPU)'));
+check('entry-level dedicated GPU: integrated-style memory caps on any preset; fast iGPU: integrated caps', entry.gpuBudgetMB <= 1500 && entry.textureMaxSize <= 2048 && entry.pixelRatioMax <= 1 && fast.deviceClass === 'integrated' && fast.gpuBudgetMB <= 1700,
+  `entry ${entry.deviceClass} ${entry.gpuBudgetMB} MB · fast ${fast.deviceClass} ${fast.gpuBudgetMB} MB`);
+check('discrete Windows GPU keeps the full "high" preset', resolveQuality('high', dev('RTX 4060 Laptop')).gpuBudgetMB === QUALITY.high.gpuBudgetMB && resolveQuality('high', dev('RTX 4060 Laptop')).deviceClass === 'desktop');
+check('preset source: auto / user / cap / resume / url', qualitySource({ running: 'low', auto: 'low' }) === 'auto' && qualitySource({ running: 'high', stored: 'high', auto: 'low' }) === 'user'
+  && qualitySource({ running: 'medium', stored: 'ultra', auto: 'high', cap: 'medium' }) === 'cap' && qualitySource({ running: 'medium', auto: 'high', cap: 'high' }) === 'resume'
+  && qualitySource({ running: 'low', auto: 'high', url: 'low' }) === 'url');
+const labels = [
+  ['ANGLE (Intel, Intel(R) UHD Graphics 620 (0x00005917) Direct3D11 vs_5_0 ps_5_0, D3D11)', 'Intel UHD Graphics 620'],
+  ['ANGLE (AMD, AMD Radeon(TM) Graphics (0x00001638) Direct3D11 vs_5_0 ps_5_0, D3D11)', 'AMD Radeon Graphics'],
+  ['ANGLE (Apple, ANGLE Metal Renderer: Apple M4 Max, Unspecified Version)', 'Apple M4 Max'],
+  ['ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)', 'SwiftShader'],
+  ['ANGLE (Microsoft, Microsoft Basic Render Driver (0x0000008C) Direct3D11 vs_5_0 ps_5_0, D3D11)', 'Microsoft Basic Render Driver'],
+  ['ANGLE (NVIDIA, NVIDIA GeForce GTX 980 Direct3D11 vs_5_0 ps_5_0), or similar', 'NVIDIA GeForce GTX 980'],
+  ['Apple M1, or similar', 'Apple M1'], ['Adreno (TM) 650', 'Adreno 650'], ['llvmpipe (LLVM 15.0.7, 256 bits)', 'llvmpipe'],
+  ['ANGLE (AMD, AMD Radeon RX 580 Series (radeonsi, polaris10, LLVM 15.0.7, DRM 3.49, 6.1.0), OpenGL 4.6)', 'AMD Radeon RX 580 Series'],
+  ['ANGLE (Samsung Xclipse 920) on Vulkan 1.1.179', 'Samsung Xclipse 920'], ['Apple GPU', 'Apple GPU'],
+];
+check('telemetry GPU names keep the model ("Intel UHD Graphics 620", not "Intel")', labels.every(([raw, want]) => gpuLabel(raw) === want), labels.filter(([raw, want]) => gpuLabel(raw) !== want).map(([raw]) => gpuLabel(raw)).join(' | '));
+const advWarp = softwareRenderAdvice(dev('Chrome on WARP (no GPU driver)'), WIN), advFf = softwareRenderAdvice(classifyDevice(cases[9][1]), cases[9][1].ua);
+check('software notice: driver + Chrome setting on WARP, Firefox setting in Firefox, none for a real GPU',
+  advWarp && advWarp.steps.some((t) => /sürücü/.test(t)) && advWarp.steps.some((t) => /Chrome: Ayarlar → Sistem/.test(t)) && advFf && advFf.steps.some((t) => /Firefox/.test(t))
+  && softwareRenderAdvice(dev('Intel UHD 620'), WIN) === null && softwareRenderAdvice(classifyDevice(cases[3][1])) === null);
+check('hybrid-graphics hint only for Windows integrated GPUs', !!integratedGpuAdvice(dev('Intel UHD 620')) && integratedGpuAdvice(dev('RTX 4060 Laptop')) === null && integratedGpuAdvice(classifyDevice(cases[1][1])) === null);
 check('every preset has a budget and release policy', Object.values(QUALITY).every((q) => q.gpuBudgetMB > 0 && q.maxImageryTiles > 0 && q.releaseImages === true));
 check('quality steps: ultra → high → medium → low → none', lowerQuality('ultra') === 'high' && lowerQuality('medium') === 'low' && lowerQuality('low') === null);
 

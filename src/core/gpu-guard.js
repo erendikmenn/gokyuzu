@@ -17,7 +17,7 @@ import { attachGpuMeter } from './gpu-meter.js';
 import { createTexturePolicy } from './gpu-textures.js';
 import { saveSnapshot, markSnapshotClosed, markSnapshotAlive } from './gpu-resume.js';
 import { lowerQuality, setQualityCap, QUALITY } from './quality.js';
-import { detectDevice, deviceLabel } from './gpu-device.js';
+import { detectDevice, deviceLabel, gpuLabel, rendererString, softwareRenderAdvice } from './gpu-device.js';
 import { trackEvent } from './telemetry.js';
 
 const LOSS_KEY = 'gokyuzu.gpuLosses';
@@ -31,18 +31,13 @@ export function noteGpuFailure() { return addLoss(); }
 function addLoss() { const l = losses(); l.push(Date.now()); try { sessionStorage.setItem(LOSS_KEY, JSON.stringify(l)); } catch { /* ignore */ } return l.length; }
 
 export function shortGpuName(renderer) {
-  try {
-    const gl = renderer.getContext();
-    const ext = gl.getExtension('WEBGL_debug_renderer_info');
-    const raw = String(ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER));
-    const m = /Renderer: ([^,)]+)/.exec(raw) || /^ANGLE \([^,]*, ([^,(]+)/.exec(raw);
-    return (m ? m[1] : raw).replace(/ (Direct3D|OpenGL|Vulkan).*$/, '').trim().slice(0, 60);
-  } catch { return detectDevice().gpu.slice(0, 60); }
+  try { return gpuLabel(rendererString(renderer.getContext())) || gpuLabel(detectDevice().gpu); } catch { return gpuLabel(detectDevice().gpu); }
 }
 
 // ---- notice (Turkish, over everything; the canvas behind it may be empty) ----
 let noticeEl = null;
-export function showGpuNotice(text, buttons = []) {
+/** Full-screen notice card: `text`, optional `buttons` [[label, fn]], opts { title, steps: [text] (a numbered list) }. */
+export function showGpuNotice(text, buttons = [], { title = '', steps = [] } = {}) {
   if (typeof document === 'undefined') return;
   if (!noticeEl) {
     noticeEl = document.createElement('div');
@@ -53,11 +48,24 @@ export function showGpuNotice(text, buttons = []) {
   }
   noticeEl.textContent = '';
   const card = document.createElement('div');
-  card.style.cssText = 'max-width:min(460px,calc(100vw - 32px));padding:22px 24px;border-radius:14px;background:#122033;border:1px solid rgba(255,255,255,.12);box-shadow:0 12px 40px rgba(0,0,0,.45);text-align:center';
+  card.style.cssText = 'max-width:min(520px,calc(100vw - 32px));max-height:calc(100vh - 32px);overflow:auto;box-sizing:border-box;padding:22px 24px;border-radius:14px;background:#122033;border:1px solid rgba(255,255,255,.12);box-shadow:0 12px 40px rgba(0,0,0,.45);text-align:center';
+  if (title) {
+    const h = document.createElement('h2');
+    h.style.cssText = 'margin:0 0 8px;font-size:19px;font-weight:700';
+    h.textContent = title;
+    card.append(h);
+  }
   const p = document.createElement('p');
   p.style.cssText = 'margin:0';
   p.textContent = text;
   card.append(p);
+  if (steps.length) {
+    card.style.textAlign = 'left';
+    const ol = document.createElement('ol');
+    ol.style.cssText = 'margin:12px 0 0;padding-left:22px;font-size:14.5px;line-height:1.5;color:#cfdbe8';
+    for (const t of steps) { const li = document.createElement('li'); li.style.margin = '6px 0'; li.textContent = t; ol.append(li); }
+    card.append(ol);
+  }
   if (buttons.length) {
     const row = document.createElement('div');
     row.style.cssText = 'display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:16px';
@@ -70,11 +78,39 @@ export function showGpuNotice(text, buttons = []) {
       row.append(b);
     }
     card.append(row);
+    try { row.firstChild.focus({ preventScroll: true }); } catch { /* ignore */ }   // keyboard: Enter / Space answers it
   }
   noticeEl.append(card);
   noticeEl.style.display = 'flex';
 }
 export function hideGpuNotice() { if (noticeEl) noticeEl.style.display = 'none'; }
+
+// ---- software renderer notice ----
+// Live telemetry (23–26 Sep 2026): 4 % of the Windows sessions drew with the Microsoft Basic Render Driver (WARP: no
+// working GPU driver, remote desktop, a virtual machine) at ~10 fps and left after a median of 1 active minute, with
+// nothing on screen saying why. They now start on the software caps (src/core/quality.js DEVICE_CAPS.software) and get
+// this notice before the menu: what is wrong and how to turn the graphics card on in their browser. Once per tab, again
+// after 3 days (localStorage gokyuzu.swNotice); ?swnotice=1 shows it on any device (testing), ?swnotice=0 never.
+const SW_KEY = 'gokyuzu.swNotice';
+const SW_AGAIN = 3 * 86400000;
+export function softwareNotice({ force = null } = {}) {
+  if (typeof document === 'undefined' || typeof location === 'undefined') return false;
+  const q = new URLSearchParams(location.search).get('swnotice');
+  if (q === '0') return false;
+  const forced = force ?? q === '1';
+  let dev = detectDevice();
+  if (forced && dev.tier !== 'software') dev = { ...dev, kind: 'desktop', tier: 'software' };
+  const advice = softwareRenderAdvice(dev);
+  if (!advice) return false;
+  if (!forced) {
+    try { if (sessionStorage.getItem(SW_KEY)) return false; } catch { /* ignore */ }
+    try { const t = Number(localStorage.getItem(SW_KEY)); if (t && Date.now() - t < SW_AGAIN) return false; } catch { /* ignore */ }
+  }
+  showGpuNotice(advice.text, [['Anladım, devam et', hideGpuNotice]], { title: advice.title, steps: advice.steps });
+  try { sessionStorage.setItem(SW_KEY, '1'); localStorage.setItem(SW_KEY, String(Date.now())); } catch { /* private mode */ }
+  trackEvent('gfx', { ev: 'sw', gpu: gpuLabel(dev.gpu), dev: deviceLabel(dev) });
+  return true;
+}
 
 /**
  * createGpuGuard({ renderer, state, getQuality, onHalt, onStepDown })
@@ -90,6 +126,7 @@ export function createGpuGuard({ renderer, state, getQuality, onHalt = () => {},
   const textures = createTexturePolicy(renderer, getQuality);
   const t0 = performance.now();
   const gpuName = shortGpuName(renderer);   // read now: a lost context answers null
+  softwareNotice();   // software renderer: why the game is slow and how to turn the graphics card on (before the menu)
   let failing = false, restored = false, renderErrors = 0, lastRenderError = '';
   let acc = 0, snapAcc = 0, sweepAcc = 6, overFor = 0, lastStep = -1e9, budgetReported = false, lastMb = 0, fallingAt = -1e9;
   const budgetOn = new URLSearchParams(location.search).get('gpubudget') !== '0';   // ?gpubudget=0: measure without the monitor

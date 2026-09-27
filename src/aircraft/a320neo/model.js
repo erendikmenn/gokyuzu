@@ -7,6 +7,7 @@
 // thrust levers, side-sticks, speed brake / flap / gear levers and rudder pedals.
 import * as THREE from 'three';
 import { singlePassFlatGlass } from '../glass.js';
+import { mergeStatic } from '../merge-static.js';
 
 // URLs resolved against this module so they work from index.html and from dev/*.html alike.
 const repo = (p) => new URL(`../../../${p}`, import.meta.url).href;
@@ -73,6 +74,10 @@ export function createRig(gltfScene) {
   const byName = new Map();
   gltfScene.traverse((o) => { if (o.name && !byName.has(o.name)) byName.set(o.name, o); });
   singlePassFlatGlass(gltfScene);
+  // static parts by material (../merge-static.js): wings, fin and wing roots, tailplanes, the two engines' nacelle parts —
+  // 21 meshes drawn as 10: 11 fewer draw calls per frame and per shadow cascade; ?acmerge=0 keeps them separate (A/B)
+  const merged = typeof location !== 'undefined' && new URLSearchParams(location.search).get('acmerge') === '0' ? null
+    : mergeStatic(gltfScene, ['wing_L', 'wing_R', 'fin', 'htail_L', 'htail_R', 'nacelle_1', 'nacelle_2']);
   const N = (n) => byName.get(n) || null;
   const localPos = (n) => { const o = N(n); const v = new THREE.Vector3(); if (o) o.getWorldPosition(v); return object.worldToLocal(v); };
 
@@ -431,7 +436,7 @@ export function createRig(gltfScene) {
     view = v; applyView();
   }
 
-  const rig = { object, eye, contacts, screens, bounds, update, setView, attachCockpit, cockpitReady: !!interior };
+  const rig = { object, eye, contacts, screens, bounds, update, setView, attachCockpit, cockpitReady: !!interior, merged };   // (merged: test hook)
 
   // detailed flight deck (a320neo_cockpit.glb, same frame as the exterior: origin = CG, nose -Z)
   function attachCockpit(cockpitScene) {
