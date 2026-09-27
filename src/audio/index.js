@@ -132,7 +132,7 @@ export function createAudioSystem({ camera: defaultCamera, settings: followSetti
     G.glue.threshold.value = -14; G.glue.knee.value = 14; G.glue.ratio.value = 2;
     G.glue.attack.value = 0.015; G.glue.release.value = 0.35;
     G.mute = g(api.muted ? 0 : 1);
-    G.duck = g(1);
+    G.duck = g(userPaused ? 0 : 1);   // (a context first created on the pause screen / a mission card: silent from its first sample)
     G.mix = g(db(0));
     G.analyser = ctx.createAnalyser();
     G.analyser.fftSize = 4096;

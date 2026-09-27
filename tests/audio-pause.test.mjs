@@ -49,6 +49,15 @@ check('everything released: sound', duck() === 1, duck());
 a.setPaused(true); a.setPaused(true); a.setPaused(false);
 check('the same source twice is one switch (no counting)', duck() === 1, duck());
 
+// the context first created while held (muted until then, unmuted on the pause screen or a mission card): no blip
+const b = createAudioSystem({ settings: false });
+b.setMuted(true);
+b.setPaused(true, 'mission');
+b.start();
+check('muted at the start: no context yet', b.debug().gains === null);
+b.setMuted(false);                        // "Ses" on the pause screen / the briefing: the context is created now
+check('a context created while a card holds the flight starts silent (duck 0)', b.debug().gains && b.debug().gains.duck === 0, b.debug().gains && b.debug().gains.duck);
+
 let failed = 0;
 console.log('\n=== audio pause sources ' + '='.repeat(40));
 for (const x of rows) { if (!x.ok) failed++; console.log(`${x.ok ? 'PASS' : 'FAIL'}  ${x.name.padEnd(80)} ${x.detail}`); }
