@@ -81,17 +81,18 @@ export function createApp({ db, salt, rules, stage = 'staging', origins = [], no
 
     const retry = { 'retry-after': String(60 - Math.floor((t / 1000) % 60)) };
     if (local('post', bucket, minute) > limits.post) return reply(429, { error: 'rate' }, 'no-store', retry);
-    // 20 bits of a salted hash: each stored key stands for thousands of possible addresses, so it cannot be turned back
-    // into one even with the salt; two players sharing a bucket in the same minute only share the limit
-    const rl = createHmac('sha256', salt).update(`${bucket}|${minute}|post`).digest('hex').slice(0, 5);
-    const count = await db.hit(`rl#${minute}#${rl}`, Math.floor(t / 1000) + 120);
-    if (count > limits.post) return reply(429, { error: 'rate' }, 'no-store', retry);
-
+    // a request that cannot be stored is refused before any store access: junk costs no write (only the per-container
+    // counter above limits it)
     let body;
     try { body = JSON.parse(raw.toString('utf8')); } catch { return reply(400, { error: 'json' }); }
     const chk = checkScore(body, { rules, stage, now: t });
     if (!chk.ok) return reply(400, { error: chk.error });
     const s = chk.value;
+    // 20 bits of a salted hash: each stored key stands for thousands of possible addresses, so it cannot be turned back
+    // into one even with the salt; two players sharing a bucket in the same minute only share the limit
+    const rl = createHmac('sha256', salt).update(`${bucket}|${minute}|post`).digest('hex').slice(0, 5);
+    const count = await db.hit(`rl#${minute}#${rl}`, Math.floor(t / 1000) + 120);
+    if (count > limits.post) return reply(429, { error: 'rate' }, 'no-store', retry);
 
     const tSec = Math.floor(t / 1000);
     const pk = boardKey(s.mission, s.day);

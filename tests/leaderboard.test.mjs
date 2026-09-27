@@ -393,6 +393,19 @@ await status(get({ mission: 'ggb-ring', n: '7' }), 400, 'GET top: bad n → 400'
     && x.headers['referrer-policy'] === 'no-referrer' && /^application\/json/.test(x.headers['content-type']);
   check('API answers: JSON-only security headers (200, 4xx)', hdr(e1) && hdr(await get({ mission: 'ggb-ring' }, { ip: '192.0.2.70' })) && hdr(await get({}, { path: '/x' })));
 }
+{   // junk costs no store write: malformed / invalid bodies are refused before the rate counter, and still hit the
+    // per-container limit
+  const jdb = createMemoryDb();
+  let writes = 0;
+  const counted = { ...jdb, hit: async (...a) => { writes++; return jdb.hit(...a); }, putBest: async (...a) => { writes++; return jdb.putBest(...a); } };
+  const jApp = createApp({ db: counted, salt: SALT, rules: RULES, stage: 'staging', now: () => clock, limits: { post: 5, get: 8 } });
+  const jev = (raw) => ({ requestContext: { http: { method: 'POST' } }, rawPath: '/api/score', body: raw, isBase64Encoded: false,
+    headers: { 'content-type': 'application/json', 'cloudfront-viewer-address': '198.51.100.60:1', 'sec-fetch-site': 'same-origin' } });
+  const codes = [];
+  for (const raw of ['{', '[]', JSON.stringify({ ...good, stars: 9 }), JSON.stringify({ ...good, mission: 'nope' }), 'null', '{"a":1}', '{']) codes.push((await jApp(jev(raw))).statusCode);
+  check('junk POSTs: 400 without any store write, 429 after the per-container limit', writes === 0 && codes.slice(0, 5).every((c) => c === 400) && codes.slice(5).every((c) => c === 429),
+    `${writes} writes, ${codes.join()}`);
+}
 {   // a name stored before a filter change is hidden when the board is read (entry and score stay)
   const bdb = createMemoryDb();
   const bApp = createApp({ db: bdb, salt: SALT, rules: RULES, stage: 'staging', now: () => clock, limits: { post: 50, get: 50 } });
