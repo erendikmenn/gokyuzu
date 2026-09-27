@@ -435,6 +435,89 @@ const summary = {};
   check('Helicopter "İnişe geç" next to a building: holds the hover, no descent between the buildings', !f.crashed && !td && stage === 'blocked' && f.agl > 7, `stage ${stage}, agl ${f.agl.toFixed(1)}`);
 }
 
+// 10. regressions (bug hunt 2026-09-27): an airborne reset, a touch-and-go after an assisted landing, the ✕ on a final
+// with the gear down, a helicopter with a route, the assist switched off during a helicopter's coupled descent
+{
+  const { createRoute } = await import('../src/nav/route.js');
+  // an airborne reset (R, a crash reset, "Son yaklaşmaya git") goes on from the present flight, not a lift-off
+  for (const id of ['a320neo', 'f16']) {
+    const rw = endOf('sf', 'KSFO 28L'), world = makeWorld('sf', rw.elevation), dist = 6000;
+    const start = { x: rw.x - rw.dx * dist, z: rw.z - rw.dz * dist, heading: rw.course, altitude: rw.elevation + (dist + 300) * Math.tan(3 * DEG) };
+    const f = model(id); globalThis.__game = { flight: f };
+    f.reset({ ...start, speed: f.spec.spawnSpeed }, world);
+    f.setAssist(true);
+    f.reset({ ...start, speed: f.spec.spawnSpeed }, world);
+    check(`Airborne reset ${id}: flight phase, no take-off climb-out`, f.assist.phase !== 'ground' && !f.assist.climbout, `${f.assist.phase} climbout ${f.assist.climbout}`);
+  }
+  // touch-and-go after an assisted landing: the landed approach ends, wings level, a climb-out, no speedbrake
+  {
+    const rw = endOf('sf', 'KSFO 28R'), world = makeWorld('sf', rw.elevation), dist = 9000;
+    const f = model('a320neo'), kb = keyboard(); globalThis.__game = { flight: f };
+    f.reset({ x: rw.x - rw.dx * dist, z: rw.z - rw.dz * dist, heading: rw.course, altitude: rw.elevation + (dist + 300) * Math.tan(3 * DEG), speed: 200 * KT }, world, { approach: false, gearDown: false, flapIndex: 0 });
+    f.setAssist(true); kb.input.setAircraft(f.spec);
+    kb.input.setThrottle(f.pendingThrottle ?? 0.5); f.pendingThrottle = null;
+    let td = null, goT = null, lift = null, maxBank = 0, sb = false;
+    for (let t = 0; t < 260; t += DT) {
+      if (Math.abs(t - 1) < DT / 2) f.assist.requestApproach(world);
+      if (f.onGround && td == null && t > 5) td = t;
+      if (td != null && goT == null && t > td + 1.5) { goT = t; kb.input.setThrottle(1); }
+      if (goT != null && lift == null && !f.onGround && f.agl > 5) lift = t;
+      if (lift != null) { maxBank = Math.max(maxBank, Math.abs(f.ad.phi / DEG)); sb = sb || f.sys.speedbrakeCmd; }
+      kb.input.update(DT); f.step(DT, kb.input.state, world);
+      if (f.crashed || (lift != null && t > lift + 40)) break;
+    }
+    check('Touch-and-go after an assisted landing: the approach ends, wings level, climbs, no speedbrake', lift != null && !f.crashed && !f.assist.app && maxBank < 5 && !sb && f.agl > 150,
+      `lift-off ${lift != null}, app ${f.assist.app ? f.assist.app.stage : 'none'}, max bank ${maxBank.toFixed(0)}°, speedbrake ${sb}, agl ${f.agl.toFixed(0)} m`);
+  }
+  // the ✕ ("İnişi bırak") on a final with the gear down stays cancelled
+  {
+    const rw = endOf('sf', 'KSFO 28R'), world = makeWorld('sf', rw.elevation), dist = 9000;
+    const f = model('a320neo'), kb = keyboard(); globalThis.__game = { flight: f };
+    f.reset({ x: rw.x - rw.dx * dist, z: rw.z - rw.dz * dist, heading: rw.course, altitude: rw.elevation + (dist + 300) * Math.tan(3 * DEG), speed: 200 * KT }, world, { approach: false, gearDown: false, flapIndex: 0 });
+    f.setAssist(true); kb.input.setAircraft(f.spec);
+    kb.input.setThrottle(f.pendingThrottle ?? 0.5); f.pendingThrottle = null;
+    let cancelled = -1, again = false;
+    for (let t = 0; t < 20; t += DT) {
+      if (Math.abs(t - 1) < DT / 2) f.assist.requestApproach(world);
+      if (cancelled < 0 && f.assist.app && f.sys.gearHandleDown && t > 5) { cancelled = t; f.assist.cancelApproach(); }
+      kb.input.update(DT); f.step(DT, kb.input.state, world);
+      if (cancelled >= 0 && f.assist.app) again = true;
+    }
+    check('"İnişi bırak" (✕) with the gear down: the gear rule does not start the approach again', cancelled > 0 && !again, `cancelled at ${cancelled.toFixed(1)} s, again ${again}`);
+  }
+  // helicopter with a route on the map: "İnişe geç" slows down and lands (the route's speed held it at cruise)
+  {
+    const world = makeWorld('sf', 4);
+    const f = model('uh60'), kb = keyboard(); globalThis.__game = { flight: f };
+    f.reset({ x: 0, z: 0, heading: 0, altitude: 204, speed: 80 * KT }, world);
+    const route = createRoute(); route.add(0, -8000); route.add(6000, -16000); route.add(12000, -8000);
+    f.setRoute(route);
+    f.setAssist(true); kb.input.setAircraft(f.spec);
+    let td = false; f.on('touchdown', () => { td = true; });
+    for (let t = 0; t < 150; t += DT) {
+      if (Math.abs(t - 1) < DT / 2) f.assist.requestApproach(world);
+      kb.input.update(DT); f.step(DT, kb.input.state, world);
+      if (f.crashed || td) break;
+    }
+    check('Helicopter "İnişe geç" with a route on the map: slows down and lands', td && !f.crashed, `touchdown ${td}, ${(Math.hypot(f.velocity.x, f.velocity.z) / KT).toFixed(0)} kt, agl ${f.agl.toFixed(0)} m`);
+  }
+  // helicopter: the assist switched off during the coupled descent: the hold keeps the height, no landing by itself
+  {
+    const world = makeWorld('sf', 4);
+    const f = model('uh60'), kb = keyboard(); globalThis.__game = { flight: f };
+    f.reset({ x: 0, z: 0, heading: 0, altitude: 154, speed: 60 * KT }, world);
+    f.setAssist(true); kb.input.setAircraft(f.spec);
+    let td = false, off = -1; f.on('touchdown', () => { td = true; });
+    for (let t = 0; t < 120; t += DT) {
+      if (Math.abs(t - 1) < DT / 2) f.assist.requestApproach(world);
+      if (off < 0 && f.assist.app && f.assist.app.stage === 'descend' && f.agl < 60) { off = t; f.setAssist(false); }
+      kb.input.update(DT); f.step(DT, kb.input.state, world);
+      if (f.crashed || td) break;
+    }
+    check('Helicopter: assist off during the coupled descent → the hold keeps the height (no landing on its own)', off > 0 && !td && !f.crashed && f.agl > 20, `off at ${off.toFixed(1)} s, touchdown ${td}, agl ${f.agl.toFixed(0)} m`);
+  }
+}
+
 // 9. cost per frame (phones): the layer's own work is a small fraction of the model step
 {
   const world = makeWorld('sf', 4);
