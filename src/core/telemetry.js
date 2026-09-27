@@ -161,7 +161,9 @@ export function startTelemetry({ build, renderer, quality, state, extra = {} }) 
     // player's setting; 0 = the display's rate), so the report can tell a capped phone from a slow one
     const pacing = s.pacing || (globalThis.__game && globalThis.__game.pacing);
     const cap = s.cap ?? (pacing && Number.isFinite(pacing.cap) ? pacing.cap : undefined);
-    send('hb', { a: active, ac: s.aircraft, fps: Math.round(s.fps || 0), cap, pr: s.pixelRatio && s.pixelRatio.toFixed(2), vw: s.view === 'cockpit' ? 'c' : 'e' });
+    // lp = 1: the browser throttles requestAnimationFrame to ~30 Hz (Low Power Mode / thermal, frame-pacing.js lowPower)
+    send('hb', { a: active, ac: s.aircraft, fps: Math.round(s.fps || 0), cap, pr: s.pixelRatio && s.pixelRatio.toFixed(2), vw: s.view === 'cockpit' ? 'c' : 'e',
+      lp: pacing && pacing.lowPower ? 1 : undefined });
   }, 60000);
   addEventListener('pagehide', () => send('end', withExtras('end', { a: active })));
 }
