@@ -406,7 +406,7 @@ function createControls(hudRoot, { input, hud, getState }) {
   const fill = el('div', 'gkx-fill', track);
   const marks = el('div', null, thr);
   const handle = el('div', 'gkx-thr-h', thr, '0');
-  const sl = { pid: null, y0: 0, p0: 0, off: 0, H: 200, top: 0, pos: 0, gateAt: -1e9 };
+  const sl = { pid: null, y0: 0, p0: 0, off: 0, H: 200, top: 0, pos: 0, gateAt: -1e9, last: 0 };
   // lever ↔ track position (0 = bottom … 1 = top)
   function posOf(lever, rev) {
     const c = flightRef.cat;
@@ -448,14 +448,19 @@ function createControls(hudRoot, { input, hud, getState }) {
     sl.pid = e.pointerId;
     try { thr.setPointerCapture(e.pointerId); } catch { /* synthetic pointer */ }
     sl.y0 = e.clientY; sl.p0 = posOf(input.state.throttle, revCmd()); sl.off = 0; sl.gateAt = -1e9;   // a fresh touch is not latched
+    sl.last = sl.p0;
     thr.classList.add('live');
   });
   function sliderMove(e) {
     if (e.pointerId !== sl.pid) return;
     const f = flightRef.f;
     const raw = sl.p0 + (sl.y0 - e.clientY) / sl.H;
-    let p = raw + sl.off;
     const cur = posOf(input.state.throttle, revCmd());
+    // the lever moved without the finger since the last move (assisted flight's take-off power or lift-off collective,
+    // the lever sync after a reset or an autopilot disconnect): the drag goes on from there. Writing the finger's
+    // position again undid them while the thumb rested on the slider (A320: 0.9 → 0.27, no take-off roll; UH-60: no lift-off)
+    if (Math.abs(cur - sl.last) > 1e-4) sl.off += cur - sl.last;
+    let p = raw + sl.off;
     const EPS = 1e-4, now = performance.now();
     // stop at a gate: the handle stays there and the finger's extra travel so far is discarded; a swipe that arrives
     // at the gate stays latched for GATE_HOLD_MS (a fast full swipe ends at MIL / IDLE, passing is a second push)
@@ -492,6 +497,7 @@ function createControls(hudRoot, { input, hud, getState }) {
       }
     }
     setLeverFromPos(p);
+    sl.last = posOf(input.state.throttle, revCmd());
   }
   const sliderUp = (e) => { if (e.pointerId !== sl.pid) return; sl.pid = null; thr.classList.remove('live'); };
   window.addEventListener('pointermove', sliderMove);
