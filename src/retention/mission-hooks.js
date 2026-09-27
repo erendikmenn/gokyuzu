@@ -73,18 +73,22 @@ export function createMissionRetention({ mission, touch = false, flight = null }
   applyAccent();
   let opened = false, weekly = null, streak = null;
   const isWeekly = () => { try { return weeklyFor({ mission: mission.id, daily: mission.day }); } catch { return null; } };
+  // the week's pick when the briefing showed: a run started on Sunday evening and finished after Monday 00:00 (Istanbul)
+  // still goes to the week its briefing promised (the server takes the previous week for a day)
+  let weekPick = null;
 
   return {
     challenge: ch,
     brief() {
       try {
         apTouchdown = false; hook();
+        weekPick = isWeekly();
         if (ch && !opened) { opened = true; trackEvent('chl', { st: 'open', id: mission.id, d: mission.day ? 1 : undefined }); }
         const c = openCard();
         if (!c || c.querySelector('.gkr-chl, .gkr-wk')) return;
         const h2 = c.querySelector('h2');
         const after = (node) => { if (h2 && h2.nextSibling) c.insertBefore(node, h2.nextSibling); else c.appendChild(node); };
-        if (isWeekly()) after(el('div', 'gkr-wk', null, 'Haftanın görevi: bu uçuş haftalık sıralamaya da girer'));
+        if (weekPick) after(el('div', 'gkr-wk', null, 'Haftanın görevi: bu uçuş haftalık sıralamaya da girer'));
         if (ch) { const b = el('div', 'gkr-chl'); b.innerHTML = FLAG; b.append(briefLine(ch)); after(b); }
       } catch { /* decoration only */ }
     },
@@ -92,7 +96,7 @@ export function createMissionRetention({ mission, touch = false, flight = null }
       try {
         if (assistOn() || apTouchdown) result.assisted = true;   // (read by the result card's leaderboard)
         streak = result.ok || result.time >= 30 ? noteActivity('mission') : null;
-        const wk = result.ok ? isWeekly() : null;
+        const wk = result.ok ? weekPick : null;
         weekly = wk ? { pick: wk, assisted: !!result.assisted, p: submitQuiet({ board: boardFor(wk.board, result.assisted), score: result.score, stars: result.stars, sec: result.time, ac: mission.aircraft, weekly: wk.key, assisted: !!result.assisted }) } : null;
         if (ch) {
           const o = challengeOutcome(ch, result);
