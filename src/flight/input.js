@@ -306,6 +306,7 @@ export function createInput(target = globalThis.window) {
       add('PEDAL', 'Kuyruk rotoru: şeridi sola / sağa kaydır, bırakınca ortalanır');
       add('HOVER', 'Otomatik havada asılı kalma (hover hold) aç / kapat · rota varsa rotayı uçar');
       add('İNİŞE GEÇ', 'Destekli iniş: helikopter yavaşlar, askıda kalır ve dikey iner');
+      add('DESTEKLİ UÇUŞ', 'Üstteki düğme: dokun → Kapat, destekli uçuş kapanır · yeniden açmak için Ayarlar → Destekli uçuş');
       add('FREN', 'Tekerlek freni (basılı tut)');
       add('ACİL', 'Arıza varken görünür: motor yangınında motoru kapatır ve söndürür');
     } else {
@@ -320,6 +321,7 @@ export function createInput(target = globalThis.window) {
       add('AP', ftr ? 'Otopilot (irtifa / yön) aç / kapat' : 'Otopilot + otomatik gaz aç / kapat (iniş takımı inikken ILS yaklaşma)');
       add('AP açıkken', 'Çubuk irtifa ve yön hedefini, gaz sürgüsü hız hedefini değiştirir');
       add('İNİŞE GEÇ', 'Destekli iniş (Ayarlar → Destekli uçuş): en yakın piste yaklaşır; takım, flap ve hız otomatik, sen yönlendirebilirsin');
+      add('DESTEKLİ UÇUŞ', 'Üstteki düğme: dokun → Kapat, destekli uçuş kapanır · yeniden açmak için Ayarlar → Destekli uçuş');
       add('FREN', 'Tekerlek freni (basılı tut)');
       add('ACİL', 'Arıza varken görünür: yangında motoru kapat + söndür, takım inmezse alternatif indirme, APU, motoru yeniden çalıştır');
     }
@@ -351,6 +353,7 @@ export function createInput(target = globalThis.window) {
       add('O', 'Otomatik havada asılı kalma (hover hold) aç / kapat · rota varsa rotayı uçar');
       add('I', 'Acil durum: motor yangınında motoru kapat ve söndür');
       add('İNİŞE GEÇ', 'Destekli iniş (ekrandaki düğme): helikopter yavaşlar, askıda kalır ve dikey iner');
+      add('DESTEKLİ UÇUŞ', 'Üstteki düğme (fareyle): tıkla → Kapat, destekli uçuş kapanır · yeniden açmak için Ayarlar → Destekli uçuş');
     } else {
       add('W / S  ·  ↑ / ↓', ftr ? 'Burun aşağı / yukarı (g komutu)' : 'Burun aşağı / yukarı');
       add('A / D  ·  ← / →', 'Sola / sağa yatış');
@@ -375,6 +378,7 @@ export function createInput(target = globalThis.window) {
       add('Otopilot açıkken', 'W/S irtifa hedefi, A/D yön hedefi, gaz tuşları hız hedefi; yaklaşmada çubuk otopilotu kapatır');
       add('Rota varken', 'O otopilotu rotada (LNAV) açar; A/D ile dönmek yön moduna (HDG) geçirir, rota haritada kalır');
       add('İNİŞE GEÇ', 'Destekli iniş (ekrandaki düğme; Ayarlar → Destekli uçuş): en yakın piste yaklaşır, takım / flap / hız otomatik · pistin önündeyken takımı indirmek (G) de başlatır');
+      add('DESTEKLİ UÇUŞ', 'Üstteki düğme (fareyle): tıkla → Kapat, destekli uçuş kapanır · yeniden açmak için Ayarlar → Destekli uçuş');
       add('I', 'Acil durum: yangında motoru kapat + söndür · takım inmezse alternatif indirme · APU · motoru yeniden çalıştır');
     }
     add('B / Boşluk', heli ? 'Tekerlek freni' : 'Fren (basılı tut)');
