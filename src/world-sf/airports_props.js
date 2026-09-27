@@ -200,6 +200,68 @@ const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _p = new THREE.Vect
 const UP = new THREE.Vector3(0, 1, 0);
 const WHITE = new THREE.Color(1, 1, 1);
 
+/**
+ * The props batch where WebGL has no WEBGL_multi_draw (Firefox): three.js then draws a BatchedMesh one instance at a time,
+ * in the view and again in every shadow pass (SFO: 1,418 draw calls per frame against 360 in Chrome). This draws the
+ * same instances as one InstancedMesh per part geometry, with the calls of the BatchedMesh used here (addGeometry,
+ * addInstance, setMatrixAt, setColorAt, setVisibleAt, computeBoundingSphere). Hidden instances are left out of the
+ * instance buffers: a change marks its part, flush() (updateProps, every frame; computeBoundingSphere) rewrites it.
+ * ?multidraw=0 takes this path in any browser (A/B).
+ */
+class InstancedBatch extends THREE.Group {
+  constructor(material) {
+    super();
+    this.material = material;
+    this.geos = [];            // gid → geometry
+    this.inst = [];            // iid → gid
+    this.mat = [];             // iid → Matrix4 elements (Float32Array(16))
+    this.col = [];             // iid → [r, g, b]
+    this.vis = [];             // iid → visible
+    this.meshes = [];          // gid → InstancedMesh
+    this.dirty = new Set();    // gids to rewrite
+  }
+  addGeometry(g) { this.geos.push(g); return this.geos.length - 1; }
+  addInstance(gid) { this.inst.push(gid); this.mat.push(new Float32Array(16)); this.col.push([1, 1, 1]); this.vis.push(true); this.dirty.add(gid); return this.inst.length - 1; }
+  setMatrixAt(iid, m) { this.mat[iid].set(m.elements); this.dirty.add(this.inst[iid]); }
+  setColorAt(iid, c) { const k = this.col[iid]; k[0] = c.r; k[1] = c.g; k[2] = c.b; this.dirty.add(this.inst[iid]); }
+  setVisibleAt(iid, v) { v = !!v; if (this.vis[iid] !== v) { this.vis[iid] = v; this.dirty.add(this.inst[iid]); } }
+  computeBoundingSphere() { this.flush(); }
+  flush() {
+    if (!this.dirty.size) return;
+    if (!this.meshes.length) {   // first flush: one InstancedMesh per part, sized for all of its instances
+      this.byGid = this.geos.map(() => []);
+      this.inst.forEach((gid, iid) => this.byGid[gid].push(iid));
+      const cap = this.byGid.map((l) => l.length);
+      this.meshes = this.geos.map((g, gid) => {
+        const im = new THREE.InstancedMesh(g, this.material, Math.max(1, cap[gid]));
+        im.name = `${this.name}-${gid}`;
+        im.castShadow = this.castShadow; im.receiveShadow = this.receiveShadow;
+        im.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(Math.max(1, cap[gid]) * 3), 3);
+        this.add(im);
+        return im;
+      });
+      for (let gid = 0; gid < this.geos.length; gid++) this.dirty.add(gid);
+    }
+    for (const gid of this.dirty) {
+      const im = this.meshes[gid], M = im.instanceMatrix.array, C = im.instanceColor.array;
+      let n = 0;
+      for (const iid of this.byGid[gid]) {
+        if (!this.vis[iid]) continue;
+        M.set(this.mat[iid], n * 16);
+        const k = this.col[iid]; C[n * 3] = k[0]; C[n * 3 + 1] = k[1]; C[n * 3 + 2] = k[2];
+        n++;
+      }
+      im.count = n;
+      im.visible = n > 0;
+      im.instanceMatrix.needsUpdate = true; im.instanceColor.needsUpdate = true;
+      if (n) im.computeBoundingSphere();
+    }
+    this.dirty.clear();
+  }
+}
+const noMultiDraw = (renderer) => (typeof location !== 'undefined' && new URLSearchParams(location.search).get('multidraw') === '0')
+  || !!(renderer && renderer.extensions && !renderer.extensions.has('WEBGL_multi_draw'));
+
 /** Instanced set for an agent LOD (one InstancedMesh per part). */
 class NearSet {
   constructor(name, parts, capacity, group) {
@@ -323,7 +385,7 @@ export async function buildProps(meta, ctx, colliders) {
   let nV = 0, nI = 0, nInst = 0;
   for (const g of batchGeos) { nV += g.attributes.position.count; nI += g.index.count; }
   for (const it of items) nInst += geoIds.get(it.type).length;
-  const batch = new THREE.BatchedMesh(Math.max(1, nInst), Math.max(3, nV), Math.max(3, nI), bmat);
+  const batch = noMultiDraw(ctx.renderer) ? new InstancedBatch(bmat) : new THREE.BatchedMesh(Math.max(1, nInst), Math.max(3, nV), Math.max(3, nI), bmat);
   batch.name = `apt-props-batch-${meta.icao}`;
   batch.castShadow = true;
   batch.receiveShadow = true;
@@ -387,6 +449,7 @@ export async function buildProps(meta, ctx, colliders) {
 const _cam = new THREE.Vector3();
 export function updateProps(p, dt, camPos, day) {
   if (!p) return;
+  if (p.batch.flush) p.batch.flush();   // (InstancedBatch: instance buffers after visibility / matrix changes)
   const d = Math.round(day * 20) / 20;
   if (d !== p.lastDay) {
     p.lastDay = d;
