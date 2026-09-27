@@ -66,18 +66,18 @@ html.gk-touch #app canvas { touch-action: none; }
   box-shadow: 0 8px 24px rgba(0, 0, 0, .25), inset 0 1px 0 rgba(255, 255, 255, .07); -webkit-backdrop-filter: blur(10px) saturate(1.2); backdrop-filter: blur(10px) saturate(1.2); }
 
 /* buttons */
-.gkx-btn { position: absolute; pointer-events: auto; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: calc(1px * var(--u));
-  width: var(--b); height: var(--b); padding: 0; border-radius: calc(14px * var(--u)); color: rgba(236, 244, 255, .92); cursor: pointer; touch-action: none;
-  font: 750 calc(9.5px * var(--u)) var(--gk-sans); letter-spacing: .06em; transition: transform .08s ease, background .15s ease, border-color .15s ease, color .15s ease; }
+.gkx-btn { position: absolute; pointer-events: auto; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: calc(1px * var(--ub, var(--u)));
+  width: var(--b); height: var(--b); padding: 0; border-radius: calc(14px * var(--ub, var(--u))); color: rgba(236, 244, 255, .92); cursor: pointer; touch-action: none;
+  font: 750 calc(9.5px * var(--ub, var(--u))) var(--gk-sans); letter-spacing: .06em; transition: transform .08s ease, background .15s ease, border-color .15s ease, color .15s ease; }
 .gkx-btn svg { width: calc(var(--b) * .42); height: calc(var(--b) * .42); flex: 0 0 auto; }
 .gkx-btn span { line-height: 1; white-space: nowrap; }
-.gkx-btn small { position: absolute; bottom: calc(3px * var(--u)); font: 700 calc(8px * var(--u)) var(--gk-mono); letter-spacing: 0; color: var(--gk-dim); white-space: nowrap; }
-.gkx-btn.has-sub span { margin-bottom: calc(6px * var(--u)); }
+.gkx-btn small { position: absolute; bottom: calc(3px * var(--ub, var(--u))); font: 700 calc(8px * var(--ub, var(--u))) var(--gk-mono); letter-spacing: 0; color: var(--gk-dim); white-space: nowrap; }
+.gkx-btn.has-sub span { margin-bottom: calc(6px * var(--ub, var(--u))); }
 .gkx-btn.down { transform: scale(.92); background: rgba(92, 242, 200, .22); border-color: rgba(92, 242, 200, .7); }
 .gkx-btn.on { color: #4be37a; border-color: rgba(75, 227, 122, .75); box-shadow: 0 0 0 1px rgba(75, 227, 122, .25), 0 0 18px rgba(75, 227, 122, .22), inset 0 1px 0 rgba(255, 255, 255, .07); }
 .gkx-btn.amber { color: var(--gk-caution); border-color: rgba(255, 176, 32, .75); }
 .gkx-btn.hot { color: #ff9a55; border-color: rgba(255, 138, 61, .8); }
-.gkx-btn i.led { position: absolute; top: calc(5px * var(--u)); right: calc(5px * var(--u)); width: calc(6px * var(--u)); height: calc(6px * var(--u)); border-radius: 50%; background: rgba(255, 255, 255, .16); }
+.gkx-btn i.led { position: absolute; top: calc(5px * var(--ub, var(--u))); right: calc(5px * var(--ub, var(--u))); width: calc(6px * var(--ub, var(--u))); height: calc(6px * var(--ub, var(--u))); border-radius: 50%; background: rgba(255, 255, 255, .16); }
 .gkx-btn.on i.led { background: #4be37a; box-shadow: 0 0 6px #4be37a; }
 .gkx-btn.amber i.led { background: var(--gk-caution); box-shadow: 0 0 6px var(--gk-caution); }
 .gkx-btn.flash { animation: gkx-flash .9s ease-in-out infinite; }
@@ -562,8 +562,13 @@ function createControls(hudRoot, { input, hud, getState }) {
     const headW = 230 * clamp(Math.min(H / 900, W / 1240), 0.6, 2.4) / 0.6 * 0.6;
     const sideW = (W - headW) / 2 - Math.max(L, R) - gap;
     const nLeft = 4 + (bFull ? 1 : 0);
-    B = Math.round(clamp(Math.min(50 * u, (sideW - gap * (nLeft - 1)) / nLeft), 38, 62));
+    const fitB = (sideW - gap * (nLeft - 1)) / nLeft;
+    B = Math.round(clamp(Math.min(50 * u, fitB), 38, 62));
     root.style.setProperty('--b', `${B}px`);
+    // button labels / corners follow a button the width squeezed: a narrow portrait screen with a large short side (an
+    // unfolded Fold, a tablet upright) got 42 px buttons with labels sized for 70 px ("KAMERA" spilled over its
+    // neighbours); elsewhere (B = 50 u, or the 62 px cap on tablets) the labels keep the u scale
+    root.style.setProperty('--ub', (fitB < Math.min(50 * u, 62) ? Math.min(u, B / 50) : u).toFixed(3));
     let x = L;
     for (const o of [bPause, bMap, bCam, bView, ...(bFull ? [bFull] : [])]) { place(o.b, x, T); x += B + gap; }
     // throttle / collective slider at the right edge
