@@ -46,6 +46,9 @@ def main():
         'LambdaFunctionAssociations': {'Quantity': 0},
         'FunctionAssociations': {'Quantity': 1, 'Items': [{'FunctionARN': BEACON_FN, 'EventType': 'viewer-request'}]},
     }
+    old = next((b for b in cfg.get('CacheBehaviors', {}).get('Items', []) if b['PathPattern'] == '/_e'), None)
+    if old and old.get('ResponseHeadersPolicyId'):   # security headers (infra/security/headers_policy.py) stay attached
+        beacon['ResponseHeadersPolicyId'] = old['ResponseHeadersPolicyId']
     behaviors = [b for b in cfg.get('CacheBehaviors', {}).get('Items', []) if b['PathPattern'] != '/_e'] + [beacon]
     cfg['CacheBehaviors'] = {'Quantity': len(behaviors), 'Items': behaviors}
 
