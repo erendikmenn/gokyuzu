@@ -40,7 +40,9 @@ exactly those of the local report. Rotating the token: change the local file, ru
 the same file / parameter).
 
 Logs: CloudWatch log group `/aws/lambda/erenailab-stats-gokyuzu-feed` (14 days). Each run prints one JSON line: push
-status, days rewritten, totals, seconds. The code and logs never print secrets, bucket names or IPs.
+status, days rewritten, totals, seconds. The code and logs never print secrets, bucket names or IPs. Each run also keeps
+its snapshot as `gokyuzu/last-snapshot.json` next to the history (what was, or would have been, pushed), so it can be
+compared with `report.py --json` run locally on the same log files.
 
 ## History past the 30-day log expiry
 

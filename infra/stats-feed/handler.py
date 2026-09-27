@@ -6,6 +6,8 @@ the feed's own private bucket; download the access logs from the oldest day with
 48 h) into /tmp; build the day records and the snapshot with report.py (the same code as the local report); save the
 history; POST the snapshot. Only aggregated numbers leave AWS. Secrets, bucket names and IPs are never logged.
 
+The run's snapshot is also kept as last-snapshot.json next to the history (for checks against the local report).
+
 Environment (template.yaml): LOG_BUCKET, LOG_PREFIX, STATE_BUCKET, STATE_KEY, INGEST_URL, PARAM_TOKEN, PARAM_SALT,
 PARAM_OWN_IPS. Event: {} (the schedule) or {"push": false} (build and save, do not push).
 """
@@ -91,9 +93,13 @@ def load_state():
     return json.loads(gzip.decompress(body))
 
 
-def save_state(state):
+def save_state(state, body=None):
+    """The history, and next to it the snapshot of this run (aggregated numbers only: what was pushed)."""
     s3.put_object(Bucket=env('STATE_BUCKET'), Key=env('STATE_KEY'), Body=report.dump_state(state),
                   ContentType='application/gzip')
+    if body is not None:
+        s3.put_object(Bucket=env('STATE_BUCKET'), Key=f"{env('STATE_KEY').rsplit('/', 1)[0]}/last-snapshot.json", Body=body,
+                      ContentType='application/json; charset=utf-8')
 
 
 def push(body, token):
@@ -143,7 +149,7 @@ def handler(event, context):
                 feed['last_ok'] = now.isoformat(timespec='seconds')
         feed['last_run'] = now.isoformat(timespec='seconds')
     finally:
-        save_state(state)   # the day records are valid whether or not the push went through
+        save_state(state, body)   # the day records are valid whether or not the push went through
     card = {c['label']: c['value'] for c in payload['cards']}
     summary = {
         'status': status, 'stale': payload['stale'], 'fails_in_a_row': feed.get('fails', 0),
