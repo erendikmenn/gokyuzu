@@ -4,6 +4,11 @@
 //   site is installable from manifest.json alone: no service worker, so nothing is cached and the asset versioning of
 //   CONTRACTS-SF.md §9 is untouched).
 //   iOS (Safari, and Chrome since iOS 16.4): there is no install API, so a two-step how-to (Paylaş → Ana Ekrana Ekle).
+//   A home-screen web app on iOS keeps its own storage, not Safari's ("by design", WebKit bug 181849; WWDC23 "What's new
+//   in web apps": "cookies and storage are separate after the web app is added"), and nothing carries it over, so the
+//   how-to says that the streak and settings stay in Safari. On Android the installed app shares the browser's storage.
+//   In the iOS home-screen app the page asks for persistent storage (WebKit grants it by heuristics that favour
+//   home-screen apps, without a prompt; they are already exempt from Safari's 7-day limit on script-written storage).
 // Never in social-app webviews (they cannot install), never when the game already runs from the home screen.
 // This module is imported by the menu (src/ui/menu.js) so the listener exists before Chrome fires the event; the UI is
 // built only when suggestInstall() is called.
@@ -12,7 +17,8 @@
 //     inline: an element to append a compact row to (the mission result card); else a floating card through
 //     mount(node) (the HUD layer) at the top centre, hidden after 15 s
 // Telemetry `inst`: show (p = android | ios, via = mission | land), accept / dismiss (the browser dialog's answer), later
-// (Şimdi değil / Tamam), installed (the browser's appinstalled event).
+// (Şimdi değil / Tamam), installed (the browser's appinstalled event), app (a page opened from the home screen: p, first = 1 on
+// the first one of this app's storage).
 import { injectCSS } from '../ui/styles.js';
 import { el } from '../ui/util.js';
 import { inAppBrowser } from '../ui/touch-env.js';
@@ -39,6 +45,19 @@ function standalone() {
     return matchMedia('(display-mode: fullscreen)').matches && !document.fullscreenElement && !document.webkitFullscreenElement;
   } catch { return false; }
 }
+// a page of the home-screen app: counted (iOS has no appinstalled event), and on iOS its storage asked to persist
+if (typeof window !== 'undefined') {
+  try {
+    const p = isIOS() ? 'ios' : /Android/.test(navigator.userAgent) ? 'android' : '';
+    if (p && standalone()) {   // (phones / tablets only: a desktop browser in F11 fullscreen also matches display-mode fullscreen)
+      const s = read();
+      trackEvent('inst', { st: 'app', p, first: s.app ? undefined : 1 });
+      if (!s.app) write({ ...s, app: Date.now() });
+      if (isIOS() && navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+    }
+  } catch { /* no storage / media queries: nothing counted */ }
+}
+
 /** 'android' (the browser offered its install dialog) | 'ios' (the how-to) | null (no way to install here). */
 export function installPlatform() {
   if (typeof window === 'undefined' || standalone()) return null;
@@ -63,6 +82,7 @@ const CSS = `
 .gkr-inst-t b { display: block; font-size: 13.5px; font-weight: 750; line-height: 1.2; }
 .gkr-inst-t small { display: block; margin-top: 2px; font-size: 11.5px; line-height: 1.35; color: var(--gk-dim); }
 .gkr-inst-t small em { font-style: normal; color: var(--gk-fg); font-weight: 650; }
+.gkr-inst-t small.gkr-inst-note { font-size: 11px; opacity: .85; }
 .gkr-inst-b { display: flex; gap: 6px; flex: 0 0 auto; }
 .gkr-inst button { min-height: 34px; padding: 5px 11px; border-radius: 9px; cursor: pointer; font: 700 12.5px var(--gk-sans); color: var(--gk-fg);
   border: 1px solid rgba(255, 255, 255, .18); background: rgba(255, 255, 255, .07); }
@@ -112,6 +132,8 @@ export function suggestInstall({ via = 'mission', inline = null, mount = null } 
     sm.append(' menüsünden ');
     el('em', null, sm, 'Ana Ekrana Ekle');
     sm.append('’yi seç: Gökyüzü tek dokunuşla açılır.');
+    // (iOS: the home-screen app starts with empty storage)
+    el('small', 'gkr-inst-note', t, 'Not: ana ekrandaki Gökyüzü sıfırdan başlar; serin ve ayarların Safari’de kalır.');
     btn('Tamam', '', () => { trackEvent('inst', { st: 'later' }); close(); });
   }
   if (inline) inline.appendChild(box);
