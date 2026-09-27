@@ -17,6 +17,7 @@ import { loadSettings, saveSettings } from '../core/settings.js';
 import { goToMenu } from '../core/leave.js';
 import { activeMap } from '../maps/index.js';
 import { createMuteButton } from './settings-live.js';   // pause-screen speaker (settings.muted, the M key's switch)
+import { detectDevice } from '../core/gpu-device.js';
 
 const MONO = 'ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace';
 const SANS = '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif';
@@ -223,8 +224,17 @@ function F(weight, px, mono) {
 // Redraw rates of the 2D canvases (Hz, wall clock, so 90 / 120 Hz displays do not draw more): the tapes and readouts
 // 30 Hz unless the conformal pitch ladder shares their canvas (full HUD, chase camera: every frame, it moves with the
 // camera), the systems panel and the minimap 15 Hz, everything 5 Hz under the open big map. Panels the touch layout
-// hides (minimap, systems, info) are not drawn at all.
-const HZ_TAPES = 30, HZ_PANELS = 15, HZ_COVERED = 5, HZ_TEXT = 10;
+// hides (minimap, systems, info) are not drawn at all. Phones (the 30 fps class) draw the tapes at HZ_TAPES_PHONE: at 30 Hz
+// they were about 7 % of a phone's CPU; a change of the flight's warning state (the speed box turns red on stall /
+// overspeed) redraws them on the same frame.
+const HZ_TAPES = 30, HZ_TAPES_PHONE = 15, HZ_PANELS = 15, HZ_COVERED = 5, HZ_TEXT = 10;
+/** Bit mask of the flight's warning flags (WARNINGS keys + the stall flag): no allocation. */
+function warnBits(f) {
+  const w = f.warnings;
+  let b = f.stalled ? 1 : 0;
+  if (w) for (let i = 0; i < WARNINGS.length; i++) if (w[WARNINGS[i][0]]) b |= 2 << i;
+  return b;
+}
 // tape label scratch (value, position pairs) and cached label strings: no arrays / strings built per frame
 const LAB_MAX = 64, LAB = new Float64Array(LAB_MAX * 2);
 const NUM_STR = new Map();
@@ -391,6 +401,8 @@ export function createHUD(container) {
   const lastDraw = [-1e9, -1e9, -1e9, -1e9];
   let redrawAll = true, wasCovered = false, panelsWere = true;   // redrawAll: canvases resized / cleared, view changed
   let lastChange = 0;                                   // time of the last update whose signature() changed
+  let lastWarn = 0;                                     // warnBits() the tapes were last drawn with
+  const hzTapesFlying = (() => { try { return detectDevice().kind === 'phone' ? HZ_TAPES_PHONE : HZ_TAPES; } catch { return HZ_TAPES; } })();
   function due(k, hz, now) {
     if (redrawAll || (lastDraw[k] < lastChange && now - lastDraw[k] >= 1000 / hz - 4)) { lastDraw[k] = now; return true; }
     return false;
@@ -1527,7 +1539,9 @@ export function createHUD(container) {
 
       // exterior instruments. Canvases are redrawn at their rates (HZ_TAPES / HZ_PANELS; HZ_COVERED under the open big
       // map, which leaves only a dimmed margin of them visible); panels the touch layout hides are not drawn at all.
-      const hzTapes = covered ? HZ_COVERED : HZ_TAPES, hzPanels = covered ? HZ_COVERED : HZ_PANELS;
+      const hzTapes = covered ? HZ_COVERED : hzTapesFlying, hzPanels = covered ? HZ_COVERED : HZ_PANELS;
+      const warn = warnBits(f);
+      if (warn !== lastWarn) { lastWarn = warn; lastDraw[T_TAPES] = -1e9; }   // a warning came or went: redraw the tapes now
       if (cinematic) {
         if (panels && due(T_SYS, hzPanels, now)) drawSystems(f);
         infoTimer -= dt;

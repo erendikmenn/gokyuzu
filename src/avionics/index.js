@@ -1,6 +1,6 @@
 // Avionics: live cockpit displays drawn with Canvas2D and exposed as THREE.CanvasTexture (CONTRACTS-SF §6.4).
 //   createDisplay(type, { size?, width?, height?, shared?, fovDeg?, boresight?, variant?, mesh?, eye?, root? })
-//     → { canvas, texture, update(dt, flight, world), type, aspect, enabled, drawMs }
+//     → { canvas, texture, update(dt, flight, world, urgent?), type, aspect, enabled, drawMs }
 // Each type draws in a fixed virtual coordinate system (see DISPLAY_SPECS: vw×vh) whose aspect ratio follows the real
 // instrument (square DUs, portrait 6×8" UH-60M MFDs, wide F-16 DED, 4:3 F-22 UFD, CDU). The canvas pixel size is
 // `size` on the longer side (default 1024 for PFD/ND/HUD/TSD, 512 otherwise). Screen meshes map UV 0..1 onto it.
@@ -131,13 +131,13 @@ function createCore(type, def, w, h, opts, shareable) {
 
   const display = {
     type, canvas, texture, aspect: w / h, enabled: true, draws: 0, drawMs: 0, watched: false, lastSeen: 0, skips: 0,
-    /** Redraws the display. dt: seconds since the previous update. Never throws. */
-    update(dt, flight, world) {
+    /** Redraws the display. dt: seconds since the previous update; urgent: a warning came or went (no rate limit). Never throws. */
+    update(dt, flight, world, urgent = false) {
       const now = performance.now();
       pendingDt += Number.isFinite(dt) ? dt : 1 / 30;
       if (display.enabled === false) return;
       if (shareable && lastFlight === flight && now - lastDraw < 8) return;   // shared instance already drawn this tick
-      if (minInterval && lastDraw >= 0 && now - lastDraw < minInterval) return; // slow pages (CDU, DED, SD…) refresh less often
+      if (!urgent && minInterval && lastDraw >= 0 && now - lastDraw < minInterval) return; // slow pages (CDU, DED, SD…) refresh less often
       if (display.watched && lastDraw >= 0 && now - display.lastSeen > 400 && now - lastDraw < 2000) return;   // not on screen
       lastDraw = now; lastFlight = flight;
       const step = Math.min(pendingDt, 0.5); pendingDt = 0;

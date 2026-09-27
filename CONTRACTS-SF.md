@@ -237,12 +237,12 @@ provides no contacts) plus `id`, `category: 'fighter'|'airliner'|'helicopter'`, 
 ### 6.4 Avionics (AV: `src/avionics/index.js`)
 ```js
 export function createDisplay(type: string, opts?: { size?: number }): Display
-interface Display { canvas: HTMLCanvasElement; texture: THREE.CanvasTexture; update(dt, flight, world): void; }
+interface Display { canvas: HTMLCanvasElement; texture: THREE.CanvasTexture; update(dt, flight, world, urgent?): void; }
 // types: 'a320.pfd','a320.nd','a320.ewd','a320.sd','a320.isis', 'b737.pfd','b737.nd','b737.eicas','b737.cdu',
 //        'f16.hud','f16.mfd.left','f16.mfd.right','f16.ded','f16.rwr', 'f22.hud','f22.ufd','f22.pmfd','f22.smfd',
 //        'uh60.mfd.pfd','uh60.mfd.nd','uh60.mfd.eng'
 ```
-Displays redraw at ~30 Hz, only when visible. HUD types draw green/amber symbology on a transparent canvas (the rig uses
+Displays redraw at ~30 Hz (phones 15, WebKit 20), only when visible; `urgent` (a warning came or went) skips the rate limit. HUD types draw green/amber symbology on a transparent canvas (the rig uses
 additive blending on the combiner glass). Unknown types draw a neutral "NO DATA" page (never throw).
 
 ### 6.5 Audio (AU: `src/audio/index.js`)

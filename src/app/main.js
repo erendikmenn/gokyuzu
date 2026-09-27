@@ -713,6 +713,10 @@ document.addEventListener('visibilitychange', () => { simAcc = 0; });   // (no c
 // cockpit displays (2D canvas → texture uploads, plan 4.4): 15 Hz on phones, 20 Hz in WebKit (each canvas upload costs
 // 20–60× more there: findings T2), 30 Hz elsewhere
 const displayInterval = quality.deviceClass === 'phone' ? 1 / 15 : detectDevice().engine === 'webkit' ? 1 / 20 : 1 / 30;
+// ... except when a warning comes or goes (PULL UP, STALL …): then every display is drawn on that frame, also the slower pages
+let lastWarnMask = 0;
+/** The flight's warning flags as a bit mask (no allocation). */
+function warnMask(w) { let b = 0, i = 0; if (w) for (const k in w) { if (w[k] === true) b |= 1 << i; i++; } return b; }
 const lastCamPose = new THREE.Vector3(), lastCamQ = new THREE.Quaternion(), lastAcPos = new THREE.Vector3();
 // opaque screens over a running page: the phone's portrait prompt "Telefonu yan çevir" (src/ui/touch.js; it pauses the
 // flight and covers everything) — nothing is drawn under it
@@ -846,7 +850,9 @@ function simulate(dt, t0) {
     if (state.cockpitFill) state.cockpitFill.intensity = cameraRig.view === 'cockpit' ? 2.5 : 0;
     world.update(dt, camera);
     displayAcc += dt;
-    if (displayAcc > displayInterval) { for (const d of state.displays) d.display.update(displayAcc, flight, world); displayAcc = 0; }
+    const warn = warnMask(flight.warnings), warnNow = warn !== lastWarnMask;   // a warning that comes or goes: drawn now
+    lastWarnMask = warn;
+    if (displayAcc > displayInterval || warnNow) { for (const d of state.displays) d.display.update(displayAcc, flight, world, warnNow); displayAcc = 0; }
     hud.update(flight, { world, spawn: state.spawn, view: cameraRig.view });
     navMap.update(dt, flight, world);   // navigation hook: track trail, map redraw while open
     onboarding.update(dt, flight, { view: cameraRig.view, paused: state.paused });   // onboarding hook
