@@ -119,10 +119,31 @@ async function fetchWithRetry(url, init, read) {
 let versions = null;       // { 'assets/sf/city/l0': '1a2b3c4d5e', ... }; null/{} = no versions (local development)
 let versionsP = null;
 let buildP = null;
+let inlineVersions = null;
+
+/**
+ * The stamp and version map the publish build writes into its pages (tools/deploy/build_dist.mjs:
+ * <script type="application/json" id="gk-build">{ ...build.json, versionMap: { ...versions.json } }</script>). A page and
+ * its asset versions then come in one response, without the two requests the game made in a row before the menu
+ * (build.json, then versions.json, both revalidated at the origin on every start). null on other pages / dev servers.
+ */
+function inlineBuild() {
+  try {
+    const el = typeof document !== 'undefined' && document.getElementById && document.getElementById('gk-build');
+    if (!el) return null;
+    const b = JSON.parse(el.textContent);
+    if (!b || typeof b !== 'object') return null;
+    if (b.versionMap && typeof b.versionMap === 'object') inlineVersions = b.versionMap;
+    delete b.versionMap;
+    return b;
+  } catch { return null; }
+}
 
 /** The publish build stamp (dist/build.json; the dev server answers with a local stamp). Memoized; null if unavailable. */
 export function loadBuildInfo() {
   if (!buildP) {
+    const inline = inlineBuild();
+    if (inline) return (buildP = Promise.resolve(inline));
     buildP = fetchWithRetry(new URL('build.json', ROOT).href, { cache: 'no-cache' }, (r) => r.json()).catch((e) => {
       if (isNetworkError(e)) { buildP = null; throw e; }   // offline: a later call tries again
       return null;    // 404 on other static servers, bad JSON: treat as a development build
@@ -143,6 +164,7 @@ export function loadAssetVersions() {
     versionsP = (async () => {
       const build = await loadBuildInfo();
       if (!build || !build.versions) { versions = {}; return versions; }
+      if (inlineVersions) { versions = inlineVersions; return versions; }   // written into the page by the publish build
       const url = new URL(build.versions, ROOT).href;
       try {
         versions = await fetchWithRetry(url, { cache: 'no-cache' }, (r) => r.json());
