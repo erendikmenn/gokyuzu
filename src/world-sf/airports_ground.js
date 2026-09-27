@@ -41,15 +41,42 @@ let texOpts = null;
  *  texture has no image (three.js skips the upload), like a THREE.TextureLoader texture that is still loading.
  *  Decoded off the main thread (an <img> is decoded synchronously at upload: 2048² JPEGs, ~20-40 ms each, 4x that on
  *  a phone) and cut to the device class's size (groundTextures). */
-function loadInto(t, url, fails = 0) {
-  assetBitmap(url, { maxSize: texOpts.maxSize }).then(({ image, flipY, from }) => {
+function loadInto(t, url, fails = 0, rank = 0) {
+  return assetBitmap(url, { maxSize: texOpts.maxSize }).then(({ image, flipY, from }) => {
+    if ((t.userData.gkRank ?? -1) > rank) { if (image.close) image.close(); return; }   // the full-size image came first
+    t.userData.gkRank = rank;
+    // a bigger image than the one on the GPU: three.js allocated the texture's storage for the old size once
+    // (texStorage2D) and would only sub-upload into it (INVALID_VALUE); dispose() drops the GL texture, the next draw
+    // allocates it anew at the new size (the materials keep this Texture object). The size is remembered here: the GPU
+    // guard's image release (src/core/gpu-textures.js) may have dropped the uploaded image by then.
+    const size = `${image.width}x${image.height}`;
+    if (t.userData.gkSize && t.userData.gkSize !== size) t.dispose();
+    t.userData.gkSize = size;
+    const old = t.image;
     t.image = image; t.flipY = flipY;
+    if (old && old !== image && old.close) old.close();   // (the 1024² copy, if still held: nothing refers to it any more)
     if (from[0] !== image.width) t.userData.downscaledFrom = from;
     t.needsUpdate = true;
   }).catch((e) => {
     reportLoadFailure('airports', url, e);
-    if (isNetworkError(e)) setTimeout(() => loadInto(t, url, fails + 1), retryDelay(fails + 1));
+    if (isNetworkError(e)) return new Promise((r) => setTimeout(r, retryDelay(fails + 1))).then(() => loadInto(t, url, fails + 1, rank));
   });
+}
+/** The 2048² original of a ground texture that started with its 1024² copy (see groundTextures): requested once the
+ *  game is playable, one texture at a time, so each re-upload (16 MB + mips) lands in a different frame. */
+const upgrades = [];
+let upgrading = false;
+function upgradeLater(t, url, ctx) {
+  upgrades.push([t, url]);
+  if (upgrading) return;
+  upgrading = true;
+  const step = () => {
+    if (!ctx.playable) { setTimeout(step, 500); return; }
+    const next = upgrades.shift();
+    if (!next) { upgrading = false; return; }
+    loadInto(next[0], next[1], 0, 1).finally(() => setTimeout(step, 400));
+  };
+  setTimeout(step, 1500);
 }
 /** Ground textures, each loaded on first use (an airport only downloads what its pavements use). */
 export function groundTextures(loader, renderer, quality = null, ctx = null) {
@@ -60,9 +87,17 @@ export function groundTextures(loader, renderer, quality = null, ctx = null) {
   const max = cls === 'phone' || cls === 'tablet' ? 1024 : cap && cap < 2048 ? cap : 0;
   texOpts = { aniso: renderer ? renderer.capabilities.getMaxAnisotropy() : 8, maxSize: max };
   // phones / tablets download the 1024² copies of packs.json (tools/assets/packs.mjs) where the originals are larger
-  const gm = max === 1024 && ctx && ctx.assets && ctx.packs && ctx.packs.airports && ctx.packs.airports.groundMobile;
+  const pack = ctx && ctx.assets && ctx.packs && ctx.packs.airports && ctx.packs.airports.groundMobile;
+  const gm = max === 1024 && pack;
   const fromPack = new Set(gm ? gm.files : []);
   const urlOf = (name) => (fromPack.has(name) ? ctx.assets + gm.dir + name : airportFiles.tex + name);
+  // Other classes start with those 1024² copies too and load the 2048² originals once the game is playable: the ground
+  // textures of the spawn airport were 3.1 MB of the start's 12–15 MB and shared the line with the airport's own
+  // props.glb, which the start waits for (slow 4G: props.glb took 21 s); the copies are 0.9 MB. The first seconds show
+  // the pavement at 8 instead of 4 mm per texel, then the same picture as before. ?groundfull=1: originals from the start.
+  const later = !gm && max === 0 && pack && ctx.packs.airports.groundMobile.files && !/[?&]groundfull=1\b/.test((typeof location !== 'undefined' && location.search) || '')
+    ? new Set(pack.files) : null;
+  const firstUrl = (name) => (later && later.has(name) ? ctx.assets + pack.dir + name : urlOf(name));
   const FILES = {
     asphaltRwy: ['asphalt_rwy.jpg', true], asphaltTwy: ['asphalt_twy.jpg', true], shoulder: ['shoulder.jpg', true],
     concrete: ['concrete.jpg', true], concreteRwy: ['concrete_rwy.jpg', true],
@@ -76,7 +111,8 @@ export function groundTextures(loader, renderer, quality = null, ctx = null) {
       get() {
         if (!t) {
           t = new THREE.Texture();
-          loadInto(t, urlOf(name));
+          loadInto(t, firstUrl(name));
+          if (later && later.has(name)) upgradeLater(t, urlOf(name), ctx);
           t.wrapS = t.wrapT = THREE.RepeatWrapping;
           t.anisotropy = texOpts.aniso;
           t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
