@@ -171,7 +171,8 @@ http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://x');
     const urlPath = decodeURIComponent(url.pathname);
     let file = path.join(root, urlPath);
-    if (!file.startsWith(root)) { res.writeHead(403).end(); return; }
+    // inside the root only (a bare prefix test let /../<root name>-other/… reach a sibling directory)
+    if (file !== root && !file.startsWith(root + path.sep)) { res.writeHead(403).end(); return; }
     if (fs.existsSync(file) && fs.statSync(file).isDirectory()) file = path.join(file, 'index.html');
     // usage beacons (src/core/telemetry.js, only sent here with ?telemetry=1): answered like the CloudFront Function, printed for checks
     if (urlPath === '/_e') { console.log(`[beacon] ${url.search}`); res.writeHead(204, { 'Cache-Control': 'no-store' }).end(); return; }
