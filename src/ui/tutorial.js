@@ -557,6 +557,14 @@ export function createOnboarding(container, { input = null, hud = null, restart 
       hints.reset();
       assistHud.reset();
       c.ev.takeoff = false; c.ev.touchdown = false;
+      // assisted flight switched on / off in the settings since the scenario was picked: the matching scenario starts
+      // over (the assisted steps asked for the İNİŞE GEÇ button, which is hidden with the assist off)
+      if (tut.active && scenario && /-as$/.test(scenario.id) !== !!assistHud.wanted) {
+        scenario = pickScenario(c.cat, spawn, flightRef, { assist: !!assistHud.wanted });
+        tut.steps = scenario.steps;
+        enterStep(0);
+        return;
+      }
       if (tut.active && tut.okT === 0 && !tut.steps[tut.i].final) enterStep(0);
       else if (tut.active && tut.okT > 0 && !(tut.i + 1 < tut.steps.length && tut.steps[tut.i + 1].final)) enterStep(0);
     },
