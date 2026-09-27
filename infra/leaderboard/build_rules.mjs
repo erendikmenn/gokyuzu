@@ -69,7 +69,10 @@ async function addMap(name, mapId, catalogPath, challengesPath) {
       max = Math.max(max, maxScore(m, (w) => warnings.add(w)));
       limit = Math.max(limit, m.limit || 0);
     }
-    const stars = variants[0].stars;
+    // star thresholds: the lowest of every variant (the daily variations scale them, e.g. climb at 12,000 ft:
+    // [1000, 1750, 2350] against the plain mission's [1000, 2125, 2625]; the plain mission's alone refused their stars)
+    const lists = variants.map((m) => m.stars).filter((x) => Array.isArray(x) && x.length === 3);
+    const stars = lists.length === variants.length ? [0, 1, 2].map((i) => Math.min(...lists.map((x) => x[i]))) : variants[0].stars;
     missions[def.id] = {
       aircraft: AIRCRAFT.includes(def.aircraft) ? [def.aircraft] : AIRCRAFT,
       scoreMin: 0, scoreMax: Math.ceil(max * 1.1), secMin: 3, secMax: limit ? limit + 60 : 7200, starsMin: 1,
