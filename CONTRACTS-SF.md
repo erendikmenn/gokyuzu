@@ -310,7 +310,12 @@ Players keep files in their browser cache, so every asset URL carries a content 
   under `assets/` and `renders/` that holds files (hash over the names + contents of the files directly in it).
 - `src/core/assets.js` exports `assetUrl(path)`: appends `?v=<hash>` of the file's directory (unchanged when the file is not
   listed, e.g. in local development where versions.json does not exist). The map is loaded once at startup
-  (`loadAssetVersions()`, `cache: 'no-cache'`), before any asset request.
+  (`loadAssetVersions()`), before any asset request: from the page itself when the publish build wrote it there
+  (`<script type="application/json" id="gk-build">` = build.json + `versionMap`, no request), else build.json and
+  versions.json (`cache: 'no-cache'`).
+- Cache headers (tools/deploy/deploy.sh): versioned files 1 day (JSON 5 min) plus `stale-while-revalidate` 30 days (a
+  returning player starts from the cache while the browser revalidates in the background), JS chunks a year + immutable,
+  pages `no-cache`, versions.json 5 min.
 - Every request for something under `assets/` or `renders/` goes through `assetUrl` (Three.js loaders via the loading
   manager's URL modifier; `fetch` via `assetFetch(path, init)` from `src/core/assets.js`, which also retries transient network
   errors). Audio keeps its per-file hashes (§6.5).
