@@ -14,6 +14,7 @@ PARAM_OWN_IPS. Event: {} (the schedule) or {"push": false} (build and save, do n
 import datetime as dt
 import gzip
 import json
+import logging
 import os
 import re
 import sys
@@ -24,6 +25,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import boto3
+from botocore.config import Config
 from botocore.exceptions import ClientError
 
 HERE = Path(__file__).resolve().parent
@@ -37,7 +39,10 @@ MAX_BODY = 2_000_000
 FAILS_STALE = 3            # after this many failed pushes in a row the next snapshot says "stale": true
 USER_AGENT = 'erenailab-stats-feed/1.0'
 
-s3 = boto3.client('s3')
+# library warnings name hosts (a bucket's host carries its name): keep them out of the log; the pool fits the 16 threads
+logging.getLogger('urllib3').setLevel(logging.ERROR)
+logging.getLogger('botocore').setLevel(logging.ERROR)
+s3 = boto3.client('s3', config=Config(max_pool_connections=20))
 ssm = boto3.client('ssm')
 
 
@@ -103,22 +108,28 @@ def save_state(state, body=None):
 
 
 def push(body, token):
-    """POST the snapshot; up to 3 tries (not after a 4xx other than 429). Returns the HTTP status or the error name."""
+    """POST the snapshot; up to 3 tries (not after a 4xx other than 429). Returns (HTTP status or error name, the
+    dashboard's message: its JSON `hata` on a rejected snapshot, else '')."""
     req = urllib.request.Request(env('INGEST_URL'), data=body, method='POST', headers={
         'Authorization': f'Bearer {token}', 'Content-Type': 'application/json; charset=utf-8', 'User-Agent': USER_AGENT})
-    status = None
+    status, message = None, ''
     for attempt in range(3):
         try:
             with urllib.request.urlopen(req, timeout=30) as res:
-                return res.status
+                return res.status, ''
         except urllib.error.HTTPError as e:
-            status = e.code
+            status, message = e.code, ''
+            if 'json' in (e.headers.get('Content-Type') or ''):
+                try:
+                    message = str(json.loads(e.read(4096)).get('hata', ''))[:300]
+                except ValueError:
+                    pass
             if 400 <= e.code < 500 and e.code != 429:
-                return status
+                return status, message
         except (urllib.error.URLError, TimeoutError, OSError) as e:
             status = type(e).__name__
         time.sleep(5 * (attempt + 1))
-    return status
+    return status, message
 
 
 def handler(event, context):
@@ -135,14 +146,14 @@ def handler(event, context):
     feed = state.setdefault('feed', {})
     fails = feed.get('fails', 0)
     if fails >= FAILS_STALE and feed.get('last_ok'):
-        payload['stale'] = True
+        report.mark_stale(payload, f"Son {fails} saatlik gönderim başarısız oldu; bu anlık görüntü aradaki boşluğu kapatır.")
     body = report.dump_payload(payload).encode()
     if len(body) > MAX_BODY:
         raise RuntimeError(f'snapshot too large: {len(body)} bytes')
-    status = 'skipped'
+    status, message = 'skipped', ''
     try:
         if (event or {}).get('push', True):
-            status = push(body, token)
+            status, message = push(body, token)
             feed['fails'] = 0 if status == 200 else fails + 1
             feed['last_status'] = status
             if status == 200:
@@ -152,7 +163,7 @@ def handler(event, context):
         save_state(state, body)   # the day records are valid whether or not the push went through
     card = {c['label']: c['value'] for c in payload['cards']}
     summary = {
-        'status': status, 'stale': payload['stale'], 'fails_in_a_row': feed.get('fails', 0),
+        'status': status, 'message': message, 'stale': payload['stale'], 'fails_in_a_row': feed.get('fails', 0),
         'range': payload['range'], 'logs_from': since.isoformat(timespec='minutes'), 'log_files': files,
         'downloaded': downloaded, 'newest_log': d.last_at.isoformat(timespec='minutes') if d.last_at else None,
         'days_rewritten': sorted(k for k, r in state['days'].items() if r.get('at') == now.isoformat(timespec='seconds')),

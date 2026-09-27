@@ -1283,7 +1283,9 @@ def load(folder, since, target='production', key_salt=None, mine=None, geo=None)
 # ── Dashboard snapshot: --json and the hourly stats feed (infra/stats-feed/) ──────────────────────────────────────────
 # The snapshot follows the stats.erenailab.com ingest contract v1: {v, generated_at, source, range, stale, cards, tables};
 # tables carry id, title, tab (genel | gunluk | haftalik | toplam | saatlik), columns and rows; titles and columns are
-# Turkish, numbers stay numbers (hours with 1 decimal, shares in % with 1 decimal), null = not available yet.
+# Turkish, numbers stay numbers (hours with 1 decimal, shares in % with 1 decimal), null = not available yet; a table's
+# `note` says what its numbers mean. The dashboard (stats.erenailab.com, src/ingest.ts) has no "saatlik" tab yet, so the
+# last-48-hours table sits on HOURLY_TAB; a stale snapshot also gets a "Veri durumu" card (the dashboard drops `stale`).
 # Definitions (the same as the text report): visitor = anonymous id (salted hash of IP + browser) with a session;
 # player = visitor who started a flight (a `fly` beacon or, without beacons, an aircraft model download); flight = such a
 # session; hours = active flight minutes (one heartbeat per active minute) / 60. Sessions go by their start, other events
@@ -1298,6 +1300,14 @@ FEED_FINAL = dt.timedelta(days=2, hours=2)   # a day's record is final 26 h afte
 FEED_CATCH_UP = 10                        # the feed rereads at most this many days of logs (after an outage)
 DEVICE_TR = {'desktop': 'masaüstü', 'phone': 'telefon', 'tablet': 'tablet'}
 ASSIST_TR = {'1': 'destekli', '0': 'desteksiz', '?': 'bilinmiyor (eski sürüm)'}
+HOURLY_TAB = 'gunluk'                     # "saatlik" once the dashboard has that tab
+
+
+def mark_stale(payload, why):
+    """Flag a snapshot as possibly out of date: `stale` and a first card the dashboard shows."""
+    payload['stale'] = True
+    if not any(c['label'] == 'Veri durumu' for c in payload['cards']):
+        payload['cards'].insert(0, {'label': 'Veri durumu', 'value': 'eski olabilir', 'note': why})
 
 
 def day_start(day):
@@ -1576,10 +1586,13 @@ def build_payload(stored, now, hourly=None, last_at=None, stale=False):
                  sum(r[5] for r in week_rows), sum(r[6] for r in week_rows)]
                 + [sum(r[7 + i] for r in week_rows) for i in range(len(ac_cols) + len(mp_ids))])
     tables = [
-        {'id': 'son7', 'title': 'Son 7 gün (uçak ve harita sütunları: uçuş sayısı)', 'tab': 'genel', 'columns': daily_cols,
-         'rows': week_rows + [wk_total]},
-        {'id': 'daily', 'title': 'Günlük (uçak ve harita sütunları: uçuş sayısı; Toplam satırında ziyaretçi ve oyuncu tekil)',
-         'tab': 'gunluk', 'columns': daily_cols, 'rows': daily + [total]},
+        {'id': 'son7', 'title': 'Son 7 gün', 'tab': 'genel', 'columns': daily_cols, 'rows': week_rows + [wk_total],
+         'note': 'Türkiye günleri. Oyuncu = uçuş başlatan tekil kişi, saat = aktif uçuş saati, uçak ve harita sütunları uçuş '
+                 'sayısı. "7 gün" satırında ziyaretçi ve oyuncu tekil.'},
+        {'id': 'daily', 'title': 'Günlük', 'tab': 'gunluk', 'columns': daily_cols, 'rows': daily + [total],
+         'note': "23 Eylül'den beri, Türkiye günleri. Oyuncu = uçuş başlatan tekil kişi, saat = aktif uçuş saati, uçak ve "
+                 'harita sütunları uçuş sayısı; yeni oyuncu o gün ilk kez uçan. Toplam satırında ziyaretçi ve oyuncu tekil, '
+                 'dönen oyuncu günlerin toplamı.'},
     ]
 
     # Haftalık: ISO weeks (Monday-Sunday, Türkiye days)
@@ -1595,17 +1608,21 @@ def build_payload(stored, now, hourly=None, last_at=None, stale=False):
         weekly.append([f'{y}-W{w:02d}', dt.date.fromisocalendar(y, w, 1).isoformat(), len(ds), len(vis), len(pl),
                        sum(R[x]['c']['fl'] for x in ds), hours1(sum(R[x]['c']['act'] for x in ds)), new, len(pl) - new,
                        sum(R[x]['c']['mp'].get('ist', [0, 0])[0] for x in ds)])
-    tables.append({'id': 'weekly', 'title': 'Haftalık (ISO hafta, Pazartesi-Pazar; ziyaretçi ve oyuncu hafta içinde tekil)',
-                   'tab': 'haftalik', 'columns': ['Hafta', 'Pazartesi', 'Gün', 'Ziyaretçi', 'Oyuncu', 'Uçuş', 'Saat',
+    tables.append({'id': 'weekly', 'title': 'Haftalık', 'tab': 'haftalik',
+                   'note': 'ISO hafta (Pazartesi-Pazar, Türkiye günleri); ziyaretçi ve oyuncu hafta içinde tekil; "Gün" = '
+                           'verisi olan gün sayısı (ilk ve bu hafta eksik).', 'columns': ['Hafta', 'Pazartesi', 'Gün', 'Ziyaretçi', 'Oyuncu', 'Uçuş', 'Saat',
                                                   'Yeni oyuncu', 'Dönen oyuncu', 'İstanbul uçuşu'], 'rows': weekly})
 
     # Toplam (since launch)
-    tables.append({'id': 'aircraft', 'title': 'Uçaklar', 'tab': 'toplam', 'columns': ['Uçak', 'Uçuş', 'Saat', 'Oyuncu', 'Uçuş payı (%)'],
+    tables.append({'id': 'aircraft', 'title': 'Uçaklar', 'tab': 'toplam', 'note': "23 Eylül'den beri; oyuncu = o uçakla uçan tekil kişi.",
+                   'columns': ['Uçak', 'Uçuş', 'Saat', 'Oyuncu', 'Uçuş payı (%)'],
                    'rows': [[AIRCRAFT.get(a, a), C_ac[a][0], hours1(C_ac[a][1]), len(ac_p[a]), share(C_ac[a][0], C['fl'])] for a in ac_ids]})
-    tables.append({'id': 'maps', 'title': 'Haritalar', 'tab': 'toplam', 'columns': ['Harita', 'Uçuş', 'Saat', 'Oyuncu', 'Uçuş payı (%)'],
+    tables.append({'id': 'maps', 'title': 'Haritalar', 'tab': 'toplam', 'note': "23 Eylül'den beri; oyuncu = o haritada uçan tekil kişi.",
+                   'columns': ['Harita', 'Uçuş', 'Saat', 'Oyuncu', 'Uçuş payı (%)'],
                    'rows': [[MAPS.get(m, m), C_mp[m][0], hours1(C_mp[m][1]), len(mp_p[m]), share(C_mp[m][0], C['fl'])] for m in mp_ids]})
     plats = sorted(pv_p, key=lambda k: (-len(pv_p[k]), k))
-    tables.append({'id': 'platforms', 'title': 'Platformlar (cihaz sınıfı ve işletim sistemi)', 'tab': 'toplam',
+    tables.append({'id': 'platforms', 'title': 'Platformlar', 'tab': 'toplam',
+                   'note': "23 Eylül'den beri; cihaz sınıfı oyunun kendi ölçümünden (yoksa tarayıcıdan), sistem tarayıcıdan.",
                    'columns': ['Cihaz', 'Sistem', 'Ziyaretçi', 'Oyuncu', 'Uçuş', 'Saat'],
                    'rows': [[DEVICE_TR.get(k.split('/')[0], k.split('/')[0]), k.split('/', 1)[1], len(pv_p[k]), len(pf_p.get(k, ())),
                              C_pf[k][0] if k in C_pf else 0, hours1(C_pf[k][1]) if k in C_pf else 0.0] for k in plats]})
@@ -1622,11 +1639,13 @@ def build_payload(stored, now, hourly=None, last_at=None, stale=False):
     rows.append(['Tümü (kişi)', len(people_of('m:brief:')), len(people_of('m:start:')), len(people_of('m:done:')),
                  len(people_of('m:fail:')), len(people_of('m:quit:')), sum(C_ev[f'm:start:{i}'] for i in m_ids),
                  sum(C_ev[f'm:done:{i}'] for i in m_ids), share(len(people_of('m:done:')), len(people_of('m:start:')))])
-    tables.append({'id': 'missions', 'title': 'Görevler (görev modu; kişi = tekil oyuncu, başlatma/bitirme = olay)', 'tab': 'toplam',
+    tables.append({'id': 'missions', 'title': 'Görevler (görev modu)', 'tab': 'toplam',
+                   'note': '(kişi) sütunları tekil oyuncu, Başlatma ve Bitirme olay sayısı; bitirme oranı = bitiren / başlayan.',
                    'columns': ['Görev', 'Brifing (kişi)', 'Başlayan (kişi)', 'Bitiren (kişi)', 'Başarısız (kişi)', 'Bırakan (kişi)',
                                'Başlatma', 'Bitirme', 'Bitirme oranı (%)'], 'rows': rows})
     c_ids = sorted(ids('c:') | ids('cp:track:'), key=lambda i: (-(n_people(f'c:start:{i}') + n_people(f'c:done:{i}')), i))
-    tables.append({'id': 'challenges', 'title': 'Serbest uçuş görevleri (kişi; bitirme = olay)', 'tab': 'toplam',
+    tables.append({'id': 'challenges', 'title': 'Serbest uçuş görevleri', 'tab': 'toplam',
+                   'note': 'Kişi sayıları (tekil); Bitirme = olay sayısı. Golden Gate altı ve En iyi iniş anında biter (başlangıç yok).',
                    'columns': ['Görev', 'Takip eden', 'Başlayan', 'Bitiren', 'Başarısız', 'Vazgeçen', 'Yarım kalan', 'Bitirme'],
                    'rows': [[FFC_NAMES.get(i, i), n_people(f'cp:track:{i}'), None if i in ('bridge', 'land') else n_people(f'c:start:{i}'),
                              n_people(f'c:done:{i}'), n_people(f'c:fail:{i}'), n_people(f'c:cancel:{i}'), n_people(f'c:drop:{i}'),
@@ -1641,11 +1660,13 @@ def build_payload(stored, now, hourly=None, last_at=None, stale=False):
         lb_rows.append([b, C_ev[f'lb:show:m:{b}'] + C_ev[f'lb:show:a:{b}'], len(keys.get(f'lb:show:m:{b}', set()) | keys.get(f'lb:show:a:{b}', set())),
                         C_ev[f'lb:submit:m:{b}'], C_ev[f'lb:submit:a:{b}'],
                         len(keys.get(f'lb:submit:m:{b}', set()) | keys.get(f'lb:submit:a:{b}', set())), C_ev[f'lb:fail:m:{b}'] + C_ev[f'lb:fail:a:{b}']])
-    tables.append({'id': 'leaderboard', 'title': 'Sıralama tablosu (oyun içi; ilk 20 tablo)', 'tab': 'toplam',
+    tables.append({'id': 'leaderboard', 'title': 'Sıralama tablosu', 'tab': 'toplam',
+                   'note': 'Oyun içi olaylar: ilk satır hepsi, sonra en çok kullanılan 20 tablo; destekli listeler kendi tablosunun satırında.',
                    'columns': ['Tablo', 'Görüntüleme', 'Gören (kişi)', 'Gönderim (elle)', 'Gönderim (destekli)', 'Gönderen (kişi)', 'Gönderilemeyen'],
                    'rows': lb_rows})
     post = {s: n for k, n in C_api.items() for m, p, s in [k.split(' ')] if m == 'POST' and p == '/api/score'}
-    tables.append({'id': 'score_api', 'title': 'Skor sunucusu (istek)', 'tab': 'toplam', 'columns': ['İstek', 'Sayı'],
+    tables.append({'id': 'score_api', 'title': 'Skor sunucusu', 'tab': 'toplam', 'note': 'İstek sayısı (/api/score, /api/top); sen / test hariç.',
+                   'columns': ['İstek', 'Sayı'],
                    'rows': [['Kabul edilen skor', post.get('200', 0)], ['Geçersiz (400)', post.get('400', 0)], ['Sınıra takılan (429)', post.get('429', 0)],
                             ['Diğer', sum(n for s, n in post.items() if s not in ('200', '400', '429'))],
                             ['Tablo görüntüleme (GET)', sum(n for k, n in C_api.items() if k.startswith('GET /api/top '))]]})
@@ -1655,21 +1676,24 @@ def build_payload(stored, now, hourly=None, last_at=None, stale=False):
         if a:
             as_rows.append([ASSIST_TR[state], a['n'], a['g'], share(a['gto'], a['g']), a['to'], a['ld'], a['rw'],
                             round(a['rw'] / max(a['to'], 1), 2), share(a['rwf'], a['n']), a['cr'], round(a['cr'] / a['n'], 2), a['aa']])
-    tables.append({'id': 'assist', 'title': 'Destekli uçuş: kalkış / iniş hunisi (as; uçuş = fly sinyali olan sayfa oturumu)', 'tab': 'toplam',
+    tables.append({'id': 'assist', 'title': 'Destekli uçuş: kalkış ve iniş', 'tab': 'toplam',
+                   'note': 'Uçuşun destekli uçuş durumuna (as) göre; uçuş = fly sinyali olan sayfa oturumu; bilinmiyor = alan eklenmeden önceki sürümler.',
                    'columns': ['Destekli uçuş', 'Uçuş', 'Yerden başlayan', 'Kalkış yapan (%)', 'Kalkış', 'İniş', 'Pist inişi',
                                'Pist inişi / kalkış', 'Pist inişi yapan uçuş (%)', 'Kaza', 'Kaza / uçuş', 'İnişe geç ile iniş'], 'rows': as_rows})
     flew = keys.get('fly', set())
     off = keys.get('as:off', set())
-    tables.append({'id': 'assist_off', 'title': 'Destekli uçuşu kapatma (kişi)', 'tab': 'toplam', 'columns': ['Adım', 'Kişi', 'Uçanların %'],
+    tables.append({'id': 'assist_off', 'title': 'Destekli uçuşu kapatma', 'tab': 'toplam', 'note': 'Kişi; oran uçan oyunculara göre.',
+                   'columns': ['Adım', 'Kişi', 'Uçanların %'],
                    'rows': [[label, len(g), share(len(g), len(flew))] for label, g in (
                        ('Çipe dokunan', keys.get('as:chip', set())), ('Çipten kapatan', off), ('Vazgeçen', keys.get('as:keep', set()) - off),
                        ("Ayarlar'dan kapatan", keys.get('s:assist', set()) - off))]})
     set_rows = [[label, n_people(f's:{g}'), share(n_people(f's:{g}'), len(flew))] for g, (label, _) in SETTING_GROUPS.items()]
     set_rows += [[f'Değiştirilen: {k[3:]}', len(v), share(len(v), len(flew))]
                  for k, v in sorted(((k, v) for k, v in keys.items() if k.startswith('sk:')), key=lambda kv: (-len(kv[1]), kv[0]))]
-    tables.append({'id': 'settings', 'title': 'Ayarlar (kişi; oran uçan oyunculara göre)', 'tab': 'toplam',
+    tables.append({'id': 'settings', 'title': 'Ayarlar', 'tab': 'toplam', 'note': 'Ayarı değiştiren kişi; oran uçan oyunculara göre.',
                    'columns': ['Ayar', 'Kişi', 'Uçanların %'], 'rows': set_rows})
-    tables.append({'id': 'funnel', 'title': 'Görev hunisi (kişi; görev modu + serbest uçuş, iniş puanı hariç)', 'tab': 'toplam',
+    tables.append({'id': 'funnel', 'title': 'Görev hunisi', 'tab': 'toplam',
+                   'note': 'Uçan oyuncular içinde kişi; görev modu ve serbest uçuş görevleri, iniş puanı hariç.',
                    'columns': ['Adım', 'Kişi', 'Uçanların %'],
                    'rows': [[label, len(g & flew), share(len(g & flew), len(flew))] for label, g in (
                        ('Uçan', flew), ('Görev paneli / menü sekmesini açan', keys.get('t:open', set())),
@@ -1697,16 +1721,22 @@ def build_payload(stored, now, hourly=None, last_at=None, stale=False):
     if ret_rows:
         ret_rows.append(['Tümü', sum(r[1] for r in ret_rows)] + [sum(r[2 + i] for r in ret_rows) for i in range(len(VISIT_KINDS))]
                         + [share(sums['d1'], sums['n1']), share(sums['d7'], sums['n7']), share(sums['w'], sums['n7'])])
-    tables.append({'id': 'retention', 'title': 'Geri dönüş (kimliksiz sayaç; kohort = tarayıcının ilk günü; D1/D7 %, gün tamamlanınca)',
-                   'tab': 'toplam', 'columns': ['Kohort', 'Yeni', 'Masaüstü', 'Telefon', 'Tablet', 'D1 (%)', 'D7 (%)', '7 gün içinde (%)'],
+    tables.append({'id': 'retention', 'title': 'Geri dönüş (D1 / D7)', 'tab': 'toplam',
+                   'note': 'Kimliksiz sayaç: kohort = tarayıcının ilk ziyaret günü; D1 / D7 = 1. / 7. gün yeniden gelenlerin yüzdesi, '
+                           'o gün bitince dolar (27 Eylül sonrası sürümler).', 'columns': ['Kohort', 'Yeni', 'Masaüstü', 'Telefon', 'Tablet', 'D1 (%)', 'D7 (%)', '7 gün içinde (%)'],
                    'rows': ret_rows})
     if hourly is not None:
-        tables.append({'id': 'hourly', 'title': 'Son 48 saat (Türkiye saati; oyuncu = uçuş sinyali veya uçak modeli indiren)', 'tab': 'saatlik',
+        tables.append({'id': 'hourly', 'title': 'Son 48 saat', 'tab': HOURLY_TAB,
+                       'note': 'Türkiye saati, en yeni üstte (bu saat sürüyor); oyuncu = uçuş sinyali ya da uçak modeli indiren; kayıtlar ~1 saat gecikebilir.',
                        'columns': ['Saat', 'Ziyaretçi', 'Oyuncu', 'Uçuş', 'Aktif dk', 'Kalkış', 'İniş', 'Kaza', 'Görev başlatan',
                                    'Görev bitiren', 'İstanbul oyuncusu', 'Telefon (%)'], 'rows': hourly})
-    return {'v': 1, 'generated_at': now.astimezone(IST).isoformat(timespec='seconds'), 'source': 'gokyuzu',
-            'range': {'from': (days[0] if days else today).isoformat(), 'to': today.isoformat()}, 'stale': bool(stale),
-            'cards': cards, 'tables': tables}
+    payload = {'v': 1, 'generated_at': now.astimezone(IST).isoformat(timespec='seconds'), 'source': 'gokyuzu',
+               'range': {'from': (days[0] if days else today).isoformat(), 'to': today.isoformat()}, 'stale': False,
+               'cards': cards, 'tables': tables}
+    if stale:
+        mark_stale(payload, f"En yeni kayıt {last_at.astimezone(IST):%d.%m %H:%M}: erişim kayıtları gelmiyor olabilir."
+                   if last_at else 'Okunan erişim kaydı yok.')
+    return payload
 
 
 def feed_snapshot(d, now, state=None):

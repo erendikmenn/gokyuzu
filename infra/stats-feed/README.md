@@ -81,6 +81,7 @@ Scheduler (free tier). Under $1 a month, effectively free.
 ## Failures
 
 The function retries the push 3 times within a run (not after a 4xx other than 429) and raises on failure (Lambda
-`Errors` metric, log line). No e-mail alert: the dashboard shows the snapshot's age, and the first successful snapshot
-after 3 or more failed runs in a row carries `"stale": true`, as does any snapshot whose newest log line is more than
-3 hours old (the access logs stopped arriving).
+`Errors` metric, log line). No e-mail alert: the dashboard shows the snapshot's age, and once the feed has worked, the
+first successful snapshot after 3 or more failed runs in a row carries `"stale": true`, as does any snapshot whose
+newest log line is more than 3 hours old (the access logs stopped arriving). The history is saved on every run, pushed
+or not, so a dashboard outage loses nothing.
