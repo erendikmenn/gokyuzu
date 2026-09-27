@@ -17,7 +17,8 @@ import { AIRPORTS, AIRPORT_ORDER, TIPS, TOUCH_TIPS } from '../ui/data.js';
 import { TOWERS } from '../ui/camera.js';
 import { setNavData } from '../avionics/nav.js';
 import { loadSettings } from '../core/settings.js';
-import { QUALITY, resolveQuality, lowerQuality, setQualityCap } from '../core/quality.js';
+import { QUALITY, isQuality, resolveQuality, lowerQuality, setQualityCap } from '../core/quality.js';
+import { queryNumber } from '../core/url-params.js';   // every numeric ?switch is read clamped (a link can carry any text)
 import { detectDevice } from '../core/gpu-device.js';
 import { createGpuGuard, noteGpuFailure } from '../core/gpu-guard.js';          // robustness: context loss, GPU budget
 import { readResume, applyResume, clearResume } from '../core/gpu-resume.js';
@@ -40,7 +41,7 @@ await runDeviceGate(uiRoot);
 
 // ---- settings / quality ----
 let settings = loadSettings();
-if (params.has('quality') && QUALITY[params.get('quality')]) settings.quality = params.get('quality');   // ?quality=low|medium|high|ultra
+if (isQuality(params.get('quality'))) settings.quality = params.get('quality');   // ?quality=low|medium|high|ultra
 // robustness hook: a flight saved before a graphics failure (?resume=1 reload, or this tab died mid-flight)
 let resume = readResume(params);
 if (resume && resume.crash) {   // the previous page of this tab died without unloading: treat it as a GPU failure too
@@ -50,7 +51,7 @@ if (resume && resume.crash) {   // the previous page of this tab died without un
     if (detectDevice().kind !== 'desktop') setQualityCap(lower);   // a lasting cap only where memory kills are real (phones/tablets)
   }
 }
-let quality = resolveQuality(QUALITY[settings.quality] ? settings.quality : 'high');   // preset + device caps (src/core/quality.js)
+let quality = resolveQuality(isQuality(settings.quality) ? settings.quality : 'high');   // preset + device caps (src/core/quality.js)
 // phones: no backdrop blur behind the HUD / menus (index.html; ?blur=1 / ?blur=0 force it on / off)
 if (params.get('blur') === '0' || (quality.deviceClass === 'phone' && params.get('blur') !== '1')) document.documentElement.classList.add('gk-noblur');
 // maps hook (src/maps/index.js): ?map=, a deep link's mission / spawn, a resumed flight, else the menu's last choice
@@ -64,9 +65,11 @@ const renderer = new THREE.WebGLRenderer({ antialias: quality.antialias, logarit
 // (weak GPUs, Retina over downtown), stepping back up after a sustained smooth period. ?pr=<n> pins it.
 let maxPixelRatio, minPixelRatio;
 function pixelRatioLimits() {
-  maxPixelRatio = params.has('pr') ? Number(params.get('pr')) : Math.min(window.devicePixelRatio, quality.pixelRatioMax);
+  // (?pr=0 / abc / -1 left a 0 × 0 or 300 × 150 canvas, ?pr=100 a canvas no GPU can hold: clamped to 0.25–3, not a number → ignored)
+  const pinned = queryNumber(params, 'pr', null, 0.25, 3);
+  maxPixelRatio = pinned ?? Math.min(window.devicePixelRatio, quality.pixelRatioMax);
   // floor: 60 % of the start, at least 0.6, or the preset's own floor (quality.js pixelRatioMin: software rasterizers 0.5)
-  minPixelRatio = params.has('pr') ? maxPixelRatio : Math.min(maxPixelRatio, Math.max(quality.pixelRatioMin ?? 0.6, maxPixelRatio * 0.6));
+  minPixelRatio = pinned ?? Math.min(maxPixelRatio, Math.max(quality.pixelRatioMin ?? 0.6, maxPixelRatio * 0.6));
 }
 pixelRatioLimits();
 let pixelRatio = maxPixelRatio;
@@ -88,7 +91,7 @@ const scene = new THREE.Scene();
 const lightStandIns = [new THREE.SpotLight(0xffffff, 0), new THREE.PointLight(0xffffff, 0)];
 for (const l of lightStandIns) { scene.add(l); if (l.target) scene.add(l.target); }
 // far plane 80 km (?far=<m> for draw-distance experiments; the sky dome, clouds and aerial perspective follow it)
-const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.3, params.has('far') ? Math.max(5000, Number(params.get('far')) || 80000) : 80000);
+const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.3, queryNumber(params, 'far', 80000, 5000, 400000));
 scene.add(camera);
 function onResize() {
   const w = window.innerWidth, h = window.innerHeight;
@@ -215,7 +218,7 @@ async function start() {
     state.mission = missionMod.createMissionRuntime(plan, {
       state, scene, camera, hud, input, audio, navRoute, landing, touch: touchUI.active, resetFlight, goToMenu, map,
       // where the player came from (telemetry `mission` brief): the menu / its daily card, a link, or "Görev olarak oyna"
-      via: missionReq ? ({ ff: 'ff', next: 'next' }[params.get('from')] || 'link') : choice.mission && choice.mission.daily ? 'daily' : 'menu',
+      via: missionReq ? (['ff', 'next'].includes(params.get('from')) ? params.get('from') : 'link') : choice.mission && choice.mission.daily ? 'daily' : 'menu',
       leave: (url) => { state.leaving = true; location.href = url; },
       snapshot: () => { renderer.render(scene, camera); return renderer.domElement; },   // share card image (same task as the render)
     });
@@ -265,7 +268,7 @@ async function start() {
  * 1,226 MB after 5 s). iOS kills a page on its footprint, so there the streaming waits until the start-up copies are gone.
  */
 function playDelay() {
-  if (params.has('playdelay')) return Math.max(0, Number(params.get('playdelay')) || 0);
+  if (params.has('playdelay')) return queryNumber(params, 'playdelay', 0, 0, 30);   // (1e9 kept the world from ever streaming)
   return (quality.deviceClass === 'phone' || quality.deviceClass === 'tablet') && detectDevice().engine === 'webkit' ? PLAY_DELAY_WEBKIT : 0;
 }
 const PLAY_DELAY_WEBKIT = 3;
@@ -930,7 +933,7 @@ let appliedQualityId = settings.quality;
 function applySettings(next) {
   settings = next;
   // only a changed choice moves the quality (a budget step-down stays until the player picks a preset)
-  if (settings.quality !== appliedQualityId && QUALITY[settings.quality]) { appliedQualityId = settings.quality; setQualityLive(resolveQuality(settings.quality)); }
+  if (settings.quality !== appliedQualityId && isQuality(settings.quality)) { appliedQualityId = settings.quality; setQualityLive(resolveQuality(settings.quality)); }
   if (audio.setVolumes) audio.setVolumes(settings.volumes);
   if (!params.has('fps')) pacer.setSetting(settings.fps);   // frame rate: Otomatik / 30 / 60 / Sınırsız
   state.settings = settings; state.quality = quality;
