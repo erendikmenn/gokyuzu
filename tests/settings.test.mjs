@@ -6,10 +6,10 @@
 
 // ---- browser stand-ins (before the modules load) ----
 const store = new Map();
-let storageBroken = false;
+let storageBroken = false, storageFull = false;
 globalThis.localStorage = {
   getItem: (k) => { if (storageBroken) throw new Error('SecurityError'); return store.has(k) ? store.get(k) : null; },
-  setItem: (k, v) => { if (storageBroken) throw new Error('QuotaExceededError'); store.set(k, String(v)); },
+  setItem: (k, v) => { if (storageBroken || storageFull) throw new Error('QuotaExceededError'); store.set(k, String(v)); },
   removeItem: (k) => { store.delete(k); },
 };
 const events = [];
@@ -86,6 +86,17 @@ patchSettings({ muted: true, volumes: { engine: 0.4 } });
 s = storedSettings();
 storageBroken = false;
 check('storage unavailable: the change is kept in memory for this page', s.muted === true && s.volumes.engine === 0.4);
+// storage full (reads work, writes throw): the stale stored object must not come back with the next change elsewhere
+store.clear();
+saveSettings({ volumes: { master: 0.7 } });     // saved earlier (a working write): assist not stored → on
+storageFull = true;
+saveSettings({ ...storedSettings(), assist: false });   // Ayarlar → Destekli uçuş: Kapalı (the write fails)
+patchSettings({ muted: true });                 // M key
+const full1 = events[events.length - 1];
+storageFull = false;
+patchSettings({ volumes: { engine: 0.9 } });    // storage works again: the page's state is written
+check('storage full: assisted flight turned off stays off through later changes (M key), then is written', full1.assist === false && storedSettings().assist === false && JSON.parse(store.get(KEY)).assist === false && JSON.parse(store.get(KEY)).muted === true,
+  `after M: ${full1.assist}, stored ${store.get(KEY)}`);
 
 // ---- alert classes ----
 const CRITICAL = ['gpws:pullup', 'gpws:tad', 'gpws:m2', 'gpws:t1', 'gpws:sink', 'gpws:dontsink', 'gpws:toolowgear', 'gpws:toolowflaps',

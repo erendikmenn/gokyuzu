@@ -36,8 +36,12 @@ export const ALERT_VOICE_MODES = ['all', 'critical', 'off'];
 
 // storage: localStorage, or this page's memory when it is unavailable (private mode quirks, blocked site data), so a
 // change still holds for the rest of the visit
-let memo = null;
+// (after a failed write, e.g. storage full, the memo is newer than what storage holds: it wins, or the next change made
+// elsewhere, such as the M key's patch, would rebuild the settings from the stale stored object: assisted flight turned
+// off came back on)
+let memo = null, memoNewer = false;
 function readRaw() {
+  if (memo && memoNewer) { try { return JSON.parse(memo) || {}; } catch { /* */ } }
   try {
     const s = localStorage.getItem(KEY);
     if (s != null) return JSON.parse(s) || {};
@@ -48,7 +52,7 @@ function readRaw() {
 function writeRaw(obj) {
   const json = JSON.stringify(obj);
   memo = json;
-  try { localStorage.setItem(KEY, json); } catch { /* private mode: memo keeps it for this page */ }
+  try { localStorage.setItem(KEY, json); memoNewer = false; } catch { memoNewer = true; /* private mode / full: memo keeps it for this page */ }
 }
 
 const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
