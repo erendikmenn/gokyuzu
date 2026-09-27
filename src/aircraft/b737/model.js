@@ -4,6 +4,7 @@
 // and gear legs towards RETRACTED. Fans spin about their local Z (engine axis).
 import * as THREE from 'three';
 import { singlePassFlatGlass } from '../glass.js';
+import { stowedParts, matName } from '../stowed.js';
 
 // URLs resolve against the repo root whatever page imports this module (index.html or dev/*.html).
 const repo = (p) => new URL(`../../../${p}`, import.meta.url).href;
@@ -151,6 +152,12 @@ export function createRig(gltfScene) {
     for (let i = 1; i <= 6; i++) if (P[`spl${s}${i}`]) spoilerList.push({ p: P[`spl${s}${i}`], right: s === 'R', flight: i >= 2 && i <= 5 });
   }
   const mainGear = SIDES.map((s) => ({ leg: P['mg' + s], brace: P['mgBrace' + s], door: P['ngDoor' + s] }));
+  // hidden while nothing outside can see them (../stowed.js): the retracted nose leg, brace, pistons and hubs behind the
+  // shut nose doors (not the tyres: they show at the door seam; a 737's main wheels stay open to the air), and the inner
+  // sleeve of the main pistons, which the strut encloses in every position
+  const bayGear = stowedParts(root, ['gear_nose'], (m) => matName(m) !== 'tire');
+  const sleeves = stowedParts(root, ['gear_main_L_piston', 'gear_main_R_piston'], (m) => /_piston$/.test(m.parent ? m.parent.name : '') && matName(m) === 'metal_dark');
+  sleeves.set(true);
   const wheels = [];
   for (const n of ['wheel_nose_L', 'wheel_nose_R']) { const p = pivot(n); if (p) wheels.push({ p, r: 0.343, a: 0 }); }
   for (const s of ['L', 'R']) for (const i of [1, 2]) { const p = pivot(`wheel_main_${s}_${i}`); if (p) wheels.push({ p, r: 0.565, a: 0 }); }
@@ -340,6 +347,7 @@ export function createRig(gltfScene) {
     }
     setRot(P.ng, legNose * 101 * D);
     setRot(P.ngBrace, legNose * 57 * D);
+    bayGear.set(g <= 0);              // back on the first frame of an extension (the nose doors open from g > 0)
     // strut compression (0 = extended; ~0.35 at static load where the model sits)
     const comp = v.gearCompression || [];
     const cN = g > 0.99 ? clamp01(comp[0] ?? 0.35) : 0, cL = g > 0.99 ? clamp01(comp[1] ?? 0.35) : 0, cR = g > 0.99 ? clamp01(comp[2] ?? 0.35) : 0;
@@ -459,6 +467,7 @@ export function createRig(gltfScene) {
     setView,
     attachCockpit,
     cockpitReady: !!interior,
+    stowed: [bayGear, sleeves],   // (test hook)
   };
   update(0, { aileron: 0, elevator: 0, rudder: 0, flaps: 0, slats: 0, spoilers: 0, speedbrake: 0, gear: 1, gearCompression: [0.35, 0.35, 0.35], wheelSpeed: 0, engines: [{ n1: 0 }, { n1: 0 }], lights: {} });
   setView('exterior');

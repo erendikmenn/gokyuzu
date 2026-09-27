@@ -4,6 +4,7 @@
 // rest quaternion. Signs: positive rotation about local +X moves a trailing edge DOWN (surfaces aft of the hinge).
 import * as THREE from 'three';
 import { singlePassFlatGlass } from '../glass.js';
+import { stowedParts, matName } from '../stowed.js';
 
 // URLs are resolved relative to this module so that pages outside the repo root (dev/*.html) load the same files.
 const ROOT = new URL('../../../', import.meta.url).href;
@@ -259,6 +260,12 @@ export function createRig(gltfScene) {
   ].filter((w) => w.a);
   const petals = [];
   for (const n of Object.keys(nodes)) if (n.startsWith('nozzle_petal_')) petals.push(anim(n));
+  // hidden while nothing outside can see them (../stowed.js): the retracted legs, wheels and pistons behind the shut doors
+  // (not the main legs' outer strut: it shows between the doors), and the well lining on the inside of the shut main doors
+  // (shut with the gear down too)
+  const bayGear = stowedParts(gltfScene, ['gear_nose', 'gear_main_L', 'gear_main_R'],
+    (m, leg) => !(leg !== 'gear_nose' && m.parent && m.parent.name === leg && matName(m) === 'gear_strut'));
+  const doorLining = stowedParts(gltfScene, ['gear_door_main_L', 'gear_door_main_R'], (m) => matName(m) === 'gear_well');
 
   // ---- eye, contacts, bounds
   const wpos = (n) => { const o = nodes[n]; return o ? o.getWorldPosition(new THREE.Vector3()) : null; };
@@ -405,6 +412,8 @@ export function createRig(gltfScene) {
       const k = seq === 'leg' ? 1 - retract : doorOpen;
       setRot(a, (a.data.open_angle ?? 0) * clamp(k, 0, 1));
     }
+    bayGear.set(g <= 0);              // back on the first frame of an extension (the doors start to open at g > 0)
+    doorLining.set(doorOpen <= 0);
     // wheels
     const ws = v.wheelSpeed ?? 0;
     for (const w of wheels) {
@@ -490,6 +499,6 @@ export function createRig(gltfScene) {
   update(0, { gear: 1, engines: [{ n1: 0, afterburner: 0 }], lights: {} });
   applyView();
 
-  const rig = { object, eye, contacts, screens, bounds, update, setView, attachCockpit, cockpitReady, nodes };
+  const rig = { object, eye, contacts, screens, bounds, update, setView, attachCockpit, cockpitReady, nodes, stowed: [bayGear, doorLining] };   // (stowed: test hook)
   return rig;
 }
