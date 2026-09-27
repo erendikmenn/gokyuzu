@@ -525,7 +525,7 @@ export function createChallengeTracker(o = {}) {
       if (!card) return;
       const ok = card.onRunway && card.stars >= 1 && !closedEnds.has(card.runway);
       if (!ok) {
-        if (run.length) { emit('message', e, `${def.title} bozuldu: ${card.onRunway ? 'en az 1 yıldız gerekli' : 'pist dışı iniş'}`); broken('broken'); }
+        if (run.length) { emit('message', e, `${def.title} bozuldu: ${!card.onRunway ? 'pist dışı iniş' : closedEnds.has(card.runway) ? 'bu pist yalnız kalkışa açık' : 'en az 1 yıldız gerekli'}`); broken('broken'); }
         return;
       }
       run.push(card);

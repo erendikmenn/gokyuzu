@@ -103,8 +103,10 @@ class Bridge extends Objective {
     if (Math.abs(along) > b.half - 40) { this.say('Kulelerin arasından geçmelisin'); return; }
     if (hit.y >= bottom) { this.say(hit.y > top ? 'Köprünün üstünden geçtin: altından geçmelisin!' : 'Tabliyeye çok yakın!'); return; }
     const centre = band(Math.abs(along), 80, b.half - 60);
-    const h = hit.y < 15 ? clamp((hit.y - 3) / 12, 0, 1) : clamp((bottom - 8 - hit.y) / (bottom - 8 - 50), 0, 1);
-    const height = hit.y >= 15 && hit.y <= 50 ? 1 : h;
+    // full height points from 15 m up to 50 m and never within 8 m of the deck: a deck underside below 58 m (İstanbul's
+    // fallback clearance is 57 m) turned the ratio negative, and a pass 2 m under the deck got the full 300
+    const hi = Math.min(50, bottom - 8);
+    const height = hit.y < 15 ? clamp((hit.y - 3) / 12, 0, 1) : hit.y <= hi ? 1 : clamp((bottom - 8 - hit.y) / Math.max(1, bottom - 58), 0, 1);
     const pc = Math.round(500 * centre), ph = Math.round(300 * height);
     this.parts = [['Kuleler arası konum', `${Math.round(Math.abs(along))} m merkezden`, pc], ['Geçiş yüksekliği', `${Math.round(hit.y)} m (tabliye ${Math.round(bottom)} m)`, ph]];
     this.say('Köprünün altından geçtin!');

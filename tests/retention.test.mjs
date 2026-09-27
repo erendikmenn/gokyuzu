@@ -192,6 +192,15 @@ const memStore = () => { const m = new Map(); return { getItem: (k) => (m.has(k)
   land('KSFO 28L', { fpm: 100 });
   const crashAbort = (tr.onCrash('Kaza'), ev.filter((x) => x.type === 'abort' && x.data === 'broken').length === 2);
   check('İniş serisi: a crash breaks it (not a failed run)', crashAbort && !ev.some((x) => x.type === 'fail'));
+  { // İstanbul: a good landing on a departure-only runway breaks the series with that reason (it said "en az 1 yıldız gerekli")
+    const { loadMissionCatalog } = await import('../src/missions/catalog.js');
+    const catalog = await loadMissionCatalog('ist', RW.ist);
+    const msgs = [];
+    const ti = createChallengeTracker({ aircraft: 'a320neo', category: 'airliner', ends: runwayEnds(RW.ist), catalog, map: 'ist', challenges: landingChallenges('ist'), emit: (type, e, data) => { if (type === 'message') msgs.push(data); } });
+    const cardIst = (runway) => ({ onRunway: true, runway, stars: 3, points: 92, fpm: 150, cat: 'airliner' });
+    ti.onLanding(cardIst('LTFM 35R'), { x: 0, z: 0 }); ti.onLanding(cardIst('LTFM 09'), { x: 0, z: 0 });
+    check('İniş serisi (İstanbul): a 3★ landing on a departure-only runway breaks it with that reason', msgs.some((m) => /bozuldu: bu pist yalnız kalkışa açık/.test(m)), msgs.filter((m) => /bozuldu/.test(m)).join(' | '));
+  }
   // Günün inişi: only the day's runway counts
   ev.length = 0;
   const e = tr.byId['daily-land'];

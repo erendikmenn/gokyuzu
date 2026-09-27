@@ -1218,6 +1218,22 @@ function ffTracker(aircraft, category, hooks = {}) {
     d ? `${d.data.score} pts ${d.data.stars}★ ${JSON.stringify(d.data.rows)}` : `no pass; crashed ${f.crashed}`);
 }
 
+// bridge height points with a low deck (the 57 m fallback clearance; the landmark's span can be lower near a tower): a pass
+// just under the deck must not get the full height points (the ratio turned negative below 58 m)
+{
+  const pass = (y, spanBottom) => {
+    const b = BRIDGES.bogazici, ax = dirOf(b.axis), n = { dx: -ax.dz, dz: ax.dx };
+    const spanAt = spanBottom == null ? null : (x, z, out) => { out.bottom = spanBottom; out.top = spanBottom + 8; return out; };
+    const o = createObjective({ type: 'bridge', bridge: 'bogazici' }, { bridges: BRIDGES, spanAt });
+    o.start();
+    o.update({ first: false, px: b.x - n.dx * 20, pz: b.z - n.dz * 20, py: y, x: b.x + n.dx * 20, z: b.z + n.dz * 20, y });
+    return o.parts[1] ? o.parts[1][2] : null;
+  };
+  const low = [pass(30), pass(45), pass(55), pass(52, 56)], high = [pass(40, 70), pass(58, 70), pass(61, 70)];
+  check('Bridge height points: a low deck (57 m / 56 m) gives full points at 30–45 m and none just under it; a 70 m deck unchanged', low[0] === 300 && low[1] === 300 && low[2] === 0 && low[3] === 0 && high[0] === 300 && high[1] > 0 && high[1] < 300 && high[2] < high[1],
+    `low ${low.join('/')}, 70 m deck ${high.join('/')}`);
+}
+
 // =====================================================================================================================
 let failed = 0;
 const w = Math.max(...rows.map((r) => r.name.length));
