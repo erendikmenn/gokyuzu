@@ -6,7 +6,7 @@
 //   src/ui/touch.js tilt                          src/ui/tutorial.js   tutorial
 // Old stored objects miss newer keys: loadSettings() fills every missing key (nested ones too) from DEFAULT_SETTINGS, so a
 // stored { volumes: { master: .4 } } keeps its levels and gets muted: false, assist: true, the default alerts, …
-import { detectQuality, capQuality, getQualityCap, clearQualityCap, qualityRank } from './quality.js';
+import { detectQuality, capQuality, getQualityCap, clearQualityCap, qualityRank, isQuality } from './quality.js';
 
 const KEY = 'gokyuzu.settings';
 export const DEFAULT_SETTINGS = {
@@ -70,6 +70,7 @@ export function storedSettings() {
   for (const k of new Set([...Object.keys(D.volumes), ...Object.keys(v)])) volumes[k] = unit(v[k], D.volumes[k] ?? 1);
   return {
     ...D, ...raw,
+    quality: isQuality(raw.quality) ? raw.quality : null,   // a hand-edited / corrupt value is "auto", never a lookup key
     volumes,
     muted: bool(raw.muted, D.muted),
     alerts: {

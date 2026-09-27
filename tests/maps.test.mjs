@@ -38,6 +38,14 @@ check('pickMap: resumed flight keeps its map', M.pickMap(q('resume=1'), { aircra
 M.rememberMap('ist');
 check('pickMap: the menu remembers the last choice', M.pickMap(q('')) === 'ist' && M.pickMap(q('aircraft=f16&spawn=KSFO-28R')) === 'sf', store.get('gokyuzu.map'));
 M.rememberMap('sf');
+// Object.prototype names from a link or a corrupt store are not maps (?map=constructor broke the start: "loaded[id].then
+// is not a function")
+check('pickMap / storedMap / isMapId: prototype names are not maps', ['constructor', '__proto__', 'toString', 'hasOwnProperty'].every((n) => {
+  store.set('gokyuzu.map', n);
+  const ok = M.pickMap(q(`map=${n}`)) === 'sf' && M.storedMap() === 'sf' && !M.isMapId(n) && M.pickMap(q('resume=1'), { aircraft: 'f16', map: n }) === 'sf';
+  store.set('gokyuzu.map', 'sf');
+  return ok;
+}) && M.isMapId('ist') && M.isMapId('sf') && !M.isMapId(null));
 check('mapOfId', M.mapOfId('LTFJ-06L') === 'ist' && M.mapOfId('ist-x') === 'ist' && M.mapOfId('KSFO-28R') === 'sf' && M.mapOfId(null) === 'sf');
 check('registry: paths per map', M.MAPS.sf.assets === 'assets/sf/' && M.MAPS.ist.assets === 'assets/ist/' && M.MAPS.ist.data === 'data/ist/' && M.MAPS.sf.fogBank && !M.MAPS.ist.fogBank);
 

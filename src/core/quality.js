@@ -52,6 +52,8 @@ export const QUALITY = {
   },
 };
 export const QUALITY_ORDER = ['low', 'medium', 'high', 'ultra'];
+/** A preset id of QUALITY (own keys only: "constructor", "__proto__" … from a link or storage are not presets). */
+export const isQuality = (id) => typeof id === 'string' && Object.prototype.hasOwnProperty.call(QUALITY, id);
 
 /**
  * Per device-class caps, applied on top of any preset (numbers: the cheaper value wins, i.e. the smaller one except for
@@ -118,7 +120,7 @@ const resolved = new Map();
  * comparisons in main.js keep working).
  */
 export function resolveQuality(id, device = detectDevice()) {
-  const base = QUALITY[id] || QUALITY.high;
+  const base = isQuality(id) ? QUALITY[id] : QUALITY.high;
   const cls = capClass(device);
   const key = `${base.id}|${cls}|${device.engine || ''}`;
   if (resolved.has(key)) return resolved.get(key);
@@ -149,7 +151,7 @@ export const qualityRank = (id) => QUALITY_ORDER.indexOf(id);
 // until the player picks a quality themselves (settings.js clears it then).
 const CAP_KEY = 'gokyuzu.gpuCap';
 export function getQualityCap() {
-  try { const c = JSON.parse(localStorage.getItem(CAP_KEY) || 'null'); return c && QUALITY[c.q] ? c : null; } catch { return null; }
+  try { const c = JSON.parse(localStorage.getItem(CAP_KEY) || 'null'); return c && isQuality(c.q) ? c : null; } catch { return null; }
 }
 export function setQualityCap(q) {
   try { const c = getQualityCap(); localStorage.setItem(CAP_KEY, JSON.stringify({ q, t: Date.now(), n: ((c && c.n) || 0) + 1 })); } catch { /* private mode */ }

@@ -195,7 +195,7 @@ function showGateScreen(container, reason, { tryLabel = null, onTry = null, keep
   const card = el('div', 'gkg-card', root);
   card.insertAdjacentHTML('beforeend', ART);
   el('h1', null, card, 'Gökyüzü');
-  const [title, text] = TEXT[reason] || TEXT.gpu;
+  const [title, text] = Object.prototype.hasOwnProperty.call(TEXT, reason) ? TEXT[reason] : TEXT.gpu;
   el('h2', null, card, title);
   el('p', null, card, text.replace('{app}', iab ? iab.name : 'Bu'));
   if (iab && reason === 'webgl2') el('p', null, card, `${iab.name} içindeki tarayıcıdasın: menüden «Tarayıcıda aç» seçip ${iab.os === 'ios' ? 'Safari' : 'Chrome'} ile de deneyebilirsin.`);
