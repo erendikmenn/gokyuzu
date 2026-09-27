@@ -37,7 +37,11 @@ export function measuredMbps() {
   let bytes = 0;
   const spans = [];
   for (const e of performance.getEntriesByType('resource')) {
-    if (!(e.transferSize > 0) || !(e.responseEnd > e.responseStart)) continue;
+    // bodies that came over the network only: a revalidated copy (304) reports its cached body in encodedBodySize but
+    // moves only its headers (transferSize ≈ 300 B), in a few ms, and read as hundreds of Mbit/s (a returning player
+    // whose copies had expired and whose first visit ended before the full model arrived then started with the full
+    // model: F-16 +4.9 MB before the first frame, 4G 6.1 s instead of ~2 s)
+    if (!(e.transferSize > 0) || !(e.transferSize > (e.encodedBodySize || 0)) || !(e.responseEnd > e.responseStart)) continue;
     bytes += e.encodedBodySize || e.transferSize;
     spans.push([e.responseStart, e.responseEnd]);
   }
