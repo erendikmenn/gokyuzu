@@ -171,10 +171,8 @@ export function startTelemetry({ build, renderer, quality, state, extra = {} }) 
 if (hasDom && typeof addEventListener === 'function') {
   addEventListener('error', (e) => reportError(e.message, e.filename, e.lineno));
   addEventListener('unhandledrejection', (e) => {
-    const r = e.reason;
-    const frame = r && r.stack ? (String(r.stack).split('\n').find((l) => /:\d+:\d+/.test(l)) || '') : '';
-    const m = /([^/\s(]+):(\d+):\d+\)?\s*$/.exec(frame);
-    reportError(r && (r.message || r), m ? m[1] : '', m ? m[2] : 0);
+    const r = e.reason, src = rejectionSource(r);
+    reportError(r && (r.message || r), src.file, src.line);
   });
   addEventListener('pagehide', flushEarly);   // (registered before the handlers below: early events leave first)
 }
@@ -231,11 +229,30 @@ export function trackEvent(type, data = {}) {
   send(t, withExtras(t, data));
 }
 
+/**
+ * Pure: script URL and line of the first stack frame of an unhandled rejection's reason (Chrome "at f (url:1:2)" /
+ * "at url:1:2", Safari and Firefox "f@url:1:2"). The whole URL, not only the file name: isForeignError() needs its origin
+ * (the file name alone tagged every rejection of the game's own code as foreign).
+ */
+export function rejectionSource(reason) {
+  const stack = reason && reason.stack ? String(reason.stack) : '';
+  const frame = stack.split('\n').find((l) => /:\d+:\d+/.test(l)) || '';
+  const m = /([^\s(@]+):(\d+):\d+\)?\s*$/.exec(frame);
+  return m ? { file: m[1], line: Number(m[2]) } : { file: '', line: 0 };
+}
+/**
+ * Pure: an error from a script not served by `origin` (other sites; browser extensions, chrome-extension://…, e.g. an
+ * injected "200.js" throwing "reading 'M_ID'" on one Windows Chrome; in-app browsers' injected code). The game's own
+ * blob: workers count as its own.
+ */
+export function isForeignError(message, file, origin) {
+  const f = String(file || '');
+  return message === 'Script error.' || (!!f && !f.startsWith(origin) && !f.startsWith(`blob:${origin}`));
+}
+
 function reportError(message, file, line) {
   if (errors++ >= 5) return;   // a broken frame loop must not flood the log
   const msg = String(message || 'unknown');
-  // any script not served from this origin is foreign: other sites, and browser extensions (chrome-extension://…,
-  // e.g. an injected "200.js" throwing "reading 'M_ID'" on one Windows Chrome)
-  const foreign = msg === 'Script error.' || (file && !String(file).startsWith(location.origin));
+  const foreign = isForeignError(msg, file, location.origin);
   send('err', { e: msg, f: file ? `${String(file).split('/').pop()}:${line}` : '', x: foreign ? 'foreign' : '' });
 }
