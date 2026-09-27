@@ -48,9 +48,11 @@ const HATE_NUMBERS = ['1488'];
 // impersonation of the game / its staff: prefixes of any word, and whole words
 const RESERVED_PREFIXES = ['admin', 'moderat', 'yonetici', 'gokyuzu', 'erenailab'];
 const RESERVED_WORDS = new Set(['mod', 'yonetim', 'official', 'resmi', 'destek', 'support', 'staff', 'sistem', 'system']);
-// links and promotion: a word that is a web/social marker, or a top-level domain after another word ("site com")
+// links and promotion: a word that is a web/social marker, or a generic top-level domain after another word ("site com";
+// "." and "/" are not allowed at all, so "site.com" never gets this far). Two-letter country domains and word-like ones
+// (tr, de, gg, me, co, io, dev, app, online …) are ordinary words or tags in a nickname ("Ahmet TR", "Ben de", "Pilot GG")
 const LINK_WORDS = new Set(['www', 'http', 'https', 'discord', 'instagram', 'insta', 'tiktok', 'youtube', 'telegram', 'twitch', 'whatsapp', 'onlyfans', 'twitter']);
-const TLDS = new Set(['com', 'net', 'org', 'io', 'gg', 'xyz', 'tr', 'co', 'me', 'tv', 'app', 'dev', 'info', 'biz', 'ru', 'de', 'uk', 'ly', 'link', 'site', 'online']);
+const TLDS = new Set(['com', 'net', 'org', 'xyz', 'info', 'biz']);
 
 /** Lower-case skeleton for matching: Turkish-aware case folding, accents removed, look-alike letters and digits mapped. */
 function skeleton(s) {

@@ -35,12 +35,17 @@ check('name: normalized (NFKC, spaces, zero-width)', cleanName('  Ali   Veli ').
 // false positives that must never happen: real names, places and words that contain a filtered stem
 const GOOD2 = ['Sıkı', 'Amasya', 'Sikorsky', 'Sikke', 'Sıkıntı', 'Zuniga', 'Therapist', 'Tyranny', 'Cumhur', 'Analiz', 'Gotik', 'Götürü',
   'Gotham', 'Nigel', 'Nigar', 'Dickens', 'Spice', 'Cocoon', 'Heilbronn', 'Tasarım', 'Göktürk', 'Işıker', 'Işıktaş', 'Łukasz', 'Ødegaard',
-  'Æsir', 'Straße', 'Classic', 'Kanal', 'Ali 88', 'Emre 14', 'Pilot 2024'];
+  'Æsir', 'Straße', 'Classic', 'Kanal', 'Ali 88', 'Emre 14', 'Pilot 2024',
+  // a short word after a space is not a domain: country codes, Turkish words, gaming tags
+  'Ahmet TR', 'Ben de', 'Pilot GG', 'Kaptan Me', 'Ali Co', 'Pilot Dev', 'Deniz IO', 'Mert TV', 'Pilot Online', 'Can UK', 'Efe RU'];
 for (const n of GOOD2) { const r = cleanName(n); check(`name ok (no false positive): ${n}`, r.ok && r.name === n, JSON.stringify(r)); }
 // evasions: Latin look-alike letters, leetspeak, joined words, slurs, hate numbers, the l / I confusion on reserved names
 const BAD2 = {
   bad: ['Øröspu', 'ƒuck', 'fvck', 'Phuck', 'niggas', 'n1ggaz', 'dickhead', 'cocksucker', 'ananisikeyim', 'siktiğim', 'götüne', 'taşak',
     'kike', 'tranny', 'Heil', 'KKK', 'Sieg Heil', 'Pilot 14 88', '1488', 'Amcığ', 'ORSPU'],
+  // real link attempts stay blocked: a web / social marker, or a generic domain after a word; "." and "/" are refused
+  link: ['site com', 'benim site net', 'oyun org', 'www pilot', 'http pilot', 'discord gg', 'instagram tr', 'benim_insta'],
+  chars: ['site.com', 'x.co/abc', 'www.site.tr', 'http://x', 'pilot@mail'],
   reserved: ['Admln', 'AdmIn', 'Admǀn', 'Offıcıal', 'Øfficial', 'G0kyuzu', 'Ｇökyüzü'],
 };
 for (const [reason, list] of Object.entries(BAD2)) {
