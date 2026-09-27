@@ -332,7 +332,7 @@ Players keep files in their browser cache, so every asset URL carries a content 
 
 - `src/core/telemetry.js` sends GET beacons to `_e?t=<type>&s=<random page session id>&…` on the game's own origin: `open`
   (page opened: screen, quality, GPU name, language), `fly` (aircraft, spawn, load seconds), `hb` (one per active flight
-  minute: fps, pixel ratio, view; `lp` = 1 while the browser runs requestAnimationFrame at ~30 Hz: Low Power Mode / thermal), `err` (≤ 5 per page), `end`. No cookies, no stored id, nothing personal. Off on localhost
+  minute: fps, pixel ratio, view; `lp` = 1 while the browser runs requestAnimationFrame at ~30 Hz: Low Power Mode / thermal; `zm` = 1 when the page is zoomed in), `err` (≤ 5 per page), `end`. No cookies, no stored id, nothing personal. Off on localhost
   (unless `?telemetry=1`), with `?telemetry=0` and under Do Not Track / Global Privacy Control.
   - Every beacon carries the build version `v`. Events raised before `startTelemetry()` knows it (the dead-page report at
     module load, the start gate `gate`, the software-renderer notice) are queued and sent with it (after 15 s or at

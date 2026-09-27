@@ -237,6 +237,16 @@ export function createTouchControls(hudRoot, { input, hud, getState = () => ({})
     // iOS Safari: no pinch / double-tap page zoom over the game
     for (const ev of ['gesturestart', 'gesturechange']) document.addEventListener(ev, (e) => e.preventDefault(), { passive: false });
     document.addEventListener('dblclick', (e) => e.preventDefault(), { passive: false });
+    // ... and a quick second tap on the on-screen controls: WebKit does not honour touch-action for double-tap zoom on
+    // absolutely positioned elements (bug 218015). The controls act on pointerdown and ignore clicks, so the second
+    // touchend is cancelled there (the canvas keeps its double tap = centre: camera.js listens to dblclick).
+    let lastEnd = -1e9;
+    document.addEventListener('touchend', (e) => {
+      const t = e.target;
+      if (!t || !t.closest || !t.closest('.gkx')) return;
+      if (e.timeStamp - lastEnd < 450 && e.cancelable) e.preventDefault();
+      lastEnd = e.timeStamp;
+    }, { passive: false });
     document.addEventListener('contextmenu', (e) => { if (!/INPUT|TEXTAREA/.test(e.target.tagName || '')) e.preventDefault(); });
     Object.assign(api, createControls(hudRoot, { input, hud, getState, api }));
   }
