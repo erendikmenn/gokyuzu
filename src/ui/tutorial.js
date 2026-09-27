@@ -145,6 +145,11 @@ const CSS = `
 .gkt.gkt-cockpit .gkt-text kbd.gk-ikbd { font-size: calc(10.5px * var(--ts)); }
 .gkt.gkt-cockpit .gkt-meter { margin-top: calc(5px * var(--ts)); }
 .gkt.gkt-cockpit .gkt-meter b { min-width: calc(80px * var(--ts)); }
+/* touch: the card is squeezed between the stick and the buttons (upright tablets: ~270 px); the fixed label / value widths
+   pushed the value ("%0", "140 / 145 kt") out of the card onto the FLAP buttons. The value wraps under the bar instead. */
+html.gk-touch .gkt .gkt-meter { flex-wrap: wrap; row-gap: 2px; }
+html.gk-touch .gkt .gkt-meter span, html.gk-touch .gkt .gkt-meter b { min-width: 0; }
+html.gk-touch .gkt .gkt-meter .gkt-bar { min-width: calc(36px * var(--ts)); }
 .gkt.gkt-cockpit .gkt-kc { min-width: 0; padding: calc(9px * var(--ts)) calc(13px * var(--ts)) calc(11px * var(--ts)); border-radius: calc(13px * var(--ts)); }
 .gkt.gkt-cockpit .gkt-kc-grid { grid-template-columns: repeat(2, auto); gap: calc(8px * var(--ts)) calc(18px * var(--ts)); }
 .gkt.gkt-cockpit .gkt-kc-cell .gk-keys kbd { font-size: calc(12px * var(--ts)); padding: calc(3px * var(--ts)) calc(7px * var(--ts)); }
