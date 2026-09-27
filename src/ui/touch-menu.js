@@ -91,4 +91,25 @@ export const MENU_TOUCH_CSS = `
   .gkm.gkm-touch .gkm-touch-note { display: block; margin: 0 14px 8px; font-size: 12px; font-weight: 650; text-align: center; color: var(--gk-teal); }
   .gkm.gkm-touch .gkm-scene { opacity: .45; }
 }
+/* upright phones up to 760 px tall (iPhones in Safari 375x667 / 390x664 / 393x659, social-app webviews ~700, small
+   Androids 360x640): the three entry buttons (Görevler, Günün görevi, Haftanın görevi) stacked with their subtitles took
+   165 px and squeezed the start panel (grid row 4, minmax(0, 1fr)) until its "Uç" button was clipped (53-77 px of 63 cut,
+   at 393x659 not visible at all). They go on one row with their short names (no subtitles, titles or icons: with them the
+   names were cut to "G…"); below 680 px the "telefonu yan çevir" note under "Uç" too (it was cut in half there; the
+   loading screen and the flight's portrait prompt say it) */
+@media (max-width: 560px) and (orientation: portrait) and (max-height: 760px) {
+  .gkm.gkm-touch .gkmm-entry.in-foot { flex-wrap: nowrap; justify-content: center; min-width: 0; max-width: 100%; }
+  .gkm.gkm-touch .gkmm-entry.in-foot .gkmm-eb { padding: 6px 10px; min-width: 0; flex: 0 1 auto; }
+  .gkm.gkm-touch .gkmm-entry.in-foot .gkmm-eb small, .gkm.gkm-touch .gkmm-entry.in-foot .gkmm-eb svg,
+  .gkm.gkm-touch .gkmm-entry.in-foot .gkmm-eb b .t { display: none; }
+  .gkm.gkm-touch .gkmm-entry.in-foot .gkmm-eb.main { flex-shrink: 0; }
+  .gkm.gkm-touch .gkmm-entry.in-foot .gkmm-eb b { overflow: hidden; text-overflow: ellipsis; }
+}
+@media (max-width: 560px) and (orientation: portrait) and (max-height: 680px) {
+  .gkm.gkm-touch .gkm-touch-note { display: none; }
+}
+@media (max-width: 560px) and (orientation: portrait) and (max-height: 600px) {
+  .gkm.gkm-touch .gkm-blurb { display: none; }
+  .gkm.gkm-touch .gkm-card { flex-basis: 34vw; }
+}
 `;
