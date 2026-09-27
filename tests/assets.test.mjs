@@ -181,6 +181,24 @@ check('retryDelay: grows, capped at ~60 s', A.retryDelay(1) < A.retryDelay(3) &&
   check('release geometry: empty / missing geometry ignored', !threw);
 }
 
+// ---- meshopt decoder workers: their blob URL stays valid (WebKit loads a worker's script after new Worker() returns;
+// revoked at once, the workers never started and every city tile decode waited for ever: no buildings in Safari)
+{
+  const created = [], revoked = [];
+  const realWorker = globalThis.Worker, realRevoke = URL.revokeObjectURL;
+  globalThis.Worker = class { constructor(url) { created.push(String(url)); } postMessage() {} };
+  URL.revokeObjectURL = (u) => { revoked.push(String(u)); };
+  let threw = null;
+  try {
+    const A = await import('../src/core/assets.js?meshopt');
+    A.createAssetLoader({ extensions: { has: () => false }, capabilities: {} });
+  } catch (e) { threw = e; }
+  const revokeBack = URL.revokeObjectURL !== realRevoke && typeof URL.revokeObjectURL === 'function';
+  globalThis.Worker = realWorker; URL.revokeObjectURL = realRevoke;
+  check('meshopt workers: created, their script URL never revoked, URL.revokeObjectURL put back', !threw && created.length >= 1 && !revoked.some((u) => created.includes(u)) && revokeBack,
+    `${threw ? threw.message : ''} workers ${created.length}, revoked ${revoked.filter((u) => created.includes(u)).length}`);
+}
+
 globalThis.setTimeout = realSetTimeout;
 const w = Math.max(...results.map((r) => r.name.length));
 for (const r of results) console.log(`${r.ok ? 'PASS' : 'FAIL'}  ${r.name.padEnd(w)}  ${r.ok ? '' : r.detail}`);
