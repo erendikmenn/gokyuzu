@@ -8,22 +8,25 @@
 //   ah.on                                        // the layer is active (telemetry `as`)
 //   ah.requestApproach()                         // "İnişe geç" (button)
 //   assistWanted(settings, mission)              // the setting and the mission → on / off (main.js `fly` event)
-//   createAssistOffFlow({ patch, track, now })   // the chip's two-step off switch (pure; tests/assist.test.mjs)
+//   createAssistChipFlow({ patch, track, now }) // the chip's switch: off in two steps, on in one (pure; tests/assist.test.mjs)
 //
 // Setting semantics (src/core/settings.js `assist`, owned by the settings module): on unless the player turned it off.
-// The one write here is the chip's off switch ("DESTEKLİ UÇUŞ" ✕ → "Destekli uçuşu kapat?" → Kapat), which does what
-// Ayarlar → Destekli uçuş → Kapalı does: patchSettings({ assist: false }) (the `set` beacon follows from
-// src/ui/settings-live.js) and the flight hands over through the same settings event. Nothing ever writes true: only the
-// player, in Ayarlar, turns it back on; the tutorial, the progression and missions only read it. A mission that is flown
-// by hand (catalog `manual: true`) suspends the layer for its duration without touching the setting (no chip then), and
-// its briefing says so (src/ui/missions-hud.js, ASSIST_MANUAL_NOTE).
+// Only the player changes it: in Ayarlar → Destekli uçuş, or with the "DESTEKLİ UÇUŞ" chip on the flight screen, which
+// does the same as that switch through patchSettings (the `set` beacon follows from src/ui/settings-live.js, the open
+// settings panel shows the change, the flight switches through the settings event): on → "Destekli uçuşu kapat?" →
+// Kapat writes false; off → one tap writes true. Those two writes are the only ones here, and true only on a real tap
+// (e.isTrusted): nothing turns it on by itself — the tutorial, the progression, missions, the callouts and updates only
+// read it. A mission flown by hand (catalog `manual: true`) suspends the layer for its duration without touching the
+// setting (no chip then), and its briefing says so (src/ui/missions-hud.js, ASSIST_MANUAL_NOTE).
 // Guidance: a cue pill for the next step (throttle, rotation, gear), the approach panel (runway, distance, a direction
 // arrow, the glide-path dot, "sola / sağa · yüksek / alçak", auto thrust), the approach path drawn as gates in the sky,
 // a short line when a protection acts, and the "İNİŞE GEÇ" button. Desktop: under the heading tape; touch: bottom
-// centre between the stick and the buttons. While the assist flies, a "DESTEKLİ UÇUŞ" chip at the top (desktop: right of
-// the heading tape / cockpit strip; touch: in the top row between the button groups, under the heading tape) shows it is
-// on and turns it off in two steps. After a few assisted landings one dismissible tip points at the chip (once per
-// browser).
+// centre between the stick and the buttons. The chip sits at the top in every flight but a hand-flown mission
+// (desktop: right of the heading tape / cockpit strip; touch: in the top row between the button groups, under the
+// heading tape): "DESTEKLİ UÇUŞ" with a green dot and ✕ while on, dimmed "DESTEKLİ UÇUŞ · KAPALI" while off. Callouts
+// point at it (a bubble under it, never over a toast, a card or a result): at the start of the first flights, once
+// after two crashes with the assist off (a suggestion only), and after a few assisted landings one dismissible tip (once
+// per browser).
 import * as THREE from 'three';
 import { injectCSS, BASE_CSS } from './styles.js';
 import { el, richText, clamp, storageGet, storageSet, fmtDist, KT } from './util.js';
@@ -35,34 +38,47 @@ import { trackEvent, setEventExtras } from '../core/telemetry.js';
 import { assistWanted } from '../flight/assist.js';
 import { resultOpen } from '../retention/result-flag.js';   // <html class="gk-result-open">
 
-const STATS_KEY = 'gokyuzu.assist';          // { landed: successful assisted landings, tip: 1 once the tip was shown }
+// { landed: successful assisted landings, tip: 1 once the tip was shown, hs: start callouts shown (one per flight, the
+// first START_CALLS flights), hc: 1 once the suggestion after crashes was shown }
+const STATS_KEY = 'gokyuzu.assist';
 const TIP_AFTER = 3;
+const START_CALLS = 3, START_CALL_S = 5, CRASH_CALL_AFTER = 2, CRASH_CALL_S = 7;
 export const ASSIST_MANUAL_NOTE = 'Destekli uçuş bu görevde kapalı: görev elle uçulur. Ayarın değişmez, görevden sonra yine açık.';
 
 export { assistWanted };
 
 /**
- * The chip's off switch, in two steps so a brush does not cost a beginner the assist: tap() asks ("Destekli uçuşu
- * kapat?"); confirm() within the question (not in its first `guard` s: a double tap is not a yes) writes the setting
- * off once, patch({ assist: false }) — never anything else, never true; cancel(via) ("Vazgeç", a second tap on the chip,
- * the chip hidden) and the `timeout` keep it. track(data) → telemetry `assist`: st = chip · off (via chip) · keep (via
- * cancel / tap / timeout / hide). now() in seconds. state: 'idle' | 'ask' | 'done' (off; reset() when the player turns
- * the assist back on in Ayarlar).
+ * The chip's switch. On → off in two steps, so a brush on a final does not cost a beginner the assist: tap(true) asks
+ * ("Destekli uçuşu kapat?"); confirm() within the question (not in its first `guard` s: a double tap is not a yes)
+ * writes patch({ assist: false }); cancel(via) ("Vazgeç", a second tap on the chip, the chip hidden) and the `timeout`
+ * keep it. Off → on in one tap: tap(false) writes patch({ assist: true }). These are the only writes, one per player
+ * action; a tap within `settle` s of the chip's last change is ignored (a double click on "Kapat" does not undo it).
+ * `on` is the setting as the chip shows it. track(data) → telemetry `assist`: st = chip · off (via chip) · keep (via
+ * cancel / tap / timeout / hide / off) · on (via chip). now() in seconds. state: 'idle' | 'ask'.
+ * tap() returns 'ask' | 'keep' | 'on' | '' (ignored).
  */
-export function createAssistOffFlow({ patch, track = () => {}, now = () => performance.now() / 1000, timeout = 4, guard = 0.3 } = {}) {
-  let state = 'idle', askAt = 0;
+export function createAssistChipFlow({ patch, track = () => {}, now = () => performance.now() / 1000, timeout = 4, guard = 0.3, settle = 0.8 } = {}) {
+  let state = 'idle', askAt = 0, changedAt = -Infinity;
   const flow = {
     get state() { return state; },
     /** Seconds left of the question (0 when not asking). */
     get left() { return state === 'ask' ? Math.max(0, timeout - (now() - askAt)) : 0; },
-    tap() {
-      if (state === 'idle') { state = 'ask'; askAt = now(); track({ st: 'chip' }); return true; }
-      if (state === 'ask') flow.cancel('tap');
-      return false;
+    tap(on) {
+      if (state === 'ask') { flow.cancel('tap'); return 'keep'; }
+      if (now() - changedAt < settle) return '';
+      if (!on) {
+        changedAt = now();
+        track({ st: 'on', via: 'chip' });
+        patch({ assist: true });
+        return 'on';
+      }
+      state = 'ask'; askAt = now();
+      track({ st: 'chip' });
+      return 'ask';
     },
     confirm() {
       if (state !== 'ask' || now() - askAt < guard) return false;
-      state = 'done';
+      state = 'idle'; changedAt = now();
       track({ st: 'off', via: 'chip' });
       patch({ assist: false });
       return true;
@@ -78,7 +94,6 @@ export function createAssistOffFlow({ patch, track = () => {}, now = () => perfo
       if (state === 'ask' && now() - askAt >= timeout) { state = 'idle'; track({ st: 'keep', via: 'timeout' }); return true; }
       return false;
     },
-    reset() { state = 'idle'; },
   };
   return flow;
 }
@@ -138,16 +153,17 @@ html.gk-touch .gka-x { width: 32px; height: 32px; }
 .gka-tip { display: none; position: absolute; left: calc(16px * var(--as)); bottom: calc(206px * var(--as)); align-items: center; gap: 10px;
   padding: calc(7px * var(--as)) calc(8px * var(--as)) calc(7px * var(--as)) calc(14px * var(--as)); border-radius: 16px;
   max-width: min(calc(100vw - 32px), calc(400px * var(--as))); font-size: calc(13px * var(--as)); line-height: 1.4; border-color: rgba(92, 242, 200, .35); }
-html.gk-touch .gka-tip { left: 0; right: 0; margin: 0 auto; width: max-content; bottom: calc(62px + env(safe-area-inset-bottom, 0px));
-  max-width: min(50vw, 420px); font-size: 12px; }
+html.gk-touch .gka-tip { left: var(--gkx-mid-x, 50%); translate: -50% 0; width: max-content; bottom: calc(62px + env(safe-area-inset-bottom, 0px));
+  max-width: min(calc(var(--gkx-mid-w, 50vw) - 24px), 420px); font-size: 12px; }
 .gka-tip.on { display: flex; pointer-events: auto; animation: gka-in .35s ease both; }
+.gka-tip.meas { display: flex; visibility: hidden; }
 .gka-path { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
 .gka-path path { fill: none; stroke: rgba(92, 242, 200, .85); stroke-width: 2; stroke-linejoin: round; filter: drop-shadow(0 0 2px rgba(0, 0, 0, .6)); }
-.gka.gka-hide .gka-col, .gka.gka-hide .gka-path, .gka.gka-hide .gka-tip, .gka.gka-hide .gka-chip { visibility: hidden; }
-/* "DESTEKLİ UÇUŞ" chip: on while the assist flies; ✕ → the question → Kapat / Vazgeç */
+.gka.gka-hide .gka-col, .gka.gka-hide .gka-path, .gka.gka-hide .gka-tip, .gka.gka-hide .gka-chip, .gka.gka-hide .gka-call { visibility: hidden; }
+/* "DESTEKLİ UÇUŞ" chip: on → ✕ → the question → Kapat / Vazgeç; off (dimmed, "KAPALI") → one tap turns it on */
 .gka-chip { position: absolute; left: 0; top: 0; display: none; align-items: center; pointer-events: auto; border-radius: 999px;
   border-color: rgba(92, 242, 200, .38); font: 750 calc(11px * var(--as)) var(--gk-sans); letter-spacing: .1em; white-space: nowrap; color: var(--gk-fg); }
-.gka-chip.on { display: flex; }
+.gka-chip.show { display: flex; }
 html:not(.gk-touch) .gka-chip { left: calc(50% + max(214px * var(--ps, 1), 172px * var(--s, 1)) + 10px); top: calc(10px * var(--ps, 1)); }
 .gka-chip button { font: inherit; letter-spacing: inherit; color: inherit; cursor: pointer; -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
 .gka-chip button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
@@ -156,7 +172,18 @@ html:not(.gk-touch) .gka-chip { left: calc(50% + max(214px * var(--ps, 1), 172px
 .gka-chip-dot { width: calc(7px * var(--as)); height: calc(7px * var(--as)); border-radius: 50%; background: var(--gk-teal); box-shadow: 0 0 7px rgba(92, 242, 200, .85); flex: 0 0 auto; }
 .gka-chip-x { display: inline-flex; align-items: center; justify-content: center; width: calc(18px * var(--as)); height: calc(18px * var(--as)); border-radius: 50%;
   background: rgba(255, 255, 255, .1); color: var(--gk-dim); font-size: calc(10px * var(--as)); letter-spacing: 0; flex: 0 0 auto; }
-.gka-chip-main:hover .gka-chip-x { background: rgba(255, 255, 255, .2); color: var(--gk-fg); }
+.gka-chip-st { display: none; align-items: center; padding: calc(1px * var(--as)) calc(7px * var(--as)); border-radius: 999px; border: 1px solid rgba(255, 255, 255, .24);
+  font-size: calc(9.5px * var(--as)); letter-spacing: .12em; color: var(--gk-dim); flex: 0 0 auto; }
+.gka-chip.off { border-color: rgba(255, 255, 255, .15); color: var(--gk-dim); background: linear-gradient(180deg, rgba(16, 26, 42, .6), rgba(6, 11, 20, .56)); box-shadow: 0 6px 18px rgba(0, 0, 0, .22); }
+.gka-chip.off .gka-chip-dot { background: transparent; box-shadow: inset 0 0 0 calc(1.5px * var(--as)) rgba(255, 255, 255, .5); }
+.gka-chip.off .gka-chip-x { display: none; }
+.gka-chip.off .gka-chip-st { display: inline-flex; }
+.gka-chip.off .gka-chip-main { padding-right: calc(5px * var(--as)); }
+@media (hover: hover) {   /* (a touch screen keeps :hover after a tap: the chip would look on right after Kapat) */
+  .gka-chip-main:hover .gka-chip-x { background: rgba(255, 255, 255, .2); color: var(--gk-fg); }
+  .gka-chip.off:hover { color: var(--gk-fg); border-color: rgba(92, 242, 200, .38); }
+  .gka-chip.off:hover .gka-chip-st { color: var(--gk-teal); border-color: rgba(92, 242, 200, .45); }
+}
 .gka-chip-ask { display: none; position: relative; align-items: center; gap: calc(6px * var(--as)); letter-spacing: 0; font-weight: 650; font-size: calc(12.5px * var(--as));
   padding: calc(3px * var(--as)) calc(4px * var(--as)) calc(3px * var(--as)) calc(12px * var(--as)); }
 .gka-chip.ask .gka-chip-ask { display: flex; }
@@ -172,6 +199,17 @@ html:not(.gk-touch) .gka-chip.ask .gka-chip-main { display: none; }
 @keyframes gka-hint { 0%, 100% { box-shadow: 0 10px 28px rgba(0, 0, 0, .3), 0 0 0 0 rgba(92, 242, 200, 0); }
   50% { box-shadow: 0 10px 28px rgba(0, 0, 0, .3), 0 0 0 5px rgba(92, 242, 200, .35), 0 0 18px rgba(92, 242, 200, .55); } }
 html.gk-calm .gka-chip.hint { animation: none; box-shadow: 0 0 0 2px rgba(92, 242, 200, .7); }
+.gka-chip.off.hint { color: var(--gk-fg); border-color: rgba(92, 242, 200, .45); }
+/* a callout under the chip, its caret pointing at it (placed and kept clear of toasts / cards / results in JS) */
+.gka-call { position: absolute; left: 0; top: 0; display: none; align-items: center; box-sizing: border-box; max-width: min(calc(100vw - 24px), calc(320px * var(--as)));
+  padding: calc(7px * var(--as)) calc(13px * var(--as)); border-radius: calc(12px * var(--as)); border-color: rgba(92, 242, 200, .4);
+  font-size: calc(12.5px * var(--as)); font-weight: 650; line-height: 1.35; text-align: center; text-wrap: balance; pointer-events: none; visibility: hidden; }
+.gka-call::before { content: ''; position: absolute; left: var(--cx, 50%); top: calc(-6px * var(--as)); width: calc(10px * var(--as)); height: calc(10px * var(--as));
+  margin-left: calc(-5px * var(--as)); transform: rotate(45deg); background: rgba(16, 26, 42, .9); border-left: 1px solid rgba(92, 242, 200, .4); border-top: 1px solid rgba(92, 242, 200, .4); }
+html.gk-noblur .gka-call::before { background: rgba(8, 14, 24, .86); }
+.gka-call.on { display: flex; }
+.gka-call.on.vis { visibility: visible; animation: gka-in .3s ease both; }
+html.gk-touch .gka-call { font-size: 12px; max-width: min(calc(100vw - 24px), 300px); padding: 6px 12px; }
 /* touch: a thumb-sized chip in the top row, the question as a small card under it */
 html.gk-touch .gka-chip { font-size: 11px; }
 html.gk-touch .gka-chip-main { min-height: 24px; padding: 2px 4px 2px 11px; gap: 7px; }
@@ -268,7 +306,7 @@ export function createAssistHud({ hud = null, input = null } = {}) {
   const tipTxt = el('span', null, tip, '');
   const tipX = el('button', 'gka-x', tip, '✕');
   tipX.type = 'button'; tipX.setAttribute('aria-label', 'Kapat');
-  // "DESTEKLİ UÇUŞ" chip (on while the assist flies) and its question
+  // "DESTEKLİ UÇUŞ" chip (every flight but a hand-flown mission; on / off), its question, the callouts pointing at it
   const chip = el('div', 'gka-chip gka-glass', root);
   chip.setAttribute('role', 'group');
   chip.setAttribute('aria-label', 'Destekli uçuş');
@@ -277,6 +315,7 @@ export function createAssistHud({ hud = null, input = null } = {}) {
   el('i', 'gka-chip-dot', chipMain);
   el('span', 'gka-chip-lbl', chipMain, 'DESTEKLİ UÇUŞ');
   el('span', 'gka-chip-x', chipMain, '✕').setAttribute('aria-hidden', 'true');
+  el('span', 'gka-chip-st', chipMain, 'KAPALI').setAttribute('aria-hidden', 'true');
   const ask = el('div', 'gka-chip-ask', chip);
   ask.setAttribute('role', 'alertdialog');
   el('span', 'gka-chip-q', ask, 'Destekli uçuşu kapat?');
@@ -284,15 +323,24 @@ export function createAssistHud({ hud = null, input = null } = {}) {
   const noBtn = el('button', 'gka-chip-no', ask, 'Vazgeç');
   yesBtn.type = 'button'; noBtn.type = 'button';
   const askBar = el('i', 'gka-chip-bar', ask);
+  const call = el('div', 'gka-call gka-glass', root);
+  call.setAttribute('role', 'status');
 
   let flightRef = null, def = null, wanted = true, settings = null, heli = false;
   let lastCue = null, lastProt = null, lastDot = null, lastRot = null, lastTurn = null, lastAt = null, appCueT = 0, pathT = 0;
   let tipPending = false, tipCheckT = 0, startT = 0;
   let appOn = false, btnOn = false, btnPulse = false, tipOn = false, tipT = 0, hideOn = false, pathOn = false;
   let tdAt = -1, tdOk = false, now = 0, device = 'kb', k = keySet('kb');
-  const stats = Object.assign({ landed: 0, tip: 0 }, storageGet(STATS_KEY) || {});
-  let chipOn = false, chipAsk = false, chipHint = false, offByChip = false, placeT = 0, placeKey = '', lastView = '';
-  const flow = createAssistOffFlow({ patch: (p) => patchSettings(p), track: (d) => trackEvent('assist', { ...d, ac: def && def.id }) });
+  const stats = Object.assign({ landed: 0, tip: 0, hs: 0, hc: 0 }, storageGet(STATS_KEY) || {});
+  let chipOn = false, chipOff = null, chipAsk = false, chipHint = false, byChip = false, placeT = 0, placeBurst = 0, placeKey = '', lastView = '', chipT = 0;
+  // callouts: kind '' | 'start' | 'crash', seconds left on screen, seconds since it was due (gives up after CALL_WAIT)
+  let callKind = '', callLeft = 0, callAge = 0, callVis = false, callSeen = false, callCheckT = 0, startCalled = false, crashes = 0, callStartT = 0;
+  // (the start line waits for the flight's opening cards and toasts: the key card is up for 10 s on every start)
+  const CALL_WAIT = 20, CALL_START_WINDOW = 30;
+  const flow = createAssistChipFlow({ patch: (p) => patchSettings(p), track: (d) => trackEvent('assist', { ...d, ac: def && def.id }) });
+  /** The player's setting (the chip shows it; a hand-flown mission hides the chip). */
+  const settingOn = () => (settings || storedSettings()).assist !== false;
+  const manualMission = () => { const m = currentMission(); return !!(m && m.manual); };
   // (a tip earned in an earlier visit but not shown yet waits for this flight's start)
   const toggle = (node, cls, on) => node.classList.toggle(cls, on);
   const flight = () => flightRef;
@@ -317,12 +365,13 @@ export function createAssistHud({ hud = null, input = null } = {}) {
     const was = !!(f && f.assist && f.assist.on);
     wanted = want;
     if (f && f.setAssist) f.setAssist(want);
-    if (settings.assist !== false && flow.state === 'done') flow.reset();   // the player turned it back on in Ayarlar
     if (f && was !== want && hud && hud.showMessage && f.assist) {
-      if (offByChip && !want) hud.showMessage('Destekli uçuş kapatıldı · Ayarlar’dan tekrar açabilirsin', 3600);
+      const tap = device === 'touch' ? 'dokun' : 'tıkla';
+      if (byChip && !want) hud.showMessage(`Destekli uçuş kapatıldı · açmak için tekrar ${tap}`, 3600);
+      else if (byChip && want) hud.showMessage(`Destekli uçuş açıldı · kapatmak için tekrar ${tap}`, 3600);
       else hud.showMessage(want ? 'Destekli uçuş açık' : 'Destekli uçuş kapalı: uçak tamamen sende', 2200);
     }
-    offByChip = false;
+    byChip = false;
   }
   window.addEventListener('gokyuzu:settings', (e) => apply(e.detail));
 
@@ -336,13 +385,25 @@ export function createAssistHud({ hud = null, input = null } = {}) {
   btn.addEventListener('click', (e) => { e.preventDefault(); btn.blur(); requestApproach(); });
   xBtn.addEventListener('click', (e) => { e.preventDefault(); xBtn.blur(); const a = assist(); if (a) a.cancelApproach(); });
   tipX.addEventListener('click', (e) => { e.preventDefault(); tipX.blur(); tipOn = false; tip.classList.remove('on'); });
-  chipMain.addEventListener('click', (e) => { e.preventDefault(); chipMain.blur(); flow.tap(); syncChip(); });
+  // the chip: on → the question; off → on at once, but only from the player's own tap (a script's click is not one)
+  chipMain.addEventListener('click', (e) => {
+    e.preventDefault(); chipMain.blur();
+    if (!chipOn) return;
+    const on = settingOn();
+    if (!on && !e.isTrusted) return;
+    byChip = !on;                       // (apply() shows the chip's own message)
+    const r = flow.tap(on);
+    byChip = false;
+    if (r && callKind) endCall();   // (the player found it)
+    syncChip();
+  });
   noBtn.addEventListener('click', (e) => { e.preventDefault(); noBtn.blur(); flow.cancel('cancel'); syncChip(); });
   yesBtn.addEventListener('click', (e) => {
     e.preventDefault(); yesBtn.blur();
     if (flow.state !== 'ask') return;
-    offByChip = true;                   // (apply() shows the chip's own message)
-    if (!flow.confirm()) offByChip = false;
+    byChip = true;
+    flow.confirm();
+    byChip = false;
     syncChip();
   });
   /** Chip classes from the flow (the question, its timer bar restarted each time it opens). */
@@ -354,8 +415,18 @@ export function createAssistHud({ hud = null, input = null } = {}) {
     toggle(chip, 'ask', asking);
     chipMain.setAttribute('aria-expanded', String(asking));
   }
-  chipMain.title = 'Destekli uçuş açık · kapatmak için tıkla';
-  chipMain.setAttribute('aria-label', 'Destekli uçuş açık. Kapatmak için dokun');
+  /** The chip's look from the setting: on (green dot, ✕) or off (dimmed, KAPALI). */
+  function chipState(on) {
+    const off = !on;
+    if (off === chipOff) return;
+    chipOff = off;
+    toggle(chip, 'off', off);
+    chipMain.setAttribute('aria-pressed', String(on));
+    chipMain.title = on ? 'Destekli uçuş açık · kapatmak için tıkla' : 'Destekli uçuş kapalı · açmak için tıkla';
+    chipMain.setAttribute('aria-label', on ? 'Destekli uçuş açık. Kapatmak için dokun' : 'Destekli uçuş kapalı. Açmak için dokun');
+    placeT = 0;   // (its width changed)
+  }
+  chipState(true);
 
   // touch: the chip sits in the top row between the button groups (under the heading tape in the chase views), clear of
   // the buttons, the GÖREV tab and what starts below the row (tutorial card, mission strip, toasts); measured when the
@@ -398,6 +469,74 @@ export function createAssistHud({ hud = null, input = null } = {}) {
     chip.style.maxWidth = `${Math.max(120, Math.round(hi - lo - 12))}px`;
   }
   window.addEventListener('resize', () => { placeT = 0; });
+
+  // ---- callouts under the chip, the caret pointing at it: shown only where they cover none of these (a toast, the
+  // HUD's panels and warnings, the tutorial / key cards and hints, the mission strip and cards, the landing card, the
+  // free-flight panels, the touch controls, this layer's own panel / button / tip) and while no result is open
+  const CALL_CLEAR = '.gkh-toast, .gkh-panel, .gkh-tape, .gkh-warn > *, .gkh-info, .gkh-map, .gkh-sys, .gkh-chip, .gkc, .gkt-card, .gkt-kc, .gkt-hint, .gkt-f1, .gkq-strip, '
+    + '.gkq-back, .gkls-card, .gkf-panel, .gkf-note, .gkf-tab, .gkx-btn, .gkx-thr, .gkx-ped, .gkx-stick, .gka-col > .on, .gka-tip.on';
+  let callBlock = '', tipBlock = '';
+  function placeCall() {
+    const cr = chip.getBoundingClientRect();
+    if (!cr.width) return false;
+    const W = window.innerWidth, H = window.innerHeight;
+    const cx = cr.left + cr.width / 2;
+    const touchUI = document.documentElement.classList.contains('gk-touch');
+    const els = [...document.querySelectorAll(CALL_CLEAR)].filter((e) => e !== call && shown(e));
+    // an instrument right under the chip (the cockpit view's top strip on touch screens): below it, the caret still
+    // pointing up at the chip; cards and toasts there are waited for instead
+    let top = Math.round(cr.bottom + 9);
+    for (const e of els) {
+      if (!/\bgkh-(panel|tape)\b/.test(e.className)) continue;
+      const q = e.getBoundingClientRect();
+      if (q.width && q.left < cx + 60 && q.right > cx - 60 && q.top < top + 24 && q.bottom > top - 6) top = Math.max(top, Math.round(q.bottom + 9));
+    }
+    // the room beside the chip in the callout's band (desktop: the camera bar on the right; touch: the throttle and the
+    // buttons): the bubble wraps into it rather than run over them
+    let lo = 8, hi = W - 8;
+    for (const e of els) {
+      const q = e.getBoundingClientRect();
+      if (!q.width || q.bottom <= top - 6 || q.top >= top + 64) continue;
+      if (q.right <= cx) lo = Math.max(lo, q.right + 8); else if (q.left >= cx) hi = Math.min(hi, q.left - 8);
+    }
+    if (!touchUI) lo = Math.max(lo, Math.min(cr.left, cx - 20));   // (desktop: from the chip's left edge, the tape is left of it)
+    const cap = Math.min(W - 24, touchUI ? 300 : 320 * (parseFloat(root.style.getPropertyValue('--as')) || 1));
+    call.style.maxWidth = `${Math.round(clamp(hi - lo, 160, cap))}px`;
+    const w = call.offsetWidth, h = call.offsetHeight;
+    const left = Math.round(clamp(touchUI ? cx - w / 2 : cr.left, lo, Math.max(lo, hi - w)));
+    call.style.left = `${left}px`; call.style.top = `${top}px`;
+    call.style.setProperty('--cx', `${Math.round(clamp(cx - left, 14, w - 14))}px`);
+    callBlock = top + h + 4 > H ? 'screen' : blockedBy(left - 4, top - 6, left + w + 4, top + h + 4, els);
+    return !callBlock;
+  }
+  /** What a box (px) would cover: '' when nothing of CALL_CLEAR and no result is open, else its class. */
+  function blockedBy(l, t, r, b, els = null) {
+    if (resultOnScreen()) return 'result';
+    for (const e of els || document.querySelectorAll(CALL_CLEAR)) {
+      if (e === call || e === tip || !shown(e)) continue;
+      const q = e.getBoundingClientRect();
+      if (q.width && q.height && q.left < r && q.right > l && q.top < b && q.bottom > t) return String(e.className);
+    }
+    return '';
+  }
+  /** The tip where it would show is clear of everything above (measured invisible first). */
+  function tipClear() {
+    tip.classList.add('meas');
+    const q = tip.getBoundingClientRect();
+    tip.classList.remove('meas');
+    tipBlock = q.width ? blockedBy(q.left - 4, q.top - 4, q.right + 4, q.bottom + 4) : 'size';
+    return !tipBlock;
+  }
+  function openCall(kind, text, secs) {
+    callKind = kind; callLeft = secs; callAge = 0; callVis = false; callSeen = false; callCheckT = 0;
+    call.textContent = text;
+    call.classList.add('on');   // (laid out but invisible until placed clear of everything)
+  }
+  function endCall() {
+    if (callKind === 'start') startCalled = true;
+    callKind = ''; callVis = false;
+    call.classList.remove('on', 'vis');
+  }
   // keep the keyboard for flying: the buttons never keep the focus
   root.addEventListener('pointerup', () => { if (document.activeElement && root.contains(document.activeElement)) document.activeElement.blur(); });
 
@@ -419,7 +558,9 @@ export function createAssistHud({ hud = null, input = null } = {}) {
     if (d) def = d;   // (the per-frame update may attach the flight before the onboarding hands over its definition)
     if (!f || !f.on || f === flightRef) { apply(); return; }
     flightRef = f; def = d || def;
-    startT = 20;   // a new flight: a waiting tip may show in its first seconds
+    startT = 20;   // a new flight: a waiting tip and the start callout may show in its first seconds
+    startCalled = false; callStartT = CALL_START_WINDOW;
+    if (callKind) endCall();
     heli = !!(f.spec && f.spec.category === 'helicopter');
     f.on('assist', onAssistEvent);
     // successful assisted landings (on a runway, no crash 3 s later) → the "you can turn it off" tip after a few
@@ -427,7 +568,8 @@ export function createAssistHud({ hud = null, input = null } = {}) {
       if (!i || f.crashed || !(f.assist && f.assist.on)) return;
       tdAt = now; tdOk = heli ? !i.water : !!i.onRunway;
     });
-    f.on('crash', () => { tdAt = -1; });
+    // crashes with the assist off (the setting, not a hand-flown mission) → the suggestion after CRASH_CALL_AFTER
+    f.on('crash', () => { tdAt = -1; if (!settingOn() && !manualMission()) crashes++; });
     apply();
   }
 
@@ -488,13 +630,14 @@ export function createAssistHud({ hud = null, input = null } = {}) {
       tdAt = -1;
     }
     if (startT > 0) startT -= dt;
-    tipPending = !stats.tip && stats.landed >= TIP_AFTER && on;
+    if (callStartT > 0) callStartT -= dt;
+    tipPending = !stats.tip && stats.landed >= TIP_AFTER && on && !callKind;
     if (tipPending && !tipOn && !info.tutorial && (tipCheckT -= dt) <= 0) {
       tipCheckT = 0.5;
       const stopped = f.onGround && Math.hypot(f.velocity.x, f.velocity.z) < 2;
-      if ((stopped || startT > 0) && !f.crashed && !resultOnScreen() && chipOn) {
+      tipTxt.textContent = `İnişlerin çok iyi! Kendin uçmak istersen üstteki “Destekli uçuş” düğmesine ${device === 'touch' ? 'dokun' : 'tıkla'}; istediğinde aynı düğmeyle yeniden açarsın. Ayarlar’dan da olur.`;
+      if ((stopped || startT > 0) && !f.crashed && chipOn && tipClear()) {
         stats.tip = 1; storageSet(STATS_KEY, stats);
-        tipTxt.textContent = `İnişlerin çok iyi! Kendin uçmak istersen üstteki “Destekli uçuş” düğmesine ${device === 'touch' ? 'dokun' : 'tıkla'}. Ayarlar’dan da kapatabilirsin.`;
         tipOn = true; tipT = 14; tip.classList.add('on');
         trackEvent('assist', { st: 'tip', lc: stats.landed });   // (lc: assisted landings so far; `n` is a reserved key)
       }
@@ -504,19 +647,55 @@ export function createAssistHud({ hud = null, input = null } = {}) {
       if ((tipCheckT -= dt) <= 0) { tipCheckT = 0.5; if (resultOnScreen()) tipT = 0; }
       if (tipT <= 0 || !on) { tipOn = false; tip.classList.remove('on'); }
     }
-    // ---- "DESTEKLİ UÇUŞ" chip: while the assist flies and the layer shows
-    const showChip = on && !hide;
-    if (showChip !== chipOn) { chipOn = showChip; toggle(chip, 'on', showChip); placeT = 0; }
-    if (!showChip && flow.state === 'ask') flow.cancel(on ? 'hide' : 'off');
+    // ---- "DESTEKLİ UÇUŞ" chip: every flight but a hand-flown mission, while the layer shows; on or off per the setting
+    const setOn = settingOn();
+    const showChip = !hide && !manualMission();
+    if (showChip !== chipOn) { chipOn = showChip; toggle(chip, 'show', showChip); placeT = 0; }
+    chipState(setOn);
+    if (flow.state === 'ask' && (!showChip || !setOn)) flow.cancel(setOn ? 'hide' : 'off');
     flow.tick();
     syncChip();
-    const hint = tipOn && showChip;
-    if (hint !== chipHint) { chipHint = hint; toggle(chip, 'hint', hint); }
     if (showChip) {
       const view = info.view || '';
-      if (view !== lastView) { lastView = view; placeT = 0; }
-      if ((placeT -= dt) <= 0) { placeT = 2; placeChip(); }
+      // (a new view moves the instruments over a few frames: placed again soon after, then every 2 s)
+      if (view !== lastView) { lastView = view; placeT = 0; placeBurst = 4; }
+      if ((placeT -= dt) <= 0) { placeT = placeBurst > 0 ? 0.25 : 2; placeBurst--; placeChip(); }
     }
+    // ---- callouts pointing at the chip (one at a time, not with the tip): the first flights' start line, and once
+    // after crashes with the assist off a suggestion (it only suggests: the setting stays the player's)
+    chipT = showChip ? chipT + dt : 0;
+    if (!callKind && chipT > 1.5 && !tipOn && !chipAsk && (callCheckT -= dt) <= 0) {
+      callCheckT = 0.5;
+      if (!startCalled && callStartT > 0 && stats.hs < START_CALLS && !info.tutorial) {
+        openCall('start', setOn ? 'Destekli uçuşu buradan açıp kapatabilirsin' : 'Zorlanırsan destekli uçuşu buradan açabilirsin', START_CALL_S);
+      } else if (!setOn && crashes >= CRASH_CALL_AFTER && !stats.hc && !f.crashed) {
+        openCall('crash', `Destekli uçuş kalkış ve inişte yardım eder, açmak için ${device === 'touch' ? 'dokun' : 'tıkla'}`, CRASH_CALL_S);
+      }
+    }
+    if (callKind) {
+      callAge += dt;
+      const ok = showChip && !chipAsk && !tipOn && !f.crashed && !(callKind === 'crash' && setOn);
+      if (!ok || (callCheckT -= dt) <= 0) {
+        callCheckT = 0.25;
+        const vis = ok && placeCall();
+        if (vis !== callVis) {
+          callVis = vis; toggle(call, 'vis', vis);
+          if (vis && !callSeen) {   // first time on screen: counted once
+            callSeen = true;
+            if (callKind === 'start') { stats.hs++; startCalled = true; } else stats.hc = 1;
+            storageSet(STATS_KEY, stats);
+            trackEvent('assist', { st: 'hint', k: callKind, as: setOn ? 1 : 0, ac: def && def.id });
+          }
+        }
+      }
+      if (callVis) callLeft -= dt;
+      // (gives up when it could not show in time: the start line within the flight's first CALL_START_WINDOW s, the
+      // suggestion after CALL_WAIT s (and is due again); once seen, CALL_WAIT s for the rest of its time between toasts)
+      const late = callSeen ? callAge > CALL_WAIT + callLeft : callKind === 'start' ? callStartT <= 0 : callAge > CALL_WAIT;
+      if (callLeft <= 0 || (callKind === 'crash' && setOn) || late) endCall();
+    }
+    const hint = (tipOn || callVis) && showChip;
+    if (hint !== chipHint) { chipHint = hint; toggle(chip, 'hint', hint); }
     if (!on) {
       if (appOn) { appOn = false; app.classList.remove('on'); }
       if (btnOn) { btnOn = false; btn.classList.remove('on'); }
@@ -590,8 +769,9 @@ export function createAssistHud({ hud = null, input = null } = {}) {
       const a = assist();
       return {
         wanted, on: !!(a && a.on), phase: a ? a.phase : null, cue: lastCue, prot: lastProt, button: btnOn, approach: appOn ? { t1: c1.v, t2: c2.v, t3: c3.v, stage: a.app && a.app.stage } : null,
-        path: pathOn, tip: tipOn, stats: { ...stats },
-        chip: chipOn ? { ask: flow.state === 'ask', hint: chipHint, text: tip.classList.contains('on') ? tipTxt.textContent : null } : null,
+        path: pathOn, tip: tipOn, tipBlock, stats: { ...stats },
+        chip: chipOn ? { state: chipOff ? 'off' : 'on', ask: flow.state === 'ask', hint: chipHint, text: tip.classList.contains('on') ? tipTxt.textContent : null } : null,
+        call: callKind ? { kind: callKind, vis: callVis, text: call.textContent, left: +callLeft.toFixed(1), block: callBlock } : null, crashes,
       };
     },
   };

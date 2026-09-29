@@ -3,15 +3,17 @@
 // (src/flight/input.js: key ramps, lever rates, the AB detent, the lever sync) against flat worlds built from the San
 // Francisco and İstanbul runway data, once with the assist and once without, with the same seeds. Prints a PASS/FAIL
 // table and the success rates, exits 1 on failure.
-//   - setting semantics: on by default, off stays off (other settings changes, new versions), nothing else writes it
+//   - setting semantics: on by default, off stays off (other settings changes, new versions); only the player's two
+//     switches write it (Ayarlar and the chip), nothing else
 //   - assist off: the models fly exactly as without the layer (trajectory hashes)
 //   - novice take-offs (random taps, keys held too long, a guessed rotation speed) and novice landings from 5–10 km at
 //     SF and İstanbul airports: assisted ≥ 2× the successes without, and a high absolute rate
 //   - hands-off "İnişe geç" from awkward starts; runway choice (no departure-only / backup runways)
 //   - pulling back too long (idle and full power): no stall, no crash
 //   - helicopter: assisted lift-off into the hover hold, a dumped collective, the vertical landing, never onto water
-//   - the "DESTEKLİ UÇUŞ" chip's off switch (src/ui/assist-hud.js createAssistOffFlow): two steps, a timeout, writes
-//     assist = false once through the settings module and never true; the flight hands over without a jolt
+//   - the "DESTEKLİ UÇUŞ" chip (src/ui/assist-hud.js createAssistChipFlow): off in two steps with a timeout, on in one
+//     tap, one write per player action through the settings module; the flight hands over without a jolt either way
+//     (off: turn, final, short final, flare, take-off roll; on: ground, climb, cruise, final, hands-off or a stick held)
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { createFixedWingModel } from '../src/flight/fixedwing.js';
@@ -19,7 +21,7 @@ import { createHelicopterModel } from '../src/flight/helicopter.js';
 import { createInput } from '../src/flight/input.js';
 import { runwayEnds } from '../src/flight/fixedwing-autopilot.js';
 import { assistWanted, pickRunway, landingEnds, BACKUP_RUNWAYS } from '../src/flight/assist.js';
-import { createAssistOffFlow } from '../src/ui/assist-hud.js';
+import { createAssistChipFlow } from '../src/ui/assist-hud.js';
 
 const KT = 0.514444, DEG = Math.PI / 180;
 const FIXED = ['a320neo', 'b737', 'f16', 'f22'];
@@ -208,28 +210,50 @@ function landRun({ id, map, rwName, dist, lat = 0, hdgOff = 0, altOff = 0, assis
     check('Setting: a manual mission suspends it without writing the setting', !assistWanted({ assist: true }, { manual: true }) && assistWanted({ assist: true }, { manual: false }) && JSON.parse(mem['gokyuzu.settings']).assist === false);
     check('Setting: a mission never turns it on when the player turned it off', !assistWanted({ assist: false }, { manual: false }));
   } finally { globalThis.localStorage = prevLS; }
-  // only the settings module / panel may write the key: no other source file saves settings with `assist` in them, and
-  // the assisted-flight code, the tutorial, missions and the progression never save settings at all
+  // only the player's switches write the key: Ayarlar (src/ui/panels.js, its "Destekli uçuş" row) and the chip
+  // (src/ui/assist-hud.js, through its flow); the settings module owns the default. No other source file saves settings
+  // with `assist` in them or writes `assist: true`, and the assisted-flight code, the tutorial, hints, the landing card,
+  // missions and the progression never save settings at all
   const files = [];
   const walk = (d) => { for (const n of readdirSync(d)) { const p = `${d}/${n}`; if (statSync(p).isDirectory()) walk(p); else if (p.endsWith('.js')) files.push(p); } };
   walk(new URL('../src', import.meta.url).pathname);
   const writers = [], forbidden = [];
   // (code only: comments may name the calls)
   const code = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`\\])\/\/.*$/gm, '$1');
+  const OWN = ['src/core/settings.js', 'src/ui/panels.js', 'src/ui/assist-hud.js'];
   for (const p of files) {
     const src = code(readFileSync(p, 'utf8')), rel = p.slice(p.indexOf('/src/') + 1);
-    if (rel === 'src/core/settings.js' || rel === 'src/ui/panels.js') continue;
-    if (/(save|patch)Settings\([^;)]*\bassist\b/.test(src) || /localStorage\.setItem\([^;]*gokyuzu\.settings[^;]*assist/.test(src) || /\bassist\s*:\s*true\b/.test(src)) writers.push(rel);
+    if (OWN.includes(rel)) continue;
+    if (/(save|patch)Settings\([^;)]*\bassist\b/.test(src) || /localStorage\.setItem\([^;]*gokyuzu\.settings[^;]*assist/.test(src) || /\bassist\s*:\s*true\b/.test(src)
+      || /\bsettings\.assist\s*=[^=]/.test(src) || /createAssistChipFlow\s*\(/.test(src)) writers.push(rel);
     if (/^src\/(flight|missions|retention)\//.test(rel) || /^src\/ui\/(tutorial|hints|landing)/.test(rel)) {
       if (/\b(save|patch)Settings\s*\(/.test(src)) forbidden.push(rel);
     }
   }
-  // the chip (src/ui/assist-hud.js) writes through its off flow only: one patchSettings call, handed the flow's patch
+  check('Setting: no module but Ayarlar and the chip writes `assist` (nothing else writes it, true or false)', !writers.length, writers.join(', '));
+  check('Setting: the assisted flight, tutorial, hints, landing card, missions and progression never save settings', !forbidden.length, forbidden.join(', '));
+  // the settings module: `assist: true` is the default only; Ayarlar: one assignment, in its "Destekli uçuş" row
+  const setSrc = code(readFileSync(new URL('../src/core/settings.js', import.meta.url), 'utf8'));
+  const panSrc = code(readFileSync(new URL('../src/ui/panels.js', import.meta.url), 'utf8'));
+  const panAssign = [...panSrc.matchAll(/\bs\.assist\s*=[^=]/g)].length;
+  const inDefaults = (t) => { const d = t.indexOf('export const DEFAULT_SETTINGS'), i = t.search(/\bassist\s*:\s*true\b/); return d >= 0 && i > d && i < t.indexOf('\n};', d); };
+  check('Setting: the settings module has `assist: true` only as its default; Ayarlar writes it in its "Destekli uçuş" row only',
+    [...setSrc.matchAll(/\bassist\s*:\s*true\b/g)].length === 1 && inDefaults(setSrc)
+      && panAssign === 1 && /choice\(c, 'Destekli uçuş'[^;]*\(id\) => \{ s\.assist = id === 'on'; commit\(\); \}/.test(panSrc), `panel assignments ${panAssign}`);
+  // the chip: one patchSettings call, handed to its flow; the flow writes true in its off → on tap only and false in its
+  // confirm only; the flow's tap is called from the chip's click listener only, which turns it on for a real tap only
   const hudSrc = code(readFileSync(new URL('../src/ui/assist-hud.js', import.meta.url), 'utf8'));
   const hudCalls = [...hudSrc.matchAll(/\b(save|patch)Settings\s*\(([^)]*)\)/g)].map((m) => m[0]);
-  check('Setting: no module but the settings panel writes `assist` (and nothing anywhere writes it true)', !writers.length, writers.join(', '));
-  check('Setting: the assisted flight, tutorial, hints, landing card, missions and progression never save settings', !forbidden.length, forbidden.join(', '));
-  check('Setting: the chip saves settings only through its off flow (one patchSettings(p), p from the flow)', hudCalls.length === 1 && hudCalls[0] === 'patchSettings(p)', hudCalls.join(' | '));
+  const flowAt = hudSrc.indexOf('export function createAssistChipFlow'), flowSrc = hudSrc.slice(flowAt, hudSrc.indexOf('\n}\n', flowAt));
+  const trues = [...hudSrc.matchAll(/\bassist\s*:\s*true\b/g)].length, falses = [...hudSrc.matchAll(/\bassist\s*:\s*false\b/g)].length;
+  const taps = [...hudSrc.matchAll(/\bflow\.tap\(/g)].length;
+  check('Setting: the chip saves settings only through its flow (one patchSettings(p), p from the flow)',
+    hudCalls.length === 1 && hudCalls[0] === 'patchSettings(p)' && /createAssistChipFlow\(\{ patch: \(p\) => patchSettings\(p\)/.test(hudSrc), hudCalls.join(' | '));
+  check('Setting: the chip writes true only in its off → on tap and false only in its "Kapat"; the tap comes from the chip\'s click, a real one to turn it on',
+    trues === 1 && falses === 1 && /if \(!on\) \{[^}]*track\(\{ st: 'on', via: 'chip' \}\);\s*patch\(\{ assist: true \}\);/.test(flowSrc)
+      && /confirm\(\) \{(?:(?!\n {4}\},)[\s\S])*patch\(\{ assist: false \}\);/.test(flowSrc)
+      && taps === 1 && /chipMain\.addEventListener\('click', \(e\) => \{[^}]*if \(!on && !e\.isTrusted\) return;[^}]*flow\.tap\(on\)/.test(hudSrc),
+    `true ${trues}, false ${falses}, taps ${taps}`);
 }
 
 // telemetry: `as` on the outcome events, no data key that would overwrite an envelope key (t, s, n, m, v)
@@ -527,36 +551,46 @@ const summary = {};
   }
 }
 
-// 11. the "DESTEKLİ UÇUŞ" chip's off switch: two steps, a timeout, one write of assist = false, never true
+// 11. the "DESTEKLİ UÇUŞ" chip: off in two steps with a timeout, on in one tap; one write per player action
 {
   let clock = 0;
   const writes = [], events = [];
-  const mk = () => createAssistOffFlow({ patch: (p) => writes.push(JSON.stringify(p)), track: (d) => events.push(`${d.st}${d.via ? ':' + d.via : ''}`), now: () => clock });
+  const mk = () => createAssistChipFlow({ patch: (p) => writes.push(JSON.stringify(p)), track: (d) => events.push(`${d.st}${d.via ? ':' + d.via : ''}`), now: () => clock });
   // a brush: one tap asks, nothing is written; the question runs out after 4 s
   let fl = mk();
-  fl.tap(); clock += 3.9; fl.tick();
+  fl.tap(true); clock += 3.9; fl.tick();
   const stillAsking = fl.state === 'ask';
   clock += 0.2; fl.tick();
-  check('Chip: a tap only asks ("Destekli uçuşu kapat?"); after 4 s the question closes by itself, nothing written',
+  check('Chip (on): a tap only asks ("Destekli uçuşu kapat?"); after 4 s the question closes by itself, nothing written',
     stillAsking && fl.state === 'idle' && !writes.length && events.join() === 'chip,keep:timeout', events.join());
   // a double tap is not a yes: the second tap closes the question; Kapat within 0.3 s of the question is ignored
   events.length = 0; fl = mk();
-  fl.tap(); fl.tap();
+  fl.tap(true); fl.tap(true);
   const dbl = fl.state === 'idle';
-  fl.tap(); clock += 0.1; const early = fl.confirm();
-  check('Chip: a double tap or a Kapat within 0.3 s of the question does not turn it off', dbl && !early && !writes.length && fl.state === 'ask', events.join());
+  fl.tap(true); clock += 0.1; const early = fl.confirm();
+  check('Chip (on): a double tap or a Kapat within 0.3 s of the question does not turn it off', dbl && !early && !writes.length && fl.state === 'ask', events.join());
   // Vazgeç keeps it
   events.length = 0; fl.cancel('cancel');
-  check('Chip: Vazgeç keeps it (st=keep via=cancel)', fl.state === 'idle' && !writes.length && events.join() === 'keep:cancel', events.join());
-  // Kapat: exactly one write, assist false; nothing more afterwards whatever is tapped
+  check('Chip (on): Vazgeç keeps it (st=keep via=cancel)', fl.state === 'idle' && !writes.length && events.join() === 'keep:cancel', events.join());
+  // Kapat: exactly one write, assist false; a second click right after (the off chip under the pointer) changes nothing
   events.length = 0;
-  fl.tap(); clock += 1; const yes = fl.confirm();
-  fl.confirm(); fl.tap(); clock += 10; fl.tick(); fl.confirm();
-  check('Chip: Kapat writes { assist: false } once (st=chip, st=off via=chip) and nothing afterwards',
-    yes && writes.length === 1 && writes[0] === '{"assist":false}' && fl.state === 'done' && events.join() === 'chip,off:chip', `${writes.join()} ${events.join()}`);
+  fl.tap(true); clock += 1; const yes = fl.confirm();
+  fl.confirm(); clock += 0.2; const quick = fl.tap(false);
+  check('Chip (on): Kapat writes { assist: false } once (st=chip, st=off via=chip); a click within 0.8 s after it does not undo it',
+    yes && !quick && writes.length === 1 && writes[0] === '{"assist":false}' && fl.state === 'idle' && events.join() === 'chip,off:chip', `${writes.join()} ${events.join()}`);
+  // off → on: one tap, one write of true (st=on via=chip); a quick second tap does not open the question at once
+  events.length = 0; writes.length = 0;
+  clock += 5; const on1 = fl.tap(false); clock += 0.3; const again = fl.tap(true);
+  clock += 1; const ask2 = fl.tap(true);
+  check('Chip (off): one tap turns it on, { assist: true } written once (st=on via=chip); a double tap does not ask to turn it off again',
+    on1 === 'on' && again === '' && ask2 === 'ask' && writes.length === 1 && writes[0] === '{"assist":true}' && events.join() === 'on:chip,chip', `${writes.join()} ${events.join()}`);
+  // nothing but a tap writes: time passing, the question's timeout, a cancel never write
+  writes.length = 0;
+  for (let i = 0; i < 100; i++) { clock += 0.5; fl.tick(); fl.cancel('hide'); }
+  check('Chip: time, timeouts and cancels never write the setting (on or off)', !writes.length, writes.join());
 
-  // with the real settings module: the chip's write is Ayarlar's "Kapalı", it survives a reload and other changes, and
-  // no write ever carries assist: true
+  // with the real settings module: the chip's writes are Ayarlar's switch; they survive a reload and other changes, and
+  // assist: true is written only by the off → on tap
   const mem = {}, all = [];
   const prevLS = globalThis.localStorage;
   globalThis.localStorage = { getItem: (k) => (k in mem ? mem[k] : null), setItem: (k, v) => { mem[k] = String(v); all.push(String(v)); }, removeItem: (k) => { delete mem[k]; } };
@@ -565,14 +599,20 @@ const summary = {};
     mem['gokyuzu.settings'] = JSON.stringify({ quality: 'low', volumes: { master: 0.6 } });   // a player with assist on (default)
     const before = S.storedSettings().assist;
     clock = 100;
-    const real = createAssistOffFlow({ patch: (p) => S.patchSettings(p), now: () => clock });
-    real.tap(); clock += 1; real.confirm();
+    let onTaps = 0;
+    const real = createAssistChipFlow({ patch: (p) => S.patchSettings(p), now: () => clock });
+    const tapReal = () => { const on = S.storedSettings().assist !== false; if (!on) onTaps++; return real.tap(on); };
+    tapReal(); clock += 1; real.confirm();
     const afterOff = S.storedSettings().assist, kept = JSON.parse(mem['gokyuzu.settings']);
     S.patchSettings({ muted: true });
-    real.tap(); clock += 1; real.confirm();          // (done: no second write)
-    const trues = all.filter((v) => /"assist":true/.test(v));
-    check('Chip + settings module: on → off through patchSettings, other keys kept, still off after a reload and other changes, never written true',
-      before === true && afterOff === false && kept.quality === 'low' && kept.volumes.master === 0.6 && S.storedSettings().assist === false && !trues.length,
+    const offAfterOther = S.storedSettings().assist;
+    clock += 3; tapReal();
+    const afterOn = S.storedSettings().assist;
+    clock += 3; tapReal(); clock += 1; real.confirm();
+    const trues = all.filter((v) => /"assist":true/.test(v)).length;
+    check('Chip + settings module: on → off → on → off through patchSettings, other keys kept, off survives other changes, true written once per off → on tap',
+      before === true && afterOff === false && kept.quality === 'low' && kept.volumes.master === 0.6 && offAfterOther === false && afterOn === true
+        && S.storedSettings().assist === false && onTaps === 1 && trues === 1,
       `writes ${all.length}: ${all.map((v) => JSON.parse(v).assist).join(',')}`);
   } finally { globalThis.localStorage = prevLS; }
 
@@ -607,6 +647,83 @@ const summary = {};
     if (offAt == null || f.crashed || jolt || dThr > 0.05 || f.assist.on) bad.push(`${id} ${moment}: ${offAt == null ? 'never reached' : ''}${f.crashed ? ' crash ' + f.crashReason : ''} n±${n.toFixed(2)} q ${q.toFixed(1)}°/s Δthrust ${dThr.toFixed(2)}`);
   }
   check('Chip off mid-flight (turn, final, short final, flare, take-off roll; all fixed-wing types): no crash, no jolt (≤ 0.4 g, ≤ 7°/s), no thrust jump', !bad.length, bad.join('; '));
+
+  // the flight goes on from where it is when the chip turns it on (the settings event → flight.setAssist(true)): parked
+  // on the runway, a climb, cruise, a hand-flown final (gear down: the assisted approach takes it over, its auto thrust
+  // sets the approach speed), every fixed-wing type and the UH-60. Trimmed starts, the switch at 4 s, 6 s measured.
+  // Hands off (the hand is on the chip): no crash, no jolt, no lever / thrust jump outside the approach's auto thrust,
+  // no take-off climb-out in the air, still flying the same way (heading, no climb, on the ground: still parked).
+  // A stick held through the switch: never rougher than the same flight without it (the assist's law replaces the raw
+  // stick: a held push is a steady descent, a held roll stops at the bank limit)
+  const onRun = (id, moment, sw, stick = null) => {
+    const heli = SPECS[id].category === 'helicopter';
+    const f = model(id), inp = { pitch: 0, roll: 0, yaw: 0, throttle: 0, brake: 0 };
+    globalThis.__game = { flight: f };
+    const sp = SPECS[id].spawnSpeed;
+    if (moment === 'ground') f.reset({ x: rw.px + rw.dx * 60, z: rw.pz + rw.dz * 60, heading: rw.course }, world);
+    else if (heli) f.reset({ x: 0, z: 0, heading: 0.5, altitude: rw.elevation + { climb: 120, cruise: 400, final: 200 }[moment], speed: { climb: 60, cruise: 110, final: 50 }[moment] * KT }, world);
+    else if (moment === 'final') { const d = 7000; f.reset({ x: rw.x - rw.dx * d, z: rw.z - rw.dz * d, heading: rw.course, altitude: rw.elevation + (d + 300) * Math.tan(3 * DEG) }, world); }
+    else f.reset({ x: 0, z: 30000, heading: 0.5, altitude: moment === 'climb' ? 600 : 2500, speed: sp }, world,
+      { approach: false, gearDown: false, flapIndex: 0, verticalSpeed: moment === 'climb' ? (SPECS[id].category === 'fighter' ? 25 : 9) : 0 });
+    if (f.pendingThrottle != null) { inp.throttle = f.pendingThrottle; f.pendingThrottle = null; }
+    // (helicopter: the collective picked up at the trim, then raised for the climb / lowered for the descent)
+    const trim = inp.throttle, dCol = heli ? ({ climb: 0.08, final: -0.06 }[moment] || 0) : 0;
+    const m = { n: 0, q: 0, p: 0, rate: 0, dThr: 0, dGs: 0, dHdg: 0, dAlt: 0, vs0: 0, vs: 0, app: false, at: false, climbout: false };
+    let thr0 = 0, gs0 = 0, hdg0 = 0, alt0 = 0;
+    for (let i = 0; i < 10 / DT; i++) {
+      const t = i * DT;
+      if (heli && moment !== 'ground') inp.throttle = t < 0.5 ? trim : trim + dCol * Math.min(1, (t - 0.5) / 1);
+      if (stick && t >= 3) { inp.pitch = stick[0]; inp.roll = stick[1]; }
+      if (Math.abs(t - 4) < DT / 2) {
+        thr0 = f.throttle; gs0 = Math.hypot(f.velocity.x, f.velocity.z); hdg0 = f.heading; alt0 = f.position.y; m.vs0 = f.verticalSpeed;
+        if (sw) f.setAssist(true);
+      }
+      if (f.pendingThrottle != null) { inp.throttle = f.pendingThrottle; f.pendingThrottle = null; }
+      f.step(DT, inp, world);
+      if (t >= 4 && t < 10) {
+        m.n = Math.max(m.n, Math.abs(f.gForce - 1));
+        const w = f.angularVelocity;
+        if (!heli) { m.q = Math.max(m.q, Math.abs(f.ad.q / DEG)); m.p = Math.max(m.p, Math.abs(f.ad.p / DEG)); }
+        m.rate = Math.max(m.rate, Math.hypot(w.x, w.y, w.z) / DEG);
+        m.dGs = Math.max(m.dGs, Math.abs(Math.hypot(f.velocity.x, f.velocity.z) - gs0));
+        m.dHdg = Math.max(m.dHdg, Math.abs(((f.heading - hdg0 + 540) % 360) - 180));
+        m.dAlt = Math.max(m.dAlt, f.position.y - alt0);
+        if (t < 6) m.dThr = Math.max(m.dThr, Math.abs(f.throttle - thr0));
+        if (f.assist) { m.app = m.app || !!f.assist.app; m.at = m.at || !!(f.assist.at && f.assist.at.on); m.climbout = m.climbout || !!f.assist.climbout; }
+      }
+      if (f.crashed) break;
+    }
+    m.vs = f.verticalSpeed; m.crashed = f.crashed; m.reason = f.crashReason; m.on = !!(f.assist && f.assist.on);
+    return m;
+  };
+  const badOn = [], rough = [], notes = [];
+  for (const id of [...FIXED, 'uh60']) for (const moment of ['ground', 'climb', 'cruise', 'final']) {
+    const heli = id === 'uh60';
+    const r = onRun(id, moment, true);
+    const fx = (v) => v.toFixed(2);
+    const why = [];
+    if (r.crashed) why.push(`crash ${r.reason}`);
+    if (!r.on) why.push('not on');
+    if (r.n > 0.35) why.push(`n±${fx(r.n)}`);
+    if ((heli ? r.rate : r.q) > 3) why.push(`${heli ? 'rate' : 'q'} ${r[heli ? 'rate' : 'q'].toFixed(1)}°/s`);
+    if (r.dHdg > 2) why.push(`heading ${r.dHdg.toFixed(1)}°`);
+    if (moment === 'ground' && (r.dGs > 0.3 || r.dThr > 0)) why.push(`moved ${fx(r.dGs)} m/s, thrust ${fx(r.dThr)}`);
+    if (moment !== 'ground' && r.climbout) why.push('take-off climb-out');
+    if (moment === 'cruise' && r.dAlt > 30) why.push(`climbed ${r.dAlt.toFixed(0)} m`);
+    // (a hand-flown final with the gear down: the assisted approach takes over with its auto thrust; elsewhere no change)
+    if (moment === 'final' && !heli) { if (!r.app || !r.at || r.vs >= 0) why.push(`approach ${r.app} at ${r.at} vs ${r.vs.toFixed(1)}`); else notes.push(`${id} Δthrust ${fx(r.dThr)}`); }
+    else if (r.dThr > 0.02) why.push(`thrust ${fx(r.dThr)}`);
+    if (why.length) badOn.push(`${id} ${moment}: ${why.join(', ')}`);
+    if (moment === 'ground') continue;
+    for (const stick of [[0.3, 0.3], [-0.2, 0]]) {
+      const a = onRun(id, moment, false, stick), b = onRun(id, moment, true, stick);
+      if (b.crashed || b.n > a.n + 0.25 || b.q > a.q + 4 || b.p > a.p + 5 || b.rate > a.rate + 5)
+        rough.push(`${id} ${moment} stick ${stick}: n±${fx(b.n)} vs ${fx(a.n)}, q ${b.q.toFixed(1)} vs ${a.q.toFixed(1)}, p ${b.p.toFixed(1)} vs ${a.p.toFixed(1)}, rate ${b.rate.toFixed(1)} vs ${a.rate.toFixed(1)}${b.crashed ? ' crash' : ''}`);
+    }
+  }
+  check('Chip on mid-flight, hands off (parked, climb, cruise, hand-flown final; all fixed-wing types and the UH-60): no crash, no jolt (≤ 0.35 g, ≤ 3°/s), same heading, no climb-out, no thrust jump but the approach\'s auto thrust',
+    !badOn.length, badOn.length ? badOn.join('; ') : `final: auto thrust ${notes.join(', ')}`);
+  check('Chip on mid-flight with a stick held through the switch (pull + roll, push): never rougher than the same flight without it (+0.25 g, +4°/s pitch, +5°/s roll)', !rough.length, rough.join('; '));
 }
 
 // 9. cost per frame (phones): the layer's own work is a small fraction of the model step
