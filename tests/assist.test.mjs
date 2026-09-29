@@ -10,6 +10,8 @@
 //   - hands-off "İnişe geç" from awkward starts; runway choice (no departure-only / backup runways)
 //   - pulling back too long (idle and full power): no stall, no crash
 //   - helicopter: assisted lift-off into the hover hold, a dumped collective, the vertical landing, never onto water
+//   - the "DESTEKLİ UÇUŞ" chip's off switch (src/ui/assist-hud.js createAssistOffFlow): two steps, a timeout, writes
+//     assist = false once through the settings module and never true; the flight hands over without a jolt
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { createFixedWingModel } from '../src/flight/fixedwing.js';
@@ -17,6 +19,7 @@ import { createHelicopterModel } from '../src/flight/helicopter.js';
 import { createInput } from '../src/flight/input.js';
 import { runwayEnds } from '../src/flight/fixedwing-autopilot.js';
 import { assistWanted, pickRunway, landingEnds, BACKUP_RUNWAYS } from '../src/flight/assist.js';
+import { createAssistOffFlow } from '../src/ui/assist-hud.js';
 
 const KT = 0.514444, DEG = Math.PI / 180;
 const FIXED = ['a320neo', 'b737', 'f16', 'f22'];
@@ -211,16 +214,22 @@ function landRun({ id, map, rwName, dist, lat = 0, hdgOff = 0, altOff = 0, assis
   const walk = (d) => { for (const n of readdirSync(d)) { const p = `${d}/${n}`; if (statSync(p).isDirectory()) walk(p); else if (p.endsWith('.js')) files.push(p); } };
   walk(new URL('../src', import.meta.url).pathname);
   const writers = [], forbidden = [];
+  // (code only: comments may name the calls)
+  const code = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`\\])\/\/.*$/gm, '$1');
   for (const p of files) {
-    const src = readFileSync(p, 'utf8'), rel = p.slice(p.indexOf('/src/') + 1);
+    const src = code(readFileSync(p, 'utf8')), rel = p.slice(p.indexOf('/src/') + 1);
     if (rel === 'src/core/settings.js' || rel === 'src/ui/panels.js') continue;
-    if (/(save|patch)Settings\([^;]*\bassist\b/.test(src) || /localStorage\.setItem\([^;]*gokyuzu\.settings[^;]*assist/.test(src)) writers.push(rel);
-    if (/^src\/(flight|missions|retention)\//.test(rel) || /^src\/ui\/(tutorial|assist-hud|hints|landing)/.test(rel)) {
+    if (/(save|patch)Settings\([^;)]*\bassist\b/.test(src) || /localStorage\.setItem\([^;]*gokyuzu\.settings[^;]*assist/.test(src) || /\bassist\s*:\s*true\b/.test(src)) writers.push(rel);
+    if (/^src\/(flight|missions|retention)\//.test(rel) || /^src\/ui\/(tutorial|hints|landing)/.test(rel)) {
       if (/\b(save|patch)Settings\s*\(/.test(src)) forbidden.push(rel);
     }
   }
-  check('Setting: no module but the settings panel writes `assist`', !writers.length, writers.join(', '));
+  // the chip (src/ui/assist-hud.js) writes through its off flow only: one patchSettings call, handed the flow's patch
+  const hudSrc = code(readFileSync(new URL('../src/ui/assist-hud.js', import.meta.url), 'utf8'));
+  const hudCalls = [...hudSrc.matchAll(/\b(save|patch)Settings\s*\(([^)]*)\)/g)].map((m) => m[0]);
+  check('Setting: no module but the settings panel writes `assist` (and nothing anywhere writes it true)', !writers.length, writers.join(', '));
   check('Setting: the assisted flight, tutorial, hints, landing card, missions and progression never save settings', !forbidden.length, forbidden.join(', '));
+  check('Setting: the chip saves settings only through its off flow (one patchSettings(p), p from the flow)', hudCalls.length === 1 && hudCalls[0] === 'patchSettings(p)', hudCalls.join(' | '));
 }
 
 // telemetry: `as` on the outcome events, no data key that would overwrite an envelope key (t, s, n, m, v)
@@ -433,6 +442,171 @@ const summary = {};
     if (f.crashed || td) break;
   }
   check('Helicopter "İnişe geç" next to a building: holds the hover, no descent between the buildings', !f.crashed && !td && stage === 'blocked' && f.agl > 7, `stage ${stage}, agl ${f.agl.toFixed(1)}`);
+}
+
+// 10. regressions (bug hunt 2026-09-27): an airborne reset, a touch-and-go after an assisted landing, the ✕ on a final
+// with the gear down, a helicopter with a route, the assist switched off during a helicopter's coupled descent
+{
+  const { createRoute } = await import('../src/nav/route.js');
+  // an airborne reset (R, a crash reset, "Son yaklaşmaya git") goes on from the present flight, not a lift-off
+  for (const id of ['a320neo', 'f16']) {
+    const rw = endOf('sf', 'KSFO 28L'), world = makeWorld('sf', rw.elevation), dist = 6000;
+    const start = { x: rw.x - rw.dx * dist, z: rw.z - rw.dz * dist, heading: rw.course, altitude: rw.elevation + (dist + 300) * Math.tan(3 * DEG) };
+    const f = model(id); globalThis.__game = { flight: f };
+    f.reset({ ...start, speed: f.spec.spawnSpeed }, world);
+    f.setAssist(true);
+    f.reset({ ...start, speed: f.spec.spawnSpeed }, world);
+    check(`Airborne reset ${id}: flight phase, no take-off climb-out`, f.assist.phase !== 'ground' && !f.assist.climbout, `${f.assist.phase} climbout ${f.assist.climbout}`);
+  }
+  // touch-and-go after an assisted landing: the landed approach ends, wings level, a climb-out, no speedbrake
+  {
+    const rw = endOf('sf', 'KSFO 28R'), world = makeWorld('sf', rw.elevation), dist = 9000;
+    const f = model('a320neo'), kb = keyboard(); globalThis.__game = { flight: f };
+    f.reset({ x: rw.x - rw.dx * dist, z: rw.z - rw.dz * dist, heading: rw.course, altitude: rw.elevation + (dist + 300) * Math.tan(3 * DEG), speed: 200 * KT }, world, { approach: false, gearDown: false, flapIndex: 0 });
+    f.setAssist(true); kb.input.setAircraft(f.spec);
+    kb.input.setThrottle(f.pendingThrottle ?? 0.5); f.pendingThrottle = null;
+    let td = null, goT = null, lift = null, maxBank = 0, sb = false;
+    for (let t = 0; t < 260; t += DT) {
+      if (Math.abs(t - 1) < DT / 2) f.assist.requestApproach(world);
+      if (f.onGround && td == null && t > 5) td = t;
+      if (td != null && goT == null && t > td + 1.5) { goT = t; kb.input.setThrottle(1); }
+      if (goT != null && lift == null && !f.onGround && f.agl > 5) lift = t;
+      if (lift != null) { maxBank = Math.max(maxBank, Math.abs(f.ad.phi / DEG)); sb = sb || f.sys.speedbrakeCmd; }
+      kb.input.update(DT); f.step(DT, kb.input.state, world);
+      if (f.crashed || (lift != null && t > lift + 40)) break;
+    }
+    check('Touch-and-go after an assisted landing: the approach ends, wings level, climbs, no speedbrake', lift != null && !f.crashed && !f.assist.app && maxBank < 5 && !sb && f.agl > 150,
+      `lift-off ${lift != null}, app ${f.assist.app ? f.assist.app.stage : 'none'}, max bank ${maxBank.toFixed(0)}°, speedbrake ${sb}, agl ${f.agl.toFixed(0)} m`);
+  }
+  // the ✕ ("İnişi bırak") on a final with the gear down stays cancelled
+  {
+    const rw = endOf('sf', 'KSFO 28R'), world = makeWorld('sf', rw.elevation), dist = 9000;
+    const f = model('a320neo'), kb = keyboard(); globalThis.__game = { flight: f };
+    f.reset({ x: rw.x - rw.dx * dist, z: rw.z - rw.dz * dist, heading: rw.course, altitude: rw.elevation + (dist + 300) * Math.tan(3 * DEG), speed: 200 * KT }, world, { approach: false, gearDown: false, flapIndex: 0 });
+    f.setAssist(true); kb.input.setAircraft(f.spec);
+    kb.input.setThrottle(f.pendingThrottle ?? 0.5); f.pendingThrottle = null;
+    let cancelled = -1, again = false;
+    for (let t = 0; t < 20; t += DT) {
+      if (Math.abs(t - 1) < DT / 2) f.assist.requestApproach(world);
+      if (cancelled < 0 && f.assist.app && f.sys.gearHandleDown && t > 5) { cancelled = t; f.assist.cancelApproach(); }
+      kb.input.update(DT); f.step(DT, kb.input.state, world);
+      if (cancelled >= 0 && f.assist.app) again = true;
+    }
+    check('"İnişi bırak" (✕) with the gear down: the gear rule does not start the approach again', cancelled > 0 && !again, `cancelled at ${cancelled.toFixed(1)} s, again ${again}`);
+  }
+  // helicopter with a route on the map: "İnişe geç" slows down and lands (the route's speed held it at cruise)
+  {
+    const world = makeWorld('sf', 4);
+    const f = model('uh60'), kb = keyboard(); globalThis.__game = { flight: f };
+    f.reset({ x: 0, z: 0, heading: 0, altitude: 204, speed: 80 * KT }, world);
+    const route = createRoute(); route.add(0, -8000); route.add(6000, -16000); route.add(12000, -8000);
+    f.setRoute(route);
+    f.setAssist(true); kb.input.setAircraft(f.spec);
+    let td = false; f.on('touchdown', () => { td = true; });
+    for (let t = 0; t < 150; t += DT) {
+      if (Math.abs(t - 1) < DT / 2) f.assist.requestApproach(world);
+      kb.input.update(DT); f.step(DT, kb.input.state, world);
+      if (f.crashed || td) break;
+    }
+    check('Helicopter "İnişe geç" with a route on the map: slows down and lands', td && !f.crashed, `touchdown ${td}, ${(Math.hypot(f.velocity.x, f.velocity.z) / KT).toFixed(0)} kt, agl ${f.agl.toFixed(0)} m`);
+  }
+  // helicopter: the assist switched off during the coupled descent: the hold keeps the height, no landing by itself
+  {
+    const world = makeWorld('sf', 4);
+    const f = model('uh60'), kb = keyboard(); globalThis.__game = { flight: f };
+    f.reset({ x: 0, z: 0, heading: 0, altitude: 154, speed: 60 * KT }, world);
+    f.setAssist(true); kb.input.setAircraft(f.spec);
+    let td = false, off = -1; f.on('touchdown', () => { td = true; });
+    for (let t = 0; t < 120; t += DT) {
+      if (Math.abs(t - 1) < DT / 2) f.assist.requestApproach(world);
+      if (off < 0 && f.assist.app && f.assist.app.stage === 'descend' && f.agl < 60) { off = t; f.setAssist(false); }
+      kb.input.update(DT); f.step(DT, kb.input.state, world);
+      if (f.crashed || td) break;
+    }
+    check('Helicopter: assist off during the coupled descent → the hold keeps the height (no landing on its own)', off > 0 && !td && !f.crashed && f.agl > 20, `off at ${off.toFixed(1)} s, touchdown ${td}, agl ${f.agl.toFixed(0)} m`);
+  }
+}
+
+// 11. the "DESTEKLİ UÇUŞ" chip's off switch: two steps, a timeout, one write of assist = false, never true
+{
+  let clock = 0;
+  const writes = [], events = [];
+  const mk = () => createAssistOffFlow({ patch: (p) => writes.push(JSON.stringify(p)), track: (d) => events.push(`${d.st}${d.via ? ':' + d.via : ''}`), now: () => clock });
+  // a brush: one tap asks, nothing is written; the question runs out after 4 s
+  let fl = mk();
+  fl.tap(); clock += 3.9; fl.tick();
+  const stillAsking = fl.state === 'ask';
+  clock += 0.2; fl.tick();
+  check('Chip: a tap only asks ("Destekli uçuşu kapat?"); after 4 s the question closes by itself, nothing written',
+    stillAsking && fl.state === 'idle' && !writes.length && events.join() === 'chip,keep:timeout', events.join());
+  // a double tap is not a yes: the second tap closes the question; Kapat within 0.3 s of the question is ignored
+  events.length = 0; fl = mk();
+  fl.tap(); fl.tap();
+  const dbl = fl.state === 'idle';
+  fl.tap(); clock += 0.1; const early = fl.confirm();
+  check('Chip: a double tap or a Kapat within 0.3 s of the question does not turn it off', dbl && !early && !writes.length && fl.state === 'ask', events.join());
+  // Vazgeç keeps it
+  events.length = 0; fl.cancel('cancel');
+  check('Chip: Vazgeç keeps it (st=keep via=cancel)', fl.state === 'idle' && !writes.length && events.join() === 'keep:cancel', events.join());
+  // Kapat: exactly one write, assist false; nothing more afterwards whatever is tapped
+  events.length = 0;
+  fl.tap(); clock += 1; const yes = fl.confirm();
+  fl.confirm(); fl.tap(); clock += 10; fl.tick(); fl.confirm();
+  check('Chip: Kapat writes { assist: false } once (st=chip, st=off via=chip) and nothing afterwards',
+    yes && writes.length === 1 && writes[0] === '{"assist":false}' && fl.state === 'done' && events.join() === 'chip,off:chip', `${writes.join()} ${events.join()}`);
+
+  // with the real settings module: the chip's write is Ayarlar's "Kapalı", it survives a reload and other changes, and
+  // no write ever carries assist: true
+  const mem = {}, all = [];
+  const prevLS = globalThis.localStorage;
+  globalThis.localStorage = { getItem: (k) => (k in mem ? mem[k] : null), setItem: (k, v) => { mem[k] = String(v); all.push(String(v)); }, removeItem: (k) => { delete mem[k]; } };
+  try {
+    const S = await import('../src/core/settings.js');
+    mem['gokyuzu.settings'] = JSON.stringify({ quality: 'low', volumes: { master: 0.6 } });   // a player with assist on (default)
+    const before = S.storedSettings().assist;
+    clock = 100;
+    const real = createAssistOffFlow({ patch: (p) => S.patchSettings(p), now: () => clock });
+    real.tap(); clock += 1; real.confirm();
+    const afterOff = S.storedSettings().assist, kept = JSON.parse(mem['gokyuzu.settings']);
+    S.patchSettings({ muted: true });
+    real.tap(); clock += 1; real.confirm();          // (done: no second write)
+    const trues = all.filter((v) => /"assist":true/.test(v));
+    check('Chip + settings module: on → off through patchSettings, other keys kept, still off after a reload and other changes, never written true',
+      before === true && afterOff === false && kept.quality === 'low' && kept.volumes.master === 0.6 && S.storedSettings().assist === false && !trues.length,
+      `writes ${all.length}: ${all.map((v) => JSON.parse(v).assist).join(',')}`);
+  } finally { globalThis.localStorage = prevLS; }
+
+  // the flight hands over cleanly when it goes off (the settings event → flight.setAssist(false)): a turn onto the
+  // final, on the glide path, short final, the flare, the take-off roll — no crash, no jolt, no thrust jump
+  const rw = endOf('sf', 'KSFO 28R'), world = makeWorld('sf', rw.elevation);
+  const bad = [];
+  for (const id of FIXED) for (const moment of ['turn', 'final', 'short', 'flare', 'roll']) {
+    const f = model(id), kb = keyboard();
+    globalThis.__game = { flight: f };
+    const ground = moment === 'roll';
+    if (ground) f.reset({ x: rw.px + rw.dx * 60, z: rw.pz + rw.dz * 60, heading: rw.course }, world);
+    else {
+      const d = 9000, lat = moment === 'turn' ? 2500 : 0;
+      f.reset({ x: rw.x - rw.dx * d - rw.dz * lat, z: rw.z - rw.dz * d + rw.dx * lat, heading: rw.course + (moment === 'turn' ? 70 * DEG : 0),
+        altitude: rw.elevation + (d + 300) * Math.tan(3 * DEG), speed: 200 * KT }, world, { approach: false, gearDown: false, flapIndex: 0 });
+    }
+    f.setAssist(true); kb.input.setAircraft(f.spec); kb.input.setThrottle(f.pendingThrottle ?? 0); f.pendingThrottle = null;
+    let t = 0, offAt = null, n = 0, q = 0, dThr = 0, thr0 = 0;
+    for (let i = 0; i < 360 / DT; i++) {
+      if (i === 30) { if (ground) kb.input.setThrottle(0.3); else f.assist.requestApproach(world); }
+      const a = f.assist.app;
+      const at = { turn: a && Math.abs(f.roll) > 15, final: a && a.stage === 'final' && f.agl < 250 && f.agl > 150, short: a && a.stage === 'final' && f.agl < 60 && f.agl > 30,
+        flare: !f.onGround && f.gearHandleDown && f.agl < 8 && f.agl > 3 && t > 20, roll: f.onGround && f.ias > 60 * KT && f.ias < 90 * KT }[moment];
+      if (offAt == null && at) { offAt = t; thr0 = f.throttle; f.setAssist(false); }
+      kb.input.update(DT); f.step(DT, kb.input.state, world); t += DT;
+      if (offAt != null && t - offAt <= 6) { n = Math.max(n, Math.abs(f.gForce - 1)); q = Math.max(q, Math.abs(f.ad.q / DEG)); }
+      if (offAt != null && t - offAt <= 2) dThr = Math.max(dThr, Math.abs(f.throttle - thr0));
+      if (f.crashed || (offAt != null && t - offAt > 12)) break;
+    }
+    const jolt = moment !== 'flare' && (n > 0.4 || q > 7);   // (in the flare the touchdown itself follows within the 6 s)
+    if (offAt == null || f.crashed || jolt || dThr > 0.05 || f.assist.on) bad.push(`${id} ${moment}: ${offAt == null ? 'never reached' : ''}${f.crashed ? ' crash ' + f.crashReason : ''} n±${n.toFixed(2)} q ${q.toFixed(1)}°/s Δthrust ${dThr.toFixed(2)}`);
+  }
+  check('Chip off mid-flight (turn, final, short final, flare, take-off roll; all fixed-wing types): no crash, no jolt (≤ 0.4 g, ≤ 7°/s), no thrust jump', !bad.length, bad.join('; '));
 }
 
 // 9. cost per frame (phones): the layer's own work is a small fraction of the model step

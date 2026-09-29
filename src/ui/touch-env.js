@@ -1,8 +1,8 @@
 // Touch / mobile environment: touch-only detection (the on-screen controls), in-app browsers (X, Instagram, …), the
 // WebGL 2 probe and the weak-device rule of the start gate (src/ui/touch-gate.js). No DOM building here.
 //
-//   touchMode()          on-screen controls wanted: touch-only device (coarse pointer, no mouse / trackpad), or ?touch=1
-//                        (?touch=0 forces them off)
+//   touchMode()          on-screen controls wanted: touch-only device (an Android / iPhone touch screen, else a coarse
+//                        pointer and no mouse / trackpad), or ?touch=1 (?touch=0 forces them off)
 //   inAppBrowser()       { id, name, os } for social-app webviews, else null
 //   gateCheck()          { ok, reason, soft, … }: can this device run the 3D world? (see RULES below)
 import { detectDevice, probeGpu } from '../core/gpu-device.js';
@@ -10,12 +10,33 @@ import { detectDevice, probeGpu } from '../core/gpu-device.js';
 const params = typeof location === 'undefined' ? new URLSearchParams() : new URLSearchParams(location.search);
 const mm = (q) => { try { return !!(window.matchMedia && window.matchMedia(q).matches); } catch { return false; } };
 
-/** Touch screen without a fine pointer (phones, tablets without a keyboard / trackpad). */
-export function isTouchOnly() {
+/** This page's inputs for isTouchOnly() (tests pass their own). */
+function touchEnv() {
+  const nav = typeof navigator === 'undefined' ? {} : navigator;
+  return { ua: nav.userAgent || '', touchPoints: nav.maxTouchPoints || 0, touchEvents: typeof window !== 'undefined' && 'ontouchstart' in window, mm };
+}
+
+/**
+ * Touch screen without a fine pointer (phones, tablets without a keyboard / trackpad).
+ * Android phones / tablets and iPhones with a touch screen always count: Chromium on Android derives pointer,
+ * any-pointer and hover from every input device the system lists, and many phones list a stylus- or mouse-class device
+ * with nothing attached. Live telemetry, 23-27 Sep 2026: every Samsung Galaxy page (Chrome, Samsung Internet, the X app)
+ * opened without the touch controls, on the desktop menu (in the X app 32 % of those pages reached a flight, 57 % with
+ * the touch menu). A keyboard / mouse keeps working next to the on-screen controls. Elsewhere (touch laptops, iPads with
+ * a keyboard or trackpad): a coarse primary pointer and no fine one; those hybrids get the controls with the first finger.
+ */
+export function isTouchOnly(env = null) {
   try {
-    const touch = (navigator.maxTouchPoints || 0) > 0 || 'ontouchstart' in window;
-    return touch && mm('(pointer: coarse)') && !mm('(any-pointer: fine)');
+    const e = env || touchEnv();
+    if (!(e.touchPoints > 0 || e.touchEvents)) return false;
+    if (/Android|iPhone|iPod/.test(e.ua)) return true;
+    return e.mm('(pointer: coarse)') && !e.mm('(any-pointer: fine)');
   } catch { return false; }
+}
+
+/** The pointer media queries in short (telemetry `ptr` on `open`): primary c(oarse) | f(ine) | n(one), then F = any fine pointer, h = any hover. */
+export function pointerTag(m = mm) {
+  try { return `${m('(pointer: coarse)') ? 'c' : m('(pointer: fine)') ? 'f' : 'n'}${m('(any-pointer: fine)') ? 'F' : ''}${m('(any-hover: hover)') ? 'h' : ''}`; } catch { return ''; }
 }
 
 /** The game should show the on-screen touch controls (and the touch menu / tutorial texts). */

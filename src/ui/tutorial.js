@@ -145,6 +145,11 @@ const CSS = `
 .gkt.gkt-cockpit .gkt-text kbd.gk-ikbd { font-size: calc(10.5px * var(--ts)); }
 .gkt.gkt-cockpit .gkt-meter { margin-top: calc(5px * var(--ts)); }
 .gkt.gkt-cockpit .gkt-meter b { min-width: calc(80px * var(--ts)); }
+/* touch: the card is squeezed between the stick and the buttons (upright tablets: ~270 px); the fixed label / value widths
+   pushed the value ("%0", "140 / 145 kt") out of the card onto the FLAP buttons. The value wraps under the bar instead. */
+html.gk-touch .gkt .gkt-meter { flex-wrap: wrap; row-gap: 2px; }
+html.gk-touch .gkt .gkt-meter span, html.gk-touch .gkt .gkt-meter b { min-width: 0; }
+html.gk-touch .gkt .gkt-meter .gkt-bar { min-width: calc(36px * var(--ts)); }
 .gkt.gkt-cockpit .gkt-kc { min-width: 0; padding: calc(9px * var(--ts)) calc(13px * var(--ts)) calc(11px * var(--ts)); border-radius: calc(13px * var(--ts)); }
 .gkt.gkt-cockpit .gkt-kc-grid { grid-template-columns: repeat(2, auto); gap: calc(8px * var(--ts)) calc(18px * var(--ts)); }
 .gkt.gkt-cockpit .gkt-kc-cell .gk-keys kbd { font-size: calc(12px * var(--ts)); padding: calc(3px * var(--ts)) calc(7px * var(--ts)); }
@@ -529,7 +534,7 @@ export function createOnboarding(container, { input = null, hud = null, restart 
 
     update(dt, f, info) {
       // assisted flight runs for every flight (also a resumed one, which has no begin())
-      if (f) assistHud.update(dt, f, { paused: !!(info && info.paused), tutorialStep: tut.active && !tut.okT ? tut.steps[tut.i].id : null, tutorial: tut.active, hidden: hudOff });
+      if (f) assistHud.update(dt, f, { paused: !!(info && info.paused), view: info && info.view, tutorialStep: tut.active && !tut.okT ? tut.steps[tut.i].id : null, tutorial: tut.active, hidden: hudOff });
       if (!started || !f) return;
       paused = !!(info && info.paused);
       crashed = !!f.crashed;
@@ -557,6 +562,14 @@ export function createOnboarding(container, { input = null, hud = null, restart 
       hints.reset();
       assistHud.reset();
       c.ev.takeoff = false; c.ev.touchdown = false;
+      // assisted flight switched on / off in the settings since the scenario was picked: the matching scenario starts
+      // over (the assisted steps asked for the İNİŞE GEÇ button, which is hidden with the assist off)
+      if (tut.active && scenario && /-as$/.test(scenario.id) !== !!assistHud.wanted) {
+        scenario = pickScenario(c.cat, spawn, flightRef, { assist: !!assistHud.wanted });
+        tut.steps = scenario.steps;
+        enterStep(0);
+        return;
+      }
       if (tut.active && tut.okT === 0 && !tut.steps[tut.i].final) enterStep(0);
       else if (tut.active && tut.okT > 0 && !(tut.i + 1 < tut.steps.length && tut.steps[tut.i + 1].final)) enterStep(0);
     },

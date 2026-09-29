@@ -405,7 +405,16 @@ function useMeshoptWorkers() {
   meshoptWorkers = true;
   let n = 2;
   try { if (detectDevice().kind === 'phone') n = 1; } catch { /* no DOM */ }
-  try { MeshoptDecoder.useWorkers(n); } catch (e) { console.warn('[assets] meshopt workers unavailable', e && e.message); }
+  // The decoder revokes its workers' blob URL right after `new Worker(url)`. WebKit loads a worker's script later, and
+  // then finds no blob ("WebKitBlobResource error 1"): the worker never starts, every decode sent to it waits for ever
+  // and holds a streaming slot, so a WebKit page could end up with no city buildings at all (Playwright's WebKit: 0 city
+  // tiles at the city centre after 40 s, 200+ in Chromium; live Safari beacons: cl = 0 on some pages). The URL stays
+  // valid for the page (one 36 KB script).
+  const revoke = URL.revokeObjectURL;
+  try {
+    URL.revokeObjectURL = () => {};
+    MeshoptDecoder.useWorkers(n);
+  } catch (e) { console.warn('[assets] meshopt workers unavailable', e && e.message); } finally { URL.revokeObjectURL = revoke; }
 }
 
 export function createAssetLoader(renderer, manager = THREE.DefaultLoadingManager) {

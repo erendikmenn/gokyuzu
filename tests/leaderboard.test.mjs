@@ -207,7 +207,9 @@ check('shipped rules: every catalog mission present with its aircraft (rerun bui
       const r = SHIPPED.missions[m.id];
       const built = ib(m.id);
       if (!r || !/^ist-/.test(m.id) || r.aircraft.length !== 1 || r.aircraft[0] !== m.aircraft || r.daily !== true
-        || (Array.isArray(built.stars) && JSON.stringify(r.stars) !== JSON.stringify(built.stars)) || r.secMax < built.limit) { ok = false; detail += `${m.id} `; }
+        // the server's thresholds are the lowest of the mission's variants (a daily variation may scale them down), never stricter
+        || (Array.isArray(built.stars) && !(Array.isArray(r.stars) && r.stars.length === 3 && r.stars.every((v, i) => v <= built.stars[i])))
+        || r.secMax < built.limit) { ok = false; detail += `${m.id} `; }
     }
     for (const c of IC) {
       const r = SHIPPED.missions[c.board];
@@ -218,6 +220,9 @@ check('shipped rules: every catalog mission present with its aircraft (rerun bui
     detail += `${IM.length} missions, ${IC.length} boards`;
   } catch (e) { ok = false; detail = e.message; }
   check('shipped rules İstanbul: every ist- mission (its aircraft, stars, limit, daily) and every ff-ist- board (aircraft, max score, stars, no daily)', ok, detail);
+  check('shipped rules: the daily climb at 12,000 ft (stars [1000, 1750, 2350]) gets its 2 and 3 stars accepted (SF climb, İstanbul ist-tirmanis)',
+    ['climb', 'ist-tirmanis'].every((id) => { const ac = SHIPPED.missions[id].aircraft[0];
+      return checkScore({ mission: id, score: 1800, stars: 2, ac, sid: SID, sec: 120 }, sctx).ok && checkScore({ mission: id, score: 2400, stars: 3, ac, sid: SID, sec: 120 }, sctx).ok; }));
   const heli = { mission: 'ist-heli-tur', score: 4400, stars: 3, ac: 'uh60', sid: SID, sec: 600 };
   check('shipped rules ist-heli-tur: a 3-star UH-60 run accepted (also as daily), the F-16 refused, 3 stars for 3.500 refused',
     checkScore(heli, sctx).ok && checkScore({ ...heli, day: '20260924' }, sctx).ok && checkScore({ ...heli, ac: 'f16' }, sctx).error === 'ac' && checkScore({ ...heli, score: 3500 }, sctx).error === 'stars');

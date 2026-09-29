@@ -799,6 +799,38 @@ def report_platforms(beacons, visitors, requests, min_n=10):
               + ' · '.join(f'{k} {pct(silent[k], n)} ({silent[k]}/{n})' for k, n in total.most_common(8)))
 
 
+def report_mobile(beacons, visitors, top):
+    """Phones in social-app webviews and the way out (src/ui/touch-gate.js, src/ui/touch-env.js): pages opened inside an
+    app's webview (`open` iab) and the share that flew, the "Tarayıcıda aç" banner (`iab`: show, chrome, copy, close),
+    the pages that arrived in a real browser from a webview (`open` hf, marked in the webview's address) and the share of
+    them that flew; then the touch screens' pointer media queries (`open` ptr: c / f / n = primary coarse / fine / none,
+    F = a fine pointer listed, h = hover) and how many of those pages started with the touch controls (`in`)."""
+    rows = page_sessions(beacons, visitors)
+    inapp, arrived, ptr = defaultdict(list), defaultdict(list), defaultdict(Counter)
+    for vid, plat, first, fly, hbs, evs in rows:
+        if first.get('iab'):
+            inapp[f"{first['iab']}/{plat.split('/')[-1]}"].append((vid, bool(fly)))
+        if first.get('hf'):
+            arrived[f"{first['hf']} → {plat}"].append((vid, bool(fly)))
+        if first.get('ptr'):
+            ptr[plat][(first['ptr'], first.get('in') or '?')] += 1
+    ev = real_events(beacons, visitors, {'iab'})
+    if not (inapp or arrived or ev or ptr):
+        return
+    fmt = lambda g: ' · '.join(f"{k} {len(v)} sayfa ({len({x[0] for x in v})} kişi), uçan %{100 * sum(1 for x in v if x[1]) / len(v):.0f}"
+                               for k, v in sorted(g.items(), key=lambda kv: -len(kv[1])))
+    print('\nUygulama içi tarayıcı (sosyal uygulamaların webview\'i):')
+    if inapp:
+        print(f'  Webview\'de açılan: {fmt(inapp)}')
+    if ev:
+        acts = Counter(q.get('st') or q.get('x') or '?' for *_, q in ev)
+        print(f"  \"Tarayıcıda aç\" bandı (olay): {top(acts, 6)} · kişi: gören {len(people(ev, lambda q: q.get('st') == 'show'))}, "
+              f"dokunan {len(people(ev, lambda q: q.get('x') in ('chrome', 'copy')))}")
+    print(f"  Webview'den tarayıcıya geçen (hf): {fmt(arrived) if arrived else '-'}")
+    for plat, c in sorted(ptr.items(), key=lambda kv: -sum(kv[1].values()))[:8]:
+        print(f"  Dokunmatik ekran {plat}: ptr/in {top(Counter({f'{a}/{b}': n for (a, b), n in c.items()}), 6)}")
+
+
 def device_kind(q, v):
     dc = (q.get('dc') or '').split('/')[0]
     if dc in ('phone', 'tablet', 'desktop'):
@@ -969,6 +1001,28 @@ def report_assist(beacons, visitors, top):
             by[f['dev']].append(f)
         print('    ' + ' · '.join(f"{d} {len(v)} uçuş: kalkış {pct(sum(1 for f in v if f['ground'] and f['to']), sum(1 for f in v if f['ground']))}, pist inişi/kalkış "
                                   f"{sum(f['rw'] for f in v) / max(sum(f['to'] for f in v), 1):.2f}" for d, v in sorted(by.items(), key=lambda kv: -len(kv[1]))))
+    report_assist_off(beacons, visitors, top)
+
+
+def report_assist_off(beacons, visitors, top):
+    """Turning assisted flight off (people, players only): the "DESTEKLİ UÇUŞ" chip on the flight screen (`assist` st=chip:
+    tapped, the question asked; st=off via=chip: "Kapat"; st=keep: Vazgeç / a second tap / the 4 s timeout / the chip hid),
+    and Ayarlar → Destekli uçuş → Kapalı (`set` k=assist v2=0 of a visitor with no chip "off"; the chip's own switch sends
+    that `set` too). How far into the page the chip's "Kapat" came (median minutes)."""
+    ev = real_events(beacons, visitors, {'assist'})
+    chip = [x for x in ev if x[3].get('st') in ('chip', 'off', 'keep')]
+    sets = real_events(beacons, visitors, {'set'})
+    off_set = people(sets, lambda q: q.get('k') == 'assist' and q.get('v2') == '0')
+    if not chip and not off_set:
+        return
+    st = lambda name: (lambda q: q.get('st') == name)
+    tapped, off, keep = people(chip, st('chip')), people(chip, lambda q: q.get('st') == 'off' and q.get('via') == 'chip'), people(chip, st('keep'))
+    keeps = Counter(q.get('via') or '?' for *_, q in chip if q.get('st') == 'keep')
+    mins = [num(q.get('m')) for *_, q in chip if q.get('st') == 'off']
+    base = len(flyers(beacons, visitors))
+    print(f"  Kapatma: çipe dokunan {len(tapped)} kişi ({sum(1 for *_, q in chip if q.get('st') == 'chip')} kez) → \"Kapat\" {len(off)} kişi "
+          f"({pct(len(off), len(tapped))}; uçanların {pct(len(off), base)}; sayfada medyan {med(mins, '{:.1f}')} dk) · vazgeçen {len(keep - off)} kişi "
+          f"({top(keeps, 4)}) · Ayarlar'dan kapatan {len(off_set - off)} kişi")
 
 
 def report_comeback(beacons, visitors, top):
@@ -1261,6 +1315,7 @@ def main():
         print('Eksik dosya (403):' if a.target == 'production' else 'IP kilidine takılan istek:', top(blocked, 5))
 
     report_platforms(beacons, visitors, requests)
+    report_mobile(beacons, visitors, top)   # social-app webviews: banner, hand-off to the browser; touch screens' pointer queries
 
     # wave 7 (§12): missions, daily mission, landing score, shares, failures, leaderboard, retention
     by_day = report_missions(beacons, visitors, top)
