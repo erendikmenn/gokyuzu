@@ -478,6 +478,7 @@ SETTING_GROUPS = {   # `set` beacon groups counted in people: report_settings an
     'lower': ('Sesi kısan (varsayılanın altı)', volume_lowered),
     'zero': ('Genel sesi sıfıra çeken', lambda q: q.get('k') == 'master' and q.get('v2') == '0'),
     'assist': ('Destekli uçuşu kapatan', lambda q: q.get('k') == 'assist' and q.get('v2') == '0'),
+    'assiston': ('Destekli uçuşu açan', lambda q: q.get('k') == 'assist' and q.get('v2') == '1'),
     'crit': ('Sesli uyarılar: sadece kritik', lambda q: q.get('k') == 'valert' and q.get('v2') == '1'),
     'voff': ('Sesli uyarıları kapatan', lambda q: q.get('k') == 'valert' and q.get('v2') == '0'),
     'chime': ('Uyarı çanını kapatan', lambda q: q.get('k') == 'chime' and q.get('v2') == '0'),
@@ -1060,24 +1061,46 @@ def report_assist(beacons, visitors, top):
 
 
 def report_assist_off(beacons, visitors, top):
-    """Turning assisted flight off (people, players only): the "DESTEKLİ UÇUŞ" chip on the flight screen (`assist` st=chip:
-    tapped, the question asked; st=off via=chip: "Kapat"; st=keep: Vazgeç / a second tap / the 4 s timeout / the chip hid),
-    and Ayarlar → Destekli uçuş → Kapalı (`set` k=assist v2=0 of a visitor with no chip "off"; the chip's own switch sends
-    that `set` too). How far into the page the chip's "Kapat" came (median minutes)."""
+    """Açma / kapatma: the "DESTEKLİ UÇUŞ" chip on the flight screen and Ayarlar (people, players only). The chip: on →
+    `assist` st=chip (tapped, the question "Destekli uçuşu kapat?"), st=off via=chip ("Kapat"), st=keep (Vazgeç / a second
+    tap / the 4 s timeout / the chip hid); off → st=on via=chip (one tap). Its switch sends the `set` k=assist beacon too
+    (v2=0 off, v2=1 on), so Ayarlar = `set` people without the chip's own event. How far into the page the chip's "Kapat"
+    came (median minutes). Callouts pointing at the chip (st=hint): k=start (a new player's first flights, `as` = the
+    state then) and k=crash (the one-time suggestion after two crashes with the assist off) → the same page's chip taps
+    that followed."""
     ev = real_events(beacons, visitors, {'assist'})
-    chip = [x for x in ev if x[3].get('st') in ('chip', 'off', 'keep')]
+    chip = [x for x in ev if x[3].get('st') in ('chip', 'off', 'keep', 'on')]
+    hints = [x for x in ev if x[3].get('st') == 'hint']
     sets = real_events(beacons, visitors, {'set'})
     off_set = people(sets, lambda q: q.get('k') == 'assist' and q.get('v2') == '0')
-    if not chip and not off_set:
+    on_set = people(sets, lambda q: q.get('k') == 'assist' and q.get('v2') == '1')
+    if not chip and not off_set and not on_set and not hints:
         return
     st = lambda name: (lambda q: q.get('st') == name)
-    tapped, off, keep = people(chip, st('chip')), people(chip, lambda q: q.get('st') == 'off' and q.get('via') == 'chip'), people(chip, st('keep'))
+    tapped, keep = people(chip, st('chip')), people(chip, st('keep'))
+    off, on = people(chip, lambda q: q.get('st') == 'off' and q.get('via') == 'chip'), people(chip, lambda q: q.get('st') == 'on' and q.get('via') == 'chip')
     keeps = Counter(q.get('via') or '?' for *_, q in chip if q.get('st') == 'keep')
     mins = [num(q.get('m')) for *_, q in chip if q.get('st') == 'off']
     base = len(flyers(beacons, visitors))
-    print(f"  Kapatma: çipe dokunan {len(tapped)} kişi ({sum(1 for *_, q in chip if q.get('st') == 'chip')} kez) → \"Kapat\" {len(off)} kişi "
+    n = lambda name: sum(1 for *_, q in chip if q.get('st') == name)
+    print(f"  Açma / kapatma (çip): açıkken dokunan {len(tapped)} kişi ({n('chip')} kez) → \"Kapat\" {len(off)} kişi "
           f"({pct(len(off), len(tapped))}; uçanların {pct(len(off), base)}; sayfada medyan {med(mins, '{:.1f}')} dk) · vazgeçen {len(keep - off)} kişi "
-          f"({top(keeps, 4)}) · Ayarlar'dan kapatan {len(off_set - off)} kişi")
+          f"({top(keeps, 5)}) · kapalıyken dokunup açan {len(on)} kişi ({n('on')} kez; uçanların {pct(len(on), base)}) · Ayarlar'dan kapatan "
+          f"{len(off_set - off)} kişi · Ayarlar'dan açan {len(on_set - on)} kişi")
+    if hints:
+        # the chip taps after a callout in the same page session
+        after = defaultdict(list)
+        for at, vid, sid, q in chip:
+            after[sid].append((at, q))
+        def then(kind, pred):
+            return {vid for at, vid, sid, q in hints if q.get('k') == kind and any(t >= at and pred(x) for t, x in after.get(sid, ()))}
+        start = [x for x in hints if x[3].get('k') == 'start']
+        crash = people(hints, lambda q: q.get('k') == 'crash')
+        s_on, s_off = people(start, lambda q: q.get('as') == '1'), people(start, lambda q: q.get('as') == '0')
+        print(f"  Hatırlatmalar: başlangıç ({len(start)} kez) açıkken gören {len(s_on)} kişi → aynı sayfada kapatan "
+              f"{len(then('start', lambda q: q.get('st') == 'off') & s_on)} · kapalıyken gören {len(s_off)} kişi → aynı sayfada açan "
+              f"{len(then('start', lambda q: q.get('st') == 'on') & s_off)} · iki kazadan sonra öneri gören {len(crash)} kişi → aynı sayfada açan "
+              f"{len(then('crash', lambda q: q.get('st') == 'on'))} ({pct(len(then('crash', lambda q: q.get('st') == 'on')), len(crash))})")
 
 
 def report_comeback(beacons, visitors, top):
@@ -1365,6 +1388,10 @@ def event_keys(q):
         out.append('as:off')
     elif t == 'assist' and st == 'keep':
         out.append('as:keep')
+    elif t == 'assist' and st == 'on' and q.get('via') == 'chip':
+        out.append('as:on')
+    elif t == 'assist' and st == 'hint' and q.get('k') in ('start', 'crash'):
+        out.append(f"as:hint:{q['k']}")
     if st == 'open' and t in ('ffp', 'mmenu'):                               # report_funnel
         out.append('t:open')
     if (t == 'mission' and st == 'start') or (t == 'ffc' and st in ('start', 'done', 'fail') and q.get('id') != 'land'):
@@ -1682,11 +1709,13 @@ def build_payload(stored, now, hourly=None, last_at=None, stale=False):
                                'Pist inişi / kalkış', 'Pist inişi yapan uçuş (%)', 'Kaza', 'Kaza / uçuş', 'İnişe geç ile iniş'], 'rows': as_rows})
     flew = keys.get('fly', set())
     off = keys.get('as:off', set())
-    tables.append({'id': 'assist_off', 'title': 'Destekli uçuşu kapatma', 'tab': 'toplam', 'note': 'Kişi; oran uçan oyunculara göre.',
+    on = keys.get('as:on', set())
+    tables.append({'id': 'assist_off', 'title': 'Destekli uçuşu açma / kapatma', 'tab': 'toplam', 'note': 'Kişi; oran uçan oyunculara göre. Çip: uçuş ekranındaki "DESTEKLİ UÇUŞ" düğmesi.',
                    'columns': ['Adım', 'Kişi', 'Uçanların %'],
                    'rows': [[label, len(g), share(len(g), len(flew))] for label, g in (
-                       ('Çipe dokunan', keys.get('as:chip', set())), ('Çipten kapatan', off), ('Vazgeçen', keys.get('as:keep', set()) - off),
-                       ("Ayarlar'dan kapatan", keys.get('s:assist', set()) - off))]})
+                       ('Çipe dokunan (açıkken)', keys.get('as:chip', set())), ('Çipten kapatan', off), ('Vazgeçen', keys.get('as:keep', set()) - off),
+                       ('Çipten açan', on), ("Ayarlar'dan kapatan", keys.get('s:assist', set()) - off), ("Ayarlar'dan açan", keys.get('s:assiston', set()) - on),
+                       ('Başlangıç ipucunu gören', keys.get('as:hint:start', set())), ('Kaza sonrası öneriyi gören', keys.get('as:hint:crash', set())))]})
     set_rows = [[label, n_people(f's:{g}'), share(n_people(f's:{g}'), len(flew))] for g, (label, _) in SETTING_GROUPS.items()]
     set_rows += [[f'Değiştirilen: {k[3:]}', len(v), share(len(v), len(flew))]
                  for k, v in sorted(((k, v) for k, v in keys.items() if k.startswith('sk:')), key=lambda kv: (-len(kv[1]), kv[0]))]

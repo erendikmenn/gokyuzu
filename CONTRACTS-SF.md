@@ -377,8 +377,9 @@ Players keep files in their browser cache, so every asset URL carries a content 
   `iab` events, the pages handed over to a browser (`hf`) and the share that flew, the touch screens' `ptr` / `in`.
   "Geri dönen oyuncular": D1 / D7 / within-7-days per cohort day and device from the visit fields, and
   the daily share of returning browsers. "Destekli uçuş": outcomes per `as` value on `fly` and the `assist` events; the
-  take-off / landing / crash funnel per assist state and device, and "Kapatma": the chip tapped → "Kapat" / kept (why),
-  and the people who turned it off in Ayarlar instead.
+  take-off / landing / crash funnel per assist state and device; "Açma / kapatma (çip)": the chip tapped while on →
+  "Kapat" / kept (why), tapped while off → on, and the people who switched it in Ayarlar instead; "Hatırlatmalar": the
+  start callouts (seen with the assist on / off) and the suggestion after two crashes → the same page's chip switches.
   `--field KEY` lists any beacon field's values per event type (e.g. `as`). "Ayarlar" (from `set`): people who mute, lower a
   volume (below its default bucket), zero the master volume, turn off assisted flight, reduce or turn off the spoken
   alerts, the alert chimes or the HUD warning texts, reduce flashing, and the settings changed most.
