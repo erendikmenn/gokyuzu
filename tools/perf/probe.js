@@ -20,6 +20,7 @@
     cfg,
     frames: [],            // { t, cpu, dt, sub: {name: ms}, gpu: ms|null, gpuShadow, up: {kind: ms}, upBytes, compileMs, draws }
     longTasks: [],
+    links: [],             // { t, type, name, flags } per linkProgram call (see the WebGL hooks)
     counters: null,
     live: { tex: new Map(), buf: new Map(), rb: new Map() },
     sub: null,
@@ -252,7 +253,22 @@
     wrap('getProgramParameter', function (orig, a) { return a[1] === 0x8B82 /* LINK_STATUS */ ? stall(orig, a, this) : orig.apply(this, a); });
     wrap('getShaderParameter', function (orig, a) { return a[1] === 0x8B81 /* COMPILE_STATUS */ ? stall(orig, a, this) : orig.apply(this, a); });
     wrap('getProgramInfoLog', function (orig, a) { return stall(orig, a, this); });
-    wrap('linkProgram', function (orig, a) { const t0 = realNow(); const r = orig.apply(this, a); const f = cur(); f.linkCount++; f.compileMs += realNow() - t0; return r; });
+    wrap('linkProgram', function (orig, a) {
+      const t0 = realNow(); const r = orig.apply(this, a); const f = cur(); f.linkCount++; f.compileMs += realNow() - t0;
+      // which program (three.js: #define SHADER_TYPE / SHADER_NAME = material type / name, plus the defines that make
+      // the usual variants): P.links, for "which programs link after the first playable frame" (tools/perf/load.mjs)
+      try {
+        if (P.links.length < 3000) {
+          const sh = this.getAttachedShaders(a[0]) || [];
+          const src = sh.map((x) => this.getShaderSource(x) || '').join('\n');
+          const d = (k) => new RegExp(`#define ${k}\\b`).test(src);
+          const type = (/#define SHADER_TYPE (\S*)/.exec(src) || [])[1] || 'raw', name = (/#define SHADER_NAME ([^\n]*)/.exec(src) || [])[1] || '';
+          const flags = ['USE_INSTANCING', 'USE_BATCHING', 'USE_SKINNING', 'DEPTH_PACKING', 'USE_SHADOWMAP', 'DOUBLE_SIDED', 'FLIP_SIDED', 'USE_ALPHATEST', 'USE_MAP'].filter(d).map((k) => k.replace(/^USE_/, '').toLowerCase());
+          P.links.push({ t: realNow(), type, name: name.trim().slice(0, 60), flags: flags.join(',') });
+        }
+      } catch { /* context lost */ }
+      return r;
+    });
     wrap('compileShader', function (orig, a) { const t0 = realNow(); const r = orig.apply(this, a); cur().compileMs += realNow() - t0; return r; });
     wrap('drawElements', function (orig, a) { cur().draws++; return orig.apply(this, a); });
     wrap('drawArrays', function (orig, a) { cur().draws++; return orig.apply(this, a); });

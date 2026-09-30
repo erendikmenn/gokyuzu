@@ -318,6 +318,8 @@ def connect_distribution(cf, target, n, dist_id, url, oac_id, cache_id, orp_id):
     }
     old_b = next((b for b in cfg.get('CacheBehaviors', {}).get('Items', []) or [] if b['PathPattern'] == '/api/*'), None)
     old_o = next((o for o in cfg['Origins']['Items'] if o['Id'] == n['origin']), None)
+    if old_b and old_b.get('ResponseHeadersPolicyId'):   # security headers (infra/security/headers_policy.py) stay attached
+        api['ResponseHeadersPolicyId'] = old_b['ResponseHeadersPolicyId']
     same = old_b and old_o and old_o['DomainName'] == host and old_o.get('OriginAccessControlId') == oac_id and all(
         old_b.get(k) == api[k] for k in ('TargetOriginId', 'ViewerProtocolPolicy', 'CachePolicyId', 'OriginRequestPolicyId', 'Compress')) \
         and set(old_b['AllowedMethods']['Items']) == set(api['AllowedMethods']['Items']) \

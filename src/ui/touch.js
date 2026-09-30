@@ -25,7 +25,8 @@
 import { injectCSS, BASE_CSS } from './styles.js';
 import { el, clamp } from './util.js';
 import { shared } from './shared.js';
-import { touchMode, isPhoneSize, mobileOS } from './touch-env.js';
+import { touchMode, isPhoneSize, mobileOS, inAppBrowser } from './touch-env.js';
+import { browserIntentUrl, copyText, gameLink, inAppMenuPath } from './touch-gate.js';
 import { getTilt } from './touch-tilt.js';
 import { CAMERA_NAMES } from './camera-modes.js';
 import { loadSettings } from '../core/settings.js';
@@ -66,18 +67,18 @@ html.gk-touch #app canvas { touch-action: none; }
   box-shadow: 0 8px 24px rgba(0, 0, 0, .25), inset 0 1px 0 rgba(255, 255, 255, .07); -webkit-backdrop-filter: blur(10px) saturate(1.2); backdrop-filter: blur(10px) saturate(1.2); }
 
 /* buttons */
-.gkx-btn { position: absolute; pointer-events: auto; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: calc(1px * var(--u));
-  width: var(--b); height: var(--b); padding: 0; border-radius: calc(14px * var(--u)); color: rgba(236, 244, 255, .92); cursor: pointer; touch-action: none;
-  font: 750 calc(9.5px * var(--u)) var(--gk-sans); letter-spacing: .06em; transition: transform .08s ease, background .15s ease, border-color .15s ease, color .15s ease; }
+.gkx-btn { position: absolute; pointer-events: auto; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: calc(1px * var(--ub, var(--u)));
+  width: var(--b); height: var(--b); padding: 0; border-radius: calc(14px * var(--ub, var(--u))); color: rgba(236, 244, 255, .92); cursor: pointer; touch-action: none;
+  font: 750 calc(9.5px * var(--ub, var(--u))) var(--gk-sans); letter-spacing: .06em; transition: transform .08s ease, background .15s ease, border-color .15s ease, color .15s ease; }
 .gkx-btn svg { width: calc(var(--b) * .42); height: calc(var(--b) * .42); flex: 0 0 auto; }
 .gkx-btn span { line-height: 1; white-space: nowrap; }
-.gkx-btn small { position: absolute; bottom: calc(3px * var(--u)); font: 700 calc(8px * var(--u)) var(--gk-mono); letter-spacing: 0; color: var(--gk-dim); white-space: nowrap; }
-.gkx-btn.has-sub span { margin-bottom: calc(6px * var(--u)); }
+.gkx-btn small { position: absolute; bottom: calc(3px * var(--ub, var(--u))); font: 700 calc(8px * var(--ub, var(--u))) var(--gk-mono); letter-spacing: 0; color: var(--gk-dim); white-space: nowrap; }
+.gkx-btn.has-sub span { margin-bottom: calc(6px * var(--ub, var(--u))); }
 .gkx-btn.down { transform: scale(.92); background: rgba(92, 242, 200, .22); border-color: rgba(92, 242, 200, .7); }
 .gkx-btn.on { color: #4be37a; border-color: rgba(75, 227, 122, .75); box-shadow: 0 0 0 1px rgba(75, 227, 122, .25), 0 0 18px rgba(75, 227, 122, .22), inset 0 1px 0 rgba(255, 255, 255, .07); }
 .gkx-btn.amber { color: var(--gk-caution); border-color: rgba(255, 176, 32, .75); }
 .gkx-btn.hot { color: #ff9a55; border-color: rgba(255, 138, 61, .8); }
-.gkx-btn i.led { position: absolute; top: calc(5px * var(--u)); right: calc(5px * var(--u)); width: calc(6px * var(--u)); height: calc(6px * var(--u)); border-radius: 50%; background: rgba(255, 255, 255, .16); }
+.gkx-btn i.led { position: absolute; top: calc(5px * var(--ub, var(--u))); right: calc(5px * var(--ub, var(--u))); width: calc(6px * var(--ub, var(--u))); height: calc(6px * var(--ub, var(--u))); border-radius: 50%; background: rgba(255, 255, 255, .16); }
 .gkx-btn.on i.led { background: #4be37a; box-shadow: 0 0 6px #4be37a; }
 .gkx-btn.amber i.led { background: var(--gk-caution); box-shadow: 0 0 6px var(--gk-caution); }
 .gkx-btn.flash { animation: gkx-flash .9s ease-in-out infinite; }
@@ -145,6 +146,11 @@ html.gk-touch #app canvas { touch-action: none; }
 @keyframes gkx-rot { 0%, 20% { transform: rotate(0); } 55%, 80% { transform: rotate(-90deg); } 100% { transform: rotate(-90deg); opacity: 0; } }
 .gkx-rot h2 { margin: 0; font-size: 22px; font-weight: 800; letter-spacing: -.01em; }
 .gkx-rot p { margin: 0; max-width: 300px; font-size: 14.5px; line-height: 1.5; color: rgba(226, 236, 250, .8); }
+.gkx-rot p.gkx-rot-iab { max-width: 320px; margin-top: 6px; padding: 10px 14px; border-radius: 12px; font-size: 13.5px; background: rgba(92, 242, 200, .07);
+  border: 1px solid rgba(92, 242, 200, .25); }
+.gkx-rot p.gkx-rot-iab b { color: var(--gk-teal); }
+.gkx-rot button { min-height: 44px; padding: 10px 20px; border-radius: 12px; border: 0; cursor: pointer; font: 750 15px var(--gk-sans); color: #04140f;
+  background: var(--gk-teal); touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
 
 /* Android (Chromium): no backdrop blur over the live 3D view. Every blurred element (12 control buttons, the slider,
    the tapes, the autopilot strip…) costs the compositor an extra render pass of the screen area behind it, every
@@ -237,6 +243,16 @@ export function createTouchControls(hudRoot, { input, hud, getState = () => ({})
     // iOS Safari: no pinch / double-tap page zoom over the game
     for (const ev of ['gesturestart', 'gesturechange']) document.addEventListener(ev, (e) => e.preventDefault(), { passive: false });
     document.addEventListener('dblclick', (e) => e.preventDefault(), { passive: false });
+    // ... and a quick second tap on the on-screen controls: WebKit does not honour touch-action for double-tap zoom on
+    // absolutely positioned elements (bug 218015). The controls act on pointerdown and ignore clicks, so the second
+    // touchend is cancelled there (the canvas keeps its double tap = centre: camera.js listens to dblclick).
+    let lastEnd = -1e9;
+    document.addEventListener('touchend', (e) => {
+      const t = e.target;
+      if (!t || !t.closest || !t.closest('.gkx')) return;
+      if (e.timeStamp - lastEnd < 450 && e.cancelable) e.preventDefault();
+      lastEnd = e.timeStamp;
+    }, { passive: false });
     document.addEventListener('contextmenu', (e) => { if (!/INPUT|TEXTAREA/.test(e.target.tagName || '')) e.preventDefault(); });
     Object.assign(api, createControls(hudRoot, { input, hud, getState, api }));
   }
@@ -255,6 +271,24 @@ function createControls(hudRoot, { input, hud, getState }) {
   rot.innerHTML = ROT_SVG;
   el('h2', null, rot, 'Telefonu yan çevir');
   el('p', null, rot, 'Uçuş kontrolleri yatay ekranda: sol başparmak çubuk, sağ başparmak gaz. Uçuş bu sırada duraklatıldı.');
+  // social-app webviews often cannot turn to landscape (live telemetry 23-27 Sep 2026: 2 of 180 pages of the X app on
+  // iPhone and 5 of 141 on Android opened in landscape, against 27 % in Safari and 18 % in Chrome; 0 of 111 X iPhone
+  // flights and 6 of 50 X Android flights took off, 64 % in Chrome from portrait): the prompt shows the way out
+  const iab = inAppBrowser();
+  let rotSeen = false;
+  if (iab) {
+    const how = el('p', 'gkx-rot-iab', rot, '');
+    el('b', null, how, 'Ekran dönmüyorsa: ');
+    how.append(`${iab.name} içindeki tarayıcı yan çevirmeye izin vermiyor olabilir. Oyunu tarayıcıda aç (${inAppMenuPath(iab)}).`);
+    const b = el('button', null, rot, iab.os === 'android' ? 'Tarayıcıda aç' : 'Bağlantıyı kopyala');
+    b.type = 'button';
+    b.addEventListener('click', async () => {
+      if (iab.os === 'android') { trackEvent('iab', { id: iab.id, x: 'browser', via: 'rot' }); location.href = browserIntentUrl(); return; }
+      const ok = await copyText(gameLink());
+      b.textContent = ok ? 'Kopyalandı: Safari’de yapıştır' : 'Kopyalanamadı';
+      trackEvent('iab', { id: iab.id, x: ok ? 'copy' : 'copyfail', via: 'rot' });
+    });
+  }
 
   const flightRef = { f: null, cat: 'airliner', det: null, hasRev: false };
   const vib = (ms) => { try { if (navigator.vibrate) navigator.vibrate(ms); } catch { /* ignore */ } };
@@ -558,8 +592,13 @@ function createControls(hudRoot, { input, hud, getState }) {
     const headW = 230 * clamp(Math.min(H / 900, W / 1240), 0.6, 2.4) / 0.6 * 0.6;
     const sideW = (W - headW) / 2 - Math.max(L, R) - gap;
     const nLeft = 4 + (bFull ? 1 : 0);
-    B = Math.round(clamp(Math.min(50 * u, (sideW - gap * (nLeft - 1)) / nLeft), 38, 62));
+    const fitB = (sideW - gap * (nLeft - 1)) / nLeft;
+    B = Math.round(clamp(Math.min(50 * u, fitB), 38, 62));
     root.style.setProperty('--b', `${B}px`);
+    // button labels / corners follow a button the width squeezed: a narrow portrait screen with a large short side (an
+    // unfolded Fold, a tablet upright) got 42 px buttons with labels sized for 70 px ("KAMERA" spilled over its
+    // neighbours); elsewhere (B = 50 u, or the 62 px cap on tablets) the labels keep the u scale
+    root.style.setProperty('--ub', (fitB < Math.min(50 * u, 62) ? Math.min(u, B / 50) : u).toFixed(3));
     let x = L;
     for (const o of [bPause, bMap, bCam, bView, ...(bFull ? [bFull] : [])]) { place(o.b, x, T); x += B + gap; }
     // throttle / collective slider at the right edge
@@ -638,6 +677,7 @@ function createControls(hudRoot, { input, hud, getState }) {
   function orient() {
     const portrait = H > W && W < 700;
     rot.classList.toggle('on', portrait && flightRef.f != null);
+    if (iab && !rotSeen && rot.classList.contains('on')) { rotSeen = true; trackEvent('iab', { id: iab.id, st: 'rot' }); }
     const s = getState();
     if (portrait && s.flying && !s.paused && !autoPaused) { autoPaused = true; input.trigger('pause'); }
     else if (!portrait && autoPaused) { autoPaused = false; if (getState().paused) input.trigger('pause'); }
@@ -695,6 +735,9 @@ function createControls(hudRoot, { input, hud, getState }) {
     if (f !== flightRef.f) setAircraft(f);
     if (!f) return;
     const s = getState();
+    // a flight that became live behind the portrait prompt (started in portrait: orient() ran while it was loading) is
+    // paused like one turned upright; it ran on at 15 simulation steps / s with nobody at the controls (air starts)
+    if (!autoPaused && s.flying && !s.paused && rot.classList.contains('on')) { autoPaused = true; input.trigger('pause'); }
     // tilt: the pose the phone is held in when the flight resumes becomes the new neutral (it may have been put down)
     if (wasPaused && !s.paused && tiltOn) tilt.calibrate();
     wasPaused = !!s.paused;

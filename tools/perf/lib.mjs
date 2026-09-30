@@ -81,12 +81,15 @@ export async function launch(opts = {}) {
   return { browser, context, page, cdp, log };
 }
 
-/** Network profiles (kbit/s, ms): the task's 4G, Chrome DevTools' Fast/Slow 3G. */
+/** Network profiles (kbit/s, ms): the task's 4G, Chrome DevTools' Fast/Slow 3G, and the names of DevTools' current presets. */
 export const NETWORKS = {
   none: null,
   '4g': { latency: 60, down: 9000, up: 3000 },
   fast3g: { latency: 150, down: 1600, up: 750 },   // DevTools "Fast 3G" (1.6 Mbit/s / 562.5 ms incl. overhead)
   slow3g: { latency: 400, down: 400, up: 400 },    // DevTools "Slow 3G" (400 kbit/s / 2 s incl. overhead)
+  fast4g: { latency: 60, down: 9000, up: 1500 },   // DevTools "Fast 4G" (9 Mbit/s, 60 ms before its overhead factor; = '4g')
+  slow4g: { latency: 150, down: 1600, up: 750 },   // DevTools "Slow 4G" / Lighthouse's mobile network (= the old "Fast 3G")
+  '3g': { latency: 300, down: 780, up: 330 },      // DevTools "3G" (the old "Slow 3G" was 400 kbit/s, 400 ms)
 };
 
 /** Start the game straight into a flight (menu skipped) and wait until it is playable. Returns seconds. */

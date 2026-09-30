@@ -36,21 +36,46 @@ DEPLOY_TARGET="$TARGET" node tools/deploy/build_dist.mjs --gallery
 # the pre-bundle site (three/build, the rest of three/examples/jsm) stay for pages opened before; prune_js.mjs removes them.
 aws s3 sync dist/node_modules $BUCKET/node_modules --delete --only-show-errors --cache-control "public, max-age=604800" \
   --exclude "three/build/*" --exclude "three/examples/jsm/*" --include "three/examples/jsm/libs/draco/*" --include "three/examples/jsm/libs/basis/*"
-# Game files are requested as <file>?v=<hash of its directory> (CONTRACTS-SF.md §9, dist/assets/versions.json), so a
+# Game files are requested as <file>?v=<hash of its directory> (CONTRACTS-SF.md §9, the version map in the page), so a
 # changed file gets a new URL and no browser keeps an old copy. They still get 1 day, not a year + immutable: S3 and
-# CloudFront send one Cache-Control per object whatever the query string, some requests stay unversioned (render gallery,
-# dev pages), a player who loaded the old version map just before a deploy fetches new bytes under old ?v= URLs while
-# the sync runs, and rollback.py brings old hashes back. One day bounds all of these.
+# CloudFront send one Cache-Control per object whatever the query string (CloudFront's cache key leaves the query out,
+# too), some requests stay unversioned (render gallery, dev pages), a player who loaded the old version map just before a
+# deploy fetches new bytes under old ?v= URLs while the sync runs, and rollback.py brings old hashes back. One day of
+# freshness bounds all of these. Past that day a copy may still be used for 30 days while the browser revalidates it in
+# the background (stale-while-revalidate; Chrome 75, Firefox 68, Safari 14): a returning player starts from the cache
+# instead of waiting for one conditional request per file before the first frame (desktop, 4G: 264 revalidations, 5.1 s
+# instead of 2.1 s from the menu click); a copy that did change is replaced for the next start, so each case above lasts
+# at most one page load longer than before.
+ASSET_CC="public, max-age=86400, stale-while-revalidate=2592000"
 # The terrain height packs sf/terrain/h/<L>.bin (range requests) are no longer published: the game reads hz/ (small
 # cacheable files). The copies already in the bucket stay for pages loaded before the switch; once no such page can be
 # open any more (a week), remove them with `aws s3 rm $BUCKET/assets/sf/terrain/h --recursive`, then drop this exclude
 # and the Cloudflare cache-bypass rule for /assets/sf/terrain/h/.
-aws s3 sync dist/assets $BUCKET/assets --delete --only-show-errors --exclude "versions.json" --exclude "sf/terrain/h/*" --cache-control "public, max-age=86400"
-# manifests/indexes change with every build: keep them short-lived so browsers never mix old lists with new files
-aws s3 cp $BUCKET/assets $BUCKET/assets --recursive --exclude "*" --include "*.json" --exclude "versions.json" --metadata-directive REPLACE --cache-control "public, max-age=300" --content-type "application/json" --only-show-errors
-aws s3 sync dist/renders $BUCKET/renders --delete --only-show-errors --cache-control "public, max-age=86400"
+aws s3 sync dist/assets $BUCKET/assets --delete --only-show-errors --exclude "versions.json" --exclude "sf/terrain/h/*" --exclude ".cache-policy" --cache-control "$ASSET_CC"
+# manifests/indexes: 5 minutes of freshness (the version map aside, every one is versioned like its directory's other
+# files), then the same background revalidation; re-set on every deploy with their JSON content type
+JSON_CC="public, max-age=300, stale-while-revalidate=2592000"
+aws s3 cp $BUCKET/assets $BUCKET/assets --recursive --exclude "*" --include "*.json" --exclude "versions.json" --metadata-directive REPLACE --cache-control "$JSON_CC" --content-type "application/json" --only-show-errors
+aws s3 sync dist/renders $BUCKET/renders --delete --only-show-errors --cache-control "$ASSET_CC"
+# The sync uploads changed files only: the files it skips keep the Cache-Control they were uploaded with. When the policy
+# above changes (its text is kept in the bucket, assets/.cache-policy), every other asset / render object is copied onto
+# itself once with the new header, per file type with the content type it already has (a copy that replaces metadata
+# must name the type, S3 would store binary/octet-stream otherwise). About 50,000 objects, a few minutes, once.
+if [ "$(aws s3 cp "$BUCKET/assets/.cache-policy" - 2>/dev/null || true)" != "$ASSET_CC" ]; then
+  echo "Önbellek başlıkları yenileniyor (bir kerelik, birkaç dakika)…"
+  for prefix in assets renders; do
+    for ext in $(cd dist && find "$prefix" -type f ! -name "*.json" | sed -n 's/.*\.\([A-Za-z0-9]*\)$/\1/p' | sort -u); do
+      key=$(cd dist && find "$prefix" -type f -name "*.$ext" ! -name "*.json" ! -path "*/sf/terrain/h/*" -print -quit)   # (not | head: SIGPIPE under pipefail)
+      ct=$(aws s3api head-object --bucket "$S3" --key "$key" --query ContentType --output text 2>/dev/null) || { echo "UYARI: $key okunamadı, .$ext atlandı"; continue; }
+      aws s3 cp "$BUCKET/$prefix" "$BUCKET/$prefix" --recursive --exclude "*" --include "*.$ext" --exclude "sf/terrain/h/*" --exclude "*.json" \
+        --metadata-directive REPLACE --cache-control "$ASSET_CC" --content-type "$ct" --only-show-errors
+    done
+  done
+  printf '%s' "$ASSET_CC" | aws s3 cp - "$BUCKET/assets/.cache-policy" --cache-control "no-store" --content-type "text/plain" --only-show-errors
+fi
 # the version map goes up only after every file it points to (nobody gets a new ?v= URL before its file is there);
-# short-lived like the other JSON, and the game revalidates it on every start (fetch cache: 'no-cache')
+# short-lived. The game reads the copy inside its page (build_dist.mjs), which goes up last of all; this file serves
+# pages opened before that and tools
 aws s3 cp dist/assets/versions.json $BUCKET/assets/versions.json --only-show-errors --cache-control "public, max-age=300" --content-type "application/json"
 # JavaScript (tools/build/bundle.mjs): chunk names carry their content hash, so a year + immutable (no revalidation), and
 # uploaded before the pages that name them. Never --delete here: pages opened before this deploy still import their

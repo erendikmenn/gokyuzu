@@ -6,7 +6,7 @@
 // "Oyunu Safari'de aç" as the way in, and again instead of a reload after a context loss (showInAppFailure).
 // Also the small "Tarayıcıda aç" banner for other social-app in-app browsers (menu) and the link helpers.
 // Anonymous telemetry: 'gate' { r: reason, x: 'try' when the player continues anyway }, 'iab' (the banner: st = show,
-// x = chrome | copy | close) and the hand-off below (hf on `open`) (CONTRACTS-SF.md §11).
+// x = browser | copy | close) and the hand-off below (hf on `open`) (CONTRACTS-SF.md §11).
 import { injectCSS, BASE_CSS } from './styles.js';
 import { el } from './util.js';
 import { gateCheck, inAppBrowser, mobileOS, inBadInAppBrowser } from './touch-env.js';
@@ -65,6 +65,11 @@ const CSS = `
 .gkg-iab button { flex: 0 0 auto; min-height: 34px; padding: 6px 12px; border-radius: 10px; border: 1px solid rgba(255, 255, 255, .16); background: rgba(255, 255, 255, .08);
   color: var(--gk-fg); font: 700 12.5px var(--gk-sans); cursor: pointer; touch-action: manipulation; }
 .gkg-iab button.x { padding: 6px 10px; border: 0; background: none; color: var(--gk-dim); font-size: 16px; }
+/* landscape phones: over the brand in the left column (the touch menu's right column, 41 %, starts with the map tabs) */
+@media (orientation: landscape) and (max-height: 520px) {
+  .gkg-iab { left: max(12px, env(safe-area-inset-left)); transform: none; max-width: calc(59% - 40px); animation-name: gkg-in-l; }
+}
+@keyframes gkg-in-l { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
 `;
 
 const ART = '<svg class="gkg-art" viewBox="0 0 132 88" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
@@ -120,6 +125,12 @@ export function noteHandoff() {
 /** The social app this page was handed over from ('' = none): telemetry `hf`. */
 export const handoffFrom = () => handoff;
 
+/** Where "open in the browser" sits in this social-app webview's own menu (iOS: •••, Android: ⋮). */
+export function inAppMenuPath(iab) {
+  if (iab && iab.os === 'ios') return IAB_MENU[iab.id] || '••• menüsü → «Tarayıcıda aç»';
+  return '⋮ menüsü → «Tarayıcıda aç»';
+}
+
 /** The game's link without query parameters (what to open on the computer). */
 export function gameLink() { return `${location.origin}${location.pathname.replace(/index\.html$/, '')}`; }
 
@@ -134,10 +145,15 @@ export async function copyText(text) {
   } catch { return false; }
 }
 
-/** Android: open the page in Chrome from a webview (intent URL; ignored where the webview does not handle it). */
-export function chromeIntentUrl(url = location.href) {
+/**
+ * Android: open the page in the phone's own browser from a webview (an intent link, only from a tap; the app decides
+ * whether to follow it). No package: Samsung phones often browse with Samsung Internet, and a Chrome-only link did
+ * nothing where Chrome is off; without one Android opens the default browser (or asks). Where the intent cannot be
+ * resolved the fallback address reloads the page here.
+ */
+export function browserIntentUrl(url = location.href) {
   const u = new URL(url);
-  return `intent://${u.host}${u.pathname}${u.search}#Intent;scheme=${u.protocol.replace(':', '')};package=com.android.chrome;S.browser_fallback_url=${encodeURIComponent(url)};end`;
+  return `intent://${u.host}${u.pathname}${u.search}#Intent;scheme=${u.protocol.replace(':', '')};S.browser_fallback_url=${encodeURIComponent(url)};end`;
 }
 
 /**
@@ -185,7 +201,7 @@ function showGateScreen(container, reason, { tryLabel = null, onTry = null, keep
   const card = el('div', 'gkg-card', root);
   card.insertAdjacentHTML('beforeend', ART);
   el('h1', null, card, 'Gökyüzü');
-  const [title, text] = TEXT[reason] || TEXT.gpu;
+  const [title, text] = Object.prototype.hasOwnProperty.call(TEXT, reason) ? TEXT[reason] : TEXT.gpu;
   el('h2', null, card, title);
   el('p', null, card, text.replace('{app}', iab ? iab.name : 'Bu'));
   if (iab && reason === 'webgl2') el('p', null, card, `${iab.name} içindeki tarayıcıdasın: menüden «Tarayıcıda aç» seçip ${iab.os === 'ios' ? 'Safari' : 'Chrome'} ile de deneyebilirsin.`);
@@ -263,15 +279,20 @@ export function showInAppHint(parent) {
   box.setAttribute('role', 'note');
   box.setAttribute('lang', 'tr');
   const t = el('span', null, box);
-  const browser = iab.os === 'ios' ? 'Safari' : 'Chrome';
+  const android = mobileOS() === 'android';
   el('b', null, t, 'İpucu: ');
-  t.append(`${iab.os === 'ios' ? '•••' : '⋮'} menüsünden «Tarayıcıda aç» ile ${browser}’de tam ekran ve eğimle kumanda.`);
+  t.append(android ? 'tarayıcıda tam ekran ve eğimle kumanda.' : '••• menüsünden «Tarayıcıda aç» ile Safari’de tam ekran ve eğimle kumanda.');
   const close = () => { try { sessionStorage.setItem(BANNER_KEY, '1'); } catch { /* ignore */ } box.remove(); trackEvent('iab', { id: iab.id, x: 'close' }); };
   trackEvent('iab', { id: iab.id, st: 'show' });
-  if (mobileOS() === 'android') {
-    const b = el('button', null, box, 'Chrome’da aç');
+  if (android) {
+    const b = el('button', null, box, 'Tarayıcıda aç');
     b.type = 'button';
-    b.addEventListener('click', () => { trackEvent('iab', { id: iab.id, x: 'chrome' }); location.href = chromeIntentUrl(); });
+    b.addEventListener('click', () => {
+      trackEvent('iab', { id: iab.id, x: 'browser' });
+      location.href = browserIntentUrl();
+      // the app did not follow the link: its own menu item is the way
+      setTimeout(() => { if (!document.hidden && box.isConnected) { t.textContent = ''; el('b', null, t, 'Açılmadıysa: '); t.append('⋮ menüsü → «Tarayıcıda aç».'); } }, 1500);
+    });
   } else {
     const b = el('button', null, box, 'Bağlantıyı kopyala');
     b.type = 'button';

@@ -19,6 +19,8 @@ export const MAPS = {
   ist: { id: 'ist', name: 'İstanbul', title: 'İstanbul', assets: 'assets/ist/', data: 'data/ist/', load: () => import('./ist.js') },
 };
 let active = MAPS.sf;
+/** A map id of MAPS (own keys only: "constructor", "__proto__" … from a link or storage are not maps). */
+export const isMapId = (id) => typeof id === 'string' && Object.prototype.hasOwnProperty.call(MAPS, id);
 export const activeMap = () => active;
 /** The engine's shared tables a map module may extend or replace (filled by src/app/main.js: BRIDGES, AIRPORTS, TIPS, …). */
 export const mapHooks = {};
@@ -31,18 +33,19 @@ export const mapOfId = (id) => (/^(LT[A-Z]{2}-|IST-|ist-)/.test(id || '') ? 'ist
 
 export function pickMap(params, resume = null) {
   const q = params.get('map');
-  if (MAPS[q]) return q;
+  if (isMapId(q)) return q;
   if (params.get('mission')) return mapOfId(params.get('mission'));
-  if (resume && resume.aircraft) return MAPS[resume.map] ? resume.map : 'sf';
+  if (resume && resume.aircraft) return isMapId(resume.map) ? resume.map : 'sf';
   if (params.get('aircraft')) return mapOfId(params.get('spawn'));
   return storedMap();
 }
-export function storedMap() { try { const v = localStorage.getItem(STORE); return MAPS[v] ? v : 'sf'; } catch { return 'sf'; } }
+export function storedMap() { try { const v = localStorage.getItem(STORE); return isMapId(v) ? v : 'sf'; } catch { return 'sf'; } }
 export function rememberMap(id) { try { localStorage.setItem(STORE, id); } catch { /* private mode */ } }
 
 const loaded = {};
 /** Runways, spawns and the map module (other maps); every file but region.json may be missing while a map is built. */
 export function loadMap(id, loader) {
+  if (!isMapId(id)) id = 'sf';
   if (!loaded[id]) {
     const map = MAPS[id];
     loaded[id] = (async () => {
@@ -61,7 +64,7 @@ export function loadMap(id, loader) {
 
 /** The map the flight happens on (after loadMap): geo frame, the map module's UI data. Once per page. */
 export function useMap(id) {
-  active = MAPS[id];
+  active = isMapId(id) ? MAPS[id] : MAPS.sf;
   if (active.module) { setGeoRegion(active.region, active.module.utm); active.module.activate(mapHooks); }
   return active;
 }

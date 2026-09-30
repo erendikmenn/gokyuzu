@@ -1,9 +1,11 @@
 // Phones, tablets and social-app webviews: touch-only detection (Android phones whose pointer media queries report a
 // fine pointer), the pointer tag of the telemetry, in-app browser user agents, the webview → browser hand-off address and
-// the Chrome intent link. The screens themselves are covered by the Playwright checks.
+// the browser intent link, and the frame pacer's low-power detection (Safari's 30 Hz requestAnimationFrame in Low Power
+// Mode). The screens themselves are covered by the Playwright checks.
 // Run: node tests/mobile.test.mjs   (no framework, no network: PASS/FAIL table, exit 1 on failure)
 import { isTouchOnly, pointerTag, inAppBrowser, mobileOS } from '../src/ui/touch-env.js';
-import { handoffUrl, chromeIntentUrl } from '../src/ui/touch-gate.js';
+import { handoffUrl, browserIntentUrl } from '../src/ui/touch-gate.js';
+import { createFramePacer, PACE } from '../src/app/frame-pacing.js';
 
 const rows = [];
 const check = (name, ok, detail = '') => rows.push({ name, ok: !!ok, detail });
@@ -70,9 +72,59 @@ check('os: Android / iOS / other', mobileOS(UA.xAndroid) === 'android' && mobile
   check('handoff: an unknown value is removed but not counted', (() => { const r = handoffUrl('https://fs.example/?from=evil', ''); return r.from === '' && r.url === 'https://fs.example/'; })());
   check('handoff: no parameter in the browser → nothing to do', handoffUrl('https://fs.example/?aircraft=f16', '').url === null);
   check('handoff: another app re-marks the address', handoffUrl('https://fs.example/?from=x', 'instagram').url === 'https://fs.example/?from=instagram');
-  const intent = chromeIntentUrl(inApp.url);
-  check('intent: Chrome intent link carries the marked address and the https fallback',
-    intent.startsWith('intent://fs.example/?mission=climb&challenge=2500&from=x#Intent;scheme=https;package=com.android.chrome;') && intent.endsWith(';end') && intent.includes('S.browser_fallback_url=https%3A%2F%2Ffs.example%2F'), intent);
+  const intent = browserIntentUrl(inApp.url);
+  check('intent: the browser intent link carries the marked address and the https fallback, no browser package (default browser)',
+    intent.startsWith('intent://fs.example/?mission=climb&challenge=2500&from=x#Intent;scheme=https;') && intent.endsWith(';end')
+    && intent.includes('S.browser_fallback_url=https%3A%2F%2Ffs.example%2F') && !intent.includes('package='), intent);
+}
+
+// ---- low power (throttled requestAnimationFrame) ----
+{
+  /** Drive a pacer: `secs` of callbacks at `hz`; a drawn frame costing `cost` ms delays the next callback (GPU-bound). */
+  const drive = (p, { hz = 60, secs = 3, mode = 'flight', cost = 0, t0 = 0 }) => {
+    let ts = t0, draws = 0;
+    const gaps = [];
+    let last = null;
+    while (ts < t0 + secs * 1000) {
+      p.raf(ts);
+      const d = p.decide(ts, mode);
+      if (d.draw) { draws++; if (last !== null) gaps.push(ts - last); last = ts; p.drawn(ts, mode); }
+      const period = 1000 / hz;
+      ts += d.draw && cost > period ? Math.ceil(cost / period) * period : period;
+    }
+    return { ts, fps: draws / secs, gaps };
+  };
+  let p = createFramePacer({ deviceClass: 'tablet' });
+  let r = drive(p, { hz: 60, mode: 'idle' });
+  check('low power: tablet menu at 60 Hz → not throttled, flight cap 60', !p.lowPower && p.cap(r.ts) === 60);
+  p = createFramePacer({ deviceClass: 'tablet' });
+  r = drive(p, { hz: 30, mode: 'idle' });
+  const lp = p.lowPower, cap30 = p.cap(r.ts);
+  r = drive(p, { hz: 30, mode: 'flight', secs: 5, t0: r.ts });
+  check('low power: tablet menu at 30 Hz (Low Power Mode) → throttled, flight cap 30, steady 30 fps', lp && cap30 === 30 && Math.abs(r.fps - 30) < 1 && Math.max(...r.gaps) < 34, `lp ${lp} cap ${cap30} fps ${r.fps}`);
+  check('low power: tablet cruise takes the phones\' rate, stats report it', p.cruiseFps === PACE.cruise.phone && p.stats.lowPower === true);
+  r = drive(p, { hz: 60, mode: 'flight', secs: 3, t0: r.ts });
+  check('low power: rAF back at 60 Hz mid-flight → detected on the frames the 30 cap skips, cap 60 again', !p.lowPower && p.cap(r.ts) === 60);
+  p = createFramePacer({ deviceClass: 'tablet' });
+  r = drive(p, { hz: 60, mode: 'idle' });
+  r = drive(p, { hz: 60, mode: 'flight', secs: 20, cost: 25, t0: r.ts });
+  check('low power: a GPU-bound tablet (30 fps on a 60 Hz display) is not taken for low power', !p.lowPower, `fps ${r.fps}`);
+  p = createFramePacer({ deviceClass: 'tablet' });
+  r = drive(p, { hz: 60, mode: 'overlay', secs: 2 });
+  r = drive(p, { hz: 30, mode: 'overlay', secs: 2, t0: r.ts });
+  check('low power: detected on the pause screen too (Low Power Mode switched on mid-flight)', p.lowPower);
+  p = createFramePacer({ deviceClass: 'tablet', setting: 60 });
+  r = drive(p, { hz: 30, mode: 'idle' });
+  check('low power: the player\'s own 60 fps setting is kept', p.lowPower && p.cap(r.ts) === 60 && p.cruiseFps === 0);
+  p = createFramePacer({ deviceClass: 'desktop' });
+  r = drive(p, { hz: 30, mode: 'idle' });
+  check('low power: desktop only reports it (cap and cruise unchanged: PC behaviour identical)', p.lowPower && p.cap(r.ts) === 0 && p.cruiseFps === 0);
+  p = createFramePacer({ deviceClass: 'phone' });
+  r = drive(p, { hz: 30, mode: 'idle' });
+  check('low power: phone keeps its 30 cap and 20 cruise', p.lowPower && p.cap(r.ts) === 30 && p.cruiseFps === PACE.cruise.phone);
+  p = createFramePacer({ deviceClass: 'tablet', enabled: false });
+  r = drive(p, { hz: 30, mode: 'idle' });
+  check('low power: ?pace=0 measures nothing', !p.lowPower);
 }
 
 const w = Math.max(...rows.map((r) => r.name.length));

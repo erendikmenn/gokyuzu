@@ -99,12 +99,14 @@ const WEAK_MOBILE_GPU = /Mali-(4\d\d|T[678]\d\d)|Adreno( \(TM\))? [1-4]\d\d\b|Po
  *   gpu       phone / tablet GPU in WEAK_MOBILE_GPU, or a max texture size below 4096             → soft
  *   iab       X / Instagram / Facebook in-app browser on iOS: "Safari'de aç" first                   → soft
  * Desktop browsers only get the WebGL 2 rule (the robustness caps and the budget guard handle weak desktop GPUs).
- * ?gate=<reason> simulates a failure (testing the screen); ?gate=off skips the check.
+ * ?gate=<reason> simulates a failure (testing the screen; one of GATE_REASONS, anything else is ignored); ?gate=off skips
+ * the check.
  */
+export const GATE_REASONS = ['webgl2', 'software', 'memory', 'gpu', 'iab', 'iab-lost'];
 export function gateCheck() {
   const forced = params.get('gate');
   if (forced === 'off') return { ok: true };
-  if (forced && forced !== 'off') return { ok: false, reason: forced, soft: forced !== 'webgl2', gpu: '', kind: 'test' };
+  if (GATE_REASONS.includes(forced)) return { ok: false, reason: forced, soft: forced !== 'webgl2', gpu: '', kind: 'test' };
   const gl = probeWebGL2();
   if (!gl.ok) return { ok: false, reason: 'webgl2', soft: false, gpu: '', kind: '' };
   // docs/errors/audit.md #2: the X / Instagram / Facebook webviews on iOS drop the WebGL context within seconds at only

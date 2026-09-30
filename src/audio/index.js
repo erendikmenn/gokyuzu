@@ -132,7 +132,7 @@ export function createAudioSystem({ camera: defaultCamera, settings: followSetti
     G.glue.threshold.value = -14; G.glue.knee.value = 14; G.glue.ratio.value = 2;
     G.glue.attack.value = 0.015; G.glue.release.value = 0.35;
     G.mute = g(api.muted ? 0 : 1);
-    G.duck = g(1);
+    G.duck = g(userPaused ? 0 : 1);   // (a context first created on the pause screen / a mission card: silent from its first sample)
     G.mix = g(db(0));
     G.analyser = ctx.createAnalyser();
     G.analyser.fftSize = 4096;
@@ -217,8 +217,14 @@ export function createAudioSystem({ camera: defaultCamera, settings: followSetti
     }
   }
 
-  function setPaused(p) {
-    userPaused = !!p;
+  // Pause sources: the player's pause (P / Esc, source 'user') and a mission card holding the flight ('mission',
+  // src/missions/runtime.js) are separate switches; the sound stays off while any of them holds. (One shared boolean
+  // let the pause toggle undo the mission's hold: pausing and resuming over a briefing or a result card played the
+  // engines behind the card.)
+  const pausedBy = new Set();
+  function setPaused(p, source = 'user') {
+    if (p) pausedBy.add(source); else pausedBy.delete(source);
+    userPaused = pausedBy.size > 0;
     if (!G) return;
     G.duck.gain.setTargetAtTime(userPaused ? 0 : 1, ctx.currentTime, userPaused ? 0.08 : 0.2);
     if (userPaused && inst) stopVoice();

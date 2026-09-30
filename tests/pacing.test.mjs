@@ -158,6 +158,15 @@ for (const cls of ['integrated', 'entry', 'software']) {
   run(p, { hz: 60, secs: 10, cost: 22, t0: 10000 });
   check(`${cls} that cannot hold 60: locks to a steady 30`, p.stats.locked30 && p.cap(20000) === 30, `cap ${p.cap(20000)}`);
 }
+{ // a settings broadcast that does not change the frame-rate setting (M, H, a volume) keeps the 30 fps lock
+  const p = createFramePacer({ deviceClass: 'tablet' });
+  run(p, { hz: 60, secs: 10, cost: 22 });
+  const locked = p.stats.locked30 && p.cap(10500) === 30;
+  p.setSetting(null);
+  const kept = p.cap(10600) === 30;
+  p.setSetting(60);
+  check('tablet 30 fps lock: an unrelated settings broadcast keeps it, a new frame-rate setting ends it', locked && kept && p.cap(10700) === 60, `locked ${locked}, kept ${kept}, after 60: ${p.cap(10700)}`);
+}
 check('midrange / unknown / desktop: display rate (no cap)', flightCap('midrange', null) === 0 && flightCap('unknown', null) === 0 && flightCap('desktop', null) === 0);
 
 let failed = 0;

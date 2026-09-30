@@ -17,34 +17,13 @@
 // assisted boards `as-<board>` / `w-<yyyyww>-as-<board>` (the "Destekli" list, src/retention/boards.js) by `assisted`.
 //   node infra/leaderboard/build_rules.mjs
 import { writeFileSync, readFileSync } from 'node:fs';
+import { missionMaxScore } from '../../src/missions/score-max.js';
 
 const OUT = new URL('./lambda/rules.json', import.meta.url);
 const AIRCRAFT = ['f16', 'f22', 'a320neo', 'b737', 'uh60'];
 
-// objective type → the most points it can award (src/missions/objectives.js)
-const OBJECTIVE_MAX = {
-  altitude: () => 0,
-  bridge: () => 500 + 300,                                            // centre + height
-  // gates + optional speed windows (score.gateKt per gate) and corridor (score.low)
-  gates: (o, sc) => (o.gates || []).length * ((sc.gate ?? 200) + (sc.gateAcc ?? 100) + (o.kt != null || (o.gates || []).some((g) => g.kt != null) ? sc.gateKt ?? 100 : 0))
-    + (Number.isFinite(o.ceiling) ? sc.low ?? 300 : 0),
-  hover: () => 300,
-  pad: (o, sc) => 400 + (sc.landing ?? 8) * 100,                      // accuracy + landing card (0–100 points)
-  land: (o, sc) => (sc.landing ?? 10) * 100 + (sc.runwayBonus ?? 0),
-  ditch: (o, sc) => (sc.ditch ?? 10) * 100,
-  orbit: () => 400 + 200 + 200,                                       // radius + height + no restart
-  goaround: () => 400,                                                // height kept after the call
-};
-
-function maxScore(m, warn) {
-  const sc = m.score || {};
-  let max = (sc.base || 0) + (sc.par && sc.perSec ? sc.par * sc.perSec : 0);
-  for (const o of m.objectives || []) {
-    const f = OBJECTIVE_MAX[o.type];
-    if (!f) { warn(`${m.id}: unknown objective type "${o.type}" (counted as 2000)`); max += 2000; } else max += f(o, sc);
-  }
-  return max;
-}
+// the most points a mission can give (src/missions/score-max.js, also used by the challenge links)
+const maxScore = (m, warn) => missionMaxScore(m, warn);
 
 const warnings = new Set();
 const missions = {};

@@ -764,6 +764,21 @@ function ffTracker(aircraft, category, hooks = {}) {
     `landing card ${land09.runway} ${land09.stars}★, best-landing runs ${best ? best.runs : '-'}, emergency target ${target ? target.name : 'none'}`);
 }
 
+// ---- "Tekrar dene" reuses the objective instances: a run's ditching / landing rating must not rate the next run ----
+{
+  const m = buildMission('ditch');
+  const o = createObjective(m.objectives[0], { ends: ENDS, bridges: BRIDGES, score: m.score, cat: 'airliner' });
+  const stars = () => (o.ditch ? o.ditch.stars : o.landing ? o.landing.stars : 1);   // (runtime.js finish(), stars: 'ditch')
+  o.start();
+  o.onDitch({ fpm: 1200, pitch: 1, roll: 15, kt: 200, gear: 0, flaps: 0, survived: false });
+  const run1 = o.status;
+  o.start();                                                                             // retry
+  const clean = o.ditch == null && o.landing == null;
+  o.onLanding({ onRunway: true, runway: 'KSFO 28R', stars: 3, points: 95, label: 'Mükemmel', fpm: 150 });
+  check('ditch retry: the failed ditching of run 1 does not rate run 2 (3★ runway landing = 3★)', run1 === 'fail' && clean && o.status === 'done' && stars() === 3,
+    `run 1 ${run1}, run 2 ${o.status}, stars ${stars()}`);
+}
+
 // =====================================================================================================================
 let failed = 0;
 const w = Math.max(...rows.map((r) => r.name.length));

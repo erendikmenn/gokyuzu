@@ -5,7 +5,10 @@
 import { readFileSync } from 'node:fs';
 import { readStreak, writeStreak, recordDay, recordLanding, streakView, badgeProgress, pickedBadge, bucket, dayDiff, BADGES, STORE } from '../src/retention/streak.js';
 import { isoWeek, parseWeek, weekMonday, addWeeks, currentWeek, weekIndex, secondsToNextWeek, weekLabel, fmtLeft, weeklyPick, weeklyFor, WEEKLY_POOL } from '../src/retention/weekly.js';
-import { parseChallenge, challengeUrl, challengeOutcome, briefLine, resultLine } from '../src/retention/challenge-link.js';
+import { parseChallenge, challengeUrl, challengeOutcome, briefLine, resultLine, challengeCap, CHALLENGE_MAX } from '../src/retention/challenge-link.js';
+import { missionMaxScore } from '../src/missions/score-max.js';
+import { buildMission as buildSfMission } from '../src/missions/catalog.js';
+import { buildMission as buildIstMission } from '../src/missions/ist/catalog.js';
 import { pendingNews } from '../src/retention/news.js';
 import { landingChallenges, landingEndNames, dailyLandingEnd, endLabel, maxLandingChallengeScore, NO_DAILY_LANDING } from '../src/missions/landing-challenges.js';
 import { BACKUP_RUNWAYS } from '../src/missions/ist/catalog.js';
@@ -45,7 +48,15 @@ const memStore = () => { const m = new Map(); return { getItem: (k) => (m.has(k)
   const t = memStore(); const q = readStreak(t);
   for (let i = 0; i < 31; i++) recordDay(q, new Date(Date.UTC(2026, 8, 1 + i)).toISOString().slice(0, 10).replace(/-/g, ''));
   check('streak: 30+ days in a row → d3, d7, d14, d30 unlocked; bucket 30+', ['d3', 'd7', 'd14', 'd30'].every((id) => q.badges[id]) && streakView(q, '20261001').current === 31 && bucket(31) === '30+');
-  check('streak: kept days capped at 60', (() => { const z = readStreak(memStore()); for (let i = 0; i < 90; i++) recordDay(z, new Date(Date.UTC(2026, 0, 1 + i)).toISOString().slice(0, 10).replace(/-/g, '')); return z.days.length === 60 && streakView(z, '20260331').current === 60; })());
+  check('streak: kept days capped at 60, a longer run still counts (it stopped at 60)', (() => { const z = readStreak(memStore()); for (let i = 0; i < 90; i++) recordDay(z, new Date(Date.UTC(2026, 0, 1 + i)).toISOString().slice(0, 10).replace(/-/g, '')); return z.days.length === 60 && streakView(z, '20260331').current === 90 && z.best === 90; })());
+  check('streak: a 75-day run survives a write / read and goes on; a gap after it starts over', (() => {
+    const st = memStore(); let z = readStreak(st);
+    for (let i = 0; i < 75; i++) recordDay(z, new Date(Date.UTC(2026, 0, 1 + i)).toISOString().slice(0, 10).replace(/-/g, ''));
+    writeStreak(z, st); z = readStreak(st);
+    const a = streakView(z, '20260317').current, b = recordDay(z, '20260317').current, c = recordDay(z, '20260320').current;
+    return a === 75 && b === 76 && c === 1 && z.best === 76 && z.run0 === null;
+  })());
+  check('streak: stored days of the wrong type are dropped (a number threw in the menu)', (() => { const g = memStore(); g.setItem(STORE, JSON.stringify({ days: [20260926, '20260927'], run0: 5 })); const z = readStreak(g); return z.days.join() === '20260927' && z.run0 === null && streakView(z, '20260927').current === 1; })());
   check('streak: clock set back → later days dropped, no negative run', (() => { const z = readStreak(memStore()); recordDay(z, '20260910'); recordDay(z, '20260911'); const x = recordDay(z, '20260905'); return z.days.join() === '20260905' && x.current === 1; })());
   check('streak: buckets', bucket(0) === '0' && bucket(1) === '1' && bucket(2) === '2' && bucket(3) === '3-6' && bucket(7) === '7-13' && bucket(14) === '14-29' && dayDiff('20261231', '20270101') === 1);
   const garbage = memStore(); garbage.setItem(STORE, JSON.stringify({ days: ['x', '20260101', '20260101'], best: -3, badges: { d3: '20260101', bogus: 1 }, pick: 'bogus', land: { cur: 'a' } }));
@@ -122,6 +133,18 @@ const memStore = () => { const m = new Map(); return { getItem: (k) => (m.has(k)
   check('challenge link: Turkish lines (thousands separator, diacritics)', briefLine(c) === 'Arkadaşın 2.450 puan yaptı — geçebilir misin?'
     && resultLine(c, { ok: true, score: 2610 }).title === 'Arkadaşını geçtin!' && /160 puan kaldı/.test(resultLine(c, { ok: true, score: 2290 }).text)
     && /2\.610 > 2\.450/.test(resultLine(c, { ok: true, score: 2610 }).text));
+  // a crafted link cannot put an impossible score on the briefing ("Arkadaşın 999.999 puan yaptı")
+  const RULES = JSON.parse(readFileSync(new URL('../infra/leaderboard/lambda/rules.json', import.meta.url), 'utf8'));
+  const caps = [...MISSIONS.map((m) => [m.id, buildSfMission(m.id)]), ...IST_MISSIONS.map((m) => [m.id, buildIstMission(m.id)])]
+    .map(([id, built]) => ({ id, cap: challengeCap(missionMaxScore(built)), stars: built.stars, rule: RULES.missions[id] }));
+  const capBad = caps.filter((x) => !(x.cap > 0 && x.cap < CHALLENGE_MAX && (!x.rule || x.cap <= x.rule.scoreMax)
+    && (!Array.isArray(x.stars) || x.cap >= x.stars[2])));
+  check('challenge link: every mission has a cap above its 3-star score and within the leaderboard maximum', caps.length >= 20 && capBad.length === 0,
+    capBad.map((x) => `${x.id}:${x.cap}`).join(' '));
+  const lp = caps.find((x) => x.id === 'low-pass');
+  check('challenge link: a score above the mission cap is ignored, the cap itself accepted', parseChallenge(`?mission=low-pass&challenge=${lp.cap + 1}`, { max: lp.cap }) === null
+    && parseChallenge(`?mission=low-pass&challenge=${lp.cap}`, { max: lp.cap }).score === lp.cap && parseChallenge('?mission=low-pass&challenge=999999', { max: lp.cap }) === null
+    && parseChallenge('?mission=low-pass&challenge=999999').score === 999999 && challengeCap(0) === CHALLENGE_MAX && challengeCap(NaN) === CHALLENGE_MAX, JSON.stringify(lp));
 }
 
 // ---- what's new ---------------------------------------------------------------------------------------------------------
@@ -184,6 +207,15 @@ const memStore = () => { const m = new Map(); return { getItem: (k) => (m.has(k)
   land('KSFO 28L', { fpm: 100 });
   const crashAbort = (tr.onCrash('Kaza'), ev.filter((x) => x.type === 'abort' && x.data === 'broken').length === 2);
   check('İniş serisi: a crash breaks it (not a failed run)', crashAbort && !ev.some((x) => x.type === 'fail'));
+  { // İstanbul: a good landing on a departure-only runway breaks the series with that reason (it said "en az 1 yıldız gerekli")
+    const { loadMissionCatalog } = await import('../src/missions/catalog.js');
+    const catalog = await loadMissionCatalog('ist', RW.ist);
+    const msgs = [];
+    const ti = createChallengeTracker({ aircraft: 'a320neo', category: 'airliner', ends: runwayEnds(RW.ist), catalog, map: 'ist', challenges: landingChallenges('ist'), emit: (type, e, data) => { if (type === 'message') msgs.push(data); } });
+    const cardIst = (runway) => ({ onRunway: true, runway, stars: 3, points: 92, fpm: 150, cat: 'airliner' });
+    ti.onLanding(cardIst('LTFM 35R'), { x: 0, z: 0 }); ti.onLanding(cardIst('LTFM 09'), { x: 0, z: 0 });
+    check('İniş serisi (İstanbul): a 3★ landing on a departure-only runway breaks it with that reason', msgs.some((m) => /bozuldu: bu pist yalnız kalkışa açık/.test(m)), msgs.filter((m) => /bozuldu/.test(m)).join(' | '));
+  }
   // Günün inişi: only the day's runway counts
   ev.length = 0;
   const e = tr.byId['daily-land'];

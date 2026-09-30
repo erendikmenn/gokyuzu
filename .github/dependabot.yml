@@ -1,0 +1,17 @@
+# Dependabot (docs/security/infra-audit-2026-09.md, G-2). Read from the default branch, so it starts once this file is
+# on main. Version updates for the workflow actions only (they are pinned to commit SHAs in .github/workflows/ci.yml);
+# npm packages get security updates only (repository setting "Dependabot security updates"), not routine bumps: a
+# three.js upgrade changes rendering and goes through the quality gate by hand.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ['*']
+    commit-message:
+      prefix: ci

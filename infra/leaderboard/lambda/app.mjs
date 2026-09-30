@@ -12,24 +12,34 @@
 import { createHmac } from 'node:crypto';
 import { viewerIp, ipBucket } from './net.mjs';
 import { checkScore, checkTop, boardKey, rankKey, MAX_BODY, DAY_MS } from './validate.mjs';
+import { cleanName } from '../../../src/net/names.js';
 
 const TOP_CACHE = 'public, max-age=15, s-maxage=30';
 const RANK_CAP = 1000;   // "1000+" beyond that (counting costs reads)
 const TEST_TTL = 86400;  // selftest boards (staging checks) expire after a day
 const DAILY_TTL = 31;    // days a daily board lives after its day
 
+// JSON only: a response opened as a page runs nothing, loads nothing and cannot be framed
 function reply(status, body, cache = 'no-store', extra = {}) {
   return {
     statusCode: status,
     headers: {
       'content-type': 'application/json; charset=utf-8', 'cache-control': cache, 'x-content-type-options': 'nosniff',
-      'cross-origin-resource-policy': 'same-origin', ...extra,
+      'cross-origin-resource-policy': 'same-origin', 'content-security-policy': "default-src 'none'; frame-ancestors 'none'",
+      'referrer-policy': 'no-referrer', ...extra,
     },
     body: JSON.stringify(body),
   };
 }
 
-const entry = (it, i) => ({ rank: i + 1, name: it.n || null, score: it.sc, stars: it.st, ac: it.ac, sec: it.sec ?? null });
+// Stored nicknames are checked again on every read: a word added to the filter (src/net/names.js) hides a name that
+// was accepted before at once, without touching the table (the entry and its score stay, shown as anonymous).
+function shownName(n) {
+  if (!n) return null;
+  const c = cleanName(n);
+  return c.ok ? c.name : null;
+}
+const entry = (it, i) => ({ rank: i + 1, name: shownName(it.n), score: it.sc, stars: it.st, ac: it.ac, sec: it.sec ?? null });
 
 /**
  * @param {object} o
@@ -71,17 +81,18 @@ export function createApp({ db, salt, rules, stage = 'staging', origins = [], no
 
     const retry = { 'retry-after': String(60 - Math.floor((t / 1000) % 60)) };
     if (local('post', bucket, minute) > limits.post) return reply(429, { error: 'rate' }, 'no-store', retry);
-    // 20 bits of a salted hash: each stored key stands for thousands of possible addresses, so it cannot be turned back
-    // into one even with the salt; two players sharing a bucket in the same minute only share the limit
-    const rl = createHmac('sha256', salt).update(`${bucket}|${minute}|post`).digest('hex').slice(0, 5);
-    const count = await db.hit(`rl#${minute}#${rl}`, Math.floor(t / 1000) + 120);
-    if (count > limits.post) return reply(429, { error: 'rate' }, 'no-store', retry);
-
+    // a request that cannot be stored is refused before any store access: junk costs no write (only the per-container
+    // counter above limits it)
     let body;
     try { body = JSON.parse(raw.toString('utf8')); } catch { return reply(400, { error: 'json' }); }
     const chk = checkScore(body, { rules, stage, now: t });
     if (!chk.ok) return reply(400, { error: chk.error });
     const s = chk.value;
+    // 20 bits of a salted hash: each stored key stands for thousands of possible addresses, so it cannot be turned back
+    // into one even with the salt; two players sharing a bucket in the same minute only share the limit
+    const rl = createHmac('sha256', salt).update(`${bucket}|${minute}|post`).digest('hex').slice(0, 5);
+    const count = await db.hit(`rl#${minute}#${rl}`, Math.floor(t / 1000) + 120);
+    if (count > limits.post) return reply(429, { error: 'rate' }, 'no-store', retry);
 
     const tSec = Math.floor(t / 1000);
     const pk = boardKey(s.mission, s.day);
@@ -107,7 +118,7 @@ export function createApp({ db, salt, rules, stage = 'staging', origins = [], no
       ok: true, improved: put.written,
       best: { score: best.sc, stars: best.st, ac: best.ac, sec: best.sec ?? null },
       rank: above >= RANK_CAP ? null : above + 1,
-      name: best.n || null, nameRejected: s.nameRejected,
+      name: shownName(best.n), nameRejected: s.nameRejected,
       top,
     });
   }

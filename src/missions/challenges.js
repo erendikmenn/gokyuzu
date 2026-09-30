@@ -137,8 +137,14 @@ export function maxChallengeScore(c, build = buildMission) {
 // ------------------------------------------------------------------------------------------------------- progress
 // per map: San Francisco `gokyuzu.ffc`, another map `gokyuzu.ffc.<id>`
 const storeKey = (map) => (map && map !== 'sf' ? `gokyuzu.ffc.${map}` : 'gokyuzu.ffc');
+const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
 function readStore(map) {
-  try { const s = JSON.parse(localStorage.getItem(storeKey(map)) || 'null'); return s && typeof s === 'object' && s.e ? s : { v: 1, e: {} }; } catch { return { v: 1, e: {} }; }
+  try {
+    const s = JSON.parse(localStorage.getItem(storeKey(map)) || 'null');
+    if (!isObj(s) || !isObj(s.e)) return { v: 1, e: {} };
+    for (const k of Object.keys(s.e)) if (!isObj(s.e[k])) delete s.e[k];   // (a wrong-shaped entry threw in recordChallenge)
+    return s;
+  } catch { return { v: 1, e: {} }; }
 }
 function writeStore(s, map) { try { localStorage.setItem(storeKey(map), JSON.stringify(s)); } catch { /* private mode / Node */ } }
 /** { [id]: { best, stars, runs, done, ac } } */
@@ -519,7 +525,7 @@ export function createChallengeTracker(o = {}) {
       if (!card) return;
       const ok = card.onRunway && card.stars >= 1 && !closedEnds.has(card.runway);
       if (!ok) {
-        if (run.length) { emit('message', e, `${def.title} bozuldu: ${card.onRunway ? 'en az 1 yıldız gerekli' : 'pist dışı iniş'}`); broken('broken'); }
+        if (run.length) { emit('message', e, `${def.title} bozuldu: ${!card.onRunway ? 'pist dışı iniş' : closedEnds.has(card.runway) ? 'bu pist yalnız kalkışa açık' : 'en az 1 yıldız gerekli'}`); broken('broken'); }
         return;
       }
       run.push(card);

@@ -32,6 +32,35 @@ check('name: empty / spaces / missing → anonymous', [undefined, null, '', '   
 check('name: not a string rejected', !cleanName(42).ok && !cleanName({}).ok);
 check('name: normalized (NFKC, spaces, zero-width)', cleanName('  Ali   Veli ').name === 'Ali Veli' && cleanName('ＡＢＣ').name === 'ABC'
   && cleanName(`Ali${String.fromCharCode(0x200b)}Veli`).name === 'AliVeli');
+// false positives that must never happen: real names, places and words that contain a filtered stem
+const GOOD2 = ['Sıkı', 'Amasya', 'Sikorsky', 'Sikke', 'Sıkıntı', 'Zuniga', 'Therapist', 'Tyranny', 'Cumhur', 'Analiz', 'Gotik', 'Götürü',
+  'Gotham', 'Nigel', 'Nigar', 'Dickens', 'Spice', 'Cocoon', 'Heilbronn', 'Tasarım', 'Göktürk', 'Işıker', 'Işıktaş', 'Łukasz', 'Ødegaard',
+  'Æsir', 'Straße', 'Classic', 'Kanal', 'Ali 88', 'Emre 14', 'Pilot 2024',
+  // a short word after a space is not a domain: country codes, Turkish words, gaming tags
+  'Ahmet TR', 'Ben de', 'Pilot GG', 'Kaptan Me', 'Ali Co', 'Pilot Dev', 'Deniz IO', 'Mert TV', 'Pilot Online', 'Can UK', 'Efe RU'];
+for (const n of GOOD2) { const r = cleanName(n); check(`name ok (no false positive): ${n}`, r.ok && r.name === n, JSON.stringify(r)); }
+// evasions: Latin look-alike letters, leetspeak, joined words, slurs, hate numbers, the l / I confusion on reserved names
+const BAD2 = {
+  bad: ['Øröspu', 'ƒuck', 'fvck', 'Phuck', 'niggas', 'n1ggaz', 'dickhead', 'cocksucker', 'ananisikeyim', 'siktiğim', 'götüne', 'taşak',
+    'kike', 'tranny', 'Heil', 'KKK', 'Sieg Heil', 'Pilot 14 88', '1488', 'Amcığ', 'ORSPU'],
+  // real link attempts stay blocked: a web / social marker, or a generic domain after a word; "." and "/" are refused
+  link: ['site com', 'benim site net', 'oyun org', 'www pilot', 'http pilot', 'discord gg', 'instagram tr', 'benim_insta'],
+  chars: ['site.com', 'x.co/abc', 'www.site.tr', 'http://x', 'pilot@mail'],
+  reserved: ['Admln', 'AdmIn', 'Admǀn', 'Offıcıal', 'Øfficial', 'G0kyuzu', 'Ｇökyüzü'],
+};
+for (const [reason, list] of Object.entries(BAD2)) {
+  for (const n of list) { const r = cleanName(n); check(`name rejected (${reason}): ${n}`, !r.ok && r.reason === reason && r.name === null, JSON.stringify(r)); }
+}
+// Unicode abuse: invisible characters are removed before the checks, marks / fillers / other scripts / emoji refused
+const U = (...cps) => String.fromCodePoint(...cps);
+check('name: bidi override and isolates removed (U+202E, U+2066)', cleanName(`Ali${U(0x202e)}Veli`).name === 'AliVeli' && cleanName(`${U(0x2066)}Ali${U(0x2069)}`).name === 'Ali');
+check('name: zero-width characters cannot hide a word (ad\u200Bmin, o\u2060rospu, f\uFEFFuck)', cleanName(`ad${U(0x200b)}min`).reason === 'reserved'
+  && cleanName(`o${U(0x2060)}rospu`).reason === 'bad' && cleanName(`f${U(0xfeff)}uck`).reason === 'bad' && cleanName(`sik${U(0x00ad)}tir`).reason === 'bad');
+check('name: stacked combining marks ("Zalgo") refused', cleanName(`Ali${U(0x301, 0x301, 0x302, 0x303)}`).reason === 'chars' && cleanName(`e${U(0x301)}`).name === 'é');
+check('name: Hangul / Braille fillers and variation selectors refused', [`a${U(0x3164)}b`, U(0x115f), U(0x2800), `a${U(0xfe0f)}`].every((n) => cleanName(n).reason === 'chars'));
+check('name: Cyrillic / Greek homoglyphs refused (аdmin, Αdmin)', cleanName(`${U(0x430)}dmin`).reason === 'chars' && cleanName(`${U(0x391)}dmin`).reason === 'chars');
+check('name: emoji spam refused, length counted after normalization', cleanName('😀😀😀').reason === 'chars' && cleanName(`${'a'.repeat(NAME_MAX)}${U(0x200b)}`).ok
+  && cleanName('ﬀ'.repeat(9)).reason === 'long');
 
 // ---- viewer address -----------------------------------------------------------------------------------------------
 check('ip: CloudFront viewer v4', viewerIp({ 'cloudfront-viewer-address': '203.0.113.9:51234' }) === '203.0.113.9');
@@ -361,6 +390,46 @@ await status(get({ mission: 'ggb-ring' }, { method: 'POST' }), 405, 'POST /api/t
 await status(get({}, { path: '/api/score' }), 405, 'GET /api/score → 405');
 await status(get({}, { path: '/api/other' }), 404, 'unknown path → 404');
 await status(get({ mission: 'ggb-ring', n: '7' }), 400, 'GET top: bad n → 400');
+{   // error answers name the field only (no stack, no internals) and carry the JSON-only headers
+  const e1 = await post(null, { raw: '{"mission":' });
+  check('POST: malformed JSON → {"error":"json"} only', e1.body === '{"error":"json"}', e1.body);
+  const e2 = await post({ ...good, day: ['20260924'] });
+  check('POST: day as an array → 400 day', e2.statusCode === 400 && J(e2).error === 'day', e2.body);
+  const e3 = await post({ ...good, score: 1e308 });
+  check('POST: absurd score → 400 score', e3.statusCode === 400 && J(e3).error === 'score', e3.body);
+  const e4 = await post(null, { raw: Buffer.from(JSON.stringify(good)).toString('base64') + 'x'.repeat(2000) });
+  check('POST: oversized body refused before parsing (413)', e4.statusCode === 413, e4.body);
+  const hdr = (x) => x.headers['content-security-policy'] === "default-src 'none'; frame-ancestors 'none'" && x.headers['x-content-type-options'] === 'nosniff'
+    && x.headers['referrer-policy'] === 'no-referrer' && /^application\/json/.test(x.headers['content-type']);
+  check('API answers: JSON-only security headers (200, 4xx)', hdr(e1) && hdr(await get({ mission: 'ggb-ring' }, { ip: '192.0.2.70' })) && hdr(await get({}, { path: '/x' })));
+}
+{   // junk costs no store write: malformed / invalid bodies are refused before the rate counter, and still hit the
+    // per-container limit
+  const jdb = createMemoryDb();
+  let writes = 0;
+  const counted = { ...jdb, hit: async (...a) => { writes++; return jdb.hit(...a); }, putBest: async (...a) => { writes++; return jdb.putBest(...a); } };
+  const jApp = createApp({ db: counted, salt: SALT, rules: RULES, stage: 'staging', now: () => clock, limits: { post: 5, get: 8 } });
+  const jev = (raw) => ({ requestContext: { http: { method: 'POST' } }, rawPath: '/api/score', body: raw, isBase64Encoded: false,
+    headers: { 'content-type': 'application/json', 'cloudfront-viewer-address': '198.51.100.60:1', 'sec-fetch-site': 'same-origin' } });
+  const codes = [];
+  for (const raw of ['{', '[]', JSON.stringify({ ...good, stars: 9 }), JSON.stringify({ ...good, mission: 'nope' }), 'null', '{"a":1}', '{']) codes.push((await jApp(jev(raw))).statusCode);
+  check('junk POSTs: 400 without any store write, 429 after the per-container limit', writes === 0 && codes.slice(0, 5).every((c) => c === 400) && codes.slice(5).every((c) => c === 429),
+    `${writes} writes, ${codes.join()}`);
+}
+{   // a name stored before a filter change is hidden when the board is read (entry and score stay)
+  const bdb = createMemoryDb();
+  const bApp = createApp({ db: bdb, salt: SALT, rules: RULES, stage: 'staging', now: () => clock, limits: { post: 50, get: 50 } });
+  const ev = (body, ip) => ({ requestContext: { http: { method: 'POST' } }, rawPath: '/api/score', body: JSON.stringify(body), isBase64Encoded: false,
+    headers: { 'content-type': 'application/json', 'cloudfront-viewer-address': `${ip}:1`, 'sec-fetch-site': 'same-origin' } });
+  await bApp(ev({ ...good, sid: 'StoredNamePlayer_0001', score: 4000, stars: 2, name: 'Deniz' }, '198.51.100.40'));
+  await bApp(ev({ ...good, sid: 'StoredNamePlayer_0002', score: 3500, stars: 2, name: 'Kaan' }, '198.51.100.41'));
+  for (const it of bdb.items.values()) if (it.n === 'Kaan') it.n = 'Øröspu';   // as if stored by an older filter
+  const t = await bApp({ requestContext: { http: { method: 'GET' } }, rawPath: '/api/top', headers: { 'cloudfront-viewer-address': '198.51.100.42:1' }, queryStringParameters: { mission: 'ggb-ring' } });
+  check('GET top: a stored name the filter now refuses is shown anonymous', J(t).entries.length === 2 && J(t).entries[0].name === 'Deniz' && J(t).entries[1].name === null
+    && J(t).entries[1].score === 3500, t.body);
+  const own = await bApp(ev({ ...good, sid: 'StoredNamePlayer_0002', score: 100, stars: 0 }, '198.51.100.43'));
+  check('POST: the own entry\'s refused stored name is not echoed back', J(own).name === null && J(own).top[1].name === null, own.body);
+}
 
 // rate limits (POST: store counter per salted address+minute; GET: per container)
 clock += 60000;

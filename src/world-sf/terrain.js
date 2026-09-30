@@ -9,6 +9,7 @@ import { createTerrainShared, createTerrainMaterial, setTerrainWaterQuality, app
 import { createHorizonRing } from './terrain-horizon.js';
 import { parseHeightFile, decodeTile, heightFileOf } from './terrain-heights.js';
 import { assetData, assetImage, isNetworkError, reportLoadFailure, retryDelay, releaseArrayBuffer, releaseGeometryArrays } from '../core/assets.js';
+import { queryNumber } from '../core/url-params.js';
 
 let BASE = new URL('../../assets/sf/terrain/', import.meta.url).href;   // the active map's (createTerrain: ctx.map.assets)
 const Q = 64, NV = 65, NS = 67;          // quads, vertices per edge, samples per edge (1 border)
@@ -523,8 +524,8 @@ export async function createTerrain(ctx) {
   }
 
   // ---------------- LOD selection ----------------
-  const GEO_PX = +(q.get('geoPx') || 3);           // max geometric error on screen (px, at <= 1200 px viewport height)
-  const TEX_PX = +(q.get('texPx') || 1.6);         // max imagery texel size on screen (px)
+  const GEO_PX = queryNumber(q, 'geoPx', 3, 0.5, 64);     // max geometric error on screen (px, at <= 1200 px viewport height)
+  const TEX_PX = queryNumber(q, 'texPx', 1.6, 0.25, 64);  // max imagery texel size on screen (px)
   // resident tiles: qual.maxTiles meshes (950 on desktop presets) + qual.maxTex imagery tiles (520 x 1.4 MB with mips at high)
   let frame = 0;
   const frustum = new THREE.Frustum();

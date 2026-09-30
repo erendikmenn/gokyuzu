@@ -23,6 +23,7 @@ if (!globalThis.dispatchEvent || !globalThis.addEventListener) {
 window.addEventListener('gokyuzu:settings', (e) => events.push(e.detail));
 
 const { DEFAULT_SETTINGS, loadSettings, storedSettings, saveSettings, patchSettings } = await import('../src/core/settings.js');
+const { isQuality, resolveQuality } = await import('../src/core/quality.js');
 const { voiceClass, voiceAllowed, alertPrefsFrom } = await import('../src/audio/alert-prefs.js');
 
 const rows = [];
@@ -39,6 +40,17 @@ check('defaults: muted false, assist true, alerts all / chimes / hud on / no red
 check('defaults: volumes as before (master .9, engine 1, voice 1, atc .8, ambient .8)',
   JSON.stringify(s.volumes) === JSON.stringify({ master: 0.9, engine: 1, voice: 1, atc: 0.8, ambient: 0.8 }));
 check('loadSettings fills an auto quality, storedSettings leaves it null', typeof loadSettings().quality === 'string' && storedSettings().quality === null);
+
+// a stored quality that is not a preset (hand-edited, another tool, "constructor" / "__proto__") means auto
+for (const bad of ['constructor', '__proto__', 'toString', 'mega', 5, {}]) {
+  put({ quality: bad });
+  check(`stored quality ${JSON.stringify(bad)} → auto (a real preset)`, storedSettings().quality === null && ['low', 'medium', 'high', 'ultra'].includes(loadSettings().quality),
+    JSON.stringify(loadSettings().quality));
+}
+check('isQuality: own presets only', isQuality('low') && isQuality('ultra') && !isQuality('constructor') && !isQuality('__proto__') && !isQuality(undefined));
+check('resolveQuality: a prototype name gets the high preset, not Object', resolveQuality('constructor').id === 'high' && resolveQuality('__proto__').id === 'high'
+  && typeof resolveQuality('constructor').pixelRatioMax === 'number');
+store.clear();
 
 // ---- old stored settings ----
 put({ quality: 'low', volumes: { master: 0.35, engine: 0.2 }, invertPitch: true, fps: 30 });

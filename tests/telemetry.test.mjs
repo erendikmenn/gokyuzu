@@ -1,7 +1,7 @@
 // Telemetry without identifiers (src/core/telemetry.js, CONTRACTS-SF.md §11): the visit record behind the retention
 // fields of `open` (d0 = days since the first visit, vn = visit days, vd = first page of the day, vo = played before the
 // record existed) and their buckets. Run: node tests/telemetry.test.mjs (no browser: the module sends nothing in Node).
-const { updateVisits, bucketD0, bucketVn, localDay } = await import('../src/core/telemetry.js');
+const { updateVisits, bucketD0, bucketVn, localDay, rejectionSource, isForeignError } = await import('../src/core/telemetry.js');
 
 const rows = [];
 const check = (name, ok, detail = '') => rows.push({ name, ok: !!ok, detail });
@@ -31,6 +31,45 @@ check('corrupt record starts over', updateVisits({ f: 'x', l: 3, n: -1 }, '20260
 check('d0 buckets: exact to 14 days, then 15-29 / 30+', bucketD0(0) === '0' && bucketD0(7) === '7' && bucketD0(14) === '14' && bucketD0(15) === '15-29' && bucketD0(29) === '15-29' && bucketD0(30) === '30+');
 check('vn buckets: exact to 7 days, then 8-14 / 15+', bucketVn(1) === '1' && bucketVn(7) === '7' && bucketVn(8) === '8-14' && bucketVn(14) === '8-14' && bucketVn(15) === '15+');
 check('local day format YYYYMMDD', /^\d{8}$/.test(localDay()) && localDay(new Date(2026, 0, 5)) === '20260105');
+
+// opt-outs: Do Not Track / Global Privacy Control always win, also against a ?telemetry=1 link; ?telemetry=1 only switches
+// the statistics on where they are off by default (localhost). Each case loads the module fresh in a child process.
+{
+  const { execFileSync } = await import('node:child_process');
+  const mod = new URL('../src/core/telemetry.js', import.meta.url).href;
+  const beaconsFor = ({ host, search, dnt = null, gpc = false }) => Number(execFileSync(process.execPath, ['--input-type=module', '-e', `
+    let n = 0;
+    globalThis.location = { search: ${JSON.stringify(search)}, hostname: ${JSON.stringify(host)}, origin: 'https://' + ${JSON.stringify(host)}, pathname: '/' };
+    Object.defineProperty(globalThis, 'navigator', { value: { language: 'tr', doNotTrack: ${JSON.stringify(dnt)}, globalPrivacyControl: ${gpc}, userAgent: '' }, configurable: true });
+    globalThis.document = { referrer: '', hidden: false }; globalThis.window = globalThis; globalThis.addEventListener = () => {};
+    globalThis.innerWidth = 800; globalThis.innerHeight = 600; globalThis.devicePixelRatio = 1; globalThis.setInterval = () => 0;
+    globalThis.localStorage = { getItem: () => null, setItem() {}, removeItem() {} }; globalThis.sessionStorage = globalThis.localStorage;
+    globalThis.fetch = () => { n++; return Promise.resolve({ ok: true }); };
+    const T = await import(${JSON.stringify(mod)});
+    try { T.startTelemetry({ build: { version: 't' }, renderer: null, quality: 'low', state: () => null }); } catch { /* the count is what matters */ }
+    T.trackEvent('x', { a: 1 });
+    console.log(n);`], { encoding: 'utf8' }).trim());
+  const site = 'game.example';
+  check('beacons: sent on the site by default (control)', beaconsFor({ host: site, search: '' }) > 0);
+  check('beacons: none under Do Not Track, even with ?telemetry=1', beaconsFor({ host: site, search: '?telemetry=1', dnt: '1' }) === 0);
+  check('beacons: none under Global Privacy Control, even with ?telemetry=1', beaconsFor({ host: site, search: '?telemetry=1', gpc: true }) === 0);
+  check('beacons: none with ?telemetry=0; localhost only with ?telemetry=1', beaconsFor({ host: site, search: '?telemetry=0' }) === 0
+    && beaconsFor({ host: 'localhost', search: '' }) === 0 && beaconsFor({ host: 'localhost', search: '?telemetry=1' }) > 0);
+}
+
+// unhandled rejections: the frame's whole URL, so the game's own rejections are not tagged foreign (they all were:
+// only the file name was kept, which never starts with the origin; e.g. "signal is aborted without reason" at app-….js)
+const O = 'https://fs.example.test';
+const chrome = { message: 'signal is aborted without reason', stack: `AbortError: signal is aborted without reason\n    at t (${O}/app-KSEBZH7Y.js:805:17)\n    at ${O}/app-KSEBZH7Y.js:9:3` };
+const chromeAnon = { stack: `Error: x\n    at ${O}/app-A.js:12:5` };
+const safari = { stack: `pump@${O}/app-B.js:44:9\n@${O}/app-B.js:1:1` };
+const ext = { stack: `TypeError: x\n    at chrome-extension://abcdef/200.js:1:99` };
+const s1 = rejectionSource(chrome), s2 = rejectionSource(chromeAnon), s3 = rejectionSource(safari), s4 = rejectionSource(ext);
+check('rejection source: Chrome frame "at f (url:l:c)" keeps the whole URL and the line', s1.file === `${O}/app-KSEBZH7Y.js` && s1.line === 805, JSON.stringify(s1));
+check('rejection source: Chrome anonymous frame and Safari "f@url:l:c"', s2.file === `${O}/app-A.js` && s2.line === 12 && s3.file === `${O}/app-B.js` && s3.line === 44, JSON.stringify([s2, s3]));
+check('rejection source: no stack / no frame / a string reason', rejectionSource(null).file === '' && rejectionSource({ stack: 'AbortError: x' }).file === '' && rejectionSource('boom').file === '');
+check('own rejections are not foreign; extensions and other origins are', !isForeignError(chrome.message, s1.file, O) && !isForeignError('x', s3.file, O) && isForeignError('x', s4.file, O) && isForeignError('x', 'https://other.example/a.js', O));
+check('"Script error." is foreign, an error without a file is not, the game\'s blob: workers are its own', isForeignError('Script error.', '', O) && !isForeignError('x', '', O) && !isForeignError('x', `blob:${O}/1234-abcd`, O));
 
 let failed = 0;
 console.log('\n=== telemetry (retention without identifiers) ' + '='.repeat(40));

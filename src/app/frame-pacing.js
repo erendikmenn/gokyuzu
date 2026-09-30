@@ -35,6 +35,15 @@
 // cap draws on every refresh it gets (the phase restarts instead of catching up with short frames).
 // ?pace=0 turns all of this off (every refresh simulates and draws, the old behaviour; A/B measurements), ?fps=30|60|0
 // overrides the flight cap.
+//
+// Low power: Safari halves requestAnimationFrame to 30 Hz in Low Power Mode, under aggressive thermal mitigation and in a
+// cross-origin frame the player has not touched (WebKit AnimationFrameRate.cpp; on iOS a visible page is never
+// "visually idle"). A callback that neither simulated nor drew measures the browser's own rate: the interval to the
+// next callback (the menu, frames the cap skips, the pause screen; a GPU-bound device delays the callbacks after a drawn
+// frame, not after an empty one). Their 25th percentile above ~38 Hz's interval = throttled (`lowPower`), below ~45 Hz's
+// = not. Phones and tablets on 'auto' then fly at a steady 30 with the phones' cruise rate (a tablet no longer tries 60,
+// which it cannot get, and dynamic resolution judges against 30 instead of dropping pixels); main.js also turns off the
+// tablets' backdrop blur and slows their cockpit displays. Desktops only report it.
 
 export const PACE = {
   loading: 0,
@@ -51,7 +60,12 @@ export const PACE = {
   // tablets / weak GPUs (FALLBACK_30) on 'auto': 60, or 30 when 60 is not held (below 50 fps for 3 s of flight); 60 is
   // tried again after a backoff
   tabletLowFps: 50, tabletLowSecs: 3, backoffSecs: [30, 60, 120, 300],
+  // low power (throttled rAF): judged on the intervals after empty callbacks (ms, 25th percentile of the last 24)
+  lowPowerMs: 26, fullSpeedMs: 22, lowPowerSamples: 12,
 };
+
+/** Device classes that fly at 30 while the browser throttles requestAnimationFrame (low power). */
+export const LOW_POWER_30 = new Set(['phone', 'tablet']);
 
 /** Device classes (src/core/quality.js deviceClass) that run at 60 on 'auto', falling back to a steady 30 when 60 is not
  *  held: tablets, and laptops / desktops with an integrated, entry-level or software GPU (they rarely hold a 90–144 Hz
@@ -82,7 +96,7 @@ export function flightCap(deviceClass, setting) {
  *   drawn(ts, mode, judge)  after a drawn frame: the 60 → 30 fallback of FALLBACK_30 classes (judge = false: start-up
  *                      seconds, ignored)
  *   setSetting(v)      player's fps setting changed
- *   stats              { mode, target, drawFps, simFps, vsync, cap, locked30 } (test hook / telemetry)
+ *   stats              { mode, target, drawFps, simFps, vsync, cap, locked30, lowPower } (test hook / telemetry)
  */
 export function createFramePacer({ deviceClass = 'desktop', setting = null, enabled = true } = {}) {
   let userSetting = parseFpsSetting(setting);
@@ -92,12 +106,16 @@ export function createFramePacer({ deviceClass = 'desktop', setting = null, enab
   const D = { next: -1e9, last: -1e9 }, S = { next: -1e9, last: -1e9 };   // ideal time of the next / last draw, simulation step
   // tablet 'auto' adaptation
   let lowFor = 0, lockUntil = 0, lockCount = 0, winT = 0, winFrames = 0, winStart = -1, winGap = 0, lastDrawTs = 0;
-  const stats = { mode: 'idle', target: 0, drawFps: 0, simFps: 0, vsync: 16.7, cap: 0, locked30: false, draws: 0, sims: 0 };
+  // low power: intervals that follow a callback which neither simulated nor drew
+  const idleGaps = new Float32Array(24);
+  let nIdle = 0, prevEmpty = false, lowPower = false;
+  const stats = { mode: 'idle', target: 0, drawFps: 0, simFps: 0, vsync: 16.7, cap: 0, locked30: false, draws: 0, sims: 0, lowPower: false };
   let secT = -1, secDraws = 0, secSims = 0;
 
   const displayFps = () => 1000 / vsync;
   function cap(ts) {
     const c = flightCap(deviceClass, userSetting);
+    if (lowPower && userSetting === null && LOW_POWER_30.has(deviceClass) && (c === 0 || c > 30)) return 30;
     if (FALLBACK_30.has(deviceClass) && userSetting === null && ts < lockUntil) return 30;
     return c;
   }
@@ -113,6 +131,11 @@ export function createFramePacer({ deviceClass = 'desktop', setting = null, enab
     st.last = ts;
     return true;
   }
+  /** Cruise rate on 'auto' (0: none); in low power a tablet takes the phones' rate. */
+  function cruiseRate() {
+    if (userSetting !== null) return 0;
+    return (lowPower && LOW_POWER_30.has(deviceClass) ? PACE.cruise.phone : PACE.cruise[deviceClass]) || 0;
+  }
   function targets(ts, mode, o) {
     const c = cap(ts);
     switch (mode) {
@@ -122,7 +145,7 @@ export function createFramePacer({ deviceClass = 'desktop', setting = null, enab
       case 'overlay': return o.interacting ? [c, c] : [c > 0 ? Math.min(c, PACE.overlaySim) : PACE.overlaySim, PACE.overlay];
       case 'map': return [c, PACE.overlay];
       case 'parked': { const p = PACE.parked[deviceClass] || PACE.parked.desktop; return c > 0 && c < p ? [c, c] : [p, p]; }
-      case 'cruise': { const k = userSetting === null ? PACE.cruise[deviceClass] || 0 : 0; return k > 0 && !(c > 0 && c <= k) ? [k, k] : [c, c]; }
+      case 'cruise': { const k = cruiseRate(); return k > 0 && !(c > 0 && c <= k) ? [k, k] : [c, c]; }
       default: return [c, c];
     }
   }
@@ -137,6 +160,16 @@ export function createFramePacer({ deviceClass = 'desktop', setting = null, enab
       stalled = lastTs >= 0 && ts === lastTs;
       if (lastTs >= 0) {
         dt = ts - lastTs;
+        if (prevEmpty && dt > 2 && dt < 70) {   // low power: the browser's own callback rate
+          idleGaps[nIdle++ % idleGaps.length] = dt;
+          const n = Math.min(nIdle, idleGaps.length);
+          if (n >= PACE.lowPowerSamples && (nIdle & 3) === 0) {
+            const q = Array.from(idleGaps.subarray(0, n)).sort((a, b) => a - b)[Math.floor(n * 0.25)];
+            if (q > PACE.lowPowerMs) lowPower = true;
+            else if (q < PACE.fullSpeedMs) lowPower = false;
+            stats.lowPower = lowPower;
+          }
+        }
         if (dt > 2 && dt < 70) {   // refresh interval estimate: 25th percentile of recent callback intervals
           deltas[nDeltas++ % deltas.length] = dt;
           const n = Math.min(nDeltas, deltas.length);
@@ -152,6 +185,7 @@ export function createFramePacer({ deviceClass = 'desktop', setting = null, enab
     },
     decide(ts, mode, o = {}) {
       stats.mode = mode;
+      prevEmpty = false;
       if (!enabled) { stats.target = 0; return { sim: mode !== 'hidden', draw: mode !== 'hidden' && !(mode === 'loading' && o.warming === true) }; }
       if (o.warming === 'render' || (stalled && mode !== 'hidden' && mode !== 'idle' && mode !== 'loading' && mode !== 'covered')) return { sim: true, draw: true };
       const [simFps, drawFps] = targets(ts, mode, o);
@@ -160,6 +194,7 @@ export function createFramePacer({ deviceClass = 'desktop', setting = null, enab
       const sim = simFps === drawFps ? draw : due(ts, S, simFps) || draw;
       if (sim) secSims++;
       if (draw) { secDraws++; stats.draws++; }
+      prevEmpty = !sim && !draw && mode !== 'hidden';
       if (secT < 0) secT = ts;
       if (ts - secT >= 1000) { stats.drawFps = Math.round(secDraws * 10000 / (ts - secT)) / 10; stats.simFps = Math.round(secSims * 10000 / (ts - secT)) / 10; secT = ts; secDraws = secSims = 0; }
       return { sim, draw };
@@ -167,6 +202,8 @@ export function createFramePacer({ deviceClass = 'desktop', setting = null, enab
     /** After a drawn flight frame: tablets / weak GPUs on 'auto' drop to 30 fps when 60 is not held, and try 60 again later. */
     drawn(ts, mode, judge = true) {
       if (!enabled || !FALLBACK_30.has(deviceClass) || userSetting !== null || mode !== 'flight' || ts < lockUntil || !judge) { winStart = -1; return; }
+      // not while low power holds the cap at 30: a lock and a longer backoff would outlast it
+      if (lowPower && LOW_POWER_30.has(deviceClass)) { winStart = -1; lowFor = 0; return; }
       if (winStart < 0) { winStart = lastDrawTs = ts; winFrames = 0; winGap = 0; return; }
       winFrames++;
       winGap = Math.max(winGap, ts - lastDrawTs);
@@ -183,11 +220,15 @@ export function createFramePacer({ deviceClass = 'desktop', setting = null, enab
         lockCount++;
       }
     },
-    setSetting(v) { userSetting = parseFpsSetting(v); lockUntil = 0; lowFor = 0; },
+    // (every settings broadcast calls this: M, H, a volume … Only a real change of the frame-rate setting unlocks the
+    // tablet / weak-GPU 30 fps fallback; any broadcast used to, costing a ≥ 3 s failed try at 60 and a longer backoff)
+    setSetting(v) { const n = parseFpsSetting(v); if (n === userSetting) return; userSetting = n; lockUntil = 0; lowFor = 0; },
     /** The flight cap now (0 = display rate). */
     cap,
     /** Frames per second of the cruise mode on this device / setting (0: none; main.js skips its motion estimate then). */
-    get cruiseFps() { return enabled && userSetting === null && PACE.cruise[deviceClass] > 0 ? PACE.cruise[deviceClass] : 0; },
+    get cruiseFps() { return enabled ? cruiseRate() : 0; },
+    /** The browser runs requestAnimationFrame at about 30 Hz (Low Power Mode / thermal mitigation, see above). */
+    get lowPower() { return lowPower; },
     /** Drawn frames per second the current mode aims at (display rate when the target is 0). */
     targetFps(ts, mode, o = {}) { const t = targets(ts, mode, o)[1]; return t === 0 ? displayFps() : Math.max(t, 0); },
     get vsyncMs() { return vsync; },

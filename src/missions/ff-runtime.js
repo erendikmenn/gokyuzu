@@ -303,7 +303,9 @@ export function createFreeFlightChallenges(ctx) {
     if (r.ok) {   // retention: the day joins the streak; this week's free-flight pick also goes to its weekly board
       const st = noteActivity('ffc');
       if (st && st.newDay) streakToast(st);
-      const wk = weeklyFor({ ff: e.id });   // (an assisted result: the weekly board's "Destekli" list)
+      // (the week the run started in: one begun on Sunday evening and finished after Monday 00:00 still counts for it;
+      // an assisted result: the weekly board's "Destekli" list)
+      const wk = weeklyFor({ ff: e.id }, new Date(Date.now() - 1000 * (Number.isFinite(r.time) ? r.time : 0)));
       if (wk) r.weekly = { pick: wk, p: submitQuiet({ board: boardFor(wk.board, r.assisted), score: r.score, stars: r.stars, sec: r.time == null ? undefined : r.time, ac, weekly: wk.key, assisted: !!r.assisted }) };
     }
     if (crashing) return;   // the crash handler shows the flight's results

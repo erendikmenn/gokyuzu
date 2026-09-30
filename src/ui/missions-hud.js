@@ -5,7 +5,7 @@
 // / speed area: desktop — the strip under the info panel (top left); touch — the strip at the top centre between the
 // speed and altitude columns (the landing card and the tutorial stack move below it via --gkm-strip-h).
 //
-//   const ui = createMissionUI(hud, { touch, input, category })
+//   const ui = createMissionUI(hud, { touch, input, category, paused })   paused(): the pause screen is up (Enter leaves the card alone)
 //   ui.setMission(m) · ui.setObjective(o, i, n) · ui.update({ t, limit, objective, phase, s }) (10 Hz)
 //   ui.pointer(camera, target, s) (every frame; allocation-free) · ui.flash(text, kind)
 //   ui.showBrief(m, { start, menu, again, best }) · ui.showResult(result, { retry, next, nextTitle, menu, share }) · ui.hideCard()
@@ -51,6 +51,8 @@ const CSS = `
 .gkq-card { position: relative; width: min(560px, 100%); max-height: 100%; overflow-y: auto; box-sizing: border-box; padding: 20px 24px 18px; border-radius: 18px;
   scrollbar-width: thin; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; animation: gkq-in .35s cubic-bezier(.2, .9, .3, 1.15) both; }
 @keyframes gkq-in { from { opacity: 0; transform: translateY(10px) scale(.97); } to { opacity: 1; transform: none; } }
+/* without the backdrop blur (phones) the glass let the mission strip's text show through the score and the title */
+html.gk-noblur .gkq-card { background: linear-gradient(180deg, rgb(14, 23, 38), rgb(6, 11, 20)); }
 .gkq-kick { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; font-size: 11px; font-weight: 750; letter-spacing: .14em; text-transform: uppercase; color: var(--gk-dim); }
 .gkq-kick b { color: var(--gk-orange-2); font-weight: 800; }
 .gkq-kick b.daily { color: #04140f; background: var(--gk-teal); padding: 2px 7px; border-radius: 5px; letter-spacing: .1em; }
@@ -100,7 +102,7 @@ html.gk-mis .gkh-ccard small, html.gk-mis .gkh-ccard > i { display: none; }   /*
 }
 `;
 
-export function createMissionUI(hud, { touch = false, input = null, category = 'airliner', missions = MISSIONS } = {}) {
+export function createMissionUI(hud, { touch = false, input = null, category = 'airliner', missions = MISSIONS, paused = () => false } = {}) {
   injectPartsCSS();
   injectCSS('missions-hud', CSS);
   const root = el('div', 'gkq');
@@ -154,8 +156,9 @@ export function createMissionUI(hud, { touch = false, input = null, category = '
     if (modal) { modal = false; shared.modalOpen = Math.max(0, (shared.modalOpen || 1) - 1); }
   }
   // Enter = the card's main button (captured before the game input; Space stays the brake)
+  // (not while the pause screen covers the card: Enter would start / leave the mission behind it)
   window.addEventListener('keydown', (e) => {
-    if (!onEnter || !back.classList.contains('on')) return;
+    if (!onEnter || !back.classList.contains('on') || paused()) return;
     if (e.target && /^(INPUT|TEXTAREA)$/.test(e.target.tagName)) return;
     if (e.code === 'Enter' || e.code === 'NumpadEnter') { e.preventDefault(); e.stopPropagation(); const fn = onEnter; fn(); }
   }, true);

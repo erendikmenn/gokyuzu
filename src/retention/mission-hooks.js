@@ -18,7 +18,8 @@
 //   ret.finish(result)                when the run ends (result = { ok, score, stars, time, … })
 //   ret.result(result, { share })     after ui.showResult; share({ anchor }) = the runtime's share
 // Telemetry `chl` (challenge links): open (id, d = 1 daily), beat / lost (o = tie | short | fail), back (share-back tapped).
-import { parseChallenge, briefLine, resultLine, challengeOutcome } from './challenge-link.js';
+import { parseChallenge, briefLine, resultLine, challengeOutcome, challengeCap } from './challenge-link.js';
+import { missionMaxScore } from '../missions/score-max.js';
 import { weeklyFor } from './weekly.js';
 import { noteActivity, streakLine, applyAccent } from './activity.js';
 import { submitQuiet } from './lb.js';
@@ -56,7 +57,8 @@ const openCard = () => document.querySelector('.gkq-back.on .gkq-card');
 
 export function createMissionRetention({ mission, touch = false, flight = null } = {}) {
   let ch = null;
-  // assisted run: the assist layer on during the run (sampled at the briefing's end and the finish) or a touchdown on the
+  // assisted run: the assist layer on at any moment of the run (the runtime sets result.assisted: sticky, so turning the
+  // assist off just before the end keeps the run on the "Destekli" lists), on at the finish, or a touchdown on the
   // autopilot (autoland); reset at every briefing (a restart)
   let apTouchdown = false, hooked = null;
   const f = () => { try { return flight ? flight() : null; } catch { return null; } };
@@ -67,23 +69,28 @@ export function createMissionRetention({ mission, touch = false, flight = null }
     hooked = m;
     m.on('touchdown', () => { if (m.autopilot && m.autopilot.on) apTouchdown = true; });
   }
-  try { const c = parseChallenge(location.search); ch = c && c.id === mission.id ? c : null; } catch { ch = null; }
+  // a link's claimed score above what this mission can give is not shown ("Arkadaşın 999.999 puan yaptı")
+  try { const c = parseChallenge(location.search, { max: challengeCap(missionMaxScore(mission)) }); ch = c && c.id === mission.id ? c : null; } catch { ch = null; }
   injectCSS('retention-mission', CSS);
   applyAccent();
   let opened = false, weekly = null, streak = null;
   const isWeekly = () => { try { return weeklyFor({ mission: mission.id, daily: mission.day }); } catch { return null; } };
+  // the week's pick when the briefing showed: a run started on Sunday evening and finished after Monday 00:00 (Istanbul)
+  // still goes to the week its briefing promised (the server takes the previous week for a day)
+  let weekPick = null;
 
   return {
     challenge: ch,
     brief() {
       try {
         apTouchdown = false; hook();
+        weekPick = isWeekly();
         if (ch && !opened) { opened = true; trackEvent('chl', { st: 'open', id: mission.id, d: mission.day ? 1 : undefined }); }
         const c = openCard();
         if (!c || c.querySelector('.gkr-chl, .gkr-wk')) return;
         const h2 = c.querySelector('h2');
         const after = (node) => { if (h2 && h2.nextSibling) c.insertBefore(node, h2.nextSibling); else c.appendChild(node); };
-        if (isWeekly()) after(el('div', 'gkr-wk', null, 'Haftanın görevi: bu uçuş haftalık sıralamaya da girer'));
+        if (weekPick) after(el('div', 'gkr-wk', null, 'Haftanın görevi: bu uçuş haftalık sıralamaya da girer'));
         if (ch) { const b = el('div', 'gkr-chl'); b.innerHTML = FLAG; b.append(briefLine(ch)); after(b); }
       } catch { /* decoration only */ }
     },
@@ -91,7 +98,7 @@ export function createMissionRetention({ mission, touch = false, flight = null }
       try {
         if (assistOn() || apTouchdown) result.assisted = true;   // (read by the result card's leaderboard)
         streak = result.ok || result.time >= 30 ? noteActivity('mission') : null;
-        const wk = result.ok ? isWeekly() : null;
+        const wk = result.ok ? weekPick : null;
         weekly = wk ? { pick: wk, assisted: !!result.assisted, p: submitQuiet({ board: boardFor(wk.board, result.assisted), score: result.score, stars: result.stars, sec: result.time, ac: mission.aircraft, weekly: wk.key, assisted: !!result.assisted }) } : null;
         if (ch) {
           const o = challengeOutcome(ch, result);

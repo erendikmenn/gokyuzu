@@ -17,7 +17,8 @@ import { AIRPORTS, AIRPORT_ORDER, TIPS, TOUCH_TIPS } from '../ui/data.js';
 import { TOWERS } from '../ui/camera.js';
 import { setNavData } from '../avionics/nav.js';
 import { loadSettings } from '../core/settings.js';
-import { QUALITY, resolveQuality, lowerQuality, setQualityCap } from '../core/quality.js';
+import { QUALITY, isQuality, resolveQuality, lowerQuality, setQualityCap } from '../core/quality.js';
+import { queryNumber } from '../core/url-params.js';   // every numeric ?switch is read clamped (a link can carry any text)
 import { detectDevice } from '../core/gpu-device.js';
 import { createGpuGuard, noteGpuFailure } from '../core/gpu-guard.js';          // robustness: context loss, GPU budget
 import { readResume, applyResume, clearResume } from '../core/gpu-resume.js';
@@ -40,7 +41,7 @@ await runDeviceGate(uiRoot);
 
 // ---- settings / quality ----
 let settings = loadSettings();
-if (params.has('quality') && QUALITY[params.get('quality')]) settings.quality = params.get('quality');   // ?quality=low|medium|high|ultra
+if (isQuality(params.get('quality'))) settings.quality = params.get('quality');   // ?quality=low|medium|high|ultra
 // robustness hook: a flight saved before a graphics failure (?resume=1 reload, or this tab died mid-flight)
 let resume = readResume(params);
 if (resume && resume.crash) {   // the previous page of this tab died without unloading: treat it as a GPU failure too
@@ -50,7 +51,7 @@ if (resume && resume.crash) {   // the previous page of this tab died without un
     if (detectDevice().kind !== 'desktop') setQualityCap(lower);   // a lasting cap only where memory kills are real (phones/tablets)
   }
 }
-let quality = resolveQuality(QUALITY[settings.quality] ? settings.quality : 'high');   // preset + device caps (src/core/quality.js)
+let quality = resolveQuality(isQuality(settings.quality) ? settings.quality : 'high');   // preset + device caps (src/core/quality.js)
 // phones: no backdrop blur behind the HUD / menus (index.html; ?blur=1 / ?blur=0 force it on / off)
 if (params.get('blur') === '0' || (quality.deviceClass === 'phone' && params.get('blur') !== '1')) document.documentElement.classList.add('gk-noblur');
 // maps hook (src/maps/index.js): ?map=, a deep link's mission / spawn, a resumed flight, else the menu's last choice
@@ -64,9 +65,11 @@ const renderer = new THREE.WebGLRenderer({ antialias: quality.antialias, logarit
 // (weak GPUs, Retina over downtown), stepping back up after a sustained smooth period. ?pr=<n> pins it.
 let maxPixelRatio, minPixelRatio;
 function pixelRatioLimits() {
-  maxPixelRatio = params.has('pr') ? Number(params.get('pr')) : Math.min(window.devicePixelRatio, quality.pixelRatioMax);
+  // (?pr=0 / abc / -1 left a 0 × 0 or 300 × 150 canvas, ?pr=100 a canvas no GPU can hold: clamped to 0.25–3, not a number → ignored)
+  const pinned = queryNumber(params, 'pr', null, 0.25, 3);
+  maxPixelRatio = pinned ?? Math.min(window.devicePixelRatio, quality.pixelRatioMax);
   // floor: 60 % of the start, at least 0.6, or the preset's own floor (quality.js pixelRatioMin: software rasterizers 0.5)
-  minPixelRatio = params.has('pr') ? maxPixelRatio : Math.min(maxPixelRatio, Math.max(quality.pixelRatioMin ?? 0.6, maxPixelRatio * 0.6));
+  minPixelRatio = pinned ?? Math.min(maxPixelRatio, Math.max(quality.pixelRatioMin ?? 0.6, maxPixelRatio * 0.6));
 }
 pixelRatioLimits();
 let pixelRatio = maxPixelRatio;
@@ -88,7 +91,7 @@ const scene = new THREE.Scene();
 const lightStandIns = [new THREE.SpotLight(0xffffff, 0), new THREE.PointLight(0xffffff, 0)];
 for (const l of lightStandIns) { scene.add(l); if (l.target) scene.add(l.target); }
 // far plane 80 km (?far=<m> for draw-distance experiments; the sky dome, clouds and aerial perspective follow it)
-const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.3, params.has('far') ? Math.max(5000, Number(params.get('far')) || 80000) : 80000);
+const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.3, queryNumber(params, 'far', 80000, 5000, 400000));
 scene.add(camera);
 function onResize() {
   const w = window.innerWidth, h = window.innerHeight;
@@ -215,7 +218,7 @@ async function start() {
     state.mission = missionMod.createMissionRuntime(plan, {
       state, scene, camera, hud, input, audio, navRoute, landing, touch: touchUI.active, resetFlight, goToMenu, map,
       // where the player came from (telemetry `mission` brief): the menu / its daily card, a link, or "Görev olarak oyna"
-      via: missionReq ? ({ ff: 'ff', next: 'next' }[params.get('from')] || 'link') : choice.mission && choice.mission.daily ? 'daily' : 'menu',
+      via: missionReq ? (['ff', 'next'].includes(params.get('from')) ? params.get('from') : 'link') : choice.mission && choice.mission.daily ? 'daily' : 'menu',
       leave: (url) => { state.leaving = true; location.href = url; },
       snapshot: () => { renderer.render(scene, camera); return renderer.domElement; },   // share card image (same task as the render)
     });
@@ -234,7 +237,9 @@ async function start() {
   state.aircraftId = choice.aircraftId;
   if (state.halted) return;   // robustness: the graphics guard gave up while loading (notice shown): no flight to report
   if (state.standIn) upgradeAircraft();   // LOD start: the full model now, swapped in when it is ready
-  trackFlight(choice.aircraftId, spawn.id, (performance.now() - t0) / 1000, settings.quality, { in: touchUI.active ? 'touch' : input.kind, tilt: touchUI.active && settings.tilt ? 1 : undefined, mi: state.mission ? state.mission.mission.id : undefined });
+  // pw: seconds of the pre-warm behind the loading screen (shader links + first uploads; Firefox links every program there
+  // without KHR_parallel_shader_compile): tells a shader-bound start (Firefox / Windows, integrated GPUs) from a slow line
+  trackFlight(choice.aircraftId, spawn.id, (performance.now() - t0) / 1000, settings.quality, { in: touchUI.active ? 'touch' : input.kind, tilt: touchUI.active && settings.tilt ? 1 : undefined, mi: state.mission ? state.mission.mission.id : undefined, pw: state.prewarmMs >= 0 ? (state.prewarmMs / 1000).toFixed(1) : undefined });
   if (resumed) {   // robustness hook: back in the same flight after a graphics failure (no tutorial / key card)
     gpu.report('resume', { why: resumed.crash ? 'crash' : resumed.reason || 'gpu', ac: choice.aircraftId });
     hud.showMessage(`Uçuşa kaldığın yerden devam ediliyor · Grafik: ${quality.label}${resumeNote ? ' · ' + resumeNote : ''}`, 4500);
@@ -263,7 +268,7 @@ async function start() {
  * 1,226 MB after 5 s). iOS kills a page on its footprint, so there the streaming waits until the start-up copies are gone.
  */
 function playDelay() {
-  if (params.has('playdelay')) return Math.max(0, Number(params.get('playdelay')) || 0);
+  if (params.has('playdelay')) return queryNumber(params, 'playdelay', 0, 0, 30);   // (1e9 kept the world from ever streaming)
   return (quality.deviceClass === 'phone' || quality.deviceClass === 'tablet') && detectDevice().engine === 'webkit' ? PLAY_DELAY_WEBKIT : 0;
 }
 const PLAY_DELAY_WEBKIT = 3;
@@ -374,7 +379,7 @@ function attachCockpit(def, rig, cockpitScene) {
   bindDisplays(def, rig);
   // the first switch to the cockpit view without shader compiles (after the rig's next update, which may adjust shadow
   // flags); its textures still upload on the first cockpit frame (a background upload would stall a random frame)
-  afterFrames(2, () => { if (state.rig === rig) renderer.compileAsync(cockpitScene, camera, scene).catch(() => {}); });
+  afterFrames(2, () => { if (state.rig === rig) compileInScene(cockpitScene).catch(() => {}); });
 }
 /** Local transforms, visibility and screen UVs of a freshly loaded cockpit, to give a second rig the same starting point. */
 function snapshotNodes(root) {
@@ -494,6 +499,24 @@ function texturesIn(root) {
   return out;
 }
 
+/**
+ * compileAsync for a subtree that is already in the scene. three.js' compile(object, camera, targetScene) is made for an
+ * object about to be added: it counts the lights of targetScene *and* of the object, so the aircraft's own landing and
+ * cockpit lights were counted twice when the rig (or its cockpit) was compiled in place. Every program built there had
+ * light counts the frames never use (wasted links, the screen materials linked again at their first draw), and the
+ * renderer's light state stayed doubled until the next frame's light setup, which comes after its shadow pass: that pass
+ * built four more depth programs, synchronously, right after the first playable frame (Chromium and Firefox alike).
+ * The subtree is taken out of its parent for the duration of the call (compile() itself is synchronous; the promise
+ * only polls the programs), so each light counts once.
+ */
+function compileInScene(obj) {
+  const parent = obj.parent, i = parent ? parent.children.indexOf(obj) : -1;
+  if (i < 0) return renderer.compileAsync(obj, camera, scene);
+  parent.children.splice(i, 1);
+  obj.parent = null;
+  try { return renderer.compileAsync(obj, camera, scene); } finally { parent.children.splice(i, 0, obj); obj.parent = parent; }
+}
+
 // ---- pre-warm (plan #4): the first playable frame without the start-up stutter
 // Compile every material of the scene against the final lights (in parallel where KHR_parallel_shader_compile exists),
 // then render the start view once behind the loading screen (it uploads the textures the view shows), then lift it.
@@ -593,7 +616,7 @@ function bindDisplays(def, rig) {
       state.displays.push({ display, mesh });
       added++;
     }
-    if (added) renderer.compileAsync(rig.object, camera, scene).catch(() => {});   // the screen materials before their first frame
+    if (added) compileInScene(rig.object).catch(() => {});   // the screen materials before their first frame
   }).catch((e) => { if (!isNetworkError(e)) console.warn('[app] avionics', e); });
 }
 
@@ -712,7 +735,16 @@ addEventListener('pointermove', (e) => { if (e.buttons || e.pointerType === 'tou
 document.addEventListener('visibilitychange', () => { simAcc = 0; });   // (no catch-up step after a hidden period)
 // cockpit displays (2D canvas → texture uploads, plan 4.4): 15 Hz on phones, 20 Hz in WebKit (each canvas upload costs
 // 20–60× more there: findings T2), 30 Hz elsewhere
-const displayInterval = quality.deviceClass === 'phone' ? 1 / 15 : detectDevice().engine === 'webkit' ? 1 / 20 : 1 / 30;
+const baseDisplayInterval = quality.deviceClass === 'phone' ? 1 / 15 : detectDevice().engine === 'webkit' ? 1 / 20 : 1 / 30;
+let displayInterval = baseDisplayInterval;
+// low power (frame-pacing.js: Safari's Low Power Mode / thermal mitigation run requestAnimationFrame at 30 Hz): a tablet
+// saves like a phone while it lasts, no backdrop blur (index.html gk-noblur) and cockpit displays at 15 Hz
+let lowPowerSeen = false;
+function applyLowPower(on) {
+  if (quality.deviceClass !== 'tablet') return;
+  displayInterval = on ? 1 / 15 : baseDisplayInterval;
+  if (!params.has('blur')) document.documentElement.classList.toggle('gk-noblur', on);
+}
 // ... except when a warning comes or goes (PULL UP, STALL …): then every display is drawn on that frame, also the slower pages
 let lastWarnMask = 0;
 /** The flight's warning flags as a bit mask (no allocation). */
@@ -790,6 +822,7 @@ function frame(ts) {
   const t0 = performance.now();
   const mode = paceMode(t0);
   const { sim, draw } = pacer.decide(ts, mode, { interacting: t0 - lastInteraction < PACE.interactMs, warming: state.warming });
+  if (pacer.lowPower !== lowPowerSeen) { lowPowerSeen = pacer.lowPower; applyLowPower(lowPowerSeen); }
   if (!state.readyAt && state.texQueue.length && !state.upgrade) renderer.initTexture(state.texQueue.shift());   // aircraft textures while the world loads
   gpu.tick(Math.min(rawDt, 0.1));
   if (!sim && !draw) return;
@@ -900,7 +933,7 @@ let appliedQualityId = settings.quality;
 function applySettings(next) {
   settings = next;
   // only a changed choice moves the quality (a budget step-down stays until the player picks a preset)
-  if (settings.quality !== appliedQualityId && QUALITY[settings.quality]) { appliedQualityId = settings.quality; setQualityLive(resolveQuality(settings.quality)); }
+  if (settings.quality !== appliedQualityId && isQuality(settings.quality)) { appliedQualityId = settings.quality; setQualityLive(resolveQuality(settings.quality)); }
   if (audio.setVolumes) audio.setVolumes(settings.volumes);
   if (!params.has('fps')) pacer.setSetting(settings.fps);   // frame rate: Otomatik / 30 / 60 / Sınırsız
   state.settings = settings; state.quality = quality;

@@ -7,7 +7,7 @@ import { readArrays, buildGround, buildStructures, airportFiles } from './airpor
 import { buildLights, updateLights } from './airports_lights.js';
 import { buildSigns } from './airports_signs.js';
 import { loadBuildings, updateBuildingLights } from './airports_buildings.js';
-import { buildProps, updateProps, setPropsDensity, addAgentLods } from './airports_props.js';
+import { buildProps, prefetchProps, updateProps, setPropsDensity, addAgentLods } from './airports_props.js';
 import { buildFence, buildCables, buildFloodPools } from './airports_extras.js';
 import { Draper, meshJob, lightsJob, instancedJob, rigidJob, levelSignature } from './airports_drape.js';
 
@@ -54,10 +54,17 @@ export async function createAirports(ctx) {
   setQ(ctx.quality);
   const focus = ctx.focus || { x: 0, z: 0 };
 
-  const loadMeta = async (icao) => {
-    const meta = await ctx.loader.loadJSON(BASE + icao + '.json');
-    const buf = await ctx.loader.loadBinary(BASE + meta.bin);
-    return { meta, A: readArrays(meta, buf) };
+  const metaP = {};   // icao -> promise of { meta, A } (a failed download is dropped: the next call tries again)
+  const loadMeta = (icao) => {
+    if (!metaP[icao]) {
+      metaP[icao] = (async () => {
+        const meta = await ctx.loader.loadJSON(BASE + icao + '.json');
+        const buf = await ctx.loader.loadBinary(BASE + meta.bin);
+        return { meta, A: readArrays(meta, buf) };
+      })();
+      metaP[icao].catch(() => { delete metaP[icao]; });
+    }
+    return metaP[icao];
   };
   const metas = {};
   // airports in distance order from the spawn (centres from data/sf/runways.json, no download needed)
@@ -76,6 +83,7 @@ export async function createAirports(ctx) {
   /** Core of an airport: pavement, paint, lights, light fixtures, signs, fence, props.glb props, collisions. */
   async function buildCore(icao) {
     const { meta, A } = await loadMeta(icao);
+    delete metaP[icao];   // (used once: a later rebuild reads fresh arrays)
     metas[icao] = { meta, A };
     const apt = { meta, root: new THREE.Group(), lights: null, fixtures: [], buildings: null, props: null };
     apt.root.name = `airport-${meta.icao}`;
@@ -159,6 +167,11 @@ export async function createAirports(ctx) {
   // (airborne starts over the city / Golden Gate) do not wait for any airport data at all.
   const near = order[0];
   const nearNeeded = near && near.d < (RADIUS[near.icao] || 3000) + 6000;
+  // The spawn airport's small files (its json + bin, ~130 KB, and props.glb, 50 KB, which the start waits for) are
+  // requested now, while the terrain of the start downloads, instead of one after the other once it is there: on a slow
+  // line that chain came last and shared the link with the ground textures (slow 4G: 7 s for the json, 12–20 s for
+  // props.glb). The airport itself is still built after the terrain (it is draped on it).
+  if (nearNeeded) { loadMeta(near.icao.toLowerCase()).catch(() => {}); prefetchProps(ctx); }
   const ready = (async () => {
     if (!nearNeeded) return;
     if (ctx.terrain && ctx.terrain.ready) {

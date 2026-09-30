@@ -13,7 +13,7 @@ import { CAMERA_NAMES } from './camera.js';
 import { createCameraBar } from './camera-bar.js';   // camera selector hook (src/ui/camera-bar.js)
 import { openSettings, openCredits, qualityHintSeen, markQualityHintSeen, qualityHintText } from './panels.js';
 import { explainCrash } from './hints.js';
-import { loadSettings, saveSettings } from '../core/settings.js';
+import { loadSettings, storedSettings, patchSettings } from '../core/settings.js';
 import { goToMenu } from '../core/leave.js';
 import { activeMap } from '../maps/index.js';
 import { createMuteButton } from './settings-live.js';   // pause-screen speaker (settings.muted, the M key's switch)
@@ -1480,7 +1480,8 @@ export function createHUD(container) {
     hudMode = m;
     visible = m !== 'off';
     storageSet(MODE_KEY, m);
-    if (persist) { try { const st = loadSettings(); if (st.hudMode !== m) saveSettings({ ...st, hudMode: m }); } catch { /* ignore */ } }
+    // (patchSettings: a full save wrote the auto-detected quality into storage, so H pinned the graphics preset)
+    if (persist) { try { if (storedSettings().hudMode !== m) patchSettings({ hudMode: m }); } catch { /* ignore */ } }
     layout();
     applyVisibility();
     return hudMode;

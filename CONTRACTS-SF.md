@@ -250,7 +250,8 @@ additive blending on the combiner glass). Unknown types draw a neutral "NO DATA"
 export function createAudioSystem({ camera }): AudioSystem
 interface AudioSystem {
   start(): void;                       // on the first user click
-  muted: boolean; setMuted(m): void; setPaused(p): void;
+  muted: boolean; setMuted(m): void;
+  setPaused(p, source = 'user'): void;  // silent while any source holds ('user' = the pause screen, 'mission' = a mission card)
   loadAircraft(id: string): Promise<void>;   // assets/audio/<id>/*.wav + profile src/audio/profiles/<id>.js
   update(dt, flight, { view: 'cockpit'|'exterior', aircraftObject, camera }): void;  // detects gear/flap/canopy/AB transitions itself
   play(name): void;                     // one-shots: 'touchdown','crash','click','chime', GPWS callouts
@@ -309,7 +310,12 @@ Players keep files in their browser cache, so every asset URL carries a content 
   under `assets/` and `renders/` that holds files (hash over the names + contents of the files directly in it).
 - `src/core/assets.js` exports `assetUrl(path)`: appends `?v=<hash>` of the file's directory (unchanged when the file is not
   listed, e.g. in local development where versions.json does not exist). The map is loaded once at startup
-  (`loadAssetVersions()`, `cache: 'no-cache'`), before any asset request.
+  (`loadAssetVersions()`), before any asset request: from the page itself when the publish build wrote it there
+  (`<script type="application/json" id="gk-build">` = build.json + `versionMap`, no request), else build.json and
+  versions.json (`cache: 'no-cache'`).
+- Cache headers (tools/deploy/deploy.sh): versioned files 1 day (JSON 5 min) plus `stale-while-revalidate` 30 days (a
+  returning player starts from the cache while the browser revalidates in the background), JS chunks a year + immutable,
+  pages `no-cache`, versions.json 5 min.
 - Every request for something under `assets/` or `renders/` goes through `assetUrl` (Three.js loaders via the loading
   manager's URL modifier; `fetch` via `assetFetch(path, init)` from `src/core/assets.js`, which also retries transient network
   errors). Audio keeps its per-file hashes (§6.5).
@@ -330,8 +336,8 @@ Players keep files in their browser cache, so every asset URL carries a content 
 ## 11. Anonymous usage statistics (lead)
 
 - `src/core/telemetry.js` sends GET beacons to `_e?t=<type>&s=<random page session id>&…` on the game's own origin: `open`
-  (page opened: screen, quality, GPU name, language), `fly` (aircraft, spawn, load seconds), `hb` (one per active flight
-  minute: fps, pixel ratio, view), `err` (≤ 5 per page), `end`. No cookies, no stored id, nothing personal. Off on localhost
+  (page opened: screen, quality, GPU name, language), `fly` (aircraft, spawn, load seconds `lt`, pre-warm seconds `pw` = the shader links / first uploads behind the loading screen), `hb` (one per active flight
+  minute: fps, pixel ratio, view; `lp` = 1 while the browser runs requestAnimationFrame at ~30 Hz: Low Power Mode / thermal; `zm` = 1 when the page is zoomed in), `err` (≤ 5 per page), `end`. No cookies, no stored id, nothing personal. Off on localhost
   (unless `?telemetry=1`), with `?telemetry=0` and under Do Not Track / Global Privacy Control.
   - Every beacon carries the build version `v`. Events raised before `startTelemetry()` knows it (the dead-page report at
     module load, the start gate `gate`, the software-renderer notice) are queued and sent with it (after 15 s or at
@@ -371,8 +377,9 @@ Players keep files in their browser cache, so every asset URL carries a content 
   `iab` events, the pages handed over to a browser (`hf`) and the share that flew, the touch screens' `ptr` / `in`.
   "Geri dönen oyuncular": D1 / D7 / within-7-days per cohort day and device from the visit fields, and
   the daily share of returning browsers. "Destekli uçuş": outcomes per `as` value on `fly` and the `assist` events; the
-  take-off / landing / crash funnel per assist state and device, and "Kapatma": the chip tapped → "Kapat" / kept (why),
-  and the people who turned it off in Ayarlar instead.
+  take-off / landing / crash funnel per assist state and device; "Açma / kapatma (çip)": the chip tapped while on →
+  "Kapat" / kept (why), tapped while off → on, and the people who switched it in Ayarlar instead; "Hatırlatmalar": the
+  start callouts (seen with the assist on / off) and the suggestion after two crashes → the same page's chip switches.
   `--field KEY` lists any beacon field's values per event type (e.g. `as`). "Ayarlar" (from `set`): people who mute, lower a
   volume (below its default bucket), zero the master volume, turn off assisted flight, reduce or turn off the spoken
   alerts, the alert chimes or the HUD warning texts, reduce flashing, and the settings changed most.
@@ -390,17 +397,17 @@ Players keep files in their browser cache, so every asset URL carries a content 
   | `wk` | show · play · submit · fail | the weekly challenge (src/retention/weekly.js): `id` = the week's pick (a mission id or ff:<challenge>); show: `c` (entries of the week's top 10 seen in the menu), `as`=1 its "Destekli" list; play: started from the menu; submit: `r` (weekly rank), `im`=1 improved, `as`=1 |
   | `chl` | open · beat · lost · back | challenge links (?mission=<id>&challenge=<score>): `id`; open: `d`=1 daily; lost: `o` (tie, short = finished below, fail = not finished); back: "Skorunu gönder" tapped |
   | `news` | show · close | the "Yenilikler" card: show: `id` (newest changelog entry), `c` (entries shown) |
-  | `inst` | show · accept · dismiss · later · installed | "Ana ekrana ekle": show: `p` (android = the browser's install prompt, ios = the how-to), `via` (mission, land); accept / dismiss: the browser dialog's answer; later: "Şimdi değil" / "Tamam"; installed: the browser's appinstalled event |
+  | `inst` | show · accept · dismiss · later · installed · app | "Ana ekrana ekle": show: `p` (android = the browser's install prompt, ios = the how-to, which also says that the iOS home-screen app starts with its own empty storage), `via` (mission, land); accept / dismiss: the browser dialog's answer; later: "Şimdi değil" / "Tamam"; installed: the browser's appinstalled event; app: a phone / tablet page opened from the home screen (`p` ios / android, `first` = 1 on the app's first page; iOS has no appinstalled) |
   | `assist` | app · tip · chip · off · keep · on · hint | assisted flight (src/ui/assist-hud.js), `ac`: app = an assisted approach ("İnişe geç") started, `via` (button, gear = the gear lowered near a runway); tip = the one-time tip after assisted landings shown (it points at the chip), `lc` (assisted landings so far); the "DESTEKLİ UÇUŞ" chip on the flight screen (every flight but a hand-flown mission) switches the setting as Ayarlar does (patchSettings; the `set` k=assist beacon follows, v2=0 off / 1 on): chip = tapped while on (the question "Destekli uçuşu kapat?" opens); off = "Kapat" confirmed, `via` = chip; keep = not turned off, `via` = cancel (Vazgeç) · tap (a second tap on the chip) · timeout (4 s) · hide (the chip hid: pause, map, a card) · off (turned off elsewhere meanwhile); on = tapped while off, turned on at once, `via` = chip; hint = a callout pointing at the chip shown, `k` = start (at a flight's start, a player's first 3 flights) · crash (once per browser, after two crashes in a page with the assist off; a suggestion only, nothing switches), `as` = the assist state then. Assisted-flight state on other beacons: `as` = 1 on / 0 off on `fly`, `end`, `takeoff`, `land`, `crash` (on = the assist was on at any moment since the last take-off); `land` also `aa`=1 when "İnişe geç" flew the approach |
   | `set` | — | a setting changed (src/ui/settings-live.js; one beacon per changed setting, sent when the values have settled 1.5 s after the last change, so a slider drag is one beacon): `k` = `master` · `engine` · `voice` · `atc` · `ambient` with `v2` 0 · 25 · 50 · 75 · 100 (volume bucket); `mute` · `assist` · `chime` · `hudwarn` · `calm` (reduced flashing) · `tut` · `inv` · `tilt` · `radio` with `v2` 1 · 0; `valert` (spoken alerts) with `v2` 2 all · 1 critical · 0 off; `quality` · `fps` · `fail` · `hud` with the choice. (`v2`, not `v`: `v` is the envelope's version.) |
-  | `iab` | show | the "Tarayıcıda aç" banner in a social-app webview (src/ui/touch-gate.js): `id` (the app); show: the banner appeared; `x` = chrome (the Chrome intent link, Android) · copy (link copied) · close |
+  | `iab` | show · rot | social-app webviews (src/ui/touch-gate.js, src/ui/touch.js): `id` (the app); show: the menu's "Tarayıcıda aç" banner appeared; rot: the portrait prompt of a flight appeared inside the webview (with "Ekran dönmüyorsa … tarayıcıda aç"); `x` = browser (the intent link to the default browser, Android; builds before 28 Sep 2026: chrome, Chrome only) · copy / copyfail (link copied, iOS) · close (the banner); `via` = rot for the prompt's button |
   | `gate` | — | the start gate / "Safari'de aç" screen: `r` (reason: webgl2, memory, gpu, software, iab, iab-lost), `dev`, `iab`, `gpu`; `x` = try · safari · copy · copyfail · share |
   Existing: `takeoff`, `land` (`fpm`, `cl`, `tdz`, `st`), `crash`, `tut`, `share` (`id`, `via`), `failure`, `gfx`.
 - Retention state is local only (localStorage, never sent; no account, no id): `gokyuzu.streak` = `{ v, days: ['YYYYMMDD', …]
-  (the last 60 Istanbul days with a finished flight or mission), best, land: { cur, best } (runway landings in a row), badges:
+  (the last 60 Istanbul days with a finished flight or mission), run0? (the first day of the current run when it began before the kept days), best, land: { cur, best } (runway landings in a row), badges:
   { id: day unlocked }, pick (badge id | null) }`; `gokyuzu.seen` = the newest "Yenilikler" entry id seen
   (src/data/changelog.json); `gokyuzu.lbList` = `{ <board>: 'a' | 'm' }` (the list the latest result on a board went to:
-  the "Elle / Destekli" switch opens there); `gokyuzu.install` = `{ shown, accepted?, installed? }` (ms; the suggestion waits 14 days after
+  the "Elle / Destekli" switch opens there); `gokyuzu.install` = `{ shown, accepted?, installed?, app? }` (app: first page opened from the home screen) (ms; the suggestion waits 14 days after
   `shown`); `gokyuzu.ffc(.<map>)` also keeps the daily landing per day (`daily-land@YYYYMMDD`, the last 14 days) and `as`=1
   on a best set with assisted flight. The menu's handoff to free flight is in memory (`shared.retentionIntent`).
 - Report "Geri gelme özellikleri" (report_comeback): streak days by bucket and what finished them, badges, weekly views /

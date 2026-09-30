@@ -54,7 +54,7 @@ export function createMissionRuntime(plan, ctx) {
   const objectives = mission.objectives.map((d) => createObjective(d, env));
   const groundAt = (x, z) => { const h = world.getGroundHeight(x, z); return Number.isFinite(h) ? h : 0; };
   const markers = createMarkers(ctx.scene);
-  const ui = createMissionUI(ctx.hud, { touch: !!ctx.touch, input: ctx.input, category: cat, missions: MISSIONS });
+  const ui = createMissionUI(ctx.hud, { touch: !!ctx.touch, input: ctx.input, category: cat, missions: MISSIONS, paused: () => !!state.paused });
   const ret = createMissionRetention({ mission, touch: !!ctx.touch, flight: () => state.flight });
   const idx = MISSIONS.findIndex((m) => m.id === mission.id);
   /** The next mission in the list that is unlocked (progress after this run), wrapping around. */
@@ -69,6 +69,7 @@ export function createMissionRuntime(plan, ctx) {
   const lastAir = { vs: 0, pitch: 0, roll: 0, ias: 0, gear: 0, flaps: 0 };
   let phase = 'brief';        // brief | run | ending | result
   let cur = 0, endT = 0, result = null, failures = [], started = false, holdAudio = false, uiT = 0, runs = 0, gearT = 0, gearHinted = false;
+  let assistRun = false;      // the assisted-flight layer was on at some moment of this run (its result goes to the "Destekli" lists)
   const flight = () => state.flight;
 
   function applyStart() {
@@ -157,7 +158,7 @@ export function createMissionRuntime(plan, ctx) {
   function resetMission() {
     for (const o of objectives) o.start();
     for (const o of objectives) if (o.def.type === 'gates' || o.def.type === 'orbit') o.orient(plan.start.x, plan.start.z);
-    cur = 0; s.t = 0; s.first = true; endT = 0; result = null; gearT = 0; gearHinted = false;
+    cur = 0; s.t = 0; s.first = true; endT = 0; result = null; gearT = 0; gearHinted = false; assistRun = false;
     scheduleFailures();
     showMarkers();
     if (ctx.landing) ctx.landing.reset();
@@ -166,7 +167,7 @@ export function createMissionRuntime(plan, ctx) {
 
   function setHold(on) {
     rt.hold = on;
-    if (ctx.audio && ctx.audio.setPaused && holdAudio !== on) { holdAudio = on; ctx.audio.setPaused(on); }
+    if (ctx.audio && ctx.audio.setPaused && holdAudio !== on) { holdAudio = on; ctx.audio.setPaused(on, 'mission'); }   // (its own pause source: the player's pause toggle does not undo it)
   }
 
   function startRun() {
@@ -206,6 +207,8 @@ export function createMissionRuntime(plan, ctx) {
     }
     const prog = recordResult(mission.id, { ok, score, stars, day: mission.day });
     result = { ok, reason, score, stars, time: t, rows, newBest: prog.newBest, prevBest: prog.prevBest, mission };
+    // (sticky: an assisted run stays assisted when the player turns the assist off just before the end)
+    if (assistRun) result.assisted = true;
     ret.finish(result);   // retention hook
     trackEvent('mission', { id: mission.id, st: ok ? 'done' : 'fail', stars: ok ? stars : 0, score: ok ? score : 0, sec: t.toFixed(1), d: mission.day ? 1 : undefined, why: ok ? undefined : failCode(reason) });
     if (!ok) ui.flash(reason, 'warn');
@@ -350,6 +353,7 @@ export function createMissionRuntime(plan, ctx) {
       }
       if (phase === 'run' && !paused) {
         s.dt = dt; s.t += dt;
+        if (!assistRun && f.assist && f.assist.on) assistRun = true;
         if (!f.crashed) { lastAir.vs = s.vs; lastAir.pitch = s.pitch; lastAir.roll = s.roll; lastAir.ias = s.ias; lastAir.gear = Number(f.gear) || 0; lastAir.flaps = Number(f.flaps) || 0; }
         if (!f.crashed) checkFailures();
         if (mission.manual && f.autopilot && f.autopilot.on && f.command) { f.command('autopilot'); ui.flash('Bu görevde otopilot yok: elle uç', 'warn'); }

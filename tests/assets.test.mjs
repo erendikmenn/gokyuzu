@@ -118,6 +118,22 @@ check('three.js loaders: URL modifier installed on a manager', (() => {
 }
 check('retryDelay: grows, capped at ~60 s', A.retryDelay(1) < A.retryDelay(3) && A.retryDelay(30) <= 60000 * 1.25);
 
+// ---- publish build pages carry the stamp + version map inline (tools/deploy/build_dist.mjs): no request at all
+{
+  const stamp = { version: 'v1', target: 'staging', versions: 'assets/versions.json', versionMap: MAP };
+  globalThis.document = { baseURI: ROOT, getElementById: (id) => (id === 'gk-build' ? { textContent: JSON.stringify(stamp).replace(/</g, '\\u003c') } : null) };
+  try {
+    const C = await import('../src/core/assets.js?inline');
+    handler = () => { throw new Error('no request expected'); };
+    calls = [];
+    const v = await C.loadAssetVersions();
+    const b = await C.loadBuildInfo();
+    check('inline: no build.json / versions.json request', calls.length === 0, calls.map((c) => c.url).join(', '));
+    check('inline: the page\'s map versions assets', v['assets/sf/city/l0'] === 'aaaaaaaaaa' && C.assetUrl('assets/sf/city/l0/a.glb') === 'assets/sf/city/l0/a.glb?v=aaaaaaaaaa');
+    check('inline: the stamp without the map (telemetry / leaderboard read its version)', b && b.version === 'v1' && b.target === 'staging' && !('versionMap' in b));
+  } finally { delete globalThis.document; }
+}
+
 // ---- offline at startup: loadAssetVersions rejects (-> error screen), a later call (Tekrar dene) tries again
 {
   const B = await import('../src/core/assets.js?offline');

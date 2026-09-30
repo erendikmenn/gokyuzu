@@ -6,15 +6,16 @@
 // Returning players are counted without any identifier: this browser keeps only its first-visit day, its last visit day
 // and a count of visit days (localStorage `gokyuzu.visits`), and `open` carries coarse buckets of them (d0, vn, vd, vo).
 // Off on localhost (unless ?telemetry=1), with ?telemetry=0, and when the browser sends Do Not Track / Global Privacy
-// Control (then nothing is sent and the visit record is neither read nor written).
+// Control (then nothing is sent and the visit record is neither read nor written; a ?telemetry=1 link does not override
+// the browser's choice).
 import { detectDevice, deviceLabel, gpuLabel, rendererString } from './gpu-device.js';
-import { QUALITY, detectQuality, capQuality, getQualityCap, qualitySource } from './quality.js';
+import { isQuality, detectQuality, capQuality, getQualityCap, qualitySource } from './quality.js';
 
 const hasDom = typeof location !== 'undefined' && typeof navigator !== 'undefined' && typeof document !== 'undefined';
 const params = new URLSearchParams(hasDom ? location.search : '');
 const local = hasDom && /^(localhost|127\.|\[::1\])/.test(location.hostname);
 const optedOut = hasDom && (navigator.doNotTrack === '1' || (typeof window !== 'undefined' && window.doNotTrack === '1') || navigator.globalPrivacyControl === true);
-const enabled = hasDom && (params.get('telemetry') === '1' || (!local && !optedOut && params.get('telemetry') !== '0'));
+const enabled = hasDom && !optedOut && (local ? params.get('telemetry') === '1' : params.get('telemetry') !== '0');
 
 const sid = typeof crypto !== 'undefined' && crypto.getRandomValues
   ? Array.from(crypto.getRandomValues(new Uint8Array(6)), (b) => b.toString(36).padStart(2, '0')).join('') : '';
@@ -123,9 +124,9 @@ function visitFields() {
 function qualityReason(running) {
   try {
     const urlQ = params.get('quality');
-    if (urlQ && QUALITY[urlQ]) return params.get('resume') === '1' ? 'reload' : 'url';
+    if (isQuality(urlQ)) return params.get('resume') === '1' ? 'reload' : 'url';
     let stored = null;
-    try { const s = JSON.parse(localStorage.getItem('gokyuzu.settings') || 'null'); stored = s && QUALITY[s.quality] ? s.quality : null; } catch { /* ignore */ }
+    try { const s = JSON.parse(localStorage.getItem('gokyuzu.settings') || 'null'); stored = s && isQuality(s.quality) ? s.quality : null; } catch { /* ignore */ }
     const auto = detectQuality();
     return qualitySource({ running, stored, auto, cap: capQuality(stored || auto) });
   } catch { return ''; }
@@ -161,7 +162,11 @@ export function startTelemetry({ build, renderer, quality, state, extra = {} }) 
     // player's setting; 0 = the display's rate), so the report can tell a capped phone from a slow one
     const pacing = s.pacing || (globalThis.__game && globalThis.__game.pacing);
     const cap = s.cap ?? (pacing && Number.isFinite(pacing.cap) ? pacing.cap : undefined);
-    send('hb', { a: active, ac: s.aircraft, fps: Math.round(s.fps || 0), cap, pr: s.pixelRatio && s.pixelRatio.toFixed(2), vw: s.view === 'cockpit' ? 'c' : 'e' });
+    // lp = 1: the browser throttles requestAnimationFrame to ~30 Hz (Low Power Mode / thermal, frame-pacing.js lowPower);
+    // zm = 1: the page is zoomed in (a pinch / double tap got through on a phone or tablet)
+    const vv = typeof visualViewport !== 'undefined' && visualViewport ? visualViewport.scale : 1;
+    send('hb', { a: active, ac: s.aircraft, fps: Math.round(s.fps || 0), cap, pr: s.pixelRatio && s.pixelRatio.toFixed(2), vw: s.view === 'cockpit' ? 'c' : 'e',
+      lp: pacing && pacing.lowPower ? 1 : undefined, zm: vv > 1.01 ? 1 : undefined });
   }, 60000);
   addEventListener('pagehide', () => send('end', withExtras('end', { a: active })));
 }
@@ -171,10 +176,8 @@ export function startTelemetry({ build, renderer, quality, state, extra = {} }) 
 if (hasDom && typeof addEventListener === 'function') {
   addEventListener('error', (e) => reportError(e.message, e.filename, e.lineno));
   addEventListener('unhandledrejection', (e) => {
-    const r = e.reason;
-    const frame = r && r.stack ? (String(r.stack).split('\n').find((l) => /:\d+:\d+/.test(l)) || '') : '';
-    const m = /([^/\s(]+):(\d+):\d+\)?\s*$/.exec(frame);
-    reportError(r && (r.message || r), m ? m[1] : '', m ? m[2] : 0);
+    const r = e.reason, src = rejectionSource(r);
+    reportError(r && (r.message || r), src.file, src.line);
   });
   addEventListener('pagehide', flushEarly);   // (registered before the handlers below: early events leave first)
 }
@@ -231,11 +234,30 @@ export function trackEvent(type, data = {}) {
   send(t, withExtras(t, data));
 }
 
+/**
+ * Pure: script URL and line of the first stack frame of an unhandled rejection's reason (Chrome "at f (url:1:2)" /
+ * "at url:1:2", Safari and Firefox "f@url:1:2"). The whole URL, not only the file name: isForeignError() needs its origin
+ * (the file name alone tagged every rejection of the game's own code as foreign).
+ */
+export function rejectionSource(reason) {
+  const stack = reason && reason.stack ? String(reason.stack) : '';
+  const frame = stack.split('\n').find((l) => /:\d+:\d+/.test(l)) || '';
+  const m = /([^\s(@]+):(\d+):\d+\)?\s*$/.exec(frame);
+  return m ? { file: m[1], line: Number(m[2]) } : { file: '', line: 0 };
+}
+/**
+ * Pure: an error from a script not served by `origin` (other sites; browser extensions, chrome-extension://…, e.g. an
+ * injected "200.js" throwing "reading 'M_ID'" on one Windows Chrome; in-app browsers' injected code). The game's own
+ * blob: workers count as its own.
+ */
+export function isForeignError(message, file, origin) {
+  const f = String(file || '');
+  return message === 'Script error.' || (!!f && !f.startsWith(origin) && !f.startsWith(`blob:${origin}`));
+}
+
 function reportError(message, file, line) {
   if (errors++ >= 5) return;   // a broken frame loop must not flood the log
   const msg = String(message || 'unknown');
-  // any script not served from this origin is foreign: other sites, and browser extensions (chrome-extension://…,
-  // e.g. an injected "200.js" throwing "reading 'M_ID'" on one Windows Chrome)
-  const foreign = msg === 'Script error.' || (file && !String(file).startsWith(location.origin));
+  const foreign = isForeignError(msg, file, location.origin);
   send('err', { e: msg, f: file ? `${String(file).split('/').pop()}:${line}` : '', x: foreign ? 'foreign' : '' });
 }

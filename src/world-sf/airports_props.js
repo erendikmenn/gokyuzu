@@ -290,6 +290,9 @@ class NearSet {
   }
 }
 
+/** Start downloading props.glb now (createAirports: in parallel with the terrain of the start, see there). */
+export function prefetchProps(ctx) { loadLibrary(ctx).catch(() => {}); }
+
 export async function buildProps(meta, ctx, colliders) {
   const L = await loadLibrary(ctx).catch((e) => { if (!loggedMissing) (isNetworkError(e) ? console.warn : console.info)('[airports] props.glb', e.message); loggedMissing = !isNetworkError(e); return null; });
   if (!L) return null;

@@ -139,6 +139,7 @@ if (withGallery) {
 // ?v=<hash> to every request in that directory (src/core/assets.js assetUrl). File hashes are cached by path + size +
 // mtime in node_modules/.cache/ (gitignored), so a rebuild only reads files that changed (first build: ~2 GB, seconds).
 const VERSIONS_REL = 'assets/versions.json';
+const versions = {};
 {
   const t0 = Date.now();
   const cacheFile = path.join(root, 'node_modules/.cache/gokyuzu/file-hashes.json');
@@ -167,7 +168,6 @@ const VERSIONS_REL = 'assets/versions.json';
     if (!dirs.has(dir)) dirs.set(dir, []);
     dirs.get(dir).push([rel.slice(k + 1), fileHash(src)]);
   }
-  const versions = {};
   for (const dir of [...dirs.keys()].sort()) {
     const h = crypto.createHash('sha256');
     for (const [name, fh] of dirs.get(dir).sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))) h.update(`${name}\0${fh}\n`);
@@ -192,6 +192,20 @@ const VERSIONS_REL = 'assets/versions.json';
     versions: VERSIONS_REL,   // tells the game to load the asset version map (dev servers have none: no 404 probe)
   };
   fs.writeFileSync(path.join(dist, 'build.json'), JSON.stringify(stamp));
+  // The stamp and the version map also go into the pages themselves (src/core/assets.js reads
+  // <script type="application/json" id="gk-build"> before asking for build.json / versions.json): the game used to fetch
+  // both in a row before its first menu request, each revalidated at the origin (no-cache / 5 min), i.e. two sequential
+  // CDN → S3 round trips on every start (40–220 ms each from Türkiye, more on mobile networks). A page names the chunks
+  // and asset versions of exactly its own build that way; build.json / versions.json stay for tools and older pages.
+  const inline = JSON.stringify({ ...stamp, versionMap: versions }).replace(/</g, '\\u003c');
+  for (const page of ['index.html', 'ada.html']) {
+    const file = path.join(dist, page);
+    if (!fs.existsSync(file)) continue;
+    const html = fs.readFileSync(file, 'utf8');
+    if (!html.includes('</head>')) throw new Error(`${page}: no </head> for the build stamp`);
+    fs.rmSync(file, { force: true });   // (written by the bundle step, but never write through a hard link)
+    fs.writeFileSync(file, html.replace('</head>', `  <script type="application/json" id="gk-build">${inline}</script>\n</head>`));
+  }
 }
 
 console.log(`dist/: ${files} files, ${(bytes / 1e9).toFixed(2)} GB`);

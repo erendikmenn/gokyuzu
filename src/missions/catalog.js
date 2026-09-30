@@ -278,6 +278,7 @@ const dayIndex = (day) => Math.round((Date.UTC(+day.slice(0, 4), +day.slice(4, 6
  * another map's come from loadMissionCatalog(id) (src/missions/<id>/catalog.js: MISSIONS in this file's format + BRIDGES).
  * Progress is kept per map (localStorage `store`), the daily cycle is seeded per map (`seed`, '' = San Francisco).
  */
+const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
 export function createCatalog({ missions, bridges = {}, store = 'gokyuzu.missions', seed = '', map = 'sf', build = null, dailyId = null }) {
   const missionById = (id) => missions.find((m) => m.id === id) || null;
 
@@ -337,8 +338,16 @@ export function createCatalog({ missions, bridges = {}, store = 'gokyuzu.mission
   }
 
   // ---- progress ----
+  // (a stored value of the wrong shape, e.g. edited by hand, gets fresh parts: recordResult() used to throw in the
+  // mission's finish, so the result card never came)
   function readStore() {
-    try { const s = JSON.parse(localStorage.getItem(store) || 'null'); return s && typeof s === 'object' && s.m ? s : { v: 1, m: {}, daily: {} }; } catch { return { v: 1, m: {}, daily: {} }; }
+    try {
+      const s = JSON.parse(localStorage.getItem(store) || 'null');
+      if (!isObj(s) || !isObj(s.m)) return { v: 1, m: {}, daily: {} };
+      if (!isObj(s.daily)) s.daily = {};
+      for (const t of [s.m, s.daily]) for (const k of Object.keys(t)) if (!isObj(t[k])) delete t[k];
+      return s;
+    } catch { return { v: 1, m: {}, daily: {} }; }
   }
   function writeStore(s) { try { localStorage.setItem(store, JSON.stringify(s)); } catch { /* private mode */ } }
 
