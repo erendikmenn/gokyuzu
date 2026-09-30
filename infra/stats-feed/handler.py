@@ -1,5 +1,5 @@
 """Hourly Gökyüzü statistics feed (AWS Lambda): CloudFront access logs → tools/analytics/report.py → the private
-dashboard stats.erenailab.com (ingest contract v1). See infra/stats-feed/README.md.
+owner's private dashboard (ingest contract v1). See infra/stats-feed/README.md.
 
 One run: read the salt, the owner's IP list and the ingest token from SSM (SecureString); load the per-day history from
 the feed's own private bucket; download the access logs from the oldest day without a final record (at least the last

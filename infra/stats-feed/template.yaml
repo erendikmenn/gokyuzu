@@ -14,7 +14,7 @@ Parameters:
     AllowedPattern: '^[a-z0-9-]+/$'
   IngestUrl:
     Type: String
-    Default: https://stats.erenailab.com/api/ingest/gokyuzu
+    Description: The dashboard's ingest endpoint (local config ~/.config/erenailab-stats/ingest_url, never in the repo)
   TokenParameter:
     Type: String
     Default: /erenailab-stats/ingest-token
@@ -129,7 +129,7 @@ Resources:
     Type: AWS::Lambda::Function
     Properties:
       FunctionName: erenailab-stats-gokyuzu-feed
-      Description: Hourly Gokyuzu statistics -> stats.erenailab.com (infra/stats-feed)
+      Description: Hourly Gokyuzu statistics to the private dashboard (infra/stats-feed)
       Runtime: python3.12
       Architectures: [arm64]
       Handler: handler.handler

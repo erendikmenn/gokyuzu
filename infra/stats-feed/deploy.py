@@ -38,6 +38,18 @@ sys.path.insert(0, str(ROOT / 'tools' / 'deploy'))
 import deploy_config  # noqa: E402
 
 STACK = 'erenailab-stats-gokyuzu-feed'
+INGEST_URL_FILE = Path.home() / '.config' / 'erenailab-stats' / 'ingest_url'   # the dashboard's endpoint; kept out of the repo
+
+
+def ingest_url():
+    try:
+        url = INGEST_URL_FILE.read_text().strip()
+    except FileNotFoundError:
+        sys.exit(f'missing {INGEST_URL_FILE} (the dashboard ingest URL)')
+    if not url.startswith('https://'):
+        sys.exit(f'{INGEST_URL_FILE}: not an https URL')
+    return url
+
 FUNCTION = 'erenailab-stats-gokyuzu-feed'
 TAGS = [{'Key': 'project', 'Value': 'erenailab-stats'}]
 TZDATA = 'tzdata==2026.4'   # zoneinfo data for Europe/Istanbul (the Lambda image may not carry /usr/share/zoneinfo)
@@ -87,6 +99,7 @@ def deploy_stack(s):
     except ClientError:
         exists = False
     params = [{'ParameterKey': 'LogBucket', 'ParameterValue': deploy_config.get('S3_BUCKET_LOGS')}]
+    params.append({'ParameterKey': 'IngestUrl', 'ParameterValue': ingest_url()})
     if exists:   # keep the schedule as it is (on / off: --schedule)
         params.append({'ParameterKey': 'ScheduleState', 'UsePreviousValue': True})
     args = dict(StackName=STACK, TemplateBody=(HERE / 'template.yaml').read_text(), Parameters=params,
@@ -182,6 +195,7 @@ def set_schedule(s, state):
     cf = s.client('cloudformation')
     cf.update_stack(StackName=STACK, UsePreviousTemplate=True, Capabilities=['CAPABILITY_NAMED_IAM'], Tags=TAGS,
                     Parameters=[{'ParameterKey': 'LogBucket', 'UsePreviousValue': True},
+                                {'ParameterKey': 'IngestUrl', 'UsePreviousValue': True},
                                 {'ParameterKey': 'ScheduleState', 'ParameterValue': state}])
     cf.get_waiter('stack_update_complete').wait(StackName=STACK, WaiterConfig={'Delay': 10, 'MaxAttempts': 60})
     print(f'  schedule: {state}')

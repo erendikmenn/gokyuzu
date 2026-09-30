@@ -22,7 +22,7 @@ frame rate against the cap, pixel ratio, dead pages, graphics events; and the vi
 "Geri dönen oyuncular": retention from the identifier-free visit fields of `open` (d0 / vn / vd / vo,
 src/core/telemetry.js), by cohort day and device. --field KEY lists the values of any beacon field by event type
 (e.g. --field as: the assisted-flight flag).
---json PATH (- = stdout) writes the dashboard snapshot instead (stats.erenailab.com, ingest contract v1: cards and the
+--json PATH (- = stdout) writes the dashboard snapshot instead (the owner's private dashboard, ingest contract v1: cards and the
 tables Günlük / Haftalık / Toplam / Saatlik, the same definitions as above); --state PATH keeps a per-day history next
 to it so days older than the logs still count (the hourly feed in AWS keeps its own, infra/stats-feed/README.md).
 """
@@ -1304,10 +1304,10 @@ def load(folder, since, target='production', key_salt=None, mine=None, geo=None)
 
 
 # ── Dashboard snapshot: --json and the hourly stats feed (infra/stats-feed/) ──────────────────────────────────────────
-# The snapshot follows the stats.erenailab.com ingest contract v1: {v, generated_at, source, range, stale, cards, tables};
+# The snapshot follows the private dashboard's ingest contract v1: {v, generated_at, source, range, stale, cards, tables};
 # tables carry id, title, tab (genel | gunluk | haftalik | toplam | saatlik), columns and rows; titles and columns are
 # Turkish, numbers stay numbers (hours with 1 decimal, shares in % with 1 decimal), null = not available yet; a table's
-# `note` says what its numbers mean. The dashboard (stats.erenailab.com, src/ingest.ts) has no "saatlik" tab yet, so the
+# `note` says what its numbers mean. The dashboard (its ingest validator) has no "saatlik" tab yet, so the
 # last-48-hours table sits on HOURLY_TAB; a stale snapshot also gets a "Veri durumu" card (the dashboard also shows `stale`).
 # Definitions (the same as the text report): visitor = anonymous id (salted hash of IP + browser) with a session;
 # player = visitor who started a flight (a `fly` beacon or, without beacons, an aircraft model download); flight = such a
@@ -1323,7 +1323,7 @@ FEED_FINAL = dt.timedelta(days=2, hours=2)   # a day's record is final 26 h afte
 FEED_CATCH_UP = 10                        # the feed rereads at most this many days of logs (after an outage)
 DEVICE_TR = {'desktop': 'masaüstü', 'phone': 'telefon', 'tablet': 'tablet'}
 ASSIST_TR = {'1': 'destekli', '0': 'desteksiz', '?': 'bilinmiyor (eski sürüm)'}
-HOURLY_TAB = 'saatlik'                    # the dashboard's Saatlik tab (stats.erenailab.com)
+HOURLY_TAB = 'saatlik'                    # the dashboard's Saatlik tab
 
 
 def mark_stale(payload, why):
@@ -1828,7 +1828,7 @@ def main():
     ap.add_argument('--hourly', action='store_true', help='print the hour-by-hour table (Türkiye time) instead of the report')
     ap.add_argument('--map', choices=list(MAPS), help='--hourly: count only this map\'s flights in the beacon columns')
     ap.add_argument('--field', help='list the values of this beacon field per event type (e.g. as, q, dc, mq) and stop')
-    ap.add_argument('--json', metavar='PATH', help='write the dashboard snapshot (stats.erenailab.com contract v1) to PATH '
+    ap.add_argument('--json', metavar='PATH', help='write the dashboard snapshot (private dashboard contract v1) to PATH '
                     '(- = stdout) instead of the text report')
     ap.add_argument('--state', type=Path, metavar='PATH', help='--json: per-day history (.json.gz) to merge with and update, '
                     'so days older than the logs keep counting (the stats feed keeps its own copy in S3)')

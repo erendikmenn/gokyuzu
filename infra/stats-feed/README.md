@@ -1,7 +1,7 @@
 # Stats feed: Gökyüzü numbers to the private dashboard
 
 Every hour a small AWS Lambda turns the game's CloudFront access logs into the dashboard snapshot and pushes it to the
-owner's private dashboard (`POST https://stats.erenailab.com/api/ingest/gokyuzu`, ingest contract v1). The numbers come
+owner's private dashboard (`POST <ingest URL>`, kept in `~/.config/erenailab-stats/ingest_url`, ingest contract v1). The numbers come
 from `tools/analytics/report.py`, the same code as the local report (`report.py production --json -` prints the same
 snapshot on your machine).
 
